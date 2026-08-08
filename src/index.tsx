@@ -11,6 +11,7 @@ import { spawnSync } from "node:child_process";
 import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { loadSettings } from "./settings";
+import { installWebSearch, webSearch } from "./web-search";
 
 mkdirSync(AGENT_DIR, { recursive: true });
 
@@ -28,6 +29,12 @@ const modelRuntime = await ModelRuntime.create({
   authPath: AUTH_PATH,
   modelsPath: MODELS_PATH,
 });
+
+const settings = loadSettings();
+// Hosted web search rides on the provider, so it must be wrapped before the
+// session picks a model.
+webSearch.enabled = settings.webSearch;
+const searchProviders = installWebSearch(modelRuntime);
 
 if ((await modelRuntime.getAvailable()).length === 0) {
   console.error(`No credentials in ${AUTH_PATH}. Run: pum login`);
@@ -51,5 +58,10 @@ if (modelFallbackMessage) console.error(modelFallbackMessage);
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(
-  <App session={session} modelRuntime={modelRuntime} settings={loadSettings()} />,
+  <App
+    session={session}
+    modelRuntime={modelRuntime}
+    settings={settings}
+    searchProviders={searchProviders}
+  />,
 );

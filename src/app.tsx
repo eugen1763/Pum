@@ -1,5 +1,5 @@
 import type { InputRenderable } from "@opentui/core";
-import { useKeyboard } from "@opentui/react";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -15,6 +15,7 @@ import { appendHistory, loadHistory } from "./history";
 import { replayMessages } from "./replay";
 import { loadTheme, PRESET_NAMES } from "./theme";
 import { buildSyntaxStyle } from "./syntax";
+import { webSearch } from "./web-search";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream };
@@ -36,10 +37,13 @@ export function App({
   session,
   modelRuntime,
   settings: initial,
+  searchProviders,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
   settings: PumSettings;
+  /** Provider ids that carry the hosted web-search tool; empty means none. */
+  searchProviders: string[];
 }) {
   const [tx, setTx] = useState<Transcript>(() => ({
     // A resumed session already holds messages; show them instead of a blank pane.
@@ -62,6 +66,7 @@ export function App({
   const [elapsedSec, setElapsedSec] = useState(0);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
+  const { width } = useTerminalDimensions();
   const syntaxStyle = useMemo(() => buildSyntaxStyle(theme), [theme]);
   const animations = settings.animations && supportsTrueColor();
 
@@ -180,6 +185,7 @@ export function App({
   const update = (patch: Partial<PumSettings>) => {
     const next = { ...settings, ...patch };
     setSettings(next);
+    if (patch.webSearch !== undefined) webSearch.enabled = patch.webSearch;
     if (patch.showThinking !== undefined) showThinkingRef.current = patch.showThinking;
     saveSettings(next);
   };
@@ -243,6 +249,7 @@ export function App({
   const rowActions: { step?: (n: number) => void; enter?: () => void }[] = [
     { step: stepTheme },
     { step: () => update({ animations: !settings.animations }) },
+    { step: () => update({ webSearch: !settings.webSearch }) },
     { step: stepThinking },
     { step: () => update({ showThinking: !settings.showThinking }) },
     { enter: () => setPage("models") },
@@ -251,6 +258,7 @@ export function App({
   const rowValues = [
     `‹ ${theme.name} ›`,
     `‹ ${settings.animations ? "on" : "off"} ›${settings.animations && !animations ? "  (no truecolor)" : ""}`,
+    `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on this provider)"}`,
     `‹ ${thinkingLevel} ›`,
     `‹ ${settings.showThinking ? "on" : "off"} ›`,
     `${modelId} ›`,
@@ -364,6 +372,11 @@ export function App({
   return (
     <AnimationProvider enabled={animations}>
       <box style={{ flexDirection: "column", height: "100%", backgroundColor: theme.bg }}>
+        <text
+          content={"─".repeat(Math.max(0, width))}
+          fg={theme.border}
+          style={{ flexShrink: 0 }}
+        />
         <StatusBar
           theme={theme}
           modelId={modelId}
@@ -410,6 +423,11 @@ export function App({
             <StreamLine theme={theme} role={tx.stream.kind} text={tx.stream.text} />
           ) : null}
         </scrollbox>
+        <text
+          content={"─".repeat(Math.max(0, width))}
+          fg={theme.border}
+          style={{ flexShrink: 0 }}
+        />
         <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
           <text content="❯ " fg={theme.accent} />
           <input
@@ -421,6 +439,11 @@ export function App({
           />
           {quitArmed ? <text content=" ctrl+c again to quit " fg={theme.warn} /> : null}
         </box>
+        <text
+          content={"─".repeat(Math.max(0, width))}
+          fg={theme.border}
+          style={{ flexShrink: 0 }}
+        />
         {helpOpen ? <HelpPopup theme={theme} /> : null}
         {settingsOpen ? (
           <SettingsPopup

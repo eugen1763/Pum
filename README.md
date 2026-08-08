@@ -68,6 +68,17 @@ Highlighting is tree-sitter, and PUM ships the parsers OpenTUI bundles:
 JavaScript, TypeScript, Zig and Markdown. A fence in any other language still
 renders as a tidy code block, just without colour.
 
+## Web search
+
+With a Codex subscription, PUM adds OpenAI's hosted `web_search` tool to
+requests, so the model can look things up. It is on by default and can be
+switched off in Ctrl+P.
+
+Two things to expect. The search runs on OpenAI's side, so the transcript shows
+no search step — just an answer, usually with a source link. And it only
+applies to Codex models: pick an Anthropic model and it quietly does nothing,
+which the settings row tells you.
+
 ## Theming
 
 Three presets ship — `tokyonight`, `gruvbox`, `catppuccin` — switchable from

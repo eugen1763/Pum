@@ -5,8 +5,15 @@ import type { Theme } from "./theme";
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-export const ROWS = ["Theme", "Animations", "Thinking level", "Show thinking", "Model"] as const;
-export type RowIndex = 0 | 1 | 2 | 3 | 4;
+export const ROWS = [
+  "Theme",
+  "Animations",
+  "Web search",
+  "Thinking level",
+  "Show thinking",
+  "Model",
+] as const;
+
 
 export type PopupProps = {
   theme: Theme;

@@ -11,10 +11,16 @@ export type PumSettings = {
   showThinking: boolean;
   theme: string;
   animations: boolean;
+  webSearch: boolean;
 };
 
 const SETTINGS_PATH = join(AGENT_DIR, "pum.json");
-const DEFAULTS: PumSettings = { showThinking: false, theme: "tokyonight", animations: true };
+const DEFAULTS: PumSettings = {
+  showThinking: false,
+  theme: "tokyonight",
+  animations: true,
+  webSearch: true,
+};
 
 export function loadSettings(): PumSettings {
   try {

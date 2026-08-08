@@ -81,6 +81,21 @@ These were chosen deliberately. Change them only on purpose.
 - **Only five tree-sitter parsers ship**: javascript, typescript, markdown,
   markdown_inline, zig. Other fences render unhighlighted. `DownloadUtils` can
   fetch more at runtime if that ever becomes worth the failure path.
+- **Web search is a hosted tool bolted on outside pi's knowledge.** pi has no
+  concept of provider-native tools, so `web-search.ts` wraps the `openai-codex`
+  provider and appends `{type: "web_search"}` to the outgoing body through the
+  documented `onPayload` hook, re-registering it with
+  `runtime.registerNativeProvider()`. Verified working against the live Codex
+  backend: with it on, answers come back with citations; with it off, the model
+  resorts to a `bash` call instead.
+  - `samplingParams` looks like an easier injection point but is a shallow
+    `Object.assign`, so setting `tools` there would **wipe** read/write/edit/bash.
+  - pi ignores the returned `web_search_call` items, hence no search step in the
+    transcript. That is a display gap, not a failure.
+  - The wrapper delegates via `Object.create(base)` — spreading a `Provider`
+    would drop its methods.
+  - This is unsupported by pi and could break on upgrade. If requests start
+    failing with a tool error, that is the first thing to switch off.
 - **Glyphs stay plain Unicode.** Dingbats, block, box-drawing, and
   Miscellaneous Symbols only — no Nerd Font. Do not reach for a private-use
   codepoint.
