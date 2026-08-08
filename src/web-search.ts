@@ -42,6 +42,67 @@ function wrapProvider(base: Provider): Provider {
   return wrapped;
 }
 
+export type SearchCall =
+  | { phase: "start"; id: string; query: string }
+  | { phase: "end"; id: string; query: string; ok: boolean };
+
+/**
+ * pi drops the `web_search_call` items OpenAI sends back, so the only way to
+ * show the search in the transcript is to watch the wire.
+ *
+ * Codex talks over a WebSocket by default and only consults a custom `fetch`
+ * on its HTTP path, so there is nothing to intercept at the fetch layer.
+ * Forcing `transport: "sse"` would work but costs the `previous_response_id`
+ * continuation, which is what keeps whole-conversation resends off every turn.
+ * So instead we wrap the global WebSocket constructor and read frames as they
+ * arrive. Purely observational — the adapter's own listener is untouched.
+ */
+export function observeSearchCalls(onCall: (call: SearchCall) => void): void {
+  const Original = globalThis.WebSocket;
+  if (!Original || (Original as { __pumPatched?: boolean }).__pumPatched) return;
+
+  const seen = new Map<string, string>();
+
+  const handle = (raw: unknown) => {
+    // Every streamed token is a frame; skip the parse unless it could match.
+    if (typeof raw !== "string" || !raw.includes("web_search_call")) return;
+    let event: any;
+    try {
+      event = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const item = event?.item;
+    if (item?.type !== "web_search_call") return;
+    const id = String(item.id ?? "");
+    const query = String(item.action?.query ?? seen.get(id) ?? "");
+    if (query) seen.set(id, query);
+
+    if (event.type === "response.output_item.added") {
+      onCall({ phase: "start", id, query });
+    } else if (event.type === "response.output_item.done") {
+      onCall({ phase: "end", id, query, ok: item.status !== "failed" });
+      seen.delete(id);
+    }
+  };
+
+  const Patched = new Proxy(Original, {
+    construct(target, args: any[]) {
+      const socket = new (target as any)(...args);
+      socket.addEventListener?.("message", (ev: any) => {
+        try {
+          handle(ev?.data);
+        } catch {
+          // never let logging break a turn
+        }
+      });
+      return socket;
+    },
+  });
+  (Patched as unknown as { __pumPatched: boolean }).__pumPatched = true;
+  globalThis.WebSocket = Patched as typeof WebSocket;
+}
+
 /** Returns the provider ids that now carry the hosted search tool. */
 export function installWebSearch(runtime: ModelRuntime): string[] {
   const installed: string[] = [];

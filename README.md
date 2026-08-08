@@ -74,10 +74,15 @@ With a Codex subscription, PUM adds OpenAI's hosted `web_search` tool to
 requests, so the model can look things up. It is on by default and can be
 switched off in Ctrl+P.
 
-Two things to expect. The search runs on OpenAI's side, so the transcript shows
-no search step — just an answer, usually with a source link. And it only
-applies to Codex models: pick an Anthropic model and it quietly does nothing,
-which the settings row tells you.
+Searches appear in the transcript like any other tool, with the query the model
+actually issued:
+
+```
+⚒ web_search · site:github.com/oven-sh/bun/releases latest Bun release    ✓
+```
+
+It only applies to Codex models: pick an Anthropic model and it quietly does
+nothing, which the settings row tells you.
 
 ## Theming
 

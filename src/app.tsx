@@ -15,7 +15,7 @@ import { appendHistory, loadHistory } from "./history";
 import { replayMessages } from "./replay";
 import { loadTheme, PRESET_NAMES } from "./theme";
 import { buildSyntaxStyle } from "./syntax";
-import { webSearch } from "./web-search";
+import { observeSearchCalls, webSearch } from "./web-search";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream };
@@ -165,6 +165,23 @@ export function App({
   }, [session]);
 
   useEffect(() => () => clearTimeout(quitTimer.current), []);
+
+  // Hosted web searches are not pi tool calls, so they arrive out of band.
+  useEffect(() => {
+    observeSearchCalls((call) => {
+      if (call.phase === "start") {
+        append({
+          kind: "tool",
+          call: { id: call.id, name: "web_search", arg: call.query, state: "running" },
+        });
+      } else {
+        patchTool(call.id, {
+          state: call.ok ? "ok" : "error",
+          ...(call.query ? { arg: call.query } : {}),
+        });
+      }
+    });
+  }, []);
 
   // Git branch, live-watched.
   useEffect(() => {

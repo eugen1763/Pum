@@ -90,8 +90,16 @@ These were chosen deliberately. Change them only on purpose.
   resorts to a `bash` call instead.
   - `samplingParams` looks like an easier injection point but is a shallow
     `Object.assign`, so setting `tools` there would **wipe** read/write/edit/bash.
-  - pi ignores the returned `web_search_call` items, hence no search step in the
-    transcript. That is a display gap, not a failure.
+  - pi drops the returned `web_search_call` items, so logging them means reading
+    the wire. Codex talks over a **WebSocket** by default and only consults a
+    custom `fetch` on its HTTP path, so there is nothing to intercept there —
+    verified by probing whether a custom fetch is ever called (it is not).
+    `observeSearchCalls()` therefore wraps `globalThis.WebSocket` and reads
+    frames as they arrive, purely observationally.
+  - Do **not** "fix" this by forcing `transport: "sse"`. Cached context
+    (`previous_response_id` continuation, which sends only delta input items)
+    is enabled for `auto`/`websocket-cached` and not for `sse`, so that would
+    resend the whole conversation every turn.
   - The wrapper delegates via `Object.create(base)` — spreading a `Provider`
     would drop its methods.
   - This is unsupported by pi and could break on upgrade. If requests start
