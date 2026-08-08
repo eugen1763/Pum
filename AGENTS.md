@@ -61,6 +61,9 @@ These were chosen deliberately. Change them only on purpose.
   `session.steer()` instead of `prompt()`, so the message lands after the
   current step's tool calls rather than starting a second turn. Esc then hands
   back the queued steer, not the original prompt.
+- **`?` on an empty prompt opens the controls** instead of typing. With any
+  text in the line it is an ordinary character. `help-popup.tsx` holds the
+  list — keep it in step with the keyboard dispatch in `app.tsx`.
 - **Glyphs stay plain Unicode.** Dingbats, block, box-drawing, and
   Miscellaneous Symbols only — no Nerd Font. Do not reach for a private-use
   codepoint.

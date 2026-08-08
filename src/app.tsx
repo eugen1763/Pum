@@ -10,6 +10,7 @@ import { StatusBar } from "./status-bar";
 import { StreamLine, TextLine, ToolLine, type Line, type Role } from "./transcript";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
 import { readBranch, watchBranch } from "./git-branch";
+import { HelpPopup } from "./help-popup";
 import { appendHistory, loadHistory } from "./history";
 import { replayMessages } from "./replay";
 import { loadTheme, PRESET_NAMES } from "./theme";
@@ -47,6 +48,7 @@ export function App({
   const [busy, setBusy] = useState(false);
   const [quitArmed, setQuitArmed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [page, setPage] = useState<"main" | "models">("main");
   const [cursor, setCursor] = useState(0);
   const [settings, setSettings] = useState(initial);
@@ -272,6 +274,20 @@ export function App({
       setQuitArmed(false);
     }
 
+    if (helpOpen) {
+      key.stopPropagation();
+      if (key.name === "escape" || key.sequence === "?") setHelpOpen(false);
+      return;
+    }
+
+    // `?` on an empty prompt opens help instead of typing a question mark.
+    // With text already in the line it is just a character.
+    if (key.sequence === "?" && !settingsOpen && !inputRef.current?.value) {
+      key.stopPropagation();
+      setHelpOpen(true);
+      return;
+    }
+
     if (settingsOpen) {
       if (key.name === "escape") {
         key.stopPropagation();
@@ -392,12 +408,13 @@ export function App({
           <input
             ref={inputRef}
             placeholder={busy ? "Steer…" : "Ask something…"}
-            focused={!settingsOpen}
+            focused={!settingsOpen && !helpOpen}
             onSubmit={submit}
             style={{ flexGrow: 1 }}
           />
           {quitArmed ? <text content=" ctrl+c again to quit " fg={theme.warn} /> : null}
         </box>
+        {helpOpen ? <HelpPopup theme={theme} /> : null}
         {settingsOpen ? (
           <SettingsPopup
             theme={theme}

@@ -40,6 +40,7 @@ bun run start -r     # pick up the most recent session here
 
 | Key | Effect |
 |---|---|
+| `?` | On an empty prompt, show the controls |
 | Enter | Send — or steer, if the agent is already working |
 | ↑ / ↓ | Walk back through earlier prompts, and forward to what you were typing |
 | Esc | Cancel the running turn, and put the prompt back for editing |
