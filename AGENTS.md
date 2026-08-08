@@ -20,6 +20,7 @@ bun run start    # open the TUI in the current directory
 | `src/transcript.tsx` | Row rendering per role |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from an edit patch |
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
+| `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
 | `src/history.ts` | Prompt history, one list per working directory |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's messages |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
@@ -64,6 +65,22 @@ These were chosen deliberately. Change them only on purpose.
 - **`?` on an empty prompt opens the controls** instead of typing. With any
   text in the line it is an ordinary character. `help-popup.tsx` holds the
   list — keep it in step with the keyboard dispatch in `app.tsx`.
+- **Markdown renders only on settled answers.** `<markdown>` is a tree of child
+  renderables, so the shimmer — which writes `StyledText` onto a single `<text>`
+  — cannot run over it. The streaming line stays plain text and swaps to
+  markdown when the message completes, which also means markdown is parsed on
+  complete input and never reflows mid-answer.
+- **`<markdown>` and `<code>` require a `syntaxStyle` and OpenTUI ships no
+  default.** `syntax.ts` builds one from the theme; it is rebuilt whenever the
+  theme changes, which is what makes markdown recolour on a theme switch.
+- **Style keys are tree-sitter capture names, and the dotted fallback does not
+  apply on that path.** Headings are only ever captured as `markup.heading.1`
+  through `.6`, so registering `markup.heading` alone leaves them at the
+  default colour. Check the shipped queries in
+  `@opentui/core/assets/<lang>/highlights.scm` before inventing a key.
+- **Only five tree-sitter parsers ship**: javascript, typescript, markdown,
+  markdown_inline, zig. Other fences render unhighlighted. `DownloadUtils` can
+  fetch more at runtime if that ever becomes worth the failure path.
 - **Glyphs stay plain Unicode.** Dingbats, block, box-drawing, and
   Miscellaneous Symbols only — no Nerd Font. Do not reach for a private-use
   codepoint.

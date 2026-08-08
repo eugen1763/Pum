@@ -24,6 +24,13 @@ export type Theme = {
   popupBg: string;
   /** The bright colour a shimmer sweeps toward. */
   highlight: string;
+  /** Syntax colours for markdown code blocks. */
+  codeKeyword: string;
+  codeString: string;
+  codeNumber: string;
+  codeComment: string;
+  codeFunction: string;
+  codeType: string;
 };
 
 const tokyonight: Theme = {
@@ -45,6 +52,12 @@ const tokyonight: Theme = {
   selectionBg: "#33467c",
   popupBg: "#1f2335",
   highlight: "#ffffff",
+  codeKeyword: "#bb9af7",
+  codeString: "#9ece6a",
+  codeNumber: "#ff9e64",
+  codeComment: "#565f89",
+  codeFunction: "#7aa2f7",
+  codeType: "#2ac3de",
 };
 
 const gruvbox: Theme = {
@@ -66,6 +79,12 @@ const gruvbox: Theme = {
   selectionBg: "#504945",
   popupBg: "#32302f",
   highlight: "#fbf1c7",
+  codeKeyword: "#fb4934",
+  codeString: "#b8bb26",
+  codeNumber: "#d3869b",
+  codeComment: "#928374",
+  codeFunction: "#fabd2f",
+  codeType: "#8ec07c",
 };
 
 const catppuccin: Theme = {
@@ -87,6 +106,12 @@ const catppuccin: Theme = {
   selectionBg: "#45475a",
   popupBg: "#181825",
   highlight: "#f5e0dc",
+  codeKeyword: "#cba6f7",
+  codeString: "#a6e3a1",
+  codeNumber: "#fab387",
+  codeComment: "#6c7086",
+  codeFunction: "#89b4fa",
+  codeType: "#f9e2af",
 };
 
 export const PRESETS: Record<string, Theme> = { tokyonight, gruvbox, catppuccin };

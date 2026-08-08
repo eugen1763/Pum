@@ -1,4 +1,4 @@
-import { StyledText, fg } from "@opentui/core";
+import { StyledText, fg, type SyntaxStyle } from "@opentui/core";
 import { useShimmerText, useSpinner } from "./animation";
 import type { Theme } from "./theme";
 import type { ToolCall } from "./tool-line";
@@ -56,9 +56,35 @@ function Row({
   );
 }
 
-export function TextLine({ theme, role, text }: { theme: Theme; role: Role; text: string }) {
+export function TextLine({
+  theme,
+  syntaxStyle,
+  role,
+  text,
+}: {
+  theme: Theme;
+  syntaxStyle: SyntaxStyle;
+  role: Role;
+  text: string;
+}) {
   const color = roleColor(theme, role);
   const isUser = role === "user";
+
+  // Only a finished answer is rendered as markdown. Prompts are shown as
+  // typed, and thinking, tool and error lines are not markdown to begin with.
+  if (role === "assistant") {
+    return (
+      <Row glyph={GUTTER} glyphColor={color}>
+        <markdown
+          content={text}
+          syntaxStyle={syntaxStyle}
+          fg={color}
+          style={{ flexGrow: 1 }}
+        />
+      </Row>
+    );
+  }
+
   return (
     <Row
       glyph={isUser ? PROMPT : GUTTER}

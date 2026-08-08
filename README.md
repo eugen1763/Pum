@@ -59,6 +59,15 @@ Every glyph is plain Unicode from common blocks — no Nerd Font, no patched
 font. Emoji in a model's *answer* are a different matter: those come from the
 model, and rendering them is up to your terminal font.
 
+Answers render as markdown once they finish — headings, bold, lists,
+blockquotes, tables, and fenced code with syntax highlighting. While a reply is
+still streaming it stays plain text so nothing reflows under you as blocks
+resolve.
+
+Highlighting is tree-sitter, and PUM ships the parsers OpenTUI bundles:
+JavaScript, TypeScript, Zig and Markdown. A fence in any other language still
+renders as a tidy code block, just without colour.
+
 ## Theming
 
 Three presets ship — `tokyonight`, `gruvbox`, `catppuccin` — switchable from

@@ -14,6 +14,7 @@ import { HelpPopup } from "./help-popup";
 import { appendHistory, loadHistory } from "./history";
 import { replayMessages } from "./replay";
 import { loadTheme, PRESET_NAMES } from "./theme";
+import { buildSyntaxStyle } from "./syntax";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream };
@@ -61,6 +62,7 @@ export function App({
   const [elapsedSec, setElapsedSec] = useState(0);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
+  const syntaxStyle = useMemo(() => buildSyntaxStyle(theme), [theme]);
   const animations = settings.animations && supportsTrueColor();
 
   const inputRef = useRef<InputRenderable>(null);
@@ -384,7 +386,12 @@ export function App({
               line.kind === "tool" ? (
                 <ToolLine theme={theme} call={line.call} />
               ) : (
-                <TextLine theme={theme} role={line.role as Role} text={line.text} />
+                <TextLine
+                  theme={theme}
+                  syntaxStyle={syntaxStyle}
+                  role={line.role as Role}
+                  text={line.text}
+                />
               );
             // A user turn gets a blank row on each side, so a prompt is flush
             // against neither the previous answer nor its own. A numeric height
