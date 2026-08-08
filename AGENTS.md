@@ -13,7 +13,13 @@ bun run start    # open the TUI in the current directory
 | File | Job |
 |---|---|
 | `src/index.tsx` | Boot: config dir, login hand-off, credential check, session, render |
-| `src/app.tsx` | The TUI — transcript, input, keyboard dispatch, agent events |
+| `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
+| `src/theme.ts` | Semantic colour tokens, three presets, `theme.json` merge |
+| `src/animation.tsx` | One frame clock; shimmer, spinner, caret |
+| `src/status-bar.tsx` | Top bar; one row, or two when narrow |
+| `src/transcript.tsx` | Row rendering per role |
+| `src/tool-line.ts` | Which argument to show, and `+n −n` from an edit patch |
+| `src/git-branch.ts` | Reads and watches `.git/HEAD` |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/config.ts` | Where the config dir lives |
@@ -42,6 +48,13 @@ These were chosen deliberately. Change them only on purpose.
   nothing.
 - **All four tools run without asking.** No approval prompt.
 - **Sessions persist** to `<config dir>/sessions`.
+- **Colours are never literals.** Everything reads a semantic token from
+  `theme.ts`. Three presets ship; `theme.json` in the config dir overrides any
+  subset of tokens. Add a token rather than a hex code.
+- **Compact by default.** No borders around the input, no blank rows between
+  turns, no padding that does not earn its place. A user turn is a full-width
+  background bar; everything after it indents two columns.
+- **Animation is on by default** and turns itself off without true colour.
 - **Model and thinking level are pi's to persist.** `setModel()` and
   `setThinkingLevel()` write to `<config dir>/settings.json`, and
   `createAgentSession` reads them back at startup. Do not duplicate that here.
@@ -73,15 +86,49 @@ Each of these cost real debugging. They are not obvious from the docs.
   focus juggling at once. Only the model list is a real focusable `<select>`.
 - **`<input onSubmit>` is typed as taking an empty `SubmitEvent`** though it
   passes a string at runtime. Read the value off the ref instead.
+- **A `<text>` whose `content` is a `StyledText` measures to nothing.** It
+  renders as a zero-height row unless you give it a size — `flexGrow: 1`, or an
+  explicit `height` on its parent. This silently swallowed the whole status bar.
+- **A whitespace-only `<text>` is not a reliable spacer.** Used as a gutter it
+  measured one column narrower once the neighbouring text wrapped, so indents
+  drifted between wrapped and unwrapped rows. Use a `<box>` with a *numeric*
+  `width` — numeric sizes also set `flexShrink: 0`, string ones do not.
+- **Auto-sized boxes shrink.** Anything that must keep its height needs
+  `flexShrink: 0`, or a taller sibling steals its rows and overdraws it. The
+  two-row status bar lost its rule to this.
+- **The scrollbar auto-shows and re-wraps everything.** Once the transcript
+  passes one screen it appears, costs a column, and every message re-flows.
+  `verticalScrollbarOptions={{ visible: true }}` pins it.
+- **`FooterDataProvider` is not exported.** Only the `ReadonlyFooterDataProvider`
+  *type* is, and the package's exports map blocks deep imports — hence
+  `git-branch.ts`.
+- **Do not use `useTimeline`.** It builds a new `Timeline` every render but only
+  registers the first, so it stops updating after one re-render. Animation here
+  runs off a single `renderer.setFrameCallback` instead, writing `content`
+  straight onto renderables so React never re-renders per frame. The clock
+  holds `requestLive()` only while something animates, so idle costs nothing.
 
 ## Testing a TUI
 
 Neither the UI nor the agent loop can be checked by typechecking alone.
 
-- Drive the real UI through a pty: pipe keystrokes into
-  `script -qec "bun run src/index.tsx" /dev/null` and read the frames back with
-  the escape codes stripped. OpenTUI redraws only what changed, so expect
-  fragments, not whole screens.
+- **Use tmux, not raw pty capture.** `script -qec …` gives you OpenTUI's
+  differential output — unreadable fragments. Instead run it detached in tmux
+  and read whole rendered screens:
+
+  ```bash
+  tmux new-session -d -s t -x 100 -y 28 "cd $PWD && bun run src/index.tsx"
+  tmux send-keys -t t "hello" Enter
+  tmux capture-pane -t t -p        # plain text
+  tmux capture-pane -t t -p -e     # with SGR codes, to check colours
+  ```
+
+  Always assert the session survived (`tmux has-session`) — a launch failure
+  looks exactly like an empty capture, and silently turns every later
+  assertion green.
+- Layout bugs show up as column offsets, so measure rather than eyeball:
+  `awk '{print match($0,/[^ ]/)-1}'` over the capture catches an indent that is
+  one column out.
 - To exercise streaming, thinking traces, and cancelling, point a throwaway
   `PUM_DIR` at a local OpenAI-compatible mock server through `models.json`
   (`api: "openai-completions"`, `compat.thinkingFormat: "deepseek"`, an inline

@@ -7,10 +7,14 @@ import { AGENT_DIR } from "./config";
  * already persists those to <AGENT_DIR>/settings.json via setModel() and
  * setThinkingLevel(), and restores them when the session is created.
  */
-export type PumSettings = { showThinking: boolean };
+export type PumSettings = {
+  showThinking: boolean;
+  theme: string;
+  animations: boolean;
+};
 
 const SETTINGS_PATH = join(AGENT_DIR, "pum.json");
-const DEFAULTS: PumSettings = { showThinking: false };
+const DEFAULTS: PumSettings = { showThinking: false, theme: "tokyonight", animations: true };
 
 export function loadSettings(): PumSettings {
   try {

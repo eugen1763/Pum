@@ -41,8 +41,23 @@ bun run start
 |---|---|
 | Enter | Send |
 | Esc | Cancel the running turn |
-| Ctrl+P | Settings — thinking level, thinking traces, model |
+| Ctrl+P | Settings — theme, animations, thinking level, thinking traces, model |
 | Ctrl+C | Once warns, twice quits |
+
+A top bar carries the model, thinking level, git branch, token count, cost, and
+how much of the context window is gone. While the agent works it grows a
+spinner, a timer, and a colour sweep through the label.
+
+## Theming
+
+Three presets ship — `tokyonight`, `gruvbox`, `catppuccin` — switchable from
+Ctrl+P. To change individual colours, drop a `theme.json` in the config
+directory; it overrides whichever preset is active, and you only need the
+tokens you care about:
+
+```json
+{ "accent": "#ff7a93", "userBg": "#2a2f45" }
+```
 
 The agent has four tools: `read`, `write`, `edit`, and `bash`. **It runs all of
 them without asking.** Start it somewhere you are happy for it to make changes.
@@ -55,7 +70,8 @@ Everything sits under `~/.config/pum` — set `PUM_DIR` to move it.
 |---|---|
 | `auth.json` | Credentials |
 | `settings.json` | Model and thinking level, saved as you change them |
-| `pum.json` | Whether to show thinking traces |
+| `pum.json` | Theme, animations, whether to show thinking traces |
+| `theme.json` | Optional colour overrides |
 | `sessions/` | Conversation history, one file per session |
 
 ## Hacking on it

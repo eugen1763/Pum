@@ -1,22 +1,18 @@
 import type { Model } from "@earendil-works/pi-ai";
+import type { Theme } from "./theme";
 
 /** The seven levels pi accepts. setThinkingLevel() clamps to model capability. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-export const ROWS = ["Thinking level", "Show thinking", "Model"] as const;
-
-const ACTIVE = "#7aa2f7";
-const IDLE = "#c0caf5";
-const DIM = "#565f89";
-const BG = "#1f2335";
+export const ROWS = ["Theme", "Animations", "Thinking level", "Show thinking", "Model"] as const;
+export type RowIndex = 0 | 1 | 2 | 3 | 4;
 
 export type PopupProps = {
+  theme: Theme;
   page: "main" | "models";
   cursor: number;
-  thinkingLevel: ThinkingLevel;
-  showThinking: boolean;
-  modelId: string;
+  values: string[];
   models: readonly Model<any>[];
   onSelectModel: (model: Model<any>) => void;
 };
@@ -26,16 +22,13 @@ export type PopupProps = {
  * box — zIndex only orders siblings, it does not escape a parent.
  */
 export function SettingsPopup({
+  theme,
   page,
   cursor,
-  thinkingLevel,
-  showThinking,
-  modelId,
+  values,
   models,
   onSelectModel,
 }: PopupProps) {
-  const values = [`‹ ${thinkingLevel} ›`, `‹ ${showThinking ? "on" : "off"} ›`, `${modelId} ›`];
-
   return (
     <box
       title={page === "main" ? " Settings " : " Model "}
@@ -44,10 +37,12 @@ export function SettingsPopup({
         top: "15%",
         left: "15%",
         width: "70%",
-        height: page === "main" ? 9 : "60%",
+        // rows + blank + hint, plus 1 padding and 1 border each side
+        height: page === "main" ? ROWS.length + 6 : "60%",
         zIndex: 100,
         border: true,
-        backgroundColor: BG,
+        borderColor: theme.border,
+        backgroundColor: theme.popupBg,
         flexDirection: "column",
         padding: 1,
       }}
@@ -57,13 +52,17 @@ export function SettingsPopup({
           {ROWS.map((label, i) => (
             <text
               key={label}
-              content={`${cursor === i ? "›" : " "} ${label.padEnd(16)}${values[i]}`}
-              fg={cursor === i ? ACTIVE : IDLE}
-              bg={BG}
+              content={`${cursor === i ? "›" : " "} ${label.padEnd(16)}${values[i] ?? ""}`}
+              fg={cursor === i ? theme.accent : theme.fg}
+              bg={theme.popupBg}
             />
           ))}
-          <text content="" bg={BG} />
-          <text content="↑↓ move   ←→ change   ⏎ open   esc close" fg={DIM} bg={BG} />
+          <text content="" bg={theme.popupBg} />
+          <text
+            content="↑↓ move   ←→ change   ⏎ open   esc close"
+            fg={theme.dim}
+            bg={theme.popupBg}
+          />
         </>
       ) : (
         <select
