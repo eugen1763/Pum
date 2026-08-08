@@ -62,3 +62,7 @@ Everything sits under `~/.config/pum` — set `PUM_DIR` to move it.
 
 See [AGENTS.md](AGENTS.md) for the layout, the decisions behind it, and the
 handful of OpenTUI and pi behaviours worth knowing before you change anything.
+
+## License
+
+[MIT](LICENSE).
