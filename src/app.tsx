@@ -10,12 +10,16 @@ import { StatusBar } from "./status-bar";
 import { StreamLine, TextLine, ToolLine, type Line, type Role } from "./transcript";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
 import { readBranch, watchBranch } from "./git-branch";
+import { appendHistory, loadHistory } from "./history";
+import { replayMessages } from "./replay";
 import { loadTheme, PRESET_NAMES } from "./theme";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream };
 
 const QUIT_WINDOW_MS = 2000;
+/** Keys that move around without changing the text. */
+const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 
 /** Move any buffered stream into the transcript so later lines land in order. */
 function flushed(t: Transcript): Transcript {
@@ -35,7 +39,11 @@ export function App({
   modelRuntime: ModelRuntime;
   settings: PumSettings;
 }) {
-  const [tx, setTx] = useState<Transcript>({ lines: [], stream: null });
+  const [tx, setTx] = useState<Transcript>(() => ({
+    // A resumed session already holds messages; show them instead of a blank pane.
+    lines: replayMessages(session.agent.state.messages, process.cwd(), initial.showThinking),
+    stream: null,
+  }));
   const [busy, setBusy] = useState(false);
   const [quitArmed, setQuitArmed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -56,6 +64,20 @@ export function App({
   const inputRef = useRef<InputRenderable>(null);
   const quitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const lastQuitPress = useRef(0);
+  // Prompt history. `cursor` is null while editing a fresh line; `draft` holds
+  // that line so walking back down restores it.
+  const history = useRef<string[]>(loadHistory(process.cwd()));
+  const histCursor = useRef<number | null>(null);
+  const draft = useRef("");
+  /** The prompt in flight, so Esc can hand it back for editing. */
+  const inFlight = useRef("");
+  // Mirrors `busy` for the keyboard handler: a keypress can land before React
+  // has re-rendered, and the handler's closure would still read the old value.
+  const busyRef = useRef(false);
+  const setWorking = (value: boolean) => {
+    busyRef.current = value;
+    setBusy(value);
+  };
   // The event subscription is set up once, so it reads the toggle via a ref.
   const showThinkingRef = useRef(initial.showThinking);
 
@@ -127,7 +149,7 @@ export function App({
         // agent_end fires before auto-retries; agent_settled means truly done.
         case "agent_settled":
           setTx(flushed);
-          setBusy(false);
+          setWorking(false);
           break;
       }
     });
@@ -182,7 +204,32 @@ export function App({
 
   const cancel = () => {
     append({ kind: "text", role: "system", text: "cancelled" });
-    session.abort().finally(() => setBusy(false));
+    // Hand the prompt back so it can be reworded and sent again.
+    if (inputRef.current && !inputRef.current.value) inputRef.current.value = inFlight.current;
+    histCursor.current = null;
+    session.abort().finally(() => setWorking(false));
+  };
+
+  /** Up walks back through sent prompts, down returns to the current draft. */
+  const recall = (direction: -1 | 1) => {
+    const input = inputRef.current;
+    const list = history.current;
+    if (!input || list.length === 0) return;
+
+    if (histCursor.current === null) {
+      if (direction === 1) return; // already on the draft line
+      draft.current = input.value;
+      histCursor.current = list.length - 1;
+    } else {
+      const next = histCursor.current + direction;
+      if (next >= list.length) {
+        histCursor.current = null;
+        input.value = draft.current;
+        return;
+      }
+      histCursor.current = Math.max(0, next);
+    }
+    input.value = list[histCursor.current]!;
   };
 
   // One entry per popup row, so adding a row cannot desynchronise the indices.
@@ -242,8 +289,18 @@ export function App({
       return;
     }
 
+    // Editing puts you back on a fresh line, so the next Up starts from the
+    // most recent prompt and Down returns to what you just typed.
+    if (!NAV_KEYS.has(key.name)) histCursor.current = null;
+
+    if (key.name === "up" || key.name === "down") {
+      key.stopPropagation();
+      recall(key.name === "up" ? -1 : 1);
+      return;
+    }
+
     if (key.name === "escape") {
-      if (busy) {
+      if (busyRef.current) {
         key.stopPropagation();
         cancel();
       }
@@ -259,13 +316,17 @@ export function App({
 
   const submit = () => {
     const text = inputRef.current?.value ?? "";
-    if (!text.trim() || busy) return;
+    if (!text.trim() || busyRef.current) return;
     inputRef.current!.value = "";
+    history.current = appendHistory(process.cwd(), text);
+    histCursor.current = null;
+    draft.current = "";
+    inFlight.current = text;
     append({ kind: "text", role: "user", text });
-    setBusy(true);
+    setWorking(true);
     session.prompt(text).catch((err) => {
       append({ kind: "text", role: "error", text: String(err) });
-      setBusy(false);
+      setWorking(false);
     });
   };
 

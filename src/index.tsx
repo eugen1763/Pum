@@ -9,7 +9,7 @@ import {
 import { mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { App } from "./app";
-import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
+import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { loadSettings } from "./settings";
 
 mkdirSync(AGENT_DIR, { recursive: true });
@@ -34,13 +34,20 @@ if ((await modelRuntime.getAvailable()).length === 0) {
   process.exit(1);
 }
 
-const { session } = await createAgentSession({
+// `pum -r` picks up the most recent session for this directory.
+const resume = process.argv.includes("-r") || process.argv.includes("--resume");
+
+const { session, modelFallbackMessage } = await createAgentSession({
   cwd: process.cwd(),
   agentDir: AGENT_DIR,
   modelRuntime,
   tools: ["read", "write", "edit", "bash"],
-  sessionManager: SessionManager.create(process.cwd()),
+  sessionManager: resume
+    ? SessionManager.continueRecent(process.cwd(), sessionDir(process.cwd()))
+    : SessionManager.create(process.cwd(), sessionDir(process.cwd())),
 });
+
+if (modelFallbackMessage) console.error(modelFallbackMessage);
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(

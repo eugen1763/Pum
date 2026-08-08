@@ -34,13 +34,15 @@ ChatGPT subscription, an API key, or any of the providers pi supports.
 ## Use it
 
 ```bash
-bun run start
+bun run start        # new session in the current directory
+bun run start -r     # pick up the most recent session here
 ```
 
 | Key | Effect |
 |---|---|
 | Enter | Send |
-| Esc | Cancel the running turn |
+| ↑ / ↓ | Walk back through earlier prompts, and forward to what you were typing |
+| Esc | Cancel the running turn, and put the prompt back for editing |
 | Ctrl+P | Settings — theme, animations, thinking level, thinking traces, model |
 | Ctrl+C | Once warns, twice quits |
 
@@ -72,6 +74,7 @@ Everything sits under `~/.config/pum` — set `PUM_DIR` to move it.
 | `settings.json` | Model and thinking level, saved as you change them |
 | `pum.json` | Theme, animations, whether to show thinking traces |
 | `theme.json` | Optional colour overrides |
+| `history.json` | Prompt history, one list per working directory |
 | `sessions/` | Conversation history, one file per session |
 
 ## Hacking on it

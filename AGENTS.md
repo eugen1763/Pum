@@ -20,6 +20,8 @@ bun run start    # open the TUI in the current directory
 | `src/transcript.tsx` | Row rendering per role |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from an edit patch |
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
+| `src/history.ts` | Prompt history, one list per working directory |
+| `src/replay.ts` | Rebuilds transcript lines from a resumed session's messages |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/config.ts` | Where the config dir lives |
@@ -102,6 +104,14 @@ Each of these cost real debugging. They are not obvious from the docs.
 - **`FooterDataProvider` is not exported.** Only the `ReadonlyFooterDataProvider`
   *type* is, and the package's exports map blocks deep imports — hence
   `git-branch.ts`.
+- **`SessionManager` ignores `agentDir`.** Given no explicit directory it writes
+  to `~/.pi/agent/sessions/`, so PUM silently scattered its conversations
+  through pi's own store. Always pass `sessionDir(cwd)` from `config.ts`, to
+  both `create()` and `continueRecent()`, or resume looks in the wrong place.
+- **Keyboard handlers must read state from refs, not closures.** A keypress can
+  arrive before React has re-rendered, so the handler still sees the previous
+  value. This bit twice: the double Ctrl+C, and Esc-to-cancel silently doing
+  nothing right after a submit. `busyRef` mirrors `busy` for this reason.
 - **Do not use `useTimeline`.** It builds a new `Timeline` every render but only
   registers the first, so it stops updating after one re-render. Animation here
   runs off a single `renderer.setFrameCallback` instead, writing `content`
@@ -123,9 +133,16 @@ Neither the UI nor the agent loop can be checked by typechecking alone.
   tmux capture-pane -t t -p -e     # with SGR codes, to check colours
   ```
 
-  Always assert the session survived (`tmux has-session`) — a launch failure
-  looks exactly like an empty capture, and silently turns every later
-  assertion green.
+  Three ways this lies to you, all of which produced confidently wrong results:
+
+  - **A launch failure looks identical to an empty capture.** Assert the
+    session survived with `tmux has-session -t "=name"` before believing
+    anything.
+  - **`-t name` prefix-matches other sessions.** Use `=name` for session
+    targets and `name:0.0` for pane targets, and pick names that cannot
+    collide — a bare `-t c` once captured an unrelated session's pane.
+  - **Never pipe the app's stdout** (`| tee`). That hands the TUI a pipe
+    instead of a tty and it stops rendering. Redirect stderr only.
 - Layout bugs show up as column offsets, so measure rather than eyeball:
   `awk '{print match($0,/[^ ]/)-1}'` over the capture catches an indent that is
   one column out.
