@@ -1,0 +1,26 @@
+{
+  "name": "pum",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "pum": "./src/index.tsx"
+  },
+  "scripts": {
+    "start": "bun run src/index.tsx",
+    "login": "bun run src/index.tsx login"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.84.1",
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@opentui/core": "^0.5.1",
+    "@opentui/react": "^0.5.1",
+    "react": "^19.2.8",
+    "react-devtools-core": "^7.0.1",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "@types/react": "^19.2.18"
+  }
+}
