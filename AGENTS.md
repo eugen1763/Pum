@@ -57,6 +57,13 @@ These were chosen deliberately. Change them only on purpose.
   turns, no padding that does not earn its place. A user turn is a full-width
   background bar; everything after it indents two columns.
 - **Animation is on by default** and turns itself off without true colour.
+- **Enter steers while the agent is working.** `submit()` routes to
+  `session.steer()` instead of `prompt()`, so the message lands after the
+  current step's tool calls rather than starting a second turn. Esc then hands
+  back the queued steer, not the original prompt.
+- **Glyphs stay plain Unicode.** Dingbats, block, box-drawing, and
+  Miscellaneous Symbols only — no Nerd Font. Do not reach for a private-use
+  codepoint.
 - **Model and thinking level are pi's to persist.** `setModel()` and
   `setThinkingLevel()` write to `<config dir>/settings.json`, and
   `createAgentSession` reads them back at startup. Do not duplicate that here.

@@ -204,8 +204,11 @@ export function App({
 
   const cancel = () => {
     append({ kind: "text", role: "system", text: "cancelled" });
-    // Hand the prompt back so it can be reworded and sent again.
-    if (inputRef.current && !inputRef.current.value) inputRef.current.value = inFlight.current;
+    // Hand a prompt back for editing: the queued steer if there is one, since
+    // that is the newest thing written, otherwise the prompt that was running.
+    const queued = session.clearQueue().steering;
+    const restore = queued.length ? queued[queued.length - 1]! : inFlight.current;
+    if (inputRef.current && !inputRef.current.value) inputRef.current.value = restore;
     histCursor.current = null;
     session.abort().finally(() => setWorking(false));
   };
@@ -316,13 +319,23 @@ export function App({
 
   const submit = () => {
     const text = inputRef.current?.value ?? "";
-    if (!text.trim() || busyRef.current) return;
+    if (!text.trim()) return;
     inputRef.current!.value = "";
     history.current = appendHistory(process.cwd(), text);
     histCursor.current = null;
     draft.current = "";
-    inFlight.current = text;
     append({ kind: "text", role: "user", text });
+
+    // Working already: queue it as steering, delivered once the current step's
+    // tool calls finish, rather than starting a second turn.
+    if (busyRef.current) {
+      session.steer(text).catch((err) => {
+        append({ kind: "text", role: "error", text: String(err) });
+      });
+      return;
+    }
+
+    inFlight.current = text;
     setWorking(true);
     session.prompt(text).catch((err) => {
       append({ kind: "text", role: "error", text: String(err) });
@@ -357,14 +370,16 @@ export function App({
               ) : (
                 <TextLine theme={theme} role={line.role as Role} text={line.text} />
               );
-            // One blank row before each new user turn, so a prompt is not
-            // flush against the previous answer. A numeric height is required:
-            // an empty <text> measures to nothing.
-            const newTurn = i > 0 && line.kind === "text" && line.role === "user";
+            // A user turn gets a blank row on each side, so a prompt is flush
+            // against neither the previous answer nor its own. A numeric height
+            // is required: an empty <text> measures to nothing.
+            const isUser = line.kind === "text" && line.role === "user";
+            const gap = <box style={{ height: 1, flexShrink: 0 }} />;
             return (
               <Fragment key={i}>
-                {newTurn ? <box style={{ height: 1, flexShrink: 0 }} /> : null}
+                {isUser && i > 0 ? gap : null}
                 {row}
+                {isUser ? gap : null}
               </Fragment>
             );
           })}
@@ -376,7 +391,7 @@ export function App({
           <text content="❯ " fg={theme.accent} />
           <input
             ref={inputRef}
-            placeholder="Ask something…"
+            placeholder={busy ? "Steer…" : "Ask something…"}
             focused={!settingsOpen}
             onSubmit={submit}
             style={{ flexGrow: 1 }}

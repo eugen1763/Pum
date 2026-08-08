@@ -40,7 +40,7 @@ bun run start -r     # pick up the most recent session here
 
 | Key | Effect |
 |---|---|
-| Enter | Send |
+| Enter | Send — or steer, if the agent is already working |
 | ↑ / ↓ | Walk back through earlier prompts, and forward to what you were typing |
 | Esc | Cancel the running turn, and put the prompt back for editing |
 | Ctrl+P | Settings — theme, animations, thinking level, thinking traces, model |
@@ -49,6 +49,14 @@ bun run start -r     # pick up the most recent session here
 A top bar carries the model, thinking level, git branch, token count, cost, and
 how much of the context window is gone. While the agent works it grows a
 spinner, a timer, and a colour sweep through the label.
+
+While it is working the prompt reads `Steer…`. Anything you send then is
+delivered once the current step's tool calls finish, so you can redirect the
+agent without stopping it.
+
+Every glyph is plain Unicode from common blocks — no Nerd Font, no patched
+font. Emoji in a model's *answer* are a different matter: those come from the
+model, and rendering them is up to your terminal font.
 
 ## Theming
 
