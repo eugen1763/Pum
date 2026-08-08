@@ -24,6 +24,9 @@ const QUIT_WINDOW_MS = 2000;
 /** Keys that move around without changing the text. */
 const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 
+/** A blank row. An empty <text> measures to nothing, so this needs a height. */
+const Gap = () => <box style={{ height: 1, flexShrink: 0 }} />;
+
 /** Move any buffered stream into the transcript so later lines land in order. */
 function flushed(t: Transcript): Transcript {
   if (t.stream && t.stream.text.trim()) {
@@ -360,6 +363,12 @@ export function App({
     }
   });
 
+  const lastLine = tx.lines[tx.lines.length - 1];
+  const streamGap =
+    tx.stream?.kind === "assistant" &&
+    !!lastLine &&
+    !(lastLine.kind === "text" && lastLine.role === "user");
+
   const submit = () => {
     const text = inputRef.current?.value ?? "";
     if (!text.trim()) return;
@@ -423,21 +432,30 @@ export function App({
                   text={line.text}
                 />
               );
-            // A user turn gets a blank row on each side, so a prompt is flush
-            // against neither the previous answer nor its own. A numeric height
-            // is required: an empty <text> measures to nothing.
+            // A user turn gets a blank row on each side, and the answer gets
+            // one above it so it reads as its own block rather than trailing
+            // the tool calls. A user turn already emits a trailing gap, so
+            // never add a second one straight after it.
             const isUser = line.kind === "text" && line.role === "user";
-            const gap = <box style={{ height: 1, flexShrink: 0 }} />;
+            const prev = tx.lines[i - 1];
+            const afterUser = prev?.kind === "text" && prev.role === "user";
+            const isAnswer = line.kind === "text" && line.role === "assistant";
+            const gapBefore = (isUser && i > 0) || (isAnswer && !!prev && !afterUser);
             return (
               <Fragment key={i}>
-                {isUser && i > 0 ? gap : null}
+                {gapBefore ? <Gap /> : null}
                 {row}
-                {isUser ? gap : null}
+                {isUser ? <Gap /> : null}
               </Fragment>
             );
           })}
           {tx.stream ? (
-            <StreamLine theme={theme} role={tx.stream.kind} text={tx.stream.text} />
+            <>
+              {/* Same gap while the answer is still arriving, so it does not
+                  jump down a row when the message settles. */}
+              {streamGap ? <Gap /> : null}
+              <StreamLine theme={theme} role={tx.stream.kind} text={tx.stream.text} />
+            </>
           ) : null}
         </scrollbox>
         <text
