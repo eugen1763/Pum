@@ -45,7 +45,13 @@ function Row({
   children: React.ReactNode;
 }) {
   return (
-    <box style={{ flexDirection: "row", backgroundColor: background ?? "transparent" }}>
+    <box
+      style={{
+        flexDirection: "row",
+        width: "100%",
+        backgroundColor: background ?? "transparent",
+      }}
+    >
       {/* A numeric width pins the gutter: a whitespace-only <text> measures
           inconsistently once the message column wraps, losing a column. */}
       <box style={{ width: 2, flexShrink: 0 }}>
@@ -79,7 +85,7 @@ export function TextLine({
           content={text}
           syntaxStyle={syntaxStyle}
           fg={color}
-          style={{ flexGrow: 1 }}
+          style={{ flexGrow: 1, minWidth: 0 }}
         />
       </Row>
     );
@@ -91,7 +97,7 @@ export function TextLine({
       glyphColor={color}
       background={isUser ? theme.userBg : undefined}
     >
-      <text content={text} fg={color} style={{ flexGrow: 1 }} />
+      <text content={text} fg={color} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
     </Row>
   );
 }
@@ -116,7 +122,7 @@ export function StreamLine({
   });
   return (
     <Row glyph={GUTTER} glyphColor={color}>
-      <text ref={ref} style={{ flexGrow: 1 }} />
+      <text ref={ref} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
     </Row>
   );
 }

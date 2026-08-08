@@ -41,6 +41,8 @@ bun run start -r     # pick up the most recent session here
 | Key | Effect |
 |---|---|
 | `?` | On an empty prompt, show the controls |
+| Tab | On an empty prompt, show the prompt stash |
+| Alt+Enter | Stash the current prompt without sending |
 | Enter | Send — or steer, if the agent is already working |
 | ↑ / ↓ | Walk back through earlier prompts, and forward to what you were typing |
 | Esc | Cancel the running turn, and put the prompt back for editing |
@@ -75,7 +77,7 @@ requests, so the model can look things up. It is on by default and can be
 switched off in Ctrl+P.
 
 Searches appear in the transcript like any other tool, with the query the model
-actually issued:
+actually issued, and are restored when you resume a session with `-r`:
 
 ```
 ⚒ web_search · site:github.com/oven-sh/bun/releases latest Bun release    ✓
@@ -109,6 +111,7 @@ Everything sits under `~/.config/pum` — set `PUM_DIR` to move it.
 | `pum.json` | Theme, animations, whether to show thinking traces |
 | `theme.json` | Optional colour overrides |
 | `history.json` | Prompt history, one list per working directory |
+| `prompt-stash.json` | Saved prompt stash, one list per working directory |
 | `sessions/` | Conversation history, one file per session |
 
 ## Hacking on it

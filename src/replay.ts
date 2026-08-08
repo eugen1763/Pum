@@ -1,5 +1,9 @@
 import type { Line } from "./transcript";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
+import {
+  WEB_SEARCH_CUSTOM_TYPE,
+  type SearchCallRecord,
+} from "./web-search";
 
 const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
@@ -11,20 +15,60 @@ const textOf = (content: unknown): string => {
     .trim();
 };
 
+function searchRecordOf(entry: any): SearchCallRecord | undefined {
+  if (entry?.type !== "custom" || entry.customType !== WEB_SEARCH_CUSTOM_TYPE) return undefined;
+  const data = entry.data;
+  if (!data || typeof data !== "object" || typeof data.id !== "string") return undefined;
+  if (![
+    "running",
+    "ok",
+    "error",
+  ].includes(data.state)) return undefined;
+  return {
+    id: data.id,
+    query: typeof data.query === "string" ? data.query : "",
+    state: data.state,
+  };
+}
+
 /**
- * Rebuild transcript lines from a restored session's messages, so `pum -r`
- * shows the conversation rather than an empty pane. Messages come from pi and
- * are typed loosely, so every access here is defensive.
+ * Rebuild transcript lines from a restored session's active entries, so
+ * `pum -r` shows the conversation rather than an empty pane. Messages come
+ * from pi and are typed loosely, so every access here is defensive.
  */
-export function replayMessages(
-  messages: readonly any[],
+export function replayEntries(
+  entries: readonly any[],
   cwd: string,
   showThinking: boolean,
 ): Line[] {
   const lines: Line[] = [];
   const calls = new Map<string, ToolCall>();
+  const searchCalls = new Map<string, ToolCall>();
 
-  for (const message of messages) {
+  for (const entry of entries) {
+    const search = searchRecordOf(entry);
+    if (search) {
+      const existing = searchCalls.get(search.id);
+      if (existing) {
+        existing.state = search.state;
+        if (search.query) existing.arg = search.query;
+      } else {
+        const call: ToolCall = {
+          id: search.id,
+          name: "web_search",
+          arg: search.query,
+          state: search.state,
+        };
+        searchCalls.set(search.id, call);
+        lines.push({ kind: "tool", call });
+      }
+      continue;
+    }
+
+    // Accept raw AgentMessages too; this keeps the replay helper useful for
+    // callers that already have `agent.state.messages`.
+    const message = entry?.type === "message" ? entry.message : entry;
+
     if (message?.role === "user") {
       const text = textOf(message.content);
       if (text) lines.push({ kind: "text", role: "user", text });
@@ -64,3 +108,6 @@ export function replayMessages(
 
   return lines;
 }
+
+/** Backwards-compatible name for replaying a list of messages. */
+export const replayMessages = replayEntries;

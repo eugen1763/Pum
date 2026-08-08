@@ -1,5 +1,5 @@
 import type { Provider } from "@earendil-works/pi-ai";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 
 /**
  * Web search through the Codex subscription.
@@ -12,11 +12,14 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
  * uses the documented `onPayload` hook to append the tool to the outgoing body.
  * Two consequences worth knowing:
  *
- *  - pi ignores the `web_search_call` items that come back, so the transcript
- *    shows no search step — only a better-informed answer.
+ *  - pi ignores the `web_search_call` items that come back, so PUM observes the
+ *    wire separately to render and persist a search line.
  *  - It only applies to Codex models. Switch provider and it does nothing.
  */
 const HOSTED_SEARCH_PROVIDERS = ["openai-codex"];
+
+/** Session entry type used for searches, which pi does not represent as tools. */
+export const WEB_SEARCH_CUSTOM_TYPE = "pum.web_search";
 
 /** Mutable so the Ctrl+P toggle takes effect without rebuilding the provider. */
 export const webSearch = { enabled: false };
@@ -45,6 +48,25 @@ function wrapProvider(base: Provider): Provider {
 export type SearchCall =
   | { phase: "start"; id: string; query: string }
   | { phase: "end"; id: string; query: string; ok: boolean };
+
+export type SearchCallRecord = {
+  id: string;
+  query: string;
+  state: "running" | "ok" | "error";
+};
+
+/** Persist an out-of-band search as session metadata, not LLM context. */
+export function persistSearchCall(
+  sessionManager: Pick<SessionManager, "appendCustomEntry">,
+  call: SearchCall,
+): void {
+  const record: SearchCallRecord = {
+    id: call.id,
+    query: call.query,
+    state: call.phase === "start" ? "running" : call.ok ? "ok" : "error",
+  };
+  sessionManager.appendCustomEntry(WEB_SEARCH_CUSTOM_TYPE, record);
+}
 
 /**
  * pi drops the `web_search_call` items OpenAI sends back, so the only way to

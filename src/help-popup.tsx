@@ -3,6 +3,8 @@ import type { Theme } from "./theme";
 /** Shown when `?` is typed into an empty prompt. */
 export const CONTROLS: [string, string][] = [
   ["Enter", "Send, or steer while the agent works"],
+  ["Alt+Enter", "Stash without sending"],
+  ["Tab", "Prompt stash, on an empty input"],
   ["↑ / ↓", "Earlier prompts, and back again"],
   ["Esc", "Cancel the turn, keep the prompt"],
   ["Ctrl+P", "Settings"],

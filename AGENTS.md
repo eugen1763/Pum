@@ -22,7 +22,8 @@ bun run start    # open the TUI in the current directory
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
 | `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
 | `src/history.ts` | Prompt history, one list per working directory |
-| `src/replay.ts` | Rebuilds transcript lines from a resumed session's messages |
+| `src/prompt-stash.ts` | Stashed prompts, one list per working directory |
+| `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/config.ts` | Where the config dir lives |
@@ -32,6 +33,8 @@ bun run start    # open the TUI in the current directory
 | Key | Effect |
 |---|---|
 | Enter | Send the prompt |
+| Alt+Enter | Stash the prompt without sending |
+| Tab | Open/close the prompt stash on an empty input |
 | Esc | Cancel the running turn |
 | Ctrl+P | Open settings; Esc closes, or steps back from the model list |
 | Ctrl+C | Once arms and shows a hint, twice within 2s quits |
@@ -95,7 +98,9 @@ These were chosen deliberately. Change them only on purpose.
     custom `fetch` on its HTTP path, so there is nothing to intercept there —
     verified by probing whether a custom fetch is ever called (it is not).
     `observeSearchCalls()` therefore wraps `globalThis.WebSocket` and reads
-    frames as they arrive, purely observationally.
+    frames as they arrive. The observer also writes `pum.web_search` custom
+    session entries, so `-r` can replay the lines without putting them in LLM
+    context.
   - Do **not** "fix" this by forcing `transport: "sse"`. Cached context
     (`previous_response_id` continuation, which sends only delta input items)
     is enabled for `auto`/`websocket-cached` and not for `sse`, so that would

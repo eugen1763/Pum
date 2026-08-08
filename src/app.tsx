@@ -12,10 +12,11 @@ import { editCounts, toolArg, type ToolCall } from "./tool-line";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup } from "./help-popup";
 import { appendHistory, loadHistory } from "./history";
-import { replayMessages } from "./replay";
-import { loadTheme, PRESET_NAMES } from "./theme";
+import { loadPromptStash, appendPromptStash } from "./prompt-stash";
+import { replayEntries } from "./replay";
+import { loadTheme, PRESET_NAMES, type Theme } from "./theme";
 import { buildSyntaxStyle } from "./syntax";
-import { observeSearchCalls, webSearch } from "./web-search";
+import { observeSearchCalls, persistSearchCall, webSearch } from "./web-search";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream };
@@ -26,6 +27,40 @@ const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup"
 
 /** A blank row. An empty <text> measures to nothing, so this needs a height. */
 const Gap = () => <box style={{ height: 1, flexShrink: 0 }} />;
+
+function PromptStash({
+  theme,
+  prompts,
+  cursor,
+}: {
+  theme: Theme;
+  prompts: string[];
+  cursor: number;
+}) {
+  return (
+    <box style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}>
+      {prompts.map((prompt, i) => (
+        <box
+          key={`${i}:${prompt}`}
+          style={{
+            flexDirection: "row",
+            width: "100%",
+            flexShrink: 0,
+            backgroundColor: i === cursor ? theme.selectionBg : "transparent",
+          }}
+        >
+          <text content="  " fg={theme.dim} />
+          <text
+            content={prompt}
+            fg={i === cursor ? theme.fg : theme.dim}
+            wrapMode="word"
+            style={{ flexGrow: 1, minWidth: 0 }}
+          />
+        </box>
+      ))}
+    </box>
+  );
+}
 
 /** Move any buffered stream into the transcript so later lines land in order. */
 function flushed(t: Transcript): Transcript {
@@ -48,9 +83,14 @@ export function App({
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
 }) {
+  const cwd = process.cwd();
   const [tx, setTx] = useState<Transcript>(() => ({
     // A resumed session already holds messages; show them instead of a blank pane.
-    lines: replayMessages(session.agent.state.messages, process.cwd(), initial.showThinking),
+    lines: replayEntries(
+      session.sessionManager.buildContextEntries(),
+      process.cwd(),
+      initial.showThinking,
+    ),
     stream: null,
   }));
   const [busy, setBusy] = useState(false);
@@ -67,6 +107,10 @@ export function App({
   const [branch, setBranch] = useState<string | null>(null);
   const [usage, setUsage] = useState({ tokens: 0, cost: 0, contextPct: null as number | null });
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [stash, setStash] = useState<string[]>(() => loadPromptStash(cwd));
+  /** -1 means the input is selected; non-negative values select stash rows. */
+  const [stashCursor, setStashCursor] = useState(-1);
+  const [stashOpen, setStashOpen] = useState(false);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
   const { width } = useTerminalDimensions();
@@ -74,6 +118,9 @@ export function App({
   const animations = settings.animations && supportsTrueColor();
 
   const inputRef = useRef<InputRenderable>(null);
+  const stashRef = useRef(stash);
+  const stashOpenRef = useRef(false);
+  const stashCursorRef = useRef(-1);
   const quitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const lastQuitPress = useRef(0);
   // Prompt history. `cursor` is null while editing a fresh line; `draft` holds
@@ -92,6 +139,24 @@ export function App({
   };
   // The event subscription is set up once, so it reads the toggle via a ref.
   const showThinkingRef = useRef(initial.showThinking);
+
+  const setStashMode = (open: boolean) => {
+    stashOpenRef.current = open;
+    stashCursorRef.current = -1;
+    setStashOpen(open);
+    setStashCursor(-1);
+  };
+
+  const setSelectedStash = (index: number) => {
+    stashCursorRef.current = index;
+    setStashCursor(index);
+  };
+
+  const addToStash = (prompt: string) => {
+    const next = appendPromptStash(cwd, prompt);
+    stashRef.current = next;
+    setStash(next);
+  };
 
   const append = (line: Line) =>
     setTx((t) => {
@@ -183,8 +248,11 @@ export function App({
           ...(call.query ? { arg: call.query } : {}),
         });
       }
+      // Hosted searches are not pi messages, so persist them as custom
+      // session entries for replay without adding them to LLM context.
+      persistSearchCall(session.sessionManager, call);
     });
-  }, []);
+  }, [session]);
 
   // Git branch, live-watched.
   useEffect(() => {
@@ -265,6 +333,45 @@ export function App({
     input.value = list[histCursor.current]!;
   };
 
+  const moveStash = (direction: -1 | 1) => {
+    const list = stashRef.current;
+    if (list.length === 0) return;
+    const current = stashCursorRef.current;
+    if (direction === -1) {
+      setSelectedStash(current < 0 ? list.length - 1 : Math.max(0, current - 1));
+    } else if (current >= 0) {
+      setSelectedStash(current + 1 < list.length ? current + 1 : -1);
+    }
+  };
+
+  const submitPrompt = (value?: string) => {
+    const text = value ?? inputRef.current?.value ?? "";
+    if (!text.trim()) return;
+    if (inputRef.current) inputRef.current.value = "";
+    addToStash(text);
+    history.current = appendHistory(cwd, text);
+    histCursor.current = null;
+    draft.current = "";
+    setSelectedStash(-1);
+    append({ kind: "text", role: "user", text });
+
+    // Working already: queue it as steering, delivered once the current step's
+    // tool calls finish, rather than starting a second turn.
+    if (busyRef.current) {
+      session.steer(text).catch((err) => {
+        append({ kind: "text", role: "error", text: String(err) });
+      });
+      return;
+    }
+
+    inFlight.current = text;
+    setWorking(true);
+    session.prompt(text).catch((err) => {
+      append({ kind: "text", role: "error", text: String(err) });
+      setWorking(false);
+    });
+  };
+
   // One entry per popup row, so adding a row cannot desynchronise the indices.
   const rowActions: { step?: (n: number) => void; enter?: () => void }[] = [
     { step: stepTheme },
@@ -338,18 +445,52 @@ export function App({
       return;
     }
 
+    const isReturn = key.name === "return" || key.name === "enter";
+    const inputValue = inputRef.current?.value ?? "";
+
+    if ((key.meta || key.option) && isReturn) {
+      key.stopPropagation();
+      if (inputValue.trim()) {
+        addToStash(inputValue);
+        if (inputRef.current) inputRef.current.value = "";
+        setSelectedStash(-1);
+      }
+      return;
+    }
+
+    if (key.name === "tab" && (stashOpenRef.current || !inputValue.trim())) {
+      key.stopPropagation();
+      if (stashOpenRef.current) setStashMode(false);
+      else if (stashRef.current.length > 0) setStashMode(true);
+      return;
+    }
+
+    if (stashOpenRef.current && isReturn && stashCursorRef.current >= 0) {
+      key.stopPropagation();
+      const prompt = stashRef.current[stashCursorRef.current];
+      if (prompt) submitPrompt(prompt);
+      return;
+    }
+
     // Editing puts you back on a fresh line, so the next Up starts from the
     // most recent prompt and Down returns to what you just typed.
-    if (!NAV_KEYS.has(key.name)) histCursor.current = null;
+    if (!NAV_KEYS.has(key.name)) {
+      histCursor.current = null;
+      if (stashOpenRef.current) setSelectedStash(-1);
+    }
 
     if (key.name === "up" || key.name === "down") {
       key.stopPropagation();
-      recall(key.name === "up" ? -1 : 1);
+      if (stashOpenRef.current) moveStash(key.name === "up" ? -1 : 1);
+      else recall(key.name === "up" ? -1 : 1);
       return;
     }
 
     if (key.name === "escape") {
-      if (busyRef.current) {
+      if (stashOpenRef.current) {
+        key.stopPropagation();
+        setStashMode(false);
+      } else if (busyRef.current) {
         key.stopPropagation();
         cancel();
       }
@@ -368,32 +509,6 @@ export function App({
     tx.stream?.kind === "assistant" &&
     !!lastLine &&
     !(lastLine.kind === "text" && lastLine.role === "user");
-
-  const submit = () => {
-    const text = inputRef.current?.value ?? "";
-    if (!text.trim()) return;
-    inputRef.current!.value = "";
-    history.current = appendHistory(process.cwd(), text);
-    histCursor.current = null;
-    draft.current = "";
-    append({ kind: "text", role: "user", text });
-
-    // Working already: queue it as steering, delivered once the current step's
-    // tool calls finish, rather than starting a second turn.
-    if (busyRef.current) {
-      session.steer(text).catch((err) => {
-        append({ kind: "text", role: "error", text: String(err) });
-      });
-      return;
-    }
-
-    inFlight.current = text;
-    setWorking(true);
-    session.prompt(text).catch((err) => {
-      append({ kind: "text", role: "error", text: String(err) });
-      setWorking(false);
-    });
-  };
 
   return (
     <AnimationProvider enabled={animations}>
@@ -460,23 +575,24 @@ export function App({
         </scrollbox>
         <text
           content={"─".repeat(Math.max(0, width))}
-          fg={theme.border}
+          fg={stashOpen ? theme.dim : theme.border}
           style={{ flexShrink: 0 }}
         />
+        {stashOpen ? <PromptStash theme={theme} prompts={stash} cursor={stashCursor} /> : null}
         <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
           <text content="❯ " fg={theme.accent} />
           <input
             ref={inputRef}
             placeholder={busy ? "Steer…" : "Ask something…"}
             focused={!settingsOpen && !helpOpen}
-            onSubmit={submit}
+            onSubmit={() => submitPrompt()}
             style={{ flexGrow: 1 }}
           />
           {quitArmed ? <text content=" ctrl+c again to quit " fg={theme.warn} /> : null}
         </box>
         <text
           content={"─".repeat(Math.max(0, width))}
-          fg={theme.border}
+          fg={stashOpen ? theme.dim : theme.border}
           style={{ flexShrink: 0 }}
         />
         {helpOpen ? <HelpPopup theme={theme} /> : null}
