@@ -2,7 +2,7 @@ import type { InputRenderable } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimationProvider, supportsTrueColor } from "./animation";
 import { ROWS, SettingsPopup, THINKING_LEVELS, type ThinkingLevel } from "./settings-popup";
 import { saveSettings, type PumSettings } from "./settings";
@@ -289,13 +289,24 @@ export function App({
           stickyStart="bottom"
           verticalScrollbarOptions={{ visible: true }}
         >
-          {tx.lines.map((line, i) =>
-            line.kind === "tool" ? (
-              <ToolLine key={i} theme={theme} call={line.call} />
-            ) : (
-              <TextLine key={i} theme={theme} role={line.role as Role} text={line.text} />
-            ),
-          )}
+          {tx.lines.map((line, i) => {
+            const row =
+              line.kind === "tool" ? (
+                <ToolLine theme={theme} call={line.call} />
+              ) : (
+                <TextLine theme={theme} role={line.role as Role} text={line.text} />
+              );
+            // One blank row before each new user turn, so a prompt is not
+            // flush against the previous answer. A numeric height is required:
+            // an empty <text> measures to nothing.
+            const newTurn = i > 0 && line.kind === "text" && line.role === "user";
+            return (
+              <Fragment key={i}>
+                {newTurn ? <box style={{ height: 1, flexShrink: 0 }} /> : null}
+                {row}
+              </Fragment>
+            );
+          })}
           {tx.stream ? (
             <StreamLine theme={theme} role={tx.stream.kind} text={tx.stream.text} />
           ) : null}
