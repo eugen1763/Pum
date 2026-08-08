@@ -2,7 +2,9 @@
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import {
-  createAgentSession,
+  createAgentSessionFromServices,
+  createAgentSessionRuntime,
+  createAgentSessionServices,
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
@@ -44,22 +46,45 @@ if ((await modelRuntime.getAvailable()).length === 0) {
 // `pum -r` picks up the most recent session for this directory.
 const resume = process.argv.includes("-r") || process.argv.includes("--resume");
 
-const { session, modelFallbackMessage } = await createAgentSession({
-  cwd: process.cwd(),
-  agentDir: AGENT_DIR,
-  modelRuntime,
-  tools: ["read", "write", "edit", "bash"],
-  sessionManager: resume
-    ? SessionManager.continueRecent(process.cwd(), sessionDir(process.cwd()))
-    : SessionManager.create(process.cwd(), sessionDir(process.cwd())),
-});
+const cwd = process.cwd();
+const sessionRuntime = await createAgentSessionRuntime(
+  async ({ cwd, sessionManager, sessionStartEvent }) => {
+    const services = await createAgentSessionServices({ cwd, agentDir: AGENT_DIR, modelRuntime });
+    return {
+      ...(await createAgentSessionFromServices({
+        services,
+        sessionManager,
+        sessionStartEvent,
+        tools: ["read", "write", "edit", "bash"],
+      })),
+      services,
+      diagnostics: services.diagnostics,
+    };
+  },
+  {
+    cwd,
+    agentDir: AGENT_DIR,
+    sessionManager: resume
+      ? SessionManager.continueRecent(cwd, sessionDir(cwd))
+      : SessionManager.create(cwd, sessionDir(cwd)),
+  },
+);
 
-if (modelFallbackMessage) console.error(modelFallbackMessage);
+if (sessionRuntime.modelFallbackMessage) console.error(sessionRuntime.modelFallbackMessage);
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(
   <App
-    session={session}
+    session={sessionRuntime.session}
+    onNewSession={async () => {
+      await sessionRuntime.newSession();
+      return sessionRuntime.session;
+    }}
+    loadSessions={() => SessionManager.list(cwd, sessionDir(cwd))}
+    onSwitchSession={async (path) => {
+      await sessionRuntime.switchSession(path);
+      return sessionRuntime.session;
+    }}
     modelRuntime={modelRuntime}
     settings={settings}
     searchProviders={searchProviders}

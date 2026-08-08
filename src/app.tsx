@@ -1,7 +1,7 @@
 import type { InputRenderable } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import type { Model } from "@earendil-works/pi-ai";
-import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ModelRuntime, SessionInfo } from "@earendil-works/pi-coding-agent";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimationProvider, supportsTrueColor } from "./animation";
 import { ROWS, SettingsPopup, THINKING_LEVELS, type ThinkingLevel } from "./settings-popup";
@@ -16,6 +16,8 @@ import { replayMessages } from "./replay";
 import { loadTheme, PRESET_NAMES } from "./theme";
 import { buildSyntaxStyle } from "./syntax";
 import { observeSearchCalls, webSearch } from "./web-search";
+import { matchingCommands } from "./commands";
+import { SessionHistoryPopup } from "./session-history-popup";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream };
@@ -37,26 +39,35 @@ function flushed(t: Transcript): Transcript {
 }
 
 export function App({
-  session,
+  session: initialSession,
   modelRuntime,
+  onNewSession,
+  loadSessions,
+  onSwitchSession,
   settings: initial,
   searchProviders,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
+  onNewSession: () => Promise<AgentSession>;
+  loadSessions: () => Promise<SessionInfo[]>;
+  onSwitchSession: (path: string) => Promise<AgentSession>;
   settings: PumSettings;
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
 }) {
+  const [session, setSession] = useState(initialSession);
   const [tx, setTx] = useState<Transcript>(() => ({
     // A resumed session already holds messages; show them instead of a blank pane.
-    lines: replayMessages(session.agent.state.messages, process.cwd(), initial.showThinking),
+    lines: replayMessages(initialSession.agent.state.messages, process.cwd(), initial.showThinking),
     stream: null,
   }));
   const [busy, setBusy] = useState(false);
   const [quitArmed, setQuitArmed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historySessions, setHistorySessions] = useState<SessionInfo[]>([]);
   const [page, setPage] = useState<"main" | "models">("main");
   const [cursor, setCursor] = useState(0);
   const [settings, setSettings] = useState(initial);
@@ -67,6 +78,7 @@ export function App({
   const [branch, setBranch] = useState<string | null>(null);
   const [usage, setUsage] = useState({ tokens: 0, cost: 0, contextPct: null as number | null });
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [commandInput, setCommandInput] = useState("");
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
   const { width } = useTerminalDimensions();
@@ -114,6 +126,14 @@ export function App({
     }));
 
   useEffect(() => {
+    setThinkingLevel(session.agent.state.thinkingLevel as ThinkingLevel);
+    setModelId(session.agent.state.model.id);
+    setTx({
+      lines: replayMessages(session.agent.state.messages, process.cwd(), showThinkingRef.current),
+      stream: null,
+    });
+    setUsage({ tokens: 0, cost: 0, contextPct: null });
+
     const cwd = process.cwd();
     return session.subscribe((event) => {
       switch (event.type) {
@@ -232,6 +252,31 @@ export function App({
       .catch((err) => append({ kind: "text", role: "error", text: String(err) }));
   };
 
+  const openHistory = () => {
+    if (busyRef.current) {
+      append({ kind: "text", role: "error", text: "wait for the current turn to finish before opening history" });
+      return;
+    }
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    loadSessions()
+      .then((sessions) => {
+        const currentPath = session.sessionFile;
+        setHistorySessions(sessions.filter((candidate) => candidate.path !== currentPath));
+        setHistoryOpen(true);
+      })
+      .catch((err) => append({ kind: "text", role: "error", text: String(err) }));
+  };
+
+  const selectHistorySession = (path: string) => {
+    setHistoryOpen(false);
+    setWorking(true);
+    onSwitchSession(path)
+      .then((next) => setSession(next))
+      .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
+      .finally(() => setWorking(false));
+  };
+
   const cancel = () => {
     append({ kind: "text", role: "system", text: "cancelled" });
     // Hand a prompt back for editing: the queued steer if there is one, since
@@ -310,6 +355,20 @@ export function App({
       return;
     }
 
+    if (historyOpen) {
+      if (key.name === "escape") {
+        key.stopPropagation();
+        setHistoryOpen(false);
+      }
+      return; // navigation and Enter belong to the focused select
+    }
+
+    if (key.ctrl && key.name === "h") {
+      key.stopPropagation();
+      openHistory();
+      return;
+    }
+
     // `?` on an empty prompt opens help instead of typing a question mark.
     // With text already in the line it is just a character.
     if (key.sequence === "?" && !settingsOpen && !inputRef.current?.value) {
@@ -336,6 +395,22 @@ export function App({
       else if (key.name === "right") action?.step?.(1);
       else if (confirming) (action?.enter ?? (() => action?.step?.(1)))();
       return;
+    }
+
+    const inputValue = inputRef.current?.value ?? "";
+
+    // Tab completes a PUM command instead of moving focus. If there are ever
+    // multiple matches, repeated Tab cycles through them.
+    if (key.name === "tab") {
+      const matches = matchingCommands(inputValue);
+      if (matches.length > 0 && !/\s/.test(inputValue)) {
+        key.stopPropagation();
+        const current = matches.findIndex((command) => command.name === inputValue);
+        const next = matches[(current + 1) % matches.length]!;
+        inputRef.current!.value = next.name;
+        setCommandInput(next.name);
+        return;
+      }
     }
 
     // Editing puts you back on a fresh line, so the next Up starts from the
@@ -369,10 +444,58 @@ export function App({
     !!lastLine &&
     !(lastLine.kind === "text" && lastLine.role === "user");
 
+  const runCommand = (text: string): boolean => {
+    const trimmed = text.trim();
+    const compress = /^\/compress(?:\s+(.*))?$/s.exec(trimmed);
+    const clear = /^\/(?:clear|new)$/.test(trimmed);
+    const history = trimmed === "/history";
+    if (!compress && !clear && !history) return false;
+
+    if (history) {
+      if (inputRef.current) inputRef.current.value = "";
+      setCommandInput("");
+      openHistory();
+      return true;
+    }
+
+    if (inputRef.current) inputRef.current.value = "";
+    setCommandInput("");
+    histCursor.current = null;
+    draft.current = "";
+
+    if (busyRef.current) {
+      append({ kind: "text", role: "error", text: "wait for the current turn to finish before running a command" });
+      return true;
+    }
+
+    setWorking(true);
+    if (clear) {
+      onNewSession()
+        .then((next) => setSession(next))
+        .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
+        .finally(() => setWorking(false));
+    } else {
+      session
+        .compact(compress![1]?.trim() || undefined)
+        .then((result) => {
+          append({
+            kind: "text",
+            role: "system",
+            text: `compressed context (${result.tokensBefore.toLocaleString()} tokens before)`,
+          });
+        })
+        .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
+        .finally(() => setWorking(false));
+    }
+    return true;
+  };
+
   const submit = () => {
     const text = inputRef.current?.value ?? "";
     if (!text.trim()) return;
+    if (runCommand(text)) return;
     inputRef.current!.value = "";
+    setCommandInput("");
     history.current = appendHistory(process.cwd(), text);
     histCursor.current = null;
     draft.current = "";
@@ -463,12 +586,21 @@ export function App({
           fg={theme.border}
           style={{ flexShrink: 0 }}
         />
+        {matchingCommands(commandInput).length > 0 ? (
+          <box style={{ height: 1, flexShrink: 0, paddingLeft: 2 }}>
+            <text
+              content={`${matchingCommands(commandInput)[0]!.name}  —  ${matchingCommands(commandInput)[0]!.description}  [Tab to complete]`}
+              fg={theme.dim}
+            />
+          </box>
+        ) : null}
         <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
           <text content="❯ " fg={theme.accent} />
           <input
             ref={inputRef}
             placeholder={busy ? "Steer…" : "Ask something…"}
             focused={!settingsOpen && !helpOpen}
+            onInput={setCommandInput}
             onSubmit={submit}
             style={{ flexGrow: 1 }}
           />
@@ -480,6 +612,13 @@ export function App({
           style={{ flexShrink: 0 }}
         />
         {helpOpen ? <HelpPopup theme={theme} /> : null}
+        {historyOpen ? (
+          <SessionHistoryPopup
+            theme={theme}
+            sessions={historySessions}
+            onSelect={selectHistorySession}
+          />
+        ) : null}
         {settingsOpen ? (
           <SettingsPopup
             theme={theme}
