@@ -53,6 +53,7 @@ describe("Help popup layout", () => {
     expect(frame).toContain("History and sessions");
     expect(frame).toContain("Commands");
     expect(frame).toContain("/ in Settings");
+    expect(frame).toContain("Clear; twice quits");
     expect(frame).toContain("esc or ? close");
 
     const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));

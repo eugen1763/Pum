@@ -66,7 +66,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["Ctrl+T", "Open external triggers"],
       ["/ in Settings", "Focus settings search"],
       ["Esc", "Close; twice to cancel work"],
-      ["Ctrl+C", "Press twice to quit"],
+      ["Ctrl+C", "Clear; twice quits"],
       ["?", "Open or close this help"],
     ],
   },

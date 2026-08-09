@@ -314,6 +314,7 @@ export function App({
   loginRequired = false,
   promptHistoryStore = DEFAULT_PROMPT_HISTORY_STORE,
   promptStashStore = DEFAULT_PROMPT_STASH_STORE,
+  captureImage = captureClipboardImage,
   onExit = () => process.exit(0),
   checkApprovalCoordinator,
   checkApprovalStore,
@@ -332,6 +333,7 @@ export function App({
   loginRequired?: boolean;
   promptHistoryStore?: PromptHistoryStore;
   promptStashStore?: PromptStashStore;
+  captureImage?: typeof captureClipboardImage;
   onExit?: () => void | Promise<void>;
   checkApprovalCoordinator?: CheckApprovalCoordinator;
   checkApprovalStore?: CheckApprovalStore;
@@ -475,6 +477,11 @@ export function App({
   // Mirrors `busy` for the keyboard handler: a keypress can land before React
   // has re-rendered, and the handler's closure would still read the old value.
   const busyRef = useRef(false);
+  const resetQuitArm = () => {
+    lastQuitPress.current = 0;
+    clearTimeout(quitTimer.current);
+    setQuitArmed(false);
+  };
   const resetCancelArm = () => {
     lastCancelPress.current = null;
     cancelTarget.current = null;
@@ -677,6 +684,17 @@ export function App({
 
   const handleTextareaChange = () => handleInput(inputRef.current?.plainText ?? "");
 
+  const clearActiveDraft = () => {
+    resetQuitArm();
+    setEditorText("");
+    const viewKey = activeAgentIdRef.current ?? "main";
+    viewDrafts.current.set(viewKey, "");
+    editingStashIndex.current = null;
+    histCursor.current = null;
+    draft.current = "";
+    setSelectedStash(-1);
+  };
+
   const pasteClipboardImage = async () => {
     if (imagePasteBusy.current) return;
     if (!session.agent.state.model.input.includes("image")) {
@@ -686,7 +704,7 @@ export function App({
 
     imagePasteBusy.current = true;
     try {
-      const captured = await captureClipboardImage();
+      const captured = await captureImage();
       const input = inputRef.current;
       if (!input) {
         removePendingImage({ ...captured, id: 0, marker: "", start: 0, end: 0 });
@@ -1514,6 +1532,19 @@ export function App({
     if (key.ctrl && key.name === "c") {
       key.stopPropagation();
       resetCancelArm();
+      const promptOwnsInput =
+        !questionnaire &&
+        !loginOpen &&
+        !triggersOpenRef.current &&
+        !agentSelectorOpen &&
+        !helpOpen &&
+        !historyOpen &&
+        !settingsOpenRef.current;
+      const inputValue = inputRef.current?.plainText ?? "";
+      if (promptOwnsInput && (inputValue.length > 0 || pendingImages.current.length > 0)) {
+        clearActiveDraft();
+        return;
+      }
       // Keyed off a timestamp, not `quitArmed`: two fast presses can land in
       // one React batch, where the state has not updated between them yet.
       const now = Date.now();
@@ -1525,11 +1556,7 @@ export function App({
       return;
     }
     // Any other key disarms, so Ctrl+C · x · Ctrl+C does not quit.
-    if (lastQuitPress.current) {
-      lastQuitPress.current = 0;
-      clearTimeout(quitTimer.current);
-      setQuitArmed(false);
-    }
+    if (lastQuitPress.current) resetQuitArm();
     if (key.name !== "escape" && lastCancelPress.current !== null) resetCancelArm();
 
     if (questionnaire) {
