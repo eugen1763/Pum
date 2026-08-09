@@ -155,6 +155,15 @@ These were chosen deliberately. Change them only on purpose.
   `edit` in `tool_call`, sends only the cwd and proposed input to the configured
   verifier model, and requires a clear `SAFE` response. Missing models, request
   failures, unclear replies, and `UNSAFE` replies block the tool.
+- **The check cache is narrow and exact.** `check-mode-cache.json` stores at
+  most 256 explicit `SAFE` decisions for simple, read-only Git inspection
+  commands. A hit matches the verifier model, cwd, and canonical complete
+  `bash` input. `edit` always reaches the verifier. The policy treats the
+  recognized built-in Git inspection operations as stable across repository
+  content changes. Project scripts, shell composition, output-writing options,
+  and explicit helper options never enter the cache because mutable project
+  state can change their safety. Cache errors degrade to misses and never
+  replace a verifier decision.
 
 ## Things that bite
 

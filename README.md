@@ -150,8 +150,23 @@ verifier only the working directory, tool name, and proposed tool input.
 
 The verifier must return a clear `SAFE` decision. PUM blocks the tool call when
 it returns `UNSAFE`, gives an unclear response, is unavailable, times out, or
-fails. Check mode is off by default. It is a lightweight extra gate, not a
-replacement for process isolation or a sandbox.
+fails.
+
+PUM caches explicit `SAFE` decisions for a small set of simple, read-only Git
+inspection commands. A cache hit requires the same working directory, verifier
+model, and complete `bash` input, including fields such as `timeout`. PUM never
+caches `edit` checks or rejected, failed, malformed, timed-out, or aborted
+checks. The cache holds at most 256 entries.
+
+The cache policy treats recognized built-in Git inspection operations as
+safety-stable across repository-content changes. PUM does not cache project
+scripts, shell composition, output-writing options, or explicit helper options.
+Those operations can change safety when mutable project files or configuration
+change. A missing, corrupt, or unwritable cache becomes a cache miss, so PUM
+uses the verifier and stays fail-closed.
+
+Check mode is off by default. It is a lightweight extra gate, not a replacement
+for process isolation or a sandbox.
 
 ## Theming
 
@@ -178,6 +193,7 @@ Everything sits under `~/.config/pum` — set `PUM_DIR` to move it.
 | `auth.json` | Credentials |
 | `settings.json` | Model and thinking level, saved as you change them |
 | `pum.json` | Theme, animations, web search, writing style, thinking traces |
+| `check-mode-cache.json` | Up to 256 accepted read-only Git `bash` checks |
 | `theme.json` | Optional colour overrides |
 | `history.json` | Prompt history, one list per working directory |
 | `prompt-stash.json` | Saved prompt stash, one list per working directory |
