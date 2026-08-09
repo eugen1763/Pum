@@ -20,6 +20,8 @@ export type PendingLine = {
   line: Extract<Line, { kind: "text" | "agent-message" }>;
   /** Text used to match pi's message_start event. */
   deliveryText?: string;
+  /** False when the queued user message has attachments that cannot be restored. */
+  recallable?: boolean;
   /** Pi inserted the message, but the active streamed message must finish first. */
   delivered?: boolean;
 };

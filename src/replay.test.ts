@@ -78,6 +78,19 @@ describe("subagent transcript replay", () => {
     });
   });
 
+  test("replays an approved spawn note as a normal child user message", () => {
+    const lines = replayEntries([{
+      type: "message",
+      message: { role: "user", content: "Optional preview note" },
+    }], process.cwd(), true);
+
+    expect(lines).toEqual([{
+      kind: "text",
+      role: "user",
+      text: "Optional preview note",
+    }]);
+  });
+
   test("restores typed trigger deliveries", () => {
     const lines = replayEntries([{
       type: "custom",

@@ -10,6 +10,7 @@ import {
 } from "./manager";
 import { MESSAGE_CACHE_TOOLS } from "../message-cache";
 import { TRIGGER_EVENT_CUSTOM_TYPE, type SubagentStatus, type TriggerEventData } from "./types";
+import { SpawnPreviewManager } from "./spawn-preview";
 
 function triggerEvent(overrides: Partial<TriggerEventData> = {}): TriggerEventData {
   return {
@@ -115,6 +116,7 @@ describe("SubagentManager extension", () => {
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
     expect(result.systemPrompt).toContain("0/10 active; 10 slots available");
     expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
+    expect(definitions.get("spawn_subagent").parameters.properties.preview).toBeDefined();
     expect(definitions.get("spawn_subagent").promptGuidelines).toContain(
       "For follow-up implementation work, prefer spawn_subagent while configured capacity is available.",
     );
@@ -138,6 +140,95 @@ describe("SubagentManager extension", () => {
       },
     });
     expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
+  });
+
+  test("previews main and child spawns without side effects, then delivers an optional note", async () => {
+    const previewManager = new SpawnPreviewManager();
+    const unsubscribe = previewManager.subscribe(() => {});
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      spawnPreviewManager: previewManager,
+    });
+    addTestAgent(manager, "parent", "running");
+    const spawned: any[] = [];
+    const notes: any[] = [];
+    (manager as any).attachMain = async () => {};
+    (manager as any).spawn = async (options: any) => {
+      spawned.push(options);
+      return {
+        ...((manager as any).records.get("parent").snapshot),
+        id: "spawned",
+        name: "spawned",
+        task: options.task,
+        parentAgentId: options.parentAgentId ?? null,
+      };
+    };
+    (manager as any).sendUserMessage = async (...args: any[]) => { notes.push(args); };
+
+    const mainTools = new Map<string, any>();
+    const mainPi = { on() {}, registerTool(tool: any) { mainTools.set(tool.name, tool); } };
+    (manager.mainExtension() as any).factory(mainPi);
+    const mainRun = mainTools.get("spawn_subagent").execute("tool", {
+      task: "Main preview task",
+      preview: true,
+    }, undefined, undefined, {
+      sessionManager: { getSessionId: () => "main-session" },
+      cwd: "/repo",
+      model: { provider: "mock", id: "model" },
+      thinkingLevel: "off",
+    });
+    await Promise.resolve();
+    expect(spawned).toEqual([]);
+    expect(previewManager.current()?.requester).toEqual({ sessionId: "main-session", agentId: null, name: "main" });
+    previewManager.approve("Follow this note");
+    await mainRun;
+    expect(spawned[0].task).toBe("Main preview task");
+    expect(notes).toEqual([["spawned", "Follow this note"]]);
+
+    const childTools = new Map<string, any>();
+    const childPi = { on() {}, registerTool(tool: any) { childTools.set(tool.name, tool); } };
+    ((manager as any).childExtension("parent") as any).factory(childPi);
+    const childRun = childTools.get("spawn_subagent").execute("tool", {
+      task: "Nested preview task",
+      preview: true,
+    }, undefined, undefined, {
+      sessionManager: { getSessionId: () => "child-session" },
+    });
+    await Promise.resolve();
+    expect(previewManager.current()?.requester).toEqual({ sessionId: "child-session", agentId: "parent", name: "parent" });
+    previewManager.cancel();
+    const cancelled = await childRun;
+    expect(cancelled.content[0].text).toContain("Spawn cancelled");
+    expect(spawned).toHaveLength(1);
+    unsubscribe();
+  });
+
+  test("checks spawn capacity only after preview approval and keeps empty notes out of delivery", async () => {
+    const previewManager = new SpawnPreviewManager();
+    const unsubscribe = previewManager.subscribe(() => {});
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", spawnPreviewManager: previewManager });
+    (manager as any).attachMain = async () => {};
+    let spawnCalls = 0;
+    (manager as any).spawn = async () => {
+      spawnCalls += 1;
+      throw new Error("All 1 subagent slots are active");
+    };
+    let noteCalls = 0;
+    (manager as any).sendUserMessage = async () => { noteCalls += 1; };
+    const tools = new Map<string, any>();
+    (manager.mainExtension() as any).factory({ on() {}, registerTool(tool: any) { tools.set(tool.name, tool); } });
+    const run = tools.get("spawn_subagent").execute("tool", { task: "Wait for approval", preview: true }, undefined, undefined, {
+      sessionManager: { getSessionId: () => "main-session" }, cwd: "/repo",
+      model: { provider: "mock", id: "model" }, thinkingLevel: "off",
+    });
+    await Promise.resolve();
+    expect(spawnCalls).toBe(0);
+    previewManager.approve("");
+    await expect(run).rejects.toThrow("All 1 subagent slots are active");
+    expect(spawnCalls).toBe(1);
+    expect(noteCalls).toBe(0);
+    unsubscribe();
   });
 
   test("binds message cache tools to exact main and child requesters", () => {
@@ -1010,6 +1101,31 @@ describe("SubagentManager extension", () => {
     expect(record.snapshot.transcript.pending).toEqual([]);
     expect(record.userInstructionNotices.size).toBe(0);
     expect(deliveries).toEqual([]);
+  });
+
+  test("recalls the newest queued child user message and removes its pending notice", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const record = (manager as any).records.get("worker");
+    const steering = ["older", "newer"];
+    record.session = {
+      getSteeringMessages: () => steering,
+      getFollowUpMessages: () => [],
+      clearQueue: () => ({ steering: steering.splice(0), followUp: [] }),
+      steer: async (text: string) => { steering.push(text); },
+      followUp: async () => {},
+    };
+    record.snapshot.transcript.pending = [
+      { id: "older", line: { kind: "text", role: "user", text: "older" }, deliveryText: "older" },
+      { id: "newer", line: { kind: "text", role: "user", text: "newer" }, deliveryText: "newer" },
+      { id: "agent", line: { kind: "agent-message", sender: "main", recipient: "worker", text: "agent" } },
+    ];
+    record.userInstructionNotices = new Map([["newer", "newer"]]);
+
+    await expect(manager.recallQueuedUserMessage("worker")).resolves.toEqual({ id: "newer", text: "newer" });
+    expect(steering).toEqual(["older"]);
+    expect(record.snapshot.transcript.pending.map((item: any) => item.id)).toEqual(["older", "agent"]);
+    expect(record.userInstructionNotices.has("newer")).toBe(false);
   });
 
   test("does not notify main when queued subagent delivery is cancelled", async () => {

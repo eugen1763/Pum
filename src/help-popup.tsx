@@ -43,7 +43,7 @@ export const HELP_GROUPS: HelpGroup[] = [
   {
     title: "History and sessions",
     controls: [
-      ["↑ / ↓", "Browse prompt history"],
+      ["↑ / ↓", "Recall queued on empty; otherwise history"],
       ["Ctrl+H", "Open session history"],
       ["pum -r", "Resume the last session"],
     ],

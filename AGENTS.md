@@ -57,6 +57,7 @@ bun run start    # open the TUI in the current directory
 | Key | Effect |
 |---|---|
 | Enter | Send the prompt |
+| Up on an empty prompt | Recall the newest queued user message for the selected agent |
 | Ctrl+Enter / Shift+Enter | Insert a new line |
 | `\` then Enter | Insert a new line fallback |
 | Alt+Enter / Ctrl+Alt+Enter | Stash the prompt without sending |
@@ -148,6 +149,14 @@ These were chosen deliberately. Change them only on purpose.
 - **Queued messages stay pending until insertion.** Steering and recipient-side
   inter-agent messages render in a dim section at the transcript bottom. A
   matching pi `message_start` moves each message into the normal transcript.
+- **Spawn preview has no pre-approval side effects.** `spawn_subagent` with
+  `preview: true` queues a requester-bound root popup. Approval calls the normal
+  spawn path, then sends a non-empty note as a separate durable user message.
+  Cancellation creates no child and discards the note because no recipient exists.
+- **Up recalls only queued user text.** On an empty single-line selected prompt,
+  Up removes the newest matching user message from the exact pi queue and pending
+  transcript before restoring the text. It never recalls delivered, inter-agent,
+  trigger, lifecycle, cache, acknowledgement, or image-bearing messages.
 - **Escape requires confirmation while working.** The first press shows a hint.
   A second press within two seconds cancels the same selected agent.
 - **Cache range execution is main-agent orchestration.** Shift+Up and Shift+Down

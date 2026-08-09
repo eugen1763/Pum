@@ -114,6 +114,7 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `
 | Key | Action |
 |---|---|
 | `Enter` | Send a prompt, or steer the selected working agent |
+| `↑` on an empty prompt | Recall the newest queued user message for the selected agent |
 | `Ctrl+Enter` / `Shift+Enter` | Insert a new line |
 | `Alt+Enter` | Stash the prompt without sending |
 | `Tab` | Open the prompt stash on an empty input |
@@ -142,6 +143,10 @@ PUM runs up to 10 active subagents by default. Configure a limit from 1 through 
 Select a range of stashed prompts and press `Enter`. The main agent can group related work and run independent groups in parallel. Successful managed merges remove the completed worktree and branch. A parent cannot finish, merge, or be removed until every retained descendant closes deepest-first.
 
 Use `Ctrl+L` to select an agent transcript. Input then goes to that agent. Finished or interrupted agents remain available until PUM merges or removes them.
+
+The public `spawn_subagent` tool accepts `preview: true`. PUM then shows the exact child task before it creates any worktree or session. Press `Enter` to approve. An optional note becomes a separate visible user instruction to the new child. Press `Esc` to cancel without creating a child. Cancellation discards the preview note because no child exists. PUM preserves the existing parent transcript draft.
+
+Press `↑` on an empty single-line prompt to recall the newest queued user-authored message for the selected transcript. PUM removes the message from the authoritative queue before restoring its text. PUM does not recall inter-agent, trigger, lifecycle, cache, delivered, or image-bearing messages.
 
 Idle notices report settled work cycles to the direct spawner. They are not completion notices. PUM persists completion intent and delivery state so interrupted notification delivery can resume without duplicate completion messages.
 

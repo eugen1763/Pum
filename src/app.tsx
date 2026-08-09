@@ -80,6 +80,9 @@ import {
   type PendingImage,
 } from "./image-paste";
 import type { SubagentManager } from "./subagents/manager";
+import type { SpawnPreviewManager } from "./subagents/spawn-preview";
+import { SpawnPreviewPopup } from "./subagents/spawn-preview-popup";
+import { recallNewestQueuedUserMessage } from "./queue-recall";
 import { runWorktreeCommand } from "./worktree-command";
 import { CANCEL_WINDOW_MS, confirmsCancellation } from "./cancel-confirmation";
 import { buildStashBatchPrompt, selectedRange } from "./stash-batch";
@@ -329,6 +332,7 @@ export function App({
   searchProviders,
   subagentManager,
   questionnaireManager,
+  spawnPreviewManager,
   loginRequired = false,
   promptHistoryStore = DEFAULT_PROMPT_HISTORY_STORE,
   promptStashStore = DEFAULT_PROMPT_STASH_STORE,
@@ -349,6 +353,7 @@ export function App({
   searchProviders: string[];
   subagentManager: SubagentManager;
   questionnaireManager?: QuestionnaireManager;
+  spawnPreviewManager?: SpawnPreviewManager;
   loginRequired?: boolean;
   promptHistoryStore?: PromptHistoryStore;
   promptStashStore?: PromptStashStore;
@@ -406,6 +411,7 @@ export function App({
   const [agentElapsedSec, setAgentElapsedSec] = useState(0);
   const [loginOpen, setLoginOpen] = useState(loginRequired);
   const [, setQuestionnaireRevision] = useState(0);
+  const [, setSpawnPreviewRevision] = useState(0);
   const [loginPage, setLoginPage] = useState<LoginPage>(() => ({
     kind: "providers",
     methods: providerLoginMethods((modelRuntime as any).getProviders?.() ?? []),
@@ -432,6 +438,7 @@ export function App({
     ? agents.find((agent) => agent.id === activeAgentId)
     : undefined;
   const questionnaire = questionnaireManager?.current();
+  const spawnPreview = spawnPreviewManager?.current();
   const visibleTx = activeAgent?.transcript ?? tx;
   const visibleBusy = activeAgent
     ? activeAgent.status === "starting" || activeAgent.status === "running"
@@ -463,6 +470,7 @@ export function App({
 
   const inputRef = useRef<TextareaRenderable>(null);
   const questionnaireInputRef = useRef<TextareaRenderable>(null);
+  const spawnPreviewInputRef = useRef<TextareaRenderable>(null);
   const settingsOpenRef = useRef(settingsOpen);
   const triggersOpenRef = useRef(false);
   const settingsPageRef = useRef(page);
@@ -483,6 +491,10 @@ export function App({
   const imagePasteBusy = useRef(false);
   const viewDrafts = useRef(new Map<string, string>());
   const viewEditingStashIndices = useRef(new Map<string, number | null>());
+  const spawnPreviewRestoreView = useRef<{ active: boolean; agentId: string | null }>({
+    active: false,
+    agentId: null,
+  });
   /** Cache row currently checked out into the selected transcript input. */
   const editingStashIndex = useRef<number | null>(null);
   const quitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -804,6 +816,10 @@ export function App({
     [subagentManager],
   );
 
+  useEffect(() => spawnPreviewManager?.subscribe(() => {
+    setSpawnPreviewRevision((revision) => revision + 1);
+  }), [spawnPreviewManager]);
+
   useEffect(() => {
     if (!questionnaireManager) return;
     return questionnaireManager.subscribe(() => {
@@ -940,8 +956,9 @@ export function App({
       clearTimeout(cancelTimer.current);
       clearPendingImages();
       cleanupPendingImages();
+      spawnPreviewManager?.cancelAll("shutdown");
     },
-    [],
+    [spawnPreviewManager],
   );
 
   useEffect(() => {
@@ -1164,6 +1181,22 @@ export function App({
     session.abort().finally(() => setWorking(false));
   };
 
+  const recallQueuedUserMessage = async (target: string | null) => {
+    const recalled = target
+      ? await subagentManager.recallQueuedUserMessage(target)
+      : await recallNewestQueuedUserMessage(session, tx.pending);
+    if (!recalled) return;
+    if (!target) dropPending(recalled.id);
+    const key = target ?? "main";
+    viewDrafts.current.set(key, recalled.text);
+    if (activeAgentIdRef.current === target) {
+      setEditorText(recalled.text);
+      histCursor.current = null;
+      draft.current = "";
+      inputRef.current?.focus();
+    }
+  };
+
   /** Up walks back through sent prompts, down returns to the current draft. */
   const recall = (direction: -1 | 1) => {
     const input = inputRef.current;
@@ -1279,6 +1312,7 @@ export function App({
     promptText: string,
     displayText: string,
     images: ReturnType<typeof imageContent>[] = [],
+    recallable = images.length === 0,
   ) => {
     const userLine: Extract<Line, { kind: "text" }> = {
       kind: "text",
@@ -1293,6 +1327,7 @@ export function App({
         id: randomUUID().slice(0, 12),
         line: userLine,
         deliveryText: promptText,
+        recallable,
       };
       addPending(pending);
       withSearchRoute(session.sessionId, () => session.steer(promptText, images)).catch((error) => {
@@ -1389,7 +1424,7 @@ export function App({
     setStash(next);
     refreshHistoryAfterStashMutation();
     resetAfterCacheExecution();
-    deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts));
+    deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts), [], false);
   };
 
   useEffect(() => {
@@ -1414,15 +1449,15 @@ export function App({
         );
         const prompts = entries.map((entry) => entry.text);
         if (prompts.length > 1) {
-          deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts));
+          deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts), [], false);
           return { count: prompts.length, route: "main" };
         }
         const prompt = prompts[0]!;
         if (request.requester.kind === "subagent") {
-          await subagentManager.sendUserMessage(request.requester.id, prompt, [], prompt);
+          await subagentManager.sendUserMessage(request.requester.id, prompt, [], prompt, false);
           return { count: 1, route: "subagent" };
         }
-        deliverMainPrompt(prompt, prompt);
+        deliverMainPrompt(prompt, prompt, [], false);
         return { count: 1, route: "main" };
       },
     );
@@ -1553,6 +1588,36 @@ export function App({
     return true;
   };
 
+  useEffect(() => {
+    if (spawnPreview) {
+      if (!spawnPreviewRestoreView.current.active) {
+        spawnPreviewRestoreView.current = {
+          active: true,
+          agentId: activeAgentIdRef.current,
+        };
+      }
+      settingsOpenRef.current = false;
+      setSettingsOpen(false);
+      setHelpOpen(false);
+      setHistoryOpen(false);
+      setAgentSelectorOpen(false);
+      setTriggerPopup(false, false);
+      setLoginOpen(false);
+      const target = spawnPreview.requester.agentId;
+      if (target && !agents.some((agent) => agent.id === target)) {
+        spawnPreviewManager?.cancel("unavailable");
+      } else if (!selectAgentView(target)) {
+        spawnPreviewManager?.cancel("unavailable");
+      }
+      return;
+    }
+    if (!spawnPreviewRestoreView.current.active) return;
+    const target = spawnPreviewRestoreView.current.agentId;
+    spawnPreviewRestoreView.current.active = false;
+    if (!target || agents.some((agent) => agent.id === target)) selectAgentView(target);
+    else selectAgentView(null);
+  }, [spawnPreview?.id]);
+
   const cycleAgentView = (direction: -1 | 1) => {
     const ids: Array<string | null> = [null, ...agents.map((agent) => agent.id)];
     if (ids.length === 1) return;
@@ -1585,11 +1650,27 @@ export function App({
       return;
     }
 
+    if (spawnPreview) {
+      const isPreviewReturn = ["return", "enter", "kpenter", "linefeed"].includes(key.name);
+      if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+        key.stopPropagation();
+        spawnPreviewInputRef.current?.setText("");
+        spawnPreviewManager?.cancel();
+      } else if (isPreviewReturn && !key.shift && !key.ctrl && !key.meta && !key.option) {
+        key.stopPropagation();
+        const note = spawnPreviewInputRef.current?.plainText ?? "";
+        spawnPreviewInputRef.current?.setText("");
+        spawnPreviewManager?.approve(note);
+      }
+      return;
+    }
+
     if (key.ctrl && key.name === "c") {
       key.stopPropagation();
       resetCancelArm();
       const promptOwnsInput =
         !questionnaire &&
+        !spawnPreview &&
         !loginOpen &&
         !triggersOpenRef.current &&
         !agentSelectorOpen &&
@@ -2017,7 +2098,6 @@ export function App({
         moveStash(key.name === "up" ? -1 : 1, key.shift);
         return;
       }
-      if (activeAgentId) return;
       if (commandMatches.length > 0) {
         key.stopPropagation();
         const next = moveCommandSelection(
@@ -2031,6 +2111,22 @@ export function App({
       }
       // Keep arrow navigation inside multiline or visually wrapped prompts.
       if ((inputRef.current?.editorView.getTotalVirtualLineCount() ?? 1) > 1) return;
+      if (key.name === "up" && !inputValue && pendingImages.current.length === 0) {
+        const queued = visibleTx.pending.some((pending) =>
+          !pending.delivered &&
+          pending.line.kind === "text" &&
+          pending.line.role === "user" &&
+          Boolean(pending.deliveryText),
+        );
+        if (queued) {
+          key.stopPropagation();
+          void recallQueuedUserMessage(activeAgentIdRef.current).catch((error) =>
+            append({ kind: "text", role: "error", text: String(error) }),
+          );
+          return;
+        }
+      }
+      if (activeAgentId) return;
       key.stopPropagation();
       recall(key.name === "up" ? -1 : 1);
       return;
@@ -2269,7 +2365,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="char"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !checkApproval}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !checkApproval}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -2295,6 +2391,16 @@ export function App({
             terminalWidth={width}
             terminalHeight={height}
             onProviderSearchChange={(value) => loginControllerRef.current?.setProviderQuery(value)}
+          />
+        ) : null}
+        {spawnPreview ? (
+          <SpawnPreviewPopup
+            theme={theme}
+            syntaxStyle={syntaxStyle}
+            request={spawnPreview}
+            terminalWidth={width}
+            terminalHeight={height}
+            inputRef={spawnPreviewInputRef}
           />
         ) : null}
         {questionnaire ? (
