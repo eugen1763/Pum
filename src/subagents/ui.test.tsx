@@ -63,6 +63,104 @@ function fakeSession() {
   } as any;
 }
 
+function memoryStores(initial: Array<{ text: string; executed: boolean }> = []) {
+  let stash = initial.map((prompt) => ({ ...prompt }));
+  let history: string[] = [];
+  return {
+    stash: {
+      load: () => stash,
+      append: (_cwd: string, prompt: string, executed = false) => {
+        stash = [...stash, { text: prompt, executed }];
+        return stash;
+      },
+      markExecuted: (_cwd: string, index: number) => {
+        stash = stash.map((prompt, itemIndex) => itemIndex === index ? { ...prompt, executed: true } : prompt);
+        return stash;
+      },
+      markExecutedMany: (_cwd: string, indices: Iterable<number>) => {
+        const selected = new Set(indices);
+        stash = stash.map((prompt, index) => selected.has(index) ? { ...prompt, executed: true } : prompt);
+        return stash;
+      },
+      replace: (_cwd: string, index: number, prompt: string, executed: boolean) => {
+        stash = stash.map((item, itemIndex) => itemIndex === index ? { text: prompt, executed } : item);
+        return stash;
+      },
+      remove: (_cwd: string, index: number) => {
+        stash = stash.filter((_, itemIndex) => itemIndex !== index);
+        return stash;
+      },
+    },
+    history: {
+      load: () => history,
+      append: (_cwd: string, prompt: string) => {
+        history = [...history, prompt];
+        return history;
+      },
+      remove: (_cwd: string, prompt: string) => {
+        history = history.filter((item) => item !== prompt);
+        return history;
+      },
+    },
+    getStash: () => stash,
+  };
+}
+
+async function renderCacheApp(options: {
+  initialStash?: Array<{ text: string; executed: boolean }>;
+  onMainPrompt?: (prompt: string) => void;
+  onSubagentMessage?: (prompt: string) => void;
+}) {
+  const setup = await createTestRenderer({ width: 80, height: 24, kittyKeyboard: true });
+  destroy = () => setup.renderer.destroy();
+  const stores = memoryStores(options.initialStash);
+  const session = fakeSession();
+  session.prompt = async (prompt: string) => options.onMainPrompt?.(prompt);
+  const manager = {
+    getAgents: () => [snapshot],
+    subscribe: () => () => {},
+    bindMainSession: async () => {},
+    sendUserMessage: async (_id: string, prompt: string) => options.onSubagentMessage?.(prompt),
+    abortAgent: async () => {},
+    persistToolEvent() {},
+    createStandaloneWorktree: async () => snapshot.worktree,
+  } as any;
+  createRoot(setup.renderer).render(
+    <App
+      session={session}
+      modelRuntime={{ getAvailableSnapshot: () => [] } as any}
+      onNewSession={async () => session}
+      loadSessions={async () => []}
+      onSwitchSession={async () => session}
+      settings={{
+        showThinking: false,
+        theme: "tokyonight",
+        animations: false,
+        workingRuleAnimation: "off",
+        webSearch: false,
+        writingStyle: "none",
+        explanationStrength: "simple",
+        checkMode: false,
+        checkModel: "mock/check",
+      }}
+      searchProviders={[]}
+      subagentManager={manager}
+      promptHistoryStore={stores.history}
+      promptStashStore={stores.stash}
+    />,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await setup.renderOnce();
+  await setup.flush();
+  return { setup, stores };
+}
+
+async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await setup.renderOnce();
+  await setup.flush();
+}
+
 describe("subagent transcript UI", () => {
   test("cycles forward and backward with header notice", async () => {
     const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
@@ -92,6 +190,7 @@ describe("subagent transcript UI", () => {
           workingRuleAnimation: "input-only",
           webSearch: false,
           writingStyle: "none",
+          explanationStrength: "simple",
           checkMode: false,
           checkModel: "mock/check",
         }}
@@ -163,6 +262,7 @@ describe("subagent transcript UI", () => {
           workingRuleAnimation: "off",
           webSearch: false,
           writingStyle: "none",
+          explanationStrength: "simple",
           checkMode: false,
           checkModel: "mock/check",
         }}
@@ -183,6 +283,81 @@ describe("subagent transcript UI", () => {
     setup.mockInput.pressArrow("right");
     const selectedFrame = await setup.waitForFrame((frame) => frame.includes("Child transcript"));
     expect(selectedFrame).not.toContain("→/enter open");
+  });
+
+  test("caches a selected subagent draft without sending it", async () => {
+    let mainPrompts = 0;
+    let subagentMessages = 0;
+    const { setup, stores } = await renderCacheApp({
+      onMainPrompt: () => { mainPrompts++; },
+      onSubagentMessage: () => { subagentMessages++; },
+    });
+
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    await setup.mockInput.typeText("cache this worker draft");
+    setup.mockInput.pressEnter({ meta: true });
+    await settle(setup);
+
+    expect(stores.getStash()).toEqual([{ text: "cache this worker draft", executed: false }]);
+    expect(mainPrompts).toBe(0);
+    expect(subagentMessages).toBe(0);
+    expect(setup.captureCharFrame()).toContain("Message worker-one…");
+  });
+
+  test("loads cache text into the subagent draft and preserves both transcript drafts", async () => {
+    const { setup } = await renderCacheApp({
+      initialStash: [{ text: "loaded worker task", executed: false }],
+    });
+
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    setup.mockInput.pressTab();
+    await settle(setup);
+    setup.mockInput.pressArrow("up");
+    await settle(setup);
+    setup.mockInput.pressTab();
+    await settle(setup);
+    await setup.mockInput.typeText(" plus edits");
+
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    await setup.mockInput.typeText("main draft");
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("loaded worker task plus edits");
+
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("main draft");
+  });
+
+  test("routes a selected cache batch through the main session", async () => {
+    const mainPrompts: string[] = [];
+    const subagentMessages: string[] = [];
+    const { setup, stores } = await renderCacheApp({
+      initialStash: [
+        { text: "task one", executed: false },
+        { text: "task two", executed: false },
+      ],
+      onMainPrompt: (prompt) => mainPrompts.push(prompt),
+      onSubagentMessage: (prompt) => subagentMessages.push(prompt),
+    });
+
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    setup.mockInput.pressTab();
+    await settle(setup);
+    setup.mockInput.pressArrow("down", { shift: true });
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(mainPrompts).toHaveLength(1);
+    expect(mainPrompts[0]).toContain("<task 1>\ntask one\n</task 1>");
+    expect(mainPrompts[0]).toContain("<task 2>\ntask two\n</task 2>");
+    expect(subagentMessages).toEqual([]);
+    expect(stores.getStash().every((prompt) => prompt.executed)).toBe(true);
   });
 
   test("requires two Escape presses before aborting the selected subagent", async () => {
@@ -214,6 +389,7 @@ describe("subagent transcript UI", () => {
           workingRuleAnimation: "input-only",
           webSearch: false,
           writingStyle: "none",
+          explanationStrength: "simple",
           checkMode: false,
           checkModel: "mock/check",
         }}

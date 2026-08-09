@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { normalizeSettings, WORKING_RULE_ANIMATION_MODES } from "./settings";
 
 describe("PUM settings migration", () => {
-  test("preserves the previous input-rule animation for old files", () => {
+  test("preserves migration defaults for old files", () => {
     const settings = normalizeSettings({ animations: true, theme: "gruvbox" });
     expect(settings.workingRuleAnimation).toBe("input-only");
+    expect(settings.explanationStrength).toBe("simple");
     expect(settings.animations).toBe(true);
   });
 
@@ -15,7 +16,18 @@ describe("PUM settings migration", () => {
     }
   });
 
-  test("replaces an unknown working-rule mode with the migration default", () => {
-    expect(normalizeSettings({ workingRuleAnimation: "orbit" }).workingRuleAnimation).toBe("input-only");
+  test("replaces unknown enum values with migration defaults", () => {
+    const settings = normalizeSettings({
+      workingRuleAnimation: "orbit",
+      explanationStrength: "verbose",
+    });
+    expect(settings.workingRuleAnimation).toBe("input-only");
+    expect(settings.explanationStrength).toBe("simple");
+  });
+
+  test("accepts every explanation strength", () => {
+    for (const explanationStrength of ["none", "simple", "detailed"] as const) {
+      expect(normalizeSettings({ explanationStrength }).explanationStrength).toBe(explanationStrength);
+    }
   });
 });

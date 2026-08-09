@@ -26,6 +26,7 @@ describe("settings search and navigation", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual(["checkMode", "checkModel"]);
     expect(filterSettingsRows("reasoning visible").map((row) => row.id)).toEqual(["showThinking"]);
+    expect(filterSettingsRows("progress detailed").map((row) => row.id)).toEqual(["explanationStrength"]);
     expect(filterSettingsRows("fail-closed bash edit").map((row) => row.id)).toEqual(["checkMode"]);
     expect(SETTINGS_ROWS.every((row) => row.description.length > 20)).toBe(true);
   });

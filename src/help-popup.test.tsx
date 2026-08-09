@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { helpLines, HelpPopup, HELP_SUMMARY, maxHelpScrollOffset } from "./help-popup";
+import {
+  helpLayout,
+  helpLines,
+  HelpPopup,
+  HELP_SUMMARY,
+  maxHelpScrollOffset,
+} from "./help-popup";
 import { loadTheme } from "./theme";
 
 let destroy: (() => void) | undefined;
@@ -40,33 +46,60 @@ describe("Help popup layout", () => {
     expect(helpLines(16).some((line) => line.kind === "blank")).toBe(false);
   });
 
-  test("uses readable grouped columns in a wide terminal", async () => {
+  test("uses readable grouped columns with exact outer content gaps", async () => {
     const frame = await renderHelp(100, 28, 0);
+    const lines = frame.split("\n");
     expect(frame).toContain("Prompt");
     expect(frame).toContain("History and sessions");
     expect(frame).toContain("Commands");
     expect(frame).toContain("/ in Settings");
     expect(frame).toContain("esc or ? close");
-    const footer = frame.split("\n").find((line) => line.includes("esc or ? close"));
-    expect(footer).not.toContain("Send, or steer while working");
+
+    const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));
+    const contentStart = lines.findIndex((line) => line.includes("Prompt"));
+    const contentEnd = lines.findIndex((line) => line.includes("pum -r"));
+    const footerIndex = lines.findIndex((line) => line.includes("esc or ? close"));
+    expect(contentStart - summaryEnd).toBe(2);
+    expect(footerIndex - contentEnd).toBe(2);
+    expect(lines[footerIndex]).not.toContain("Send, or steer while working");
   });
 
-  test("supports scrolling to application controls in a short narrow terminal", async () => {
+  test("supports scrolling with footer separation in a short narrow terminal", async () => {
     const frame = await renderHelp(52, 16, maxHelpScrollOffset(16));
+    const lines = frame.split("\n");
     expect(frame).toContain("Application");
     expect(frame).toContain("Ctrl+P");
     expect(frame).toContain("↑↓ scroll");
-    const footer = frame.split("\n").find((line) => line.includes("esc or ? close"));
-    expect(footer).not.toContain("Ctrl+P");
+    const footerIndex = lines.findIndex((line) => line.includes("esc or ? close"));
+    const lastControlIndex = footerIndex - 2;
+    expect(lines[footerIndex - 1]).toMatch(/^\s*│\s*│\s*$/u);
+    expect(lines[lastControlIndex]).not.toMatch(/^\s*│\s*│\s*$/u);
+    expect(lines[footerIndex]).not.toContain("Ctrl+P");
   });
 
-  test("keeps the footer on a fixed row in a short wide terminal", async () => {
-    const frame = await renderHelp(100, 10, 0);
+  test("uses compact gaps only when a narrow terminal cannot hold both", async () => {
+    expect(helpLayout(52, 13)).toMatchObject({ topGap: 1, bottomGap: 1 });
+    expect(helpLayout(52, 12)).toMatchObject({ topGap: 0, bottomGap: 1 });
+    expect(helpLayout(52, 10)).toMatchObject({ topGap: 0, bottomGap: 0 });
+
+    const frame = await renderHelp(52, 12, 0);
     const lines = frame.split("\n");
     const footerIndex = lines.findIndex((line) => line.includes("esc or ? close"));
-
     expect(footerIndex).toBeGreaterThan(0);
+    expect(lines[footerIndex - 1]).toMatch(/^\s*│\s*│\s*$/u);
+    expect(lines[footerIndex]).not.toContain("Prompt");
+  });
+
+  test("keeps both gaps and the footer fixed in the minimum wide layout", async () => {
+    const frame = await renderHelp(100, 10, 0);
+    const lines = frame.split("\n");
+    const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));
+    const contentStart = lines.findIndex((line) => line.includes("Prompt"));
+    const footerIndex = lines.findIndex((line) => line.includes("esc or ? close"));
+
+    expect(helpLayout(100, 10)).toMatchObject({ topGap: 1, bottomGap: 1, contentHeight: 1 });
+    expect(contentStart - summaryEnd).toBe(2);
+    expect(footerIndex - contentStart).toBe(2);
     expect(lines[footerIndex]).not.toContain("Send, or steer while working");
-    expect(lines[footerIndex - 1]).not.toContain("esc or ? close");
   });
 });

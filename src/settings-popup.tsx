@@ -13,6 +13,7 @@ export type SettingRowId =
   | "workingRuleAnimation"
   | "webSearch"
   | "writingStyle"
+  | "explanationStrength"
   | "checkMode"
   | "checkModel"
   | "thinkingLevel"
@@ -37,6 +38,7 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "thinkingLevel", label: "Thinking level", category: "Agent", keywords: "reasoning effort clamp capability", description: "Set reasoning effort. Pi clamps the level to the selected model capability." },
   { id: "showThinking", label: "Show thinking", category: "Agent", keywords: "reasoning visible transcript trace", description: "Show or hide streamed reasoning traces in the transcript." },
   { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose ste simplified technical english", description: "Add per-turn response guidance. STE requests concise Simplified Technical English." },
+  { id: "explanationStrength", label: "Explanations", category: "Agent", keywords: "progress updates output none simple detailed rationale", description: "Choose how much regular output explains the agent plan, actions, decisions, and results." },
   { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },
   { id: "checkMode", label: "Check mode", category: "Safety", keywords: "verify tools safe fail closed bash edit", description: "Fail-closed safety check for every bash and edit call before execution." },
   { id: "checkModel", label: "Check model", category: "Safety", keywords: "verifier tools safety model", description: "Select the separate verifier model used by Check mode." },

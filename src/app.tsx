@@ -63,6 +63,10 @@ import { matchingCommands, moveCommandSelection } from "./commands";
 import { isRejectedToolResult } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
 import { setWritingStyle, WRITING_STYLES } from "./writing-style";
+import {
+  EXPLANATION_STRENGTHS,
+  setExplanationStrength,
+} from "./explanation-strength";
 import { setCheckModeConfig } from "./check-mode";
 import {
   captureClipboardImage,
@@ -90,19 +94,15 @@ const MAX_INPUT_ROWS = 8;
 const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 
 export function promptPlaceholder(options: {
-  width: number;
   activeAgentName?: string;
   busy: boolean;
   stashOpen: boolean;
 }): string {
-  const prefix = options.activeAgentName
-    ? options.busy ? `Steer ${options.activeAgentName}…` : `Message ${options.activeAgentName}…`
-    : options.stashOpen ? "Cache…" : options.busy ? "Steer…" : "Ask something…";
-  if (options.stashOpen || options.width < 45) return prefix;
-  const controls = options.activeAgentName || options.busy
-    ? options.width >= 70 ? "[^L] list agents" : "[^L] agents"
-    : options.width >= 70 ? "[Tab] cache list [^L] list agents" : "[Tab] cache [^L] agents";
-  return `${prefix}   ${controls}`;
+  if (options.activeAgentName) {
+    return options.busy ? `Steer ${options.activeAgentName}…` : `Message ${options.activeAgentName}…`;
+  }
+  if (options.stashOpen) return "Cache…";
+  return options.busy ? "Steer…" : "Ask something…";
 }
 
 /** A blank row. An empty <text> measures to nothing, so this needs a height. */
@@ -231,6 +231,36 @@ function messageText(message: any): string {
     .trim();
 }
 
+export type PromptHistoryStore = {
+  load: (cwd: string) => string[];
+  append: (cwd: string, prompt: string) => string[];
+  remove: (cwd: string, prompt: string) => string[];
+};
+
+const DEFAULT_PROMPT_HISTORY_STORE: PromptHistoryStore = {
+  load: loadHistory,
+  append: appendHistory,
+  remove: removeHistory,
+};
+
+export type PromptStashStore = {
+  load: (cwd: string) => StashedPrompt[];
+  append: (cwd: string, prompt: string, executed?: boolean) => StashedPrompt[];
+  markExecuted: (cwd: string, index: number) => StashedPrompt[];
+  markExecutedMany: (cwd: string, indices: Iterable<number>) => StashedPrompt[];
+  replace: (cwd: string, index: number, prompt: string, executed: boolean) => StashedPrompt[];
+  remove: (cwd: string, index: number) => StashedPrompt[];
+};
+
+const DEFAULT_PROMPT_STASH_STORE: PromptStashStore = {
+  load: loadPromptStash,
+  append: appendPromptStash,
+  markExecuted: markPromptStashExecuted,
+  markExecutedMany: markPromptStashExecutedMany,
+  replace: replacePromptStash,
+  remove: removePromptStash,
+};
+
 /** Move any buffered stream into the transcript so later lines land in order. */
 function flushed(t: Transcript): Transcript {
   if (t.stream && t.stream.text.trim()) {
@@ -250,6 +280,8 @@ export function App({
   searchProviders,
   subagentManager,
   loginRequired = false,
+  promptHistoryStore = DEFAULT_PROMPT_HISTORY_STORE,
+  promptStashStore = DEFAULT_PROMPT_STASH_STORE,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -261,6 +293,8 @@ export function App({
   searchProviders: string[];
   subagentManager: SubagentManager;
   loginRequired?: boolean;
+  promptHistoryStore?: PromptHistoryStore;
+  promptStashStore?: PromptStashStore;
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -294,7 +328,7 @@ export function App({
   const [branch, setBranch] = useState<string | null>(null);
   const [usage, setUsage] = useState(emptyAgentUsage);
   const [elapsedSec, setElapsedSec] = useState(0);
-  const [stash, setStash] = useState<StashedPrompt[]>(() => loadPromptStash(cwd));
+  const [stash, setStash] = useState<StashedPrompt[]>(() => promptStashStore.load(cwd));
   /** -1 means the input is selected; non-negative values select stash rows. */
   const [stashCursor, setStashCursor] = useState(-1);
   const [stashSelection, setStashSelection] = useState<Set<number>>(() => new Set());
@@ -368,7 +402,8 @@ export function App({
   const lastInputValue = useRef("");
   const imagePasteBusy = useRef(false);
   const viewDrafts = useRef(new Map<string, string>());
-  /** Cache row currently checked out into the input for editing. */
+  const viewEditingStashIndices = useRef(new Map<string, number | null>());
+  /** Cache row currently checked out into the selected transcript input. */
   const editingStashIndex = useRef<number | null>(null);
   const quitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const lastQuitPress = useRef(0);
@@ -377,7 +412,7 @@ export function App({
   const cancelTarget = useRef<string | null>(null);
   // Prompt history. `cursor` is null while editing a fresh line; `draft` holds
   // that line so walking back down restores it.
-  const history = useRef<string[]>(loadHistory(process.cwd()));
+  const history = useRef<string[]>(promptHistoryStore.load(cwd));
   const histCursor = useRef<number | null>(null);
   const draft = useRef("");
   /** The prompt in flight, so Esc can hand it back for editing. */
@@ -427,20 +462,20 @@ export function App({
   };
 
   const addToStash = (prompt: string, executed = false) => {
-    const next = appendPromptStash(cwd, prompt, executed);
+    const next = promptStashStore.append(cwd, prompt, executed);
     stashRef.current = next;
     setStash(next);
     if (stashOpenRef.current) setSelectedStash(-1);
   };
 
   const executeStashedPrompt = (index: number) => {
-    const next = markPromptStashExecuted(cwd, index);
+    const next = promptStashStore.markExecuted(cwd, index);
     stashRef.current = next;
     setStash(next);
   };
 
   const replaceStashedPrompt = (index: number, prompt: string, executed: boolean) => {
-    const next = replacePromptStash(cwd, index, prompt, executed);
+    const next = promptStashStore.replace(cwd, index, prompt, executed);
     stashRef.current = next;
     setStash(next);
   };
@@ -449,10 +484,10 @@ export function App({
     clearStashSelection();
     const prompt = stashRef.current[index];
     if (!prompt) return;
-    const next = removePromptStash(cwd, index);
+    const next = promptStashStore.remove(cwd, index);
     stashRef.current = next;
     setStash(next);
-    history.current = removeHistory(cwd, prompt.text);
+    history.current = promptHistoryStore.remove(cwd, prompt.text);
     histCursor.current = null;
 
     const editingIndex = editingStashIndex.current;
@@ -808,6 +843,9 @@ export function App({
     setSettings(next);
     if (patch.webSearch !== undefined) webSearch.enabled = patch.webSearch;
     if (patch.writingStyle !== undefined) setWritingStyle(patch.writingStyle);
+    if (patch.explanationStrength !== undefined) {
+      setExplanationStrength(patch.explanationStrength);
+    }
     if (patch.checkMode !== undefined || patch.checkModel !== undefined) {
       setCheckModeConfig({ enabled: next.checkMode, model: next.checkModel });
     }
@@ -833,6 +871,14 @@ export function App({
     const i = WRITING_STYLES.indexOf(settings.writingStyle);
     const next = WRITING_STYLES[(i + step + WRITING_STYLES.length) % WRITING_STYLES.length]!;
     update({ writingStyle: next });
+  };
+
+  const stepExplanationStrength = (step: number) => {
+    const i = EXPLANATION_STRENGTHS.indexOf(settings.explanationStrength);
+    const next = EXPLANATION_STRENGTHS[
+      (i + step + EXPLANATION_STRENGTHS.length) % EXPLANATION_STRENGTHS.length
+    ]!;
+    update({ explanationStrength: next });
   };
 
   const stepWorkingRuleAnimation = (step: number) => {
@@ -1071,7 +1117,7 @@ export function App({
       else replaceStashedPrompt(editingIndex, promptText, true);
     }
     editingStashIndex.current = null;
-    if (promptText) history.current = appendHistory(cwd, promptText);
+    if (promptText) history.current = promptHistoryStore.append(cwd, promptText);
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
@@ -1120,10 +1166,10 @@ export function App({
       ...prompts.map((prompt, index) => `${index + 1}. ${prompt}`),
     ].join("\n");
 
-    const next = markPromptStashExecutedMany(cwd, indices);
+    const next = promptStashStore.markExecutedMany(cwd, indices);
     stashRef.current = next;
     setStash(next);
-    for (const prompt of prompts) history.current = appendHistory(cwd, prompt);
+    for (const prompt of prompts) history.current = promptHistoryStore.append(cwd, prompt);
     editingStashIndex.current = null;
     histCursor.current = null;
     draft.current = "";
@@ -1165,6 +1211,7 @@ export function App({
     workingRuleAnimation: { step: stepWorkingRuleAnimation },
     webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
     writingStyle: { step: stepWritingStyle },
+    explanationStrength: { step: stepExplanationStrength },
     checkMode: { step: () => update({ checkMode: !settings.checkMode }) },
     checkModel: { enter: () => { setModelQuery(""); setModelSearchFocused(false); setPage("checkModels"); } },
     thinkingLevel: { step: stepThinking },
@@ -1184,6 +1231,7 @@ export function App({
     workingRuleAnimation: `‹ ${settings.workingRuleAnimation} ›${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
+    explanationStrength: `‹ ${settings.explanationStrength} ›`,
     checkMode: `‹ ${settings.checkMode ? "on" : "off"} ›`,
     checkModel: `${settings.checkModel} ›`,
     thinkingLevel: `‹ ${thinkingLevel} ›`,
@@ -1206,10 +1254,14 @@ export function App({
     }
     const current = activeAgentIdRef.current;
     if (target === current) return true;
-    viewDrafts.current.set(current ?? "main", inputRef.current?.plainText ?? "");
+    const currentKey = current ?? "main";
+    const targetKey = target ?? "main";
+    viewDrafts.current.set(currentKey, inputRef.current?.plainText ?? "");
+    viewEditingStashIndices.current.set(currentKey, editingStashIndex.current);
     activeAgentIdRef.current = target;
     setActiveAgentId(target);
-    setEditorText(viewDrafts.current.get(target ?? "main") ?? "");
+    editingStashIndex.current = viewEditingStashIndices.current.get(targetKey) ?? null;
+    setEditorText(viewDrafts.current.get(targetKey) ?? "");
     setStashMode(false);
     histCursor.current = null;
     resetCancelArm();
@@ -1466,10 +1518,6 @@ export function App({
     // Alt+Enter and Ctrl+Alt+Enter cache without executing.
     if (isCacheReturn) {
       key.stopPropagation();
-      if (activeAgentId) {
-        append({ kind: "text", role: "error", text: "prompt caching is available only in the main agent view" });
-        return;
-      }
       if (pendingImages.current.length > 0) {
         append({
           kind: "text",
@@ -1490,7 +1538,6 @@ export function App({
     }
 
     if (key.name === "tab" && !key.shift) {
-      if (activeAgentId) return;
       if (stashOpenRef.current || !inputValue.trim()) {
         key.stopPropagation();
         if (stashOpenRef.current) {
@@ -1509,6 +1556,7 @@ export function App({
         queueMicrotask(() => inputRef.current?.focus());
         return;
       }
+      if (activeAgentId) return;
       if (commandMatches.length > 0 && !/\s/.test(inputValue)) {
         key.stopPropagation();
         const selected = commandMatches[Math.min(commandCursorRef.current, commandMatches.length - 1)]!;
@@ -1568,6 +1616,11 @@ export function App({
     }
 
     if (key.name === "up" || key.name === "down") {
+      if (stashOpenRef.current) {
+        key.stopPropagation();
+        moveStash(key.name === "up" ? -1 : 1, key.shift);
+        return;
+      }
       if (activeAgentId) return;
       if (commandMatches.length > 0) {
         key.stopPropagation();
@@ -1578,11 +1631,6 @@ export function App({
         );
         commandCursorRef.current = next;
         setCommandCursor(next);
-        return;
-      }
-      if (stashOpenRef.current) {
-        key.stopPropagation();
-        moveStash(key.name === "up" ? -1 : 1, key.shift);
         return;
       }
       // Keep arrow navigation inside multiline or visually wrapped prompts.
@@ -1753,11 +1801,13 @@ export function App({
               return (
                 <box key={command.name} style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
                   <box style={{ width: 2, flexShrink: 0 }}>
-                    {highlighted ? <text content="> " fg={theme.fg} /> : null}
+                    {highlighted ? <text content="❯ " fg={theme.accent} /> : null}
                   </box>
                   <text
                     content={`${command.name}  —  ${command.description}`}
                     fg={highlighted ? theme.fg : theme.dim}
+                    wrapMode="none"
+                    style={{ flexGrow: 1, minWidth: 0 }}
                   />
                 </box>
               );
@@ -1782,14 +1832,15 @@ export function App({
           >
             {Array.from({ length: inputRows }, (_, row) => (
               <box key={row} style={{ width: 2, height: 1, flexShrink: 0 }}>
-                {row === inputCursorRow ? <text content="❯ " fg={theme.accent} /> : null}
+                {commandSuggestions.length === 0 && row === inputCursorRow
+                  ? <text content="❯ " fg={theme.accent} />
+                  : null}
               </box>
             ))}
           </box>
           <textarea
             ref={inputRef}
             placeholder={promptPlaceholder({
-              width,
               activeAgentName: activeAgent?.name,
               busy: visibleBusy,
               stashOpen,

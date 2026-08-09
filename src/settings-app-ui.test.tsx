@@ -64,6 +64,7 @@ describe("Settings keyboard flow", () => {
           workingRuleAnimation: "input-only",
           webSearch: false,
           writingStyle: "none",
+          explanationStrength: "simple",
           checkMode: false,
           checkModel: "mock/check",
         }}

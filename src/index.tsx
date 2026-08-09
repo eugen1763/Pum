@@ -14,6 +14,10 @@ import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { loadSettings } from "./settings";
 import { installWebSearch, webSearch } from "./web-search";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
+import {
+  explanationStrengthExtension,
+  setExplanationStrength,
+} from "./explanation-strength";
 import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
 import { SubagentManager } from "./subagents/manager";
 
@@ -27,12 +31,17 @@ const loginRequired = process.argv[2] === "login" || (await modelRuntime.getAvai
 
 const settings = loadSettings();
 setWritingStyle(settings.writingStyle);
+setExplanationStrength(settings.explanationStrength);
 setCheckModeConfig({ enabled: settings.checkMode, model: settings.checkModel });
 const checkModeExtension = createCheckModeExtension(modelRuntime);
 const subagentManager = new SubagentManager({
   modelRuntime,
   agentDir: AGENT_DIR,
-  childExtensionFactories: [writingStyleExtension, checkModeExtension],
+  childExtensionFactories: [
+    writingStyleExtension,
+    explanationStrengthExtension,
+    checkModeExtension,
+  ],
 });
 const subagentExtension = subagentManager.mainExtension();
 // Hosted web search rides on the provider, so it must be wrapped before the
@@ -51,7 +60,12 @@ const sessionRuntime = await createAgentSessionRuntime(
       agentDir: AGENT_DIR,
       modelRuntime,
       resourceLoaderOptions: {
-        extensionFactories: [writingStyleExtension, checkModeExtension, subagentExtension],
+        extensionFactories: [
+          writingStyleExtension,
+          explanationStrengthExtension,
+          checkModeExtension,
+          subagentExtension,
+        ],
       },
     });
     return {
