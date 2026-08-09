@@ -24,6 +24,10 @@ function findingCodes(command: string, cwd: string) {
   return analyzeCheckPolicy({ command, cwd }).findings.map((finding) => finding.code);
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -202,7 +206,7 @@ describe("deterministic hard blocks", () => {
   test("blocks broad deletion but sends a narrow deletion to the profile decision", () => {
     const cwd = temporaryProject();
 
-    for (const command of ["rm -rf .", "rm -rf *", "rm -rf build cache", `rm -rf ${cwd}`]) {
+    for (const command of ["rm -rf .", "rm -rf *", "rm -rf build cache", `rm -rf ${shellQuote(cwd)}`]) {
       expect(findingCodes(command, cwd)).toContain("broad-deletion");
     }
 
