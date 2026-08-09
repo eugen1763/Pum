@@ -16,6 +16,7 @@ export type CheckPolicyFindingCode =
   | "remote-script-execution"
   | "destructive-git"
   | "broad-deletion"
+  | "suspicious-execution"
   | "shell-complexity"
   | "mutation"
   | "unrecognized-command";
@@ -170,6 +171,16 @@ const CREDENTIAL_SEGMENTS = new Set([
 const SAFE_READ_COMMANDS = new Set([
   "pwd", "printf", "echo", "true", "false", "test", "[", "ls", "tree", "cat", "head", "tail",
   "wc", "stat", "file", "du", "realpath", "readlink", "grep", "rg", "git",
+]);
+const LANGUAGE_EVAL_FLAGS = new Map<string, Set<string>>([
+  ["node", new Set(["-e", "--eval", "-p", "--print"])],
+  ["bun", new Set(["-e", "--eval", "-p", "--print"])],
+  ["deno", new Set(["eval"])],
+  ["python", new Set(["-c"])],
+  ["python3", new Set(["-c"])],
+  ["ruby", new Set(["-e"])],
+  ["perl", new Set(["-e", "-E"])],
+  ["php", new Set(["-r"])],
 ]);
 
 function commandName(argv0: string | undefined): string {
@@ -696,6 +707,72 @@ function inspectHardBlocks(
   return findings;
 }
 
+function shellCommandFlag(name: string, argv: string[]): number {
+  if (name === "cmd") return argv.findIndex((arg) => arg.toLowerCase() === "/c");
+  if (name === "powershell" || name === "pwsh") {
+    return argv.findIndex((arg) => ["-c", "-command"].includes(arg.toLowerCase()));
+  }
+  return SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
+}
+
+function isEncodedDecoder(argv: string[]): boolean {
+  const name = commandName(argv[0]);
+  const lowerArgs = argv.slice(1).map((arg) => arg.toLowerCase());
+  if (name === "base64") return lowerArgs.some((arg) => arg === "-d" || arg === "--decode" || /^-[^-]*d/.test(arg));
+  if (name === "openssl") return lowerArgs[0] === "base64" && lowerArgs.some((arg) => arg === "-d" || arg === "-decode");
+  if (name === "xxd") return lowerArgs.some((arg) => arg === "-r" || /^-[^-]*r/.test(arg));
+  return name === "certutil" && lowerArgs.includes("-decode");
+}
+
+function inspectSuspiciousExecution(analysis: BashAnalysis, depth = 0): CheckPolicyFinding[] {
+  const findings: CheckPolicyFinding[] = [];
+  if (!analysis.complete) return findings;
+
+  for (let index = 0; index < analysis.stages.length; index++) {
+    const stage = analysis.stages[index]!;
+    const argv = effectiveArgv(stage.argv);
+    const name = commandName(argv[0]);
+    const lowerArgs = argv.slice(1).map((arg) => arg.toLowerCase());
+    const next = analysis.stages[index + 1];
+    const nextName = commandName(effectiveArgv(next?.argv ?? [])[0]);
+    const commandFlag = shellCommandFlag(name, argv);
+    const evalFlags = LANGUAGE_EVAL_FLAGS.get(name);
+    const dynamicCommand = argv[0] !== undefined && /(?:\$\(|`|\$\{|\$[A-Za-z_])/.test(argv[0]);
+    const encodedPowerShell = (name === "powershell" || name === "pwsh")
+      && lowerArgs.some((arg) => arg === "-encodedcommand" || arg === "-enc");
+    const encodedShellText = /\$'[^']*(?:\\x[0-9a-f]{2}|\\[0-7]{3}|\\u[0-9a-f]{4})/i.test(stage.text);
+    const pipedIntoShell = (stage.operatorAfter === "|" || stage.operatorAfter === "|&")
+      && (SHELL_INTERPRETERS.has(nextName) || nextName === "eval");
+
+    let message: string | undefined;
+    if (name === "eval") message = "eval executes dynamically constructed shell text";
+    else if (commandFlag >= 0) message = `${name} executes an inline shell command string`;
+    else if (evalFlags && argv.slice(1).some((arg) => evalFlags.has(arg))) message = `${name} evaluates inline program text`;
+    else if (encodedPowerShell) message = `${name} executes an encoded command`;
+    else if (dynamicCommand) message = "command name is constructed dynamically";
+    else if (encodedShellText) message = "command contains encoded shell text";
+    else if (pipedIntoShell) {
+      message = isEncodedDecoder(argv)
+        ? "command decodes data directly into a shell interpreter"
+        : "command pipes generated text directly into a shell interpreter";
+    }
+    if (message) {
+      addFinding(findings, { code: "suspicious-execution", severity: "review", message, stage: stage.index });
+    }
+
+    if (depth < 2) {
+      const nestedCommands = stage.substitutions.map((item) => item.text);
+      if (commandFlag >= 0 && argv[commandFlag + 1]) nestedCommands.push(argv[commandFlag + 1]!);
+      for (const nestedCommand of nestedCommands) {
+        for (const finding of inspectSuspiciousExecution(analyzeBashCommand(nestedCommand), depth + 1)) {
+          addFinding(findings, { ...finding, stage: stage.index, message: `nested command: ${finding.message}` });
+        }
+      }
+    }
+  }
+  return findings;
+}
+
 function safeGitInspection(argv: string[]): boolean {
   const subcommand = argv[1];
   const args = argv.slice(2);
@@ -717,19 +794,6 @@ function isNarrowRead(stage: BashStage): boolean {
   return true;
 }
 
-function isNarrowBalancedMutation(stage: BashStage): boolean {
-  const name = commandName(stage.argv[0]);
-  const args = stage.argv.slice(1);
-  if (stage.substitutions.length > 0 || stage.redirections.length > 0) return false;
-  if (name === "mkdir") return args.length > 0 && args.every((arg) => arg === "-p" || (!arg.startsWith("-") && !/[*?\[]/.test(arg)));
-  if (name === "touch") return args.length > 0 && args.every((arg) => !arg.startsWith("-") && !/[*?\[]/.test(arg));
-  if (name === "rm" || name === "unlink") {
-    const operands = args.filter((arg) => !arg.startsWith("-"));
-    return operands.length === 1 && args.every((arg) => !arg.startsWith("-") || arg === "-f" || arg === "--force") && !/[*?\[]/.test(operands[0]!);
-  }
-  return false;
-}
-
 /** Analyze a bash tool call and return a deterministic profile decision. */
 export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPolicyResult {
   const profile = options.profile ?? "balanced";
@@ -744,14 +808,25 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
     return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
   }
 
+  for (const finding of inspectSuspiciousExecution(analysis)) addFinding(findings, finding);
+  if (profile === "balanced") {
+    if (findings.length) return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+    return {
+      profile,
+      decision: "allow",
+      reason: "complete project-local command passed deterministic hard rules",
+      findings: [],
+      analysis,
+    };
+  }
+
   const hasComplexShell = analysis.stages.length !== 1 || analysis.substitutions.length > 0 || analysis.operators.some((item) => item.operator === "&");
   if (hasComplexShell) addFinding(findings, { code: "shell-complexity", severity: "review", message: "compound commands, substitutions, and background execution require review" });
   if (analysis.mutationIntent.possible) addFinding(findings, { code: "mutation", severity: "review", message: "command can mutate project state" });
 
   const allNarrowReads = !hasComplexShell && analysis.stages.length === 1 && analysis.stages.every(isNarrowRead);
-  const balancedMutation = !hasComplexShell && analysis.stages.length === 1 && analysis.stages.every(isNarrowBalancedMutation);
-  if (allNarrowReads || (profile === "balanced" && balancedMutation)) {
-    return { profile, decision: "allow", reason: allNarrowReads ? "narrow project-local inspection" : "narrow project-local mutation", findings: [], analysis };
+  if (allNarrowReads) {
+    return { profile, decision: "allow", reason: "narrow project-local inspection", findings: [], analysis };
   }
 
   if (!findings.length) addFinding(findings, { code: "unrecognized-command", severity: "review", message: "command is not a rigorously narrow built-in policy case" });
@@ -828,16 +903,26 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
     addFinding(findings, { code: "unrecognized-command", severity: "review", message: "ask profile requires review for every command" });
     return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
   }
+  for (const finding of inspectSuspiciousExecution(analysis)) addFinding(findings, finding);
+  if (profile === "balanced") {
+    if (findings.length) return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+    return {
+      profile,
+      decision: "allow",
+      reason: "complete project-local process passed deterministic hard rules",
+      findings: [],
+      analysis,
+    };
+  }
   if (analysis.mutationIntent.possible) {
     addFinding(findings, { code: "mutation", severity: "review", message: "command can mutate project state" });
   }
   const narrowRead = isNarrowRead(stage);
-  const narrowMutation = profile === "balanced" && isNarrowBalancedMutation(stage);
-  if (narrowRead || narrowMutation) {
+  if (narrowRead) {
     return {
       profile,
       decision: "allow",
-      reason: narrowRead ? "narrow project-local inspection" : "narrow project-local mutation",
+      reason: "narrow project-local inspection",
       findings: [],
       analysis,
     };

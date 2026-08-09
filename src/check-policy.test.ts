@@ -130,7 +130,7 @@ describe("deterministic hard blocks", () => {
 
     expect(read.decision).toBe("allow");
     expect(read.findings).toEqual([]);
-    expect(redirection.decision).toBe("ask");
+    expect(redirection.decision).toBe("allow");
     expect(redirection.findings.map((finding) => finding.code)).not.toContain("outside-project");
 
     const blocked = [
@@ -263,7 +263,7 @@ describe("deterministic hard blocks", () => {
     }
 
     expect(analyzeCheckPolicy({ command: "rm -f build.txt", cwd }).decision).toBe("allow");
-    expect(analyzeCheckPolicy({ command: "rm -rf build", cwd }).decision).toBe("ask");
+    expect(analyzeCheckPolicy({ command: "rm -rf build", cwd }).decision).toBe("allow");
   });
 
   test("blocks Windows drive and UNC project-root deletion variants", () => {
@@ -294,8 +294,8 @@ describe("deterministic hard blocks", () => {
   test("fails closed without misreading an unquoted backslash path as the Windows root", () => {
     const cwd = "C:\\work\\repo";
     const malformed = analyzeCheckPolicy({ command: "rm -rf C:\\work\\repo", cwd });
-    expect(malformed.decision).toBe("ask");
-    expect(malformed.findings.map((item) => item.code)).toContain("mutation");
+    expect(malformed.decision).toBe("allow");
+    expect(malformed.findings).toEqual([]);
     expect(malformed.findings.map((item) => item.code)).not.toContain("broad-deletion");
 
     const split = analyzeCheckPolicy({ command: "rm -rf C:\\work space\\repo", cwd: "C:\\work space\\repo" });
@@ -385,26 +385,43 @@ describe("structured executable proposals", () => {
     const cwd = temporaryProject();
     expect(analyzeExecutablePolicy({ executable: "node", args: ["-e", "process.exit()"], cwd, projectCwd: cwd }).decision).toBe("ask");
     expect(analyzeExecutablePolicy({ executable: "python", args: ["-c", "print('x')"], cwd, projectCwd: cwd }).decision).toBe("ask");
+    expect(analyzeExecutablePolicy({ executable: "powershell", args: ["-EncodedCommand", "ZQBjAGgAbwA="], cwd, projectCwd: cwd }).decision).toBe("ask");
+  });
+
+  test("balanced allows ordinary direct project-local processes", () => {
+    const cwd = temporaryProject();
+    expect(analyzeExecutablePolicy({ executable: "bun", args: ["test"], cwd, projectCwd: cwd }).decision).toBe("allow");
+    expect(analyzeExecutablePolicy({ executable: "cp", args: ["src/index.ts", "src/copy.ts"], cwd, projectCwd: cwd }).decision).toBe("allow");
   });
 });
 
 describe("profile decisions", () => {
-  test("allows only exact narrow inspection forms", () => {
+  test("balanced allows complete ordinary project-local commands", () => {
     const cwd = temporaryProject();
-    const allowed = ["pwd", "git status --short", "git diff --check", "rg TODO src", "cat src/index.ts"];
+    const allowed = [
+      "pwd",
+      "git status --short",
+      "git config --get user.email",
+      "rg TODO src",
+      "cat src/index.ts",
+      "unknown-tool src",
+      "bun test",
+      "cp src/index.ts build/index.ts",
+      "git status && git diff",
+      "printf x | wc -c",
+      "echo $(git status)",
+      "git status &",
+    ];
 
     for (const command of allowed) expect(analyzeCheckPolicy({ command, cwd }).decision).toBe("allow");
-    expect(analyzeCheckPolicy({ command: "git config --get user.email", cwd }).decision).toBe("ask");
-    expect(analyzeCheckPolicy({ command: "unknown-tool src", cwd }).decision).toBe("ask");
-    expect(analyzeCheckPolicy({ command: "bun test", cwd }).decision).toBe("ask");
   });
 
-  test("balanced allows only narrow project-local mutations", () => {
+  test("balanced allows ordinary project-local mutations", () => {
     const cwd = temporaryProject();
 
     expect(analyzeCheckPolicy({ command: "mkdir -p build", cwd, profile: "balanced" }).decision).toBe("allow");
     expect(analyzeCheckPolicy({ command: "touch build/result.txt", cwd, profile: "balanced" }).decision).toBe("allow");
-    expect(analyzeCheckPolicy({ command: "cp src/index.ts build/index.ts", cwd, profile: "balanced" }).decision).toBe("ask");
+    expect(analyzeCheckPolicy({ command: "cp src/index.ts build/index.ts", cwd, profile: "balanced" }).decision).toBe("allow");
   });
 
   test("strict asks for mutations and ask asks for every non-blocked command", () => {
@@ -412,18 +429,41 @@ describe("profile decisions", () => {
 
     expect(analyzeCheckPolicy({ command: "mkdir build", cwd, profile: "strict" }).decision).toBe("ask");
     expect(analyzeCheckPolicy({ command: "git status", cwd, profile: "strict" }).decision).toBe("allow");
+    expect(analyzeCheckPolicy({ command: "git status && git diff", cwd, profile: "strict" }).decision).toBe("ask");
     expect(analyzeCheckPolicy({ command: "git status", cwd, profile: "ask" }).decision).toBe("ask");
+    expect(analyzeCheckPolicy({ command: "bun test", cwd, profile: "ask" }).decision).toBe("ask");
     expect(analyzeCheckPolicy({ command: "cat ../secret", cwd, profile: "ask" }).decision).toBe("block");
   });
 
-  test("requires review for compounds, pipelines, substitutions, and background jobs", () => {
+  test("requires review for explicit suspicious or obfuscated execution", () => {
     const cwd = temporaryProject();
-    const commands = ["git status && git diff", "printf x | wc -c", "echo $(git status)", "git status &"];
+    const commands = [
+      "eval '$RUNNER src/index.ts'",
+      "bash -c 'bun test'",
+      "node -e 'process.exit()'",
+      "python -c 'print(1)'",
+      "printf 'echo ok' | sh",
+      "printf '%s' ZWNobyBvaw== | base64 -d | bash",
+      "powershell -EncodedCommand ZQBjAGgAbwAgAG8AawA=",
+      "$RUNNER src/index.ts",
+      "printf %s $'\\x65\\x76\\x61\\x6c'",
+    ];
 
     for (const command of commands) {
       const result = analyzeCheckPolicy({ command, cwd });
       expect(result.decision).toBe("ask");
-      expect(result.findings.map((item) => item.code)).toContain("shell-complexity");
+      expect(result.findings.map((item) => item.code)).toContain("suspicious-execution");
     }
+  });
+
+  test("inspects dangerous and suspicious late segments", () => {
+    const cwd = temporaryProject();
+    const hardBlocked = analyzeCheckPolicy({ command: "bun test && printf done && cat ../secret.txt", cwd });
+    const suspicious = analyzeCheckPolicy({ command: "bun test && printf done && eval '$RUNNER src/index.ts'", cwd });
+
+    expect(hardBlocked.decision).toBe("block");
+    expect(hardBlocked.findings).toContainEqual(expect.objectContaining({ code: "outside-project", stage: 2 }));
+    expect(suspicious.decision).toBe("ask");
+    expect(suspicious.findings).toContainEqual(expect.objectContaining({ code: "suspicious-execution", stage: 2 }));
   });
 });
