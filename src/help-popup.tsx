@@ -132,9 +132,10 @@ export function HelpPopup({
   const twoColumns = terminalWidth >= 82;
   const margin = terminalWidth < 64 ? 1 : Math.max(2, Math.floor(terminalWidth * 0.08));
   const popupWidth = Math.max(24, terminalWidth - margin * 2);
-  // Add border, padding, and footer rows to the tallest content column.
-  const desiredHeight = twoColumns ? 23 : 35;
+  // Add border, padding, and a fixed footer row to the tallest content column.
+  const desiredHeight = twoColumns ? 24 : 35;
   const popupHeight = Math.max(8, Math.min(terminalHeight - 2, desiredHeight));
+  const contentHeight = Math.max(1, popupHeight - 5);
   const split = 3;
 
   return (
@@ -154,7 +155,14 @@ export function HelpPopup({
         padding: 1,
       }}
     >
-      <box style={{ flexDirection: "row", flexGrow: 1, minHeight: 0 }}>
+      <box
+        style={{
+          flexDirection: "row",
+          height: contentHeight,
+          flexShrink: 0,
+          overflow: "hidden",
+        }}
+      >
         {twoColumns ? (
           <>
             <HelpColumn groups={HELP_GROUPS.slice(0, split)} theme={theme} />
@@ -169,12 +177,14 @@ export function HelpPopup({
           </box>
         )}
       </box>
-      <text
-        content={twoColumns ? "esc or ? close" : "↑↓ scroll   esc or ? close"}
-        fg={theme.dim}
-        bg={theme.popupBg}
-        style={{ flexShrink: 0 }}
-      />
+      <box style={{ height: 1, flexShrink: 0 }}>
+        <text
+          content={twoColumns ? "esc or ? close" : "↑↓ scroll   esc or ? close"}
+          fg={theme.dim}
+          bg={theme.popupBg}
+          wrapMode="none"
+        />
+      </box>
     </box>
   );
 }

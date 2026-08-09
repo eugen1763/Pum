@@ -36,6 +36,8 @@ describe("Help popup layout", () => {
     expect(frame).toContain("Commands");
     expect(frame).toContain("/ in Settings");
     expect(frame).toContain("esc or ? close");
+    const footer = frame.split("\n").find((line) => line.includes("esc or ? close"));
+    expect(footer).not.toContain("Send, or steer while working");
   });
 
   test("supports scrolling to application controls in a short narrow terminal", async () => {
@@ -43,5 +45,17 @@ describe("Help popup layout", () => {
     expect(frame).toContain("Application");
     expect(frame).toContain("Ctrl+P");
     expect(frame).toContain("↑↓ scroll");
+    const footer = frame.split("\n").find((line) => line.includes("esc or ? close"));
+    expect(footer).not.toContain("Ctrl+P");
+  });
+
+  test("keeps the footer on a fixed row in a short wide terminal", async () => {
+    const frame = await renderHelp(100, 10, 0);
+    const lines = frame.split("\n");
+    const footerIndex = lines.findIndex((line) => line.includes("esc or ? close"));
+
+    expect(footerIndex).toBeGreaterThan(0);
+    expect(lines[footerIndex]).not.toContain("Send, or steer while working");
+    expect(lines[footerIndex - 1]).not.toContain("esc or ? close");
   });
 });
