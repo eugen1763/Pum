@@ -115,6 +115,24 @@ describe("login popup", () => {
     expect(frame).not.toContain("secret-value");
   });
 
+  test("keeps an auth URL visible on the immediate manual-code prompt", async () => {
+    const frame = await frameFor({
+      kind: "prompt",
+      providerName: "OpenAI Codex",
+      prompt: { type: "manual_code", message: "Paste the authorization code" },
+      event: {
+        type: "auth_url",
+        url: "https://login.example.test/oauth?state=abc",
+        instructions: "Open this URL in a browser:",
+      },
+      cursor: 0,
+      value: "",
+      secretLength: 0,
+    }, 72);
+    expect(frame).toContain("https://login.example.test/oauth?state=abc");
+    expect(frame).toContain("Paste the authorization code");
+  });
+
   test("scrolls downward to keep a later provider selected and visible", async () => {
     const harness = await providerHarness();
     await harness.render(harness.providerPage(0));

@@ -97,6 +97,11 @@ These were chosen deliberately. Change them only on purpose.
 - **Login runs inside PUM.** Startup without an available provider opens the
   login popup. `/login` opens the same popup. The provider list comes from
   `ModelRuntime.getProviders()` and must not be replaced with a local allowlist.
+- **Browser login uses safe direct process arguments.** PUM opens credential-free
+  HTTP(S) auth and device-code URLs once per login attempt. Windows uses
+  `rundll32.exe`, macOS uses `open`, and Linux uses `xdg-open`. PUM never uses a
+  shell, logs an OAuth URL, persists an OAuth URL, or fails login when launch is
+  unavailable. The popup keeps the URL selectable as the fallback.
 - **Submitted keys never enter React labels or session data.** The login
   controller keeps secrets outside React state. The popup renders only a length
   mask. Custom keys go to PUM's `auth.json`, while `models.json` contains only

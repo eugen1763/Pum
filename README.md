@@ -74,7 +74,7 @@ bun run login
 bun run start
 ```
 
-PUM opens the login panel automatically when no provider is available. Use `/login` later to add or update a provider.
+PUM opens the login panel automatically when no provider is available. Use `/login` later to add or update a provider. During browser-based login, PUM opens credential-free HTTP(S) authentication URLs with the platform browser. The URL remains selectable when automatic launch is unavailable.
 
 Resume the latest session for the current directory:
 

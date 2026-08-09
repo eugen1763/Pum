@@ -161,4 +161,77 @@ describe("login controller", () => {
     await settle();
     expect(pages.at(-1)).toMatchObject({ kind: "providers", cursor: providers.length - 1 });
   });
+
+  test("launches an auth URL once and retains it on an immediate manual-code prompt", async () => {
+    const pages: LoginPage[] = [];
+    const launched: string[] = [];
+    const authEvent = {
+      type: "auth_url",
+      url: "https://login.example.test/oauth?state=abc",
+      instructions: "Open the account login page.",
+    } as const;
+    const runtime = {
+      getProviders: () => [{ id: "oauth", name: "OAuth", auth: { oauth: {
+        name: "Account", login() {}, refresh() {}, toAuth() {},
+      } } }],
+      login: async (_id: string, _type: string, interaction: any) => {
+        interaction.notify(authEvent);
+        interaction.notify(authEvent);
+        await interaction.prompt({ type: "manual_code", message: "Paste the authorization code" });
+      },
+    } as any;
+    const controller = new LoginController(
+      runtime,
+      () => ({}) as any,
+      (page) => pages.push(page),
+      () => {},
+      () => {},
+      async (url) => { launched.push(url); return false; },
+    );
+
+    controller.open();
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    await settle();
+
+    expect(launched).toEqual([authEvent.url]);
+    expect(pages.at(-1)).toMatchObject({
+      kind: "prompt",
+      prompt: { type: "manual_code" },
+      event: authEvent,
+    });
+    controller.handleKey({ name: "escape" });
+  });
+
+  test("launches a safe device-code verification URL", async () => {
+    const launched: string[] = [];
+    const runtime = {
+      getProviders: () => [{ id: "oauth", name: "OAuth", auth: { oauth: {
+        name: "Account", login() {}, refresh() {}, toAuth() {},
+      } } }],
+      login: async (_id: string, _type: string, interaction: any) => {
+        interaction.notify({
+          type: "device_code",
+          userCode: "ABCD",
+          verificationUri: "https://device.example.test/activate",
+        });
+        await new Promise((_resolve, reject) => interaction.signal.addEventListener("abort", () => reject(new Error("cancelled"))));
+      },
+    } as any;
+    const controller = new LoginController(
+      runtime,
+      () => ({}) as any,
+      () => {},
+      () => {},
+      () => {},
+      async (url) => { launched.push(url); return true; },
+    );
+
+    controller.open();
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    await settle();
+    expect(launched).toEqual(["https://device.example.test/activate"]);
+    controller.handleKey({ name: "escape" });
+  });
 });
