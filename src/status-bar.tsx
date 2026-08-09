@@ -21,6 +21,7 @@ export type StatusProps = {
   elapsedSec: number;
   agentCount: number;
   runningAgentCount: number;
+  maxActiveAgentCount: number;
   activeAgentName?: string;
 };
 
@@ -66,6 +67,7 @@ export function StatusBar(props: StatusProps) {
     busy,
     agentCount,
     runningAgentCount,
+    maxActiveAgentCount,
     activeAgentName,
   } = props;
   const { width } = useTerminalDimensions();
@@ -80,7 +82,7 @@ export function StatusBar(props: StatusProps) {
   const idleAgentCount = Math.max(0, agentCount - runningAgentCount);
   const agentPrefix = agentCount > 0 ? " · " : "";
   const idleAgentText = idleAgentCount > 0 ? `◇ ${idleAgentCount}` : "";
-  const workingAgentText = runningAgentCount > 0 ? `${idleAgentCount > 0 ? " " : ""}• ${runningAgentCount}` : "";
+  const workingAgentText = runningAgentCount > 0 ? `${idleAgentCount > 0 ? " " : ""}• ${runningAgentCount}/${maxActiveAgentCount}` : "";
   const activeAgentText = activeAgentName ? ` · ${activeAgentName}` : "";
 
   const right: TextChunk[] = statusMetadataChunks(statusMetadataItems({
@@ -107,7 +109,7 @@ export function StatusBar(props: StatusProps) {
         <box style={{ flexDirection: "row" }}>
           {idleAgentCount > 0 ? <text content=" " /> : null}
           <WorkingPulse theme={theme} />
-          <text content={` ${runningAgentCount}`} fg={theme.accent} />
+          <text content={` ${runningAgentCount}/${maxActiveAgentCount}`} fg={theme.accent} />
         </box>
       ) : null}
       {activeAgentName ? <text content={activeAgentText} fg={theme.dim} /> : null}

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  MAX_ACTIVE_SUBAGENTS,
   SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
   SUBAGENT_COORDINATION_SYSTEM_PROMPT,
   SubagentManager,
@@ -77,13 +76,13 @@ describe("SubagentManager extension", () => {
     const result = beforeStart?.({ systemPrompt: "base prompt" });
     expect(result.systemPrompt).toContain(SUBAGENT_COORDINATION_SYSTEM_PROMPT);
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
-    expect(result.systemPrompt).toContain("0/5 active; 5 slots available");
+    expect(result.systemPrompt).toContain("0/10 active; 10 slots available");
     expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
     expect(definitions.get("spawn_subagent").promptGuidelines).toContain(
-      "For follow-up implementation work, prefer spawn_subagent while fewer than five subagents are starting or running.",
+      "For follow-up implementation work, prefer spawn_subagent while configured capacity is available.",
     );
     expect(definitions.get("spawn_subagent").promptGuidelines).toContain(
-      "At five active subagents, queue related follow-up work through message_agent instead of spawning a sixth.",
+      "At configured capacity, queue related follow-up work through message_agent instead of spawning another agent.",
     );
     expect(definitions.get("message_agent").description).toContain("durable queued message");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Use finish_subagent as the only final completion report");
@@ -225,33 +224,147 @@ describe("SubagentManager extension", () => {
     expect(countActiveSubagents(statuses.map((status) => ({ status })))).toBe(2);
   });
 
-  test("changes follow-up guidance when all five active slots are used", () => {
-    expect(buildSubagentCapacityPrompt(4)).toContain("4/5 active; 1 slot available");
-    expect(buildSubagentCapacityPrompt(4)).toContain("Prefer spawn_subagent");
-    expect(buildSubagentCapacityPrompt(5)).toContain("no slots available");
-    expect(buildSubagentCapacityPrompt(5)).toContain("appropriate related running subagent");
-    expect(buildSubagentCapacityPrompt(5)).toContain("keep the work pending");
+  test("uses default, lower, higher, and validated active limits", () => {
+    const defaultManager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    const lowerManager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 2 });
+    const higherManager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 20 });
+    const invalidManager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 0 });
+
+    expect(defaultManager.getMaxActiveSubagents()).toBe(10);
+    expect(lowerManager.getMaxActiveSubagents()).toBe(2);
+    expect(higherManager.getMaxActiveSubagents()).toBe(20);
+    expect(invalidManager.getMaxActiveSubagents()).toBe(10);
+    higherManager.setMaxActiveSubagents(25);
+    expect(higherManager.getMaxActiveSubagents()).toBe(25);
+    higherManager.setMaxActiveSubagents(26);
+    expect(higherManager.getMaxActiveSubagents()).toBe(10);
   });
 
-  test("rejects a sixth active subagent with durable queue guidance", async () => {
+  test("blocks managed parent merge for a direct running child", async () => {
     const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
-    for (let index = 0; index < MAX_ACTIVE_SUBAGENTS; index += 1) {
+    addTestAgent(manager, "parent", "idle");
+    addTestAgent(manager, "child", "running", "parent");
+
+    await expect((manager as any).worktreeAction("/tmp", "merge", "parent"))
+      .rejects.toThrow("Cannot merge parent while retained descendants remain:\n- child (running)");
+  });
+
+  test("blocks managed parent closure for completed and recursive descendants", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "idle");
+    addTestAgent(manager, "child", "completed", "parent");
+    addTestAgent(manager, "grandchild", "interrupted", "child");
+    addTestAgent(manager, "unrelated", "failed");
+
+    await expect((manager as any).worktreeAction("/tmp", "merge", "parent")).rejects.toThrow(
+      "Cannot merge parent while retained descendants remain:\n- grandchild (interrupted)\n- child (completed)",
+    );
+    expect(() => (manager as any).assertNoRetainedDescendants(
+      (manager as any).records.get("unrelated"),
+      "merge",
+    )).not.toThrow();
+  });
+
+  test("blocks finish_subagent until every descendant closes", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "idle");
+    addTestAgent(manager, "child", "failed", "parent");
+    const tools = new Map<string, any>();
+    (manager as any).childExtension("parent").factory({
+      on() {},
+      registerTool(tool: any) { tools.set(tool.name, tool); },
+    });
+
+    await expect(tools.get("finish_subagent").execute("finish-parent", { summary: "Done." }))
+      .rejects.toThrow("Cannot finish parent while retained descendants remain:\n- child (failed)");
+    expect((manager as any).records.get("parent").finishRequested).toBeUndefined();
+  });
+
+  test("rejects a child spawn after its parent requests finish", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "running");
+    const tools = new Map<string, any>();
+    (manager as any).childExtension("parent").factory({
+      on() {},
+      registerTool(tool: any) { tools.set(tool.name, tool); },
+    });
+    await tools.get("finish_subagent").execute("finish-parent", { summary: "Done." });
+
+    await expect(manager.spawn({
+      task: "Late child.",
+      name: "late-child",
+      modelId: "mock/model",
+      thinkingLevel: "off",
+      parentAgentId: "parent",
+    })).rejects.toThrow("Spawner subagent is finishing");
+  });
+
+  test("nested parent worktree tool uses the authoritative recursive guard", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "completed");
+    addTestAgent(manager, "child", "completed", "parent");
+    addTestAgent(manager, "grandchild", "failed", "child");
+    const tools = new Map<string, any>();
+    (manager as any).childExtension("parent").factory({
+      on() {},
+      registerTool(tool: any) { tools.set(tool.name, tool); },
+    });
+
+    expect(tools.has("worktree")).toBe(true);
+    await expect(tools.get("worktree").execute("merge-parent", { action: "merge", target: "parent" }))
+      .rejects.toThrow("- grandchild (failed)\n- child (completed)");
+  });
+
+  test("nested agents receive the configured capacity and recursive closure guidance", () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 14 });
+    addTestAgent(manager, "parent", "idle");
+    const handlers = new Map<string, Function>();
+    (manager as any).childExtension("parent").factory({
+      on(name: string, handler: Function) { handlers.set(name, handler); },
+      registerTool() {},
+    });
+
+    const result = handlers.get("before_agent_start")?.({ systemPrompt: "base" });
+    expect(result.systemPrompt).toContain("0/14 active; 14 slots available");
+    expect(result.systemPrompt).toContain("recursively merge or resolve every retained descendant");
+    expect(result.systemPrompt).toContain("Before finish_subagent");
+  });
+
+  test("managed force removal cannot discard failed or unmerged work", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "failed-child", "failed");
+    await expect((manager as any).worktreeAction("/tmp", "remove", "failed-child", undefined, true))
+      .rejects.toThrow("Cannot force-remove managed subagent failed-child");
+    expect(manager.getAgent("failed-child")).toBeDefined();
+  });
+
+  test("changes follow-up guidance at the configured capacity", () => {
+    expect(buildSubagentCapacityPrompt(3, 4)).toContain("3/4 active; 1 slot available");
+    expect(buildSubagentCapacityPrompt(3, 4)).toContain("Prefer spawn_subagent");
+    expect(buildSubagentCapacityPrompt(4, 4)).toContain("no slots available");
+    expect(buildSubagentCapacityPrompt(4, 4)).toContain("appropriate related running subagent");
+    expect(buildSubagentCapacityPrompt(4, 4)).toContain("keep the work pending");
+  });
+
+  test("rejects another active subagent at a custom lower limit", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 3 });
+    for (let index = 0; index < 3; index += 1) {
       addTestAgent(manager, `active-${index}`, index === 0 ? "starting" : "running");
     }
     addTestAgent(manager, "idle-retained", "idle");
     addTestAgent(manager, "completed-retained", "completed");
 
-    expect(manager.activeCount()).toBe(5);
+    expect(manager.activeCount()).toBe(3);
     await expect(manager.spawn({
       task: "Follow-up implementation",
       modelId: "mock/model",
       thinkingLevel: "off",
     })).rejects.toThrow(
-      "All 5 subagent slots are active (starting or running). Queue follow-up work to an appropriate related running subagent with message_agent.",
+      "All 3 subagent slots are active (starting or running). Queue follow-up work to an appropriate related running subagent with message_agent.",
     );
   });
 
-  test("injects at-capacity guidance into the main system prompt", () => {
+  test("injects custom at-capacity guidance into the main system prompt", () => {
     const handlers = new Map<string, Function[]>();
     const pi = {
       on(name: string, handler: Function) {
@@ -259,14 +372,14 @@ describe("SubagentManager extension", () => {
       },
       registerTool() {},
     };
-    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
-    for (let index = 0; index < MAX_ACTIVE_SUBAGENTS; index += 1) {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 12 });
+    for (let index = 0; index < 12; index += 1) {
       addTestAgent(manager, `active-${index}`, "running");
     }
     (manager.mainExtension() as { factory: (api: any) => void }).factory(pi);
 
     const result = handlers.get("before_agent_start")?.[0]?.({ systemPrompt: "base prompt" });
-    expect(result.systemPrompt).toContain("5/5 active; no slots available");
+    expect(result.systemPrompt).toContain("12/12 active; no slots available");
     expect(result.systemPrompt).toContain("Queue follow-up work with message_agent");
     expect(result.systemPrompt).toContain("keep the work pending for deliberate routing");
   });
@@ -458,13 +571,15 @@ describe("SubagentManager extension", () => {
         },
       },
     ];
-    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 1 });
     await manager.attachMain({ appendEntry() {} } as any, {
       getSessionId: () => "main-session",
       getEntries: () => entries,
     } as any, "/repo");
 
     expect(manager.getAgent("child")?.parentAgentId).toBe("parent");
+    expect(manager.activeCount()).toBe(0);
+    expect(manager.getMaxActiveSubagents()).toBe(1);
     expect(manager.getAgent("child")?.usage).toEqual({
       outgoing: 700,
       incoming: 0,
@@ -480,6 +595,8 @@ describe("SubagentManager extension", () => {
       cost: 0,
       contextPct: null,
     });
+    await expect((manager as any).worktreeAction("/repo", "merge", "parent"))
+      .rejects.toThrow("Cannot merge worker while retained descendants remain:\n- worker (idle)");
   });
 
   test("binds the main session even when session_start was missed", async () => {

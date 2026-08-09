@@ -27,6 +27,7 @@ describe("settings search and navigation", () => {
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual(["checkMode", "checkModel", "clearCheckApprovals"]);
     expect(filterSettingsRows("reasoning visible").map((row) => row.id)).toEqual(["showThinking"]);
     expect(filterSettingsRows("progress detailed").map((row) => row.id)).toEqual(["explanationStrength"]);
+    expect(filterSettingsRows("parallel capacity").map((row) => row.id)).toEqual(["maxActiveSubagents"]);
     expect(filterSettingsRows("strict balanced ask").map((row) => row.id)).toEqual(["checkMode"]);
     expect(filterSettingsRows("exact project approvals").map((row) => row.id)).toEqual(["clearCheckApprovals"]);
     expect(SETTINGS_ROWS.every((row) => row.description.length > 20)).toBe(true);

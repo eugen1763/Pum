@@ -60,6 +60,7 @@ async function renderApp(width: number, height: number) {
         explanationStrength: "simple",
         checkMode: "off",
         checkModel: "mock/check",
+        maxActiveSubagents: 10,
       }}
       searchProviders={[]}
       subagentManager={manager}

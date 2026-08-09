@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { CHECK_MODE_PROFILES, normalizeSettings, WORKING_RULE_ANIMATION_MODES } from "./settings";
+import {
+  CHECK_MODE_PROFILES,
+  DEFAULT_MAX_ACTIVE_SUBAGENTS,
+  MAX_ACTIVE_SUBAGENTS,
+  MIN_ACTIVE_SUBAGENTS,
+  normalizeSettings,
+  WORKING_RULE_ANIMATION_MODES,
+} from "./settings";
 
 describe("PUM settings migration", () => {
   test("preserves migration defaults for old files", () => {
@@ -7,6 +14,7 @@ describe("PUM settings migration", () => {
     expect(settings.workingRuleAnimation).toBe("input-only");
     expect(settings.explanationStrength).toBe("simple");
     expect(settings.animations).toBe(true);
+    expect(settings.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
   });
 
   test("accepts every working-rule mode including explicit off", () => {
@@ -28,6 +36,18 @@ describe("PUM settings migration", () => {
   test("accepts every explanation strength", () => {
     for (const explanationStrength of ["none", "simple", "detailed"] as const) {
       expect(normalizeSettings({ explanationStrength }).explanationStrength).toBe(explanationStrength);
+    }
+  });
+
+  test("validates the configurable active subagent limit", () => {
+    expect(MIN_ACTIVE_SUBAGENTS).toBe(1);
+    expect(MAX_ACTIVE_SUBAGENTS).toBe(25);
+    expect(normalizeSettings({ maxActiveSubagents: 1 }).maxActiveSubagents).toBe(1);
+    expect(normalizeSettings({ maxActiveSubagents: 20 }).maxActiveSubagents).toBe(20);
+    expect(normalizeSettings({ maxActiveSubagents: 25 }).maxActiveSubagents).toBe(25);
+    for (const invalid of [0, 26, 4.5, "12", null]) {
+      expect(normalizeSettings({ maxActiveSubagents: invalid } as any).maxActiveSubagents)
+        .toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
     }
   });
 

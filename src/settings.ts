@@ -12,6 +12,18 @@ export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"]
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
 export const CHECK_MODE_PROFILES = ["off", "strict", "balanced", "ask"] as const;
 export type CheckModeProfile = (typeof CHECK_MODE_PROFILES)[number];
+export const MIN_ACTIVE_SUBAGENTS = 1;
+export const MAX_ACTIVE_SUBAGENTS = 25;
+export const DEFAULT_MAX_ACTIVE_SUBAGENTS = 10;
+
+export function normalizeMaxActiveSubagents(value: unknown): number {
+  return typeof value === "number"
+    && Number.isInteger(value)
+    && value >= MIN_ACTIVE_SUBAGENTS
+    && value <= MAX_ACTIVE_SUBAGENTS
+    ? value
+    : DEFAULT_MAX_ACTIVE_SUBAGENTS;
+}
 
 export function isCheckModeProfile(value: unknown): value is CheckModeProfile {
   return CHECK_MODE_PROFILES.includes(value as CheckModeProfile);
@@ -37,6 +49,7 @@ export type PumSettings = {
   explanationStrength: ExplanationStrength;
   checkMode: CheckModeProfile;
   checkModel: string;
+  maxActiveSubagents: number;
 };
 
 const SETTINGS_PATH = join(AGENT_DIR, "pum.json");
@@ -51,6 +64,7 @@ const DEFAULTS: PumSettings = {
   explanationStrength: "simple",
   checkMode: "off",
   checkModel: DEFAULT_CHECK_MODEL,
+  maxActiveSubagents: DEFAULT_MAX_ACTIVE_SUBAGENTS,
 };
 
 export function normalizeSettings(parsed: unknown): PumSettings {
@@ -77,6 +91,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
       typeof merged.checkModel === "string" && merged.checkModel.includes("/")
         ? merged.checkModel
         : DEFAULTS.checkModel,
+    maxActiveSubagents: normalizeMaxActiveSubagents(merged.maxActiveSubagents),
   };
 }
 

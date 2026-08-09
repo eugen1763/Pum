@@ -67,6 +67,7 @@ describe("Settings keyboard flow", () => {
           explanationStrength: "simple",
           checkMode: "off",
           checkModel: "mock/check",
+          maxActiveSubagents: 10,
         }}
         searchProviders={[]}
         subagentManager={manager}

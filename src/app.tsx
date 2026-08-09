@@ -19,6 +19,8 @@ import {
 } from "./settings-popup";
 import {
   CHECK_MODE_PROFILES,
+  MAX_ACTIVE_SUBAGENTS,
+  MIN_ACTIVE_SUBAGENTS,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
   type PumSettings,
@@ -918,6 +920,9 @@ export function App({
       setCheckModeConfig({ profile: next.checkMode, model: next.checkModel });
     }
     if (patch.showThinking !== undefined) showThinkingRef.current = patch.showThinking;
+    if (patch.maxActiveSubagents !== undefined) {
+      subagentManager.setMaxActiveSubagents(patch.maxActiveSubagents);
+    }
     saveSettings(next);
   };
 
@@ -1308,6 +1313,12 @@ export function App({
     } },
     thinkingLevel: { step: stepThinking },
     showThinking: { step: () => update({ showThinking: !settings.showThinking }) },
+    maxActiveSubagents: { step: (step) => update({
+      maxActiveSubagents: Math.max(
+        MIN_ACTIVE_SUBAGENTS,
+        Math.min(MAX_ACTIVE_SUBAGENTS, settings.maxActiveSubagents + step),
+      ),
+    }) },
     model: { enter: () => { setModelQuery(""); setModelSearchFocused(false); setPage("models"); } },
   };
 
@@ -1329,6 +1340,7 @@ export function App({
     clearCheckApprovals: "clear ›",
     thinkingLevel: `‹ ${thinkingLevel} ›`,
     showThinking: `‹ ${settings.showThinking ? "on" : "off"} ›`,
+    maxActiveSubagents: `‹ ${settings.maxActiveSubagents} ›`,
     model: `${modelId} ›`,
   };
 
@@ -1878,6 +1890,7 @@ export function App({
           elapsedSec={visibleElapsedSec}
           agentCount={agents.length}
           runningAgentCount={agents.filter((agent) => agent.status === "running" || agent.status === "starting").length}
+          maxActiveAgentCount={settings.maxActiveSubagents}
           activeAgentName={activeAgent?.name}
         />
         <WorkingRule

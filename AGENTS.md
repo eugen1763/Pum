@@ -126,8 +126,9 @@ These were chosen deliberately. Change them only on purpose.
   worktree agents in parallel. Merge each successful agent when it settles unless
   a concrete dependency, conflict risk, or integration order requires waiting.
 - **Follow-up implementation work uses available parallel capacity.** Count only
-  `starting` and `running` subagents toward the five-agent active limit. When a
-  slot is available, prefer another managed worktree subagent. At capacity, use
+  `starting` and `running` subagents toward the configured active limit. The PUM
+  setting defaults to 10 and accepts values from 1 through 25. When a slot is
+  available, prefer another managed worktree subagent. At capacity, use
   `message_agent` to queue related work for an appropriate running subagent. This
   uses the durable recipient-side message and steering queue. Never create shell
   polling or hidden queues. Never route unrelated work to an arbitrary agent. If
@@ -143,6 +144,14 @@ These were chosen deliberately. Change them only on purpose.
   removal. A successful managed merge closes the agent, removes the worktree and
   branch, and removes its view.
   Resume restores retained agents. Previously running agents become interrupted.
+- **Managed parent closure is recursive and deepest-first.** A managed parent
+  cannot finish, merge, or be removed while any retained descendant remains at
+  any depth. Every retained status blocks closure, including completed, failed,
+  stopped, interrupted, idle, starting, and running. A descendant closes only
+  after a successful managed merge or valid non-force removal removes both its
+  registry record and managed worktree. Managed agents cannot use force removal
+  to discard failed or unmerged work. Spawn and closure checks share the
+  worktree mutation queue, so a nested spawn cannot race parent closure.
 - **The main agent never polls background agents.** After spawning all available
   work, the main turn ends. Completion notifications restart or steer the main
   loop. Do not use `bash sleep`, shell polling, or repeated status tool calls.

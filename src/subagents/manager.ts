@@ -29,6 +29,10 @@ import { editCounts, toolArg, type ToolCall } from "../tool-line";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
+  DEFAULT_MAX_ACTIVE_SUBAGENTS,
+  normalizeMaxActiveSubagents,
+} from "../settings";
+import {
   resolvePendingDelivery,
   settleTranscriptMessage,
   type Line,
@@ -56,14 +60,15 @@ import {
   type SubagentStatus,
 } from "./types";
 
-export const MAX_ACTIVE_SUBAGENTS = 5;
-const MAX_RETAINED_AGENTS = 8;
+const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
 const ACTIVE_SUBAGENT_STATUSES = new Set<SubagentStatus>(["starting", "running"]);
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
 - Use finish_subagent as the only final completion report. It sends the sole completion notification to the direct spawner after the status changes.
+- Before finish_subagent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
+- Every retained descendant blocks finish_subagent regardless of status. Completion does not close a descendant.
 - Do not send a final summary, test report, done message, or completion status through message_agent.
 - Use message_agent for questions, blockers, coordination, or intermediate information that needs action before completion.
 - Do not automatically reply to an acknowledgement, status-only message, or completion notice.
@@ -75,9 +80,9 @@ export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communicatio
 export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coordination
 
 - spawn_subagent returns after setup. The subagent continues in the background.
-- Count only starting and running subagents as active. The active limit is five.
-- For follow-up implementation work, prefer a new managed worktree subagent when fewer than five subagents are active.
-- When five subagents are active, use message_agent to queue follow-up work for an appropriate related running subagent.
+- Count only starting and running subagents as active. Use the current capacity shown below.
+- For follow-up implementation work, prefer a new managed worktree subagent while capacity is available.
+- At capacity, use message_agent to queue follow-up work for an appropriate related running subagent.
 - message_agent uses the durable recipient-side message and steering queue. Do not create a shell queue or another hidden queue.
 - Do not send unrelated work to an arbitrary subagent. If no appropriate recipient is clear, state the capacity issue and keep the work pending for deliberate routing.
 - Never wait for subagents with bash sleep, shell polling loops, repeated list_subagents calls, or repeated worktree status calls.
@@ -88,15 +93,17 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
 - For a coordinated batch, track unfinished agents from completion notifications.
 - Merge each successful agent as soon as it settles.
+- Before merging a managed parent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
+- Every retained descendant blocks its parent regardless of status. Completion does not close a descendant.
 - Wait to merge only when another unfinished task has a concrete dependency, a known conflict risk, or a required integration order. State that reason explicitly.
 - If a notification does not arrive, report the notification fault instead of creating a sleep loop.`;
 
-export function buildSubagentCapacityPrompt(activeCount: number): string {
-  const available = Math.max(0, MAX_ACTIVE_SUBAGENTS - activeCount);
+export function buildSubagentCapacityPrompt(activeCount: number, maxActive = DEFAULT_MAX_ACTIVE_SUBAGENTS): string {
+  const available = Math.max(0, maxActive - activeCount);
   if (available > 0) {
-    return `Current subagent capacity: ${activeCount}/${MAX_ACTIVE_SUBAGENTS} active; ${available} slot${available === 1 ? "" : "s"} available. Prefer spawn_subagent for follow-up implementation work that can run in parallel.`;
+    return `Current subagent capacity: ${activeCount}/${maxActive} active; ${available} slot${available === 1 ? "" : "s"} available. Prefer spawn_subagent for follow-up implementation work that can run in parallel.`;
   }
-  return `Current subagent capacity: ${activeCount}/${MAX_ACTIVE_SUBAGENTS} active; no slots available. Queue follow-up work with message_agent only when an appropriate related running subagent is clear. Otherwise, state the capacity issue and keep the work pending for deliberate routing.`;
+  return `Current subagent capacity: ${activeCount}/${maxActive} active; no slots available. Queue follow-up work with message_agent only when an appropriate related running subagent is clear. Otherwise, state the capacity issue and keep the work pending for deliberate routing.`;
 }
 
 export function countActiveSubagents(agents: Iterable<Pick<SubagentSnapshot, "status">>): number {
@@ -116,9 +123,9 @@ export function isCompletionOnlyMessage(text: string): boolean {
   return /^(?:completed|finished|done\b|implemented\b|task complete\b|work complete\b|all requested .* complete)/i.test(message);
 }
 
-function activeLimitError(): Error {
+function activeLimitError(maxActive: number): Error {
   return new Error(
-    `All ${MAX_ACTIVE_SUBAGENTS} subagent slots are active (starting or running). ` +
+    `All ${maxActive} subagent slots are active (starting or running). ` +
       "Queue follow-up work to an appropriate related running subagent with message_agent. " +
       "If no appropriate recipient is clear, keep the task pending and state the capacity issue.",
   );
@@ -138,6 +145,7 @@ type RuntimeRecord = {
 type ManagerOptions = {
   modelRuntime: ModelRuntime;
   agentDir: string;
+  maxActiveSubagents?: number;
   childExtensionFactories?: InlineExtension[];
   questionnaireManager?: QuestionnaireManager;
 };
@@ -183,6 +191,8 @@ function textResult(text: string, details: unknown = {}) {
   return { content: [{ type: "text" as const, text }], details };
 }
 
+type RetainedDescendant = { record: RuntimeRecord; depth: number };
+
 export class SubagentManager {
   private readonly modelRuntime: ModelRuntime;
   private readonly agentDir: string;
@@ -195,12 +205,14 @@ export class SubagentManager {
   private mainCwd = process.cwd();
   private parentSessionId = "detached";
   private mainRunning = false;
+  private maxActiveSubagents: number;
   private worktreeQueue: Promise<void> = Promise.resolve();
   private readonly messageTimes = new Map<string, number[]>();
 
   constructor(options: ManagerOptions) {
     this.modelRuntime = options.modelRuntime;
     this.agentDir = options.agentDir;
+    this.maxActiveSubagents = normalizeMaxActiveSubagents(options.maxActiveSubagents);
     this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
     this.questionnaireManager = options.questionnaireManager;
   }
@@ -530,7 +542,9 @@ export class SubagentManager {
               "Use message_agent only for questions, blockers, coordination, or intermediate information that needs action. " +
               "Never send the final summary through message_agent. " +
               "Commit completed changes before finishing. Call finish_subagent exactly once with the final summary; it sends the sole completion notification after status changes.\n\n" +
-              SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
+              SUBAGENT_COMMUNICATION_SYSTEM_PROMPT + "\n\n" +
+              SUBAGENT_COORDINATION_SYSTEM_PROMPT + "\n\n" +
+              buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
           };
         });
 
@@ -599,14 +613,32 @@ export class SubagentManager {
             summary: Type.String({ description: "Summary of completed work, tests, and remaining concerns" }),
           }),
           execute: async (_id, params) => {
-            const record = this.records.get(agentId);
-            if (!record) throw new Error("Subagent no longer exists");
-            record.finishRequested = params.summary;
+            await this.withWorktreeLock(async () => {
+              const record = this.records.get(agentId);
+              if (!record) throw new Error("Subagent no longer exists");
+              this.assertNoRetainedDescendants(record, "finish");
+              record.finishRequested = params.summary;
+            });
             return {
               ...textResult("Completion recorded."),
               terminate: true,
             };
           },
+        });
+
+        pi.registerTool({
+          name: "worktree",
+          label: "Worktree",
+          description: "List, inspect, merge, or remove PUM Git worktrees. Close managed descendants recursively before their parent.",
+          promptSnippet: "Manage isolated Git worktrees under .pum/worktrees",
+          parameters: Type.Object({
+            action: Type.String({ description: "create, list, status, merge, or remove" }),
+            target: Type.Optional(Type.String({ description: "Worktree id or name" })),
+            name: Type.Optional(Type.String({ description: "Name for a new worktree" })),
+            force: Type.Optional(Type.Boolean({ description: "Force removal of a standalone unmerged worktree" })),
+          }),
+          execute: async (_id, params) =>
+            this.worktreeAction(this.mainCwd, params.action, params.target, params.name, params.force),
         });
       },
     };
@@ -620,7 +652,7 @@ export class SubagentManager {
         // extensions after session_start, so every tool also binds lazily.
         this.mainApi = pi;
         pi.on("before_agent_start", (event) => ({
-          systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}\n\n${buildSubagentCapacityPrompt(this.activeCount())}`,
+          systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}\n\n${buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents)}`,
         }));
         pi.on("agent_start", () => {
           this.mainRunning = true;
@@ -644,16 +676,17 @@ export class SubagentManager {
         pi.registerTool({
           name: "spawn_subagent",
           label: "Spawn Subagent",
-          description: "Start a nonblocking subagent in a new Git worktree. The subagent runs in parallel and reports when it stops. Five starting or running subagents can be active.",
+          description: "Start a nonblocking subagent in a new Git worktree. The configured limit counts starting and running subagents.",
           promptSnippet: "Start a parallel subagent in an isolated Git worktree",
           promptGuidelines: [
             "Use spawn_subagent for independent tasks that can run in parallel.",
-            "For follow-up implementation work, prefer spawn_subagent while fewer than five subagents are starting or running.",
-            "At five active subagents, queue related follow-up work through message_agent instead of spawning a sixth.",
+            "For follow-up implementation work, prefer spawn_subagent while configured capacity is available.",
+            "At configured capacity, queue related follow-up work through message_agent instead of spawning another agent.",
             "Do not route unrelated work to an arbitrary subagent. Keep it pending when no appropriate recipient is clear.",
             "Give each spawn_subagent call a complete, self-contained task.",
             "After spawning background agents, end the current turn. Never poll with bash sleep or status loops.",
             "Merge each successful agent when it settles unless a concrete dependency or conflict requires waiting.",
+            "Recursively close every retained descendant before merging a managed parent. Close the deepest descendants first.",
           ],
           parameters: Type.Object({
             task: Type.String({ description: "Complete task for the subagent" }),
@@ -766,10 +799,23 @@ export class SubagentManager {
     return countActiveSubagents([...this.records.values()].map((record) => record.snapshot));
   }
 
+  getMaxActiveSubagents(): number {
+    return this.maxActiveSubagents;
+  }
+
+  setMaxActiveSubagents(value: number): void {
+    this.maxActiveSubagents = normalizeMaxActiveSubagents(value);
+  }
+
   async spawn(options: SpawnSubagentOptions): Promise<SubagentSnapshot> {
     const record = await this.withWorktreeLock(async () => {
-      if (this.activeCount() >= MAX_ACTIVE_SUBAGENTS) throw activeLimitError();
+      if (this.activeCount() >= this.maxActiveSubagents) throw activeLimitError(this.maxActiveSubagents);
       if (this.records.size >= MAX_RETAINED_AGENTS) throw new Error(`At most ${MAX_RETAINED_AGENTS} subagents can be retained`);
+      if (options.parentAgentId !== undefined && options.parentAgentId !== null) {
+        const parent = this.records.get(options.parentAgentId);
+        if (!parent) throw new Error("Spawner subagent no longer exists");
+        if (parent.finishRequested !== undefined) throw new Error("Spawner subagent is finishing");
+      }
 
       const worktree = await createWorktree(this.mainCwd, options.name);
       const id = randomUUID().slice(0, 8);
@@ -835,7 +881,7 @@ export class SubagentManager {
       thinkingLevel: record.snapshot.thinkingLevel as any,
       tools: [
         "read", "write", "edit", "apply_patch", "bash", "questionnaire",
-        "spawn_subagent", "message_agent", "list_subagents", "finish_subagent",
+        "spawn_subagent", "message_agent", "list_subagents", "finish_subagent", "worktree",
       ],
     });
     record.session = result.session;
@@ -875,6 +921,42 @@ export class SubagentManager {
 
   private findRecord(target: string): RuntimeRecord | undefined {
     return this.records.get(target) ?? [...this.records.values()].find((record) => record.snapshot.name === target);
+  }
+
+  private retainedDescendants(parentId: string): RetainedDescendant[] {
+    const descendants: RetainedDescendant[] = [];
+    const visited = new Set<string>([parentId]);
+    let frontier = [{ id: parentId, depth: 0 }];
+    while (frontier.length > 0) {
+      const next: typeof frontier = [];
+      for (const parent of frontier) {
+        for (const record of this.records.values()) {
+          if (record.snapshot.parentAgentId !== parent.id || visited.has(record.snapshot.id)) continue;
+          visited.add(record.snapshot.id);
+          const descendant = { record, depth: parent.depth + 1 };
+          descendants.push(descendant);
+          next.push({ id: record.snapshot.id, depth: descendant.depth });
+        }
+      }
+      frontier = next;
+    }
+    return descendants.sort((a, b) =>
+      b.depth - a.depth
+        || a.record.snapshot.startedAt - b.record.snapshot.startedAt
+        || a.record.snapshot.name.localeCompare(b.record.snapshot.name),
+    );
+  }
+
+  private assertNoRetainedDescendants(record: RuntimeRecord, action: "finish" | "merge" | "remove"): void {
+    const descendants = this.retainedDescendants(record.snapshot.id);
+    if (descendants.length === 0) return;
+    const blockers = descendants.map(({ record: descendant }) =>
+      `- ${descendant.snapshot.name} (${descendant.snapshot.status})`,
+    ).join("\n");
+    throw new Error(
+      `Cannot ${action} ${record.snapshot.name} while retained descendants remain:\n${blockers}\n` +
+        "Merge or resolve the deepest descendants first. A descendant closes only after its record and managed worktree are removed through a successful merge or valid removal.",
+    );
   }
 
   async sendUserMessage(
@@ -1180,16 +1262,23 @@ export class SubagentManager {
       return textResult(records.length ? records.map((record) => `${record.name}  ${record.branch}\n  ${record.path}`).join("\n") : "No PUM worktrees.", { records });
     }
     if (!target) throw new Error(`worktree ${action} requires target`);
-    const managedAgent = this.findRecord(target);
-    if (managedAgent && ["starting", "running"].includes(managedAgent.snapshot.status)) {
-      throw new Error(`Stop ${managedAgent.snapshot.name} before ${action}`);
+    if (action === "status") {
+      const managedAgent = this.findRecord(target);
+      const record = managedAgent?.snapshot.worktree
+        ?? (await listWorktrees(cwd)).find((item) => item.name === target || item.branch === target);
+      if (!record) throw new Error(`Unknown worktree: ${target}`);
+      return textResult(await worktreeStatus(cwd, record), record);
     }
-    const record = managedAgent?.snapshot.worktree
-      ?? (await listWorktrees(cwd)).find((item) => item.name === target || item.branch === target);
-    if (!record) throw new Error(`Unknown worktree: ${target}`);
-    if (action === "status") return textResult(await worktreeStatus(cwd, record), record);
     if (action === "merge") {
       return this.withWorktreeLock(async () => {
+        const managedAgent = this.findRecord(target);
+        if (managedAgent && ["starting", "running"].includes(managedAgent.snapshot.status)) {
+          throw new Error(`Stop ${managedAgent.snapshot.name} before ${action}`);
+        }
+        if (managedAgent) this.assertNoRetainedDescendants(managedAgent, "merge");
+        const record = managedAgent?.snapshot.worktree
+          ?? (await listWorktrees(cwd)).find((item) => item.name === target || item.branch === target);
+        if (!record) throw new Error(`Unknown worktree: ${target}`);
         const output = (await mergeWorktree(cwd, record)) || `Merged ${record.branch}`;
         if (!managedAgent) return textResult(output, record);
 
@@ -1201,6 +1290,22 @@ export class SubagentManager {
     }
     if (action === "remove") {
       return this.withWorktreeLock(async () => {
+        const managedAgent = this.findRecord(target);
+        if (managedAgent && ["starting", "running"].includes(managedAgent.snapshot.status)) {
+          throw new Error(`Stop ${managedAgent.snapshot.name} before ${action}`);
+        }
+        if (managedAgent) {
+          this.assertNoRetainedDescendants(managedAgent, "remove");
+          if (force) {
+            throw new Error(
+              `Cannot force-remove managed subagent ${managedAgent.snapshot.name}. ` +
+                "Failed or unmerged managed subagents must remain retained until a valid merge or removal flow closes them.",
+            );
+          }
+        }
+        const record = managedAgent?.snapshot.worktree
+          ?? (await listWorktrees(cwd)).find((item) => item.name === target || item.branch === target);
+        if (!record) throw new Error(`Unknown worktree: ${target}`);
         if (managedAgent) await this.stop(managedAgent.snapshot.id, "stopped");
         await removeWorktree(cwd, record, force);
         if (managedAgent) this.forgetManagedAgent(managedAgent);
