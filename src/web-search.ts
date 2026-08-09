@@ -1,20 +1,12 @@
 import type { Provider } from "@earendil-works/pi-ai";
 import type { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
  * Web search through the Codex subscription.
  *
- * OpenAI's `web_search` is a hosted tool: the model calls it, OpenAI runs it
- * server-side, and the answer comes back already informed by the results. The
- * client only has to name the tool in the request.
- *
- * pi has no notion of provider-native tools, so this wraps the provider and
- * uses the documented `onPayload` hook to append the tool to the outgoing body.
- * Two consequences worth knowing:
- *
- *  - pi ignores the `web_search_call` items that come back, so PUM observes the
- *    wire separately to render and persist a search line.
- *  - It only applies to Codex models. Switch provider and it does nothing.
+ * OpenAI's `web_search` is a hosted tool. The model calls it, OpenAI runs it,
+ * and the answer comes back already informed by the results.
  */
 const HOSTED_SEARCH_PROVIDERS = ["openai-codex"];
 
@@ -23,6 +15,9 @@ export const WEB_SEARCH_CUSTOM_TYPE = "pum.web_search";
 
 /** Mutable so the Ctrl+P toggle takes effect without rebuilding the provider. */
 export const webSearch = { enabled: false };
+
+const searchRoute = new AsyncLocalStorage<string>();
+let socketObserverInstalled = false;
 
 function addSearchTool(payload: unknown): unknown | undefined {
   if (!webSearch.enabled || !payload || typeof payload !== "object") return undefined;
@@ -55,6 +50,40 @@ export type SearchCallRecord = {
   state: "running" | "ok" | "error";
 };
 
+export class SearchCallRouter {
+  private readonly listeners = new Map<string, Set<(call: SearchCall) => void>>();
+
+  subscribe(route: string, listener: (call: SearchCall) => void): () => void {
+    const listeners = this.listeners.get(route) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(route, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.listeners.delete(route);
+    };
+  }
+
+  emit(route: string, call: SearchCall): void {
+    for (const listener of this.listeners.get(route) ?? []) listener(call);
+  }
+}
+
+const searchCalls = new SearchCallRouter();
+
+/** Keep the route active through the asynchronous agent and provider call chain. */
+export function withSearchRoute<T>(route: string, operation: () => T): T {
+  return searchRoute.run(route, operation);
+}
+
+/** Subscribe one transcript to searches from only its own agent session. */
+export function observeSearchCalls(
+  route: string,
+  onCall: (call: SearchCall) => void,
+): () => void {
+  installSocketObserver();
+  return searchCalls.subscribe(route, onCall);
+}
+
 /** Persist an out-of-band search as session metadata, not LLM context. */
 export function persistSearchCall(
   sessionManager: Pick<SessionManager, "appendCustomEntry">,
@@ -69,53 +98,43 @@ export function persistSearchCall(
 }
 
 /**
- * pi drops the `web_search_call` items OpenAI sends back, so the only way to
- * show the search in the transcript is to watch the wire.
- *
- * Codex talks over a WebSocket by default and only consults a custom `fetch`
- * on its HTTP path, so there is nothing to intercept at the fetch layer.
- * Forcing `transport: "sse"` would work but costs the `previous_response_id`
- * continuation, which is what keeps whole-conversation resends off every turn.
- * So instead we wrap the global WebSocket constructor and read frames as they
- * arrive. Purely observational — the adapter's own listener is untouched.
+ * pi drops `web_search_call` items. Observe WebSocket frames without changing
+ * the cached WebSocket transport. Each socket captures its current session route.
  */
-export function observeSearchCalls(onCall: (call: SearchCall) => void): void {
+function installSocketObserver(): void {
+  if (socketObserverInstalled) return;
   const Original = globalThis.WebSocket;
   if (!Original || (Original as { __pumPatched?: boolean }).__pumPatched) return;
-
-  const seen = new Map<string, string>();
-
-  const handle = (raw: unknown) => {
-    // Every streamed token is a frame; skip the parse unless it could match.
-    if (typeof raw !== "string" || !raw.includes("web_search_call")) return;
-    let event: any;
-    try {
-      event = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    const item = event?.item;
-    if (item?.type !== "web_search_call") return;
-    const id = String(item.id ?? "");
-    const query = String(item.action?.query ?? seen.get(id) ?? "");
-    if (query) seen.set(id, query);
-
-    if (event.type === "response.output_item.added") {
-      onCall({ phase: "start", id, query });
-    } else if (event.type === "response.output_item.done") {
-      onCall({ phase: "end", id, query, ok: item.status !== "failed" });
-      seen.delete(id);
-    }
-  };
+  socketObserverInstalled = true;
 
   const Patched = new Proxy(Original, {
     construct(target, args: any[]) {
+      const route = searchRoute.getStore();
       const socket = new (target as any)(...args);
+      const seen = new Map<string, string>();
       socket.addEventListener?.("message", (ev: any) => {
         try {
-          handle(ev?.data);
+          const raw = ev?.data;
+          if (!route || typeof raw !== "string" || !raw.includes("web_search_call")) return;
+          const event = JSON.parse(raw);
+          const item = event?.item;
+          if (item?.type !== "web_search_call") return;
+          const id = String(item.id ?? "");
+          const query = String(item.action?.query ?? seen.get(id) ?? "");
+          if (query) seen.set(id, query);
+          if (event.type === "response.output_item.added") {
+            searchCalls.emit(route, { phase: "start", id, query });
+          } else if (event.type === "response.output_item.done") {
+            searchCalls.emit(route, {
+              phase: "end",
+              id,
+              query,
+              ok: item.status !== "failed",
+            });
+            seen.delete(id);
+          }
         } catch {
-          // never let logging break a turn
+          // Search observation must never break an agent turn.
         }
       });
       return socket;

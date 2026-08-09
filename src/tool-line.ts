@@ -5,7 +5,7 @@ export type ToolCall = {
   name: string;
   /** The one argument worth showing for this tool. */
   arg: string;
-  state: "running" | "ok" | "error";
+  state: "running" | "ok" | "error" | "rejected";
   /** "+3 −1" for edits, or an error note. */
   detail?: string;
 };

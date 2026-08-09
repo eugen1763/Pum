@@ -13,6 +13,12 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { replayEntries } from "../replay";
+import { isRejectedToolResult } from "../check-mode";
+import {
+  observeSearchCalls,
+  persistSearchCall,
+  withSearchRoute,
+} from "../web-search";
 import { editCounts, toolArg, type ToolCall } from "../tool-line";
 import type { Line } from "../transcript";
 import {
@@ -46,6 +52,7 @@ type RuntimeRecord = {
   session?: AgentSession;
   api?: ExtensionAPI;
   unsubscribe?: () => void;
+  unsubscribeSearch?: () => void;
   dispose?: () => Promise<void> | void;
   finishRequested?: string;
 };
@@ -280,7 +287,11 @@ export class SubagentManager {
         break;
       case "tool_execution_end":
         this.patchTool(record, event.toolCallId, {
-          state: event.isError ? "error" : "ok",
+          state: isRejectedToolResult(event.result)
+            ? "rejected"
+            : event.isError
+              ? "error"
+              : "ok",
           detail: event.toolName === "edit" ? editCounts(event.result) : undefined,
         });
         break;
@@ -526,7 +537,7 @@ export class SubagentManager {
       await this.ensureRuntime(record);
       this.appendLine(record, { kind: "text", role: "user", text: options.task });
       this.updateStatus(record, "running");
-      void record.session!.prompt(options.task).catch((error) => {
+      void withSearchRoute(record.session!.sessionId, () => record.session!.prompt(options.task)).catch((error) => {
         this.updateStatus(record, "failed", String(error));
         this.notifyMain(record, "failed", String(error));
       });
@@ -568,9 +579,25 @@ export class SubagentManager {
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
     record.unsubscribe = result.session.subscribe((event) => this.processSessionEvent(record, event));
+    record.unsubscribeSearch = observeSearchCalls(result.session.sessionId, (call) => {
+      if (call.phase === "start") {
+        this.appendLine(record, {
+          kind: "tool",
+          call: { id: call.id, name: "web_search", arg: call.query, state: "running" },
+        });
+      } else {
+        this.patchTool(record, call.id, {
+          state: call.ok ? "ok" : "error",
+          ...(call.query ? { arg: call.query } : {}),
+        });
+      }
+      persistSearchCall(result.session.sessionManager, call);
+    });
     record.dispose = async () => {
       record.unsubscribe?.();
       record.unsubscribe = undefined;
+      record.unsubscribeSearch?.();
+      record.unsubscribeSearch = undefined;
       await result.session.abort().catch(() => {});
       result.session.dispose();
       record.session = undefined;
@@ -599,8 +626,12 @@ export class SubagentManager {
     await this.ensureRuntime(record);
     this.appendLine(record, { kind: "text", role: "user", text: displayText });
     this.updateStatus(record, "running");
-    if (record.session!.isStreaming) await record.session!.steer(text, images);
-    else void record.session!.prompt(text, { images }).catch((error) => {
+    if (record.session!.isStreaming) {
+      await withSearchRoute(record.session!.sessionId, () => record.session!.steer(text, images));
+    } else void withSearchRoute(
+      record.session!.sessionId,
+      () => record.session!.prompt(text, { images }),
+    ).catch((error) => {
       this.updateStatus(record, "failed", String(error));
       this.notifyMain(record, "failed", String(error));
     });
@@ -669,7 +700,9 @@ export class SubagentManager {
     } else if (recipient) {
       await this.ensureRuntime(recipient);
       this.appendLine(recipient, line);
-      recipient.api?.sendMessage(customMessage, { deliverAs: "steer", triggerTurn: true });
+      withSearchRoute(recipient.session!.sessionId, () => {
+        recipient.api?.sendMessage(customMessage, { deliverAs: "steer", triggerTurn: true });
+      });
       this.updateStatus(recipient, "running");
     }
   }
@@ -687,15 +720,19 @@ export class SubagentManager {
     if (!api) return;
     const wasRunning = this.mainRunning;
     const generation = this.mainWakeGeneration;
-    api.sendMessage(message, { deliverAs: "steer", triggerTurn: true });
+    withSearchRoute(this.parentSessionId, () => {
+      api.sendMessage(message, { deliverAs: "steer", triggerTurn: true });
+    });
     if (wasRunning) return;
 
     setTimeout(() => {
       if (this.mainApi !== api || this.mainRunning || this.mainWakeGeneration !== generation) return;
-      api.sendUserMessage(
-        `[PUM subagent notification]\n${fallback}`,
-        { deliverAs: "followUp" },
-      );
+      withSearchRoute(this.parentSessionId, () => {
+        api.sendUserMessage(
+          `[PUM subagent notification]\n${fallback}`,
+          { deliverAs: "followUp" },
+        );
+      });
     }, 300);
   }
 

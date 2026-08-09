@@ -1,4 +1,5 @@
 import type { Line } from "./transcript";
+import { isRejectedToolResult } from "./check-mode";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
 import {
   WEB_SEARCH_CUSTOM_TYPE,
@@ -46,7 +47,7 @@ function toolEventOf(entry: any): ToolCall | undefined {
   if (entry?.type !== "custom" || entry.customType !== TOOL_EVENT_CUSTOM_TYPE) return undefined;
   const data = entry.data;
   if (!data || typeof data.id !== "string" || typeof data.name !== "string") return undefined;
-  if (!["running", "ok", "error"].includes(data.state)) return undefined;
+  if (!["running", "ok", "error", "rejected"].includes(data.state)) return undefined;
   return {
     id: data.id,
     name: data.name,
@@ -168,7 +169,11 @@ export function replayEntries(
     if (message?.role === "toolResult") {
       const call = calls.get(message.toolCallId);
       if (call) {
-        call.state = message.isError ? "error" : "ok";
+        call.state = isRejectedToolResult(message)
+          ? "rejected"
+          : message.isError
+            ? "error"
+            : "ok";
         if (call.name === "edit") call.detail = editCounts(message);
       }
     }

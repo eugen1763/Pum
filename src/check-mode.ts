@@ -8,6 +8,24 @@ export type CheckModeConfig = {
   model: string;
 };
 
+const REJECTED_TOOL_DETAIL = "pumRejected";
+
+export function rejectedToolDetails(details: unknown): unknown {
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    return { ...details, [REJECTED_TOOL_DETAIL]: true };
+  }
+  return { [REJECTED_TOOL_DETAIL]: true };
+}
+
+export function isRejectedToolResult(result: unknown): boolean {
+  const details = (result as { details?: unknown } | null)?.details;
+  return Boolean(
+    details &&
+    typeof details === "object" &&
+    (details as Record<string, unknown>)[REJECTED_TOOL_DETAIL] === true,
+  );
+}
+
 let current: CheckModeConfig = {
   enabled: false,
   model: DEFAULT_CHECK_MODEL,
@@ -64,6 +82,8 @@ export function createCheckModeExtension(runtime: CheckerRuntime): InlineExtensi
   return {
     name: "pum-check-mode",
     factory(pi) {
+      const rejected = new Set<string>();
+
       pi.on("tool_call", async (event, ctx) => {
         if (!current.enabled || (event.toolName !== "bash" && event.toolName !== "edit")) return;
 
@@ -71,6 +91,7 @@ export function createCheckModeExtension(runtime: CheckerRuntime): InlineExtensi
           .getAvailableSnapshot()
           .find((candidate) => modelRef(candidate) === current.model);
         if (!model) {
+          rejected.add(event.toolCallId);
           return { block: true, reason: `Check model is unavailable: ${current.model}` };
         }
 
@@ -94,19 +115,27 @@ export function createCheckModeExtension(runtime: CheckerRuntime): InlineExtensi
             },
           );
           if (result.stopReason === "error" || result.stopReason === "aborted") {
+            rejected.add(event.toolCallId);
             return { block: true, reason: result.errorMessage ?? "Safety check failed" };
           }
 
           const decision = safetyDecision(responseText(result));
           if (!decision.safe) {
+            rejected.add(event.toolCallId);
             return {
               block: true,
               reason: `Safety check blocked ${event.toolName}: ${decision.reason}`,
             };
           }
         } catch (error) {
+          rejected.add(event.toolCallId);
           return { block: true, reason: `Safety check failed: ${String(error)}` };
         }
+      });
+
+      pi.on("tool_result", (event) => {
+        if (!rejected.delete(event.toolCallId)) return;
+        return { details: rejectedToolDetails(event.details) };
       });
     },
   };
