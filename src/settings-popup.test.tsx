@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { parseColor } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import {
@@ -71,8 +72,52 @@ describe("settings popup layout", () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Search");
     expect(frame).toContain("Appearance");
-    expect(frame).toContain("Working rules");
+    expect(frame).toContain("Working animation");
     expect(frame).toContain("coordinated");
     expect(frame).toContain("/ search");
+  });
+
+  test("uses popup backgrounds for model and check-model rows", async () => {
+    const theme = loadTheme("tokyonight");
+    const models = [
+      { id: "model-a", provider: "provider-a" },
+      { id: "model-b", provider: "provider-b" },
+    ] as any;
+
+    for (const page of ["models", "checkModels"] as const) {
+      const setup = await createTestRenderer({ width: 60, height: 18 });
+      destroy = () => setup.renderer.destroy();
+      createRoot(setup.renderer).render(
+        <box style={{ width: 60, height: 18 }}>
+          <SettingsPopup
+            theme={theme}
+            page={page}
+            rows={SETTINGS_ROWS}
+            selectedId="model"
+            values={values}
+            query=""
+            searchFocused={false}
+            terminalWidth={60}
+            terminalHeight={18}
+            models={models}
+            onSearchChange={() => {}}
+            onSelectModel={() => {}}
+            onSelectCheckModel={() => {}}
+          />
+        </box>,
+      );
+      await setup.renderOnce();
+      await setup.flush();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await setup.renderOnce();
+      const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+      const selectedSpan = spans.find((span) => span.text.includes("model-a"));
+      const normalSpan = spans.find((span) => span.text.includes("model-b"));
+
+      expect(selectedSpan?.bg.equals(parseColor(theme.selectionBg))).toBe(true);
+      expect(normalSpan?.bg.equals(parseColor(theme.popupBg))).toBe(true);
+      setup.renderer.destroy();
+      destroy = undefined;
+    }
   });
 });

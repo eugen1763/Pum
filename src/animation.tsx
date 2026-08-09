@@ -49,20 +49,28 @@ const RULE_HIGHLIGHT_WIDTH = 10;
 
 export type WorkingRuleRole = "header" | "inputTop" | "inputBottom";
 export type CoordinatedRuleState = {
-  activeRole: "header" | "inputBottom";
   head: number;
-  direction: -1 | 1;
+  direction: 1;
 };
 
-/** Shared elapsed time makes the bottom and header rules one continuous route. */
+/** Shared elapsed time gives every coordinated rule the same sweep frame. */
 export function coordinatedRuleState(width: number, elapsedMs: number): CoordinatedRuleState {
   const safeWidth = Math.max(1, width);
-  const route = safeWidth * 2;
-  const position = (elapsedMs * RULE_CHARS_PER_MS) % route;
-  if (position < safeWidth) {
-    return { activeRole: "inputBottom", head: position, direction: 1 };
-  }
-  return { activeRole: "header", head: route - position - 1, direction: -1 };
+  return {
+    head: (elapsedMs * RULE_CHARS_PER_MS) % safeWidth,
+    direction: 1,
+  };
+}
+
+/** Return the frame state for a visible rule, or null when that rule is static. */
+export function workingRuleFrameState(
+  mode: WorkingRuleAnimationMode,
+  role: WorkingRuleRole,
+  width: number,
+  elapsedMs: number,
+): CoordinatedRuleState | null {
+  if (mode === "off" || width <= 0 || (mode === "input-only" && role === "header")) return null;
+  return coordinatedRuleState(width, elapsedMs);
 }
 
 type Subscriber = (elapsedMs: number) => void;
@@ -330,9 +338,8 @@ export function useWorkingRule(opts: {
   }, [color, width]);
 
   useEffect(() => {
-    const animatesInput = mode === "input-only" && role !== "header";
-    const animatesCoordinated = mode === "coordinated" && role !== "inputTop";
-    if (!active || !enabled || mode === "off" || width <= 0 || (!animatesInput && !animatesCoordinated)) {
+    const frameState = workingRuleFrameState(mode, role, width, 0);
+    if (!active || !enabled || !frameState) {
       plain();
       return;
     }
@@ -341,16 +348,14 @@ export function useWorkingRule(opts: {
     const hi = rgba(highlight);
     return subscribe((elapsedMs) => {
       if (!ref.current) return;
-      if (mode === "input-only") {
-        const head = (elapsedMs * RULE_CHARS_PER_MS) % width;
-        ref.current.content = inputRuleText(width, base, hi, head);
+      const state = workingRuleFrameState(mode, role, width, elapsedMs);
+      if (!state) {
+        ref.current.content = new StyledText([fg(color)("─".repeat(width))]);
         return;
       }
-
-      const state = coordinatedRuleState(width, elapsedMs);
-      ref.current.content = state.activeRole === role
-        ? ruleText(width, base, hi, state.head)
-        : new StyledText([fg(color)("─".repeat(width))]);
+      ref.current.content = mode === "input-only"
+        ? inputRuleText(width, base, hi, state.head)
+        : ruleText(width, base, hi, state.head);
     });
   }, [active, enabled, mode, role, width, color, highlight, plain, subscribe]);
 

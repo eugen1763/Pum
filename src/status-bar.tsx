@@ -30,8 +30,12 @@ const fmtElapsed = (seconds: number) => {
   return minutes > 0 ? `${minutes}m ${remaining}s` : `${remaining}s`;
 };
 
-function Working({ theme, elapsedSec }: { theme: Theme; elapsedSec: number }) {
+function WorkingPulse({ theme }: { theme: Theme }) {
   const spinner = useSpinner(true);
+  return <text ref={spinner} fg={theme.accent} />;
+}
+
+function Working({ theme, elapsedSec }: { theme: Theme; elapsedSec: number }) {
   const label = useShimmerText({
     text: "working",
     color: theme.accent,
@@ -40,7 +44,7 @@ function Working({ theme, elapsedSec }: { theme: Theme; elapsedSec: number }) {
   });
   return (
     <box style={{ flexDirection: "row" }}>
-      <text ref={spinner} fg={theme.accent} />
+      <WorkingPulse theme={theme} />
       <text content=" " />
       <text ref={label} />
       <text content={` ${fmtElapsed(elapsedSec)}  `} fg={theme.dim} />
@@ -71,13 +75,11 @@ export function StatusBar(props: StatusProps) {
     fg(theme.dim)(" · "),
     fg(theme.dim)(thinkingLevel),
   ];
-  if (agentCount > 0) {
-    left.push(
-      fg(theme.dim)(" · "),
-      fg(runningAgentCount > 0 ? theme.accent : theme.success)(`◇ ${agentCount}`),
-    );
-    if (activeAgentName) left.push(fg(theme.dim)(` · ${activeAgentName}`));
-  }
+  const idleAgentCount = Math.max(0, agentCount - runningAgentCount);
+  const agentPrefix = agentCount > 0 ? " · " : "";
+  const idleAgentText = idleAgentCount > 0 ? `◇ ${idleAgentCount}` : "";
+  const workingAgentText = runningAgentCount > 0 ? `${idleAgentCount > 0 ? " " : ""}• ${runningAgentCount}` : "";
+  const activeAgentText = activeAgentName ? ` · ${activeAgentName}` : "";
 
   const right: TextChunk[] = [];
   const push = (text: string, color: string) => {
@@ -93,10 +95,25 @@ export function StatusBar(props: StatusProps) {
 
   const plainLen = (chunks: { text: string }[]) => chunks.reduce((n, c) => n + c.text.length, 0);
   // The working indicator is its own element, so allow for it when measuring.
-  const needed = plainLen(left) + plainLen(right) + (busy ? 16 : 0) + 2;
+  const needed = plainLen(left) + agentPrefix.length + idleAgentText.length + workingAgentText.length +
+    activeAgentText.length + plainLen(right) + (busy ? 16 : 0) + 2;
   const stacked = needed > width;
 
-  const leftRow = <text content={new StyledText(left)} style={{ flexGrow: 1 }} />;
+  const leftRow = (
+    <box style={{ flexDirection: "row", flexGrow: 1, minWidth: 0 }}>
+      <text content={new StyledText(left)} />
+      {agentCount > 0 ? <text content={agentPrefix} fg={theme.dim} /> : null}
+      {idleAgentCount > 0 ? <text content={idleAgentText} fg={theme.success} /> : null}
+      {runningAgentCount > 0 ? (
+        <box style={{ flexDirection: "row" }}>
+          {idleAgentCount > 0 ? <text content=" " /> : null}
+          <WorkingPulse theme={theme} />
+          <text content={` ${runningAgentCount}`} fg={theme.accent} />
+        </box>
+      ) : null}
+      {activeAgentName ? <text content={activeAgentText} fg={theme.dim} /> : null}
+    </box>
+  );
   const rightRow = (
     <box style={{ flexDirection: "row", height: 1 }}>
       {busy ? <Working theme={theme} elapsedSec={props.elapsedSec} /> : null}

@@ -31,9 +31,9 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "animations", label: "Animations", category: "Appearance", keywords: "motion global" },
   {
     id: "workingRuleAnimation",
-    label: "Working rules",
+    label: "Working animation",
     category: "Appearance",
-    keywords: "input header coordinated off motion",
+    keywords: "rules input header coordinated off motion",
   },
   { id: "model", label: "Model", category: "Agent", keywords: "provider llm" },
   { id: "thinkingLevel", label: "Thinking level", category: "Agent", keywords: "reasoning effort" },
@@ -185,7 +185,7 @@ export function SettingsPopup({
                         fg={selected ? theme.accent : theme.fg}
                         bg={theme.popupBg}
                         wrapMode="none"
-                        style={{ width: narrow ? 14 : 18, flexShrink: 0 }}
+                        style={{ width: 18, flexShrink: 0 }}
                       />
                       <text
                         content={values[row.id]}
@@ -212,6 +212,14 @@ export function SettingsPopup({
         <select
           focused
           style={{ flexGrow: 1 }}
+          backgroundColor={theme.popupBg}
+          focusedBackgroundColor={theme.popupBg}
+          textColor={theme.fg}
+          focusedTextColor={theme.fg}
+          selectedBackgroundColor={theme.selectionBg}
+          selectedTextColor={theme.accent}
+          descriptionColor={theme.dim}
+          selectedDescriptionColor={theme.fg}
           options={models.map((m) => ({ name: m.id, description: m.provider, value: m }))}
           onSelect={(_index, option) => {
             if (!option) return;
