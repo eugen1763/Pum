@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { App } from "./app";
+import { App, historyOpenBlockReason } from "./app";
+import type { SessionHistoryItem } from "./session-history-metadata";
 import type { SubagentSnapshot } from "./subagents/types";
 
 let destroy: (() => void) | undefined;
@@ -91,10 +92,29 @@ type RenderOptions = {
   agents?: SubagentSnapshot[];
   initialStash?: Array<{ text: string; executed: boolean }>;
   session?: ReturnType<typeof fakeSession>;
+  historySessions?: SessionHistoryItem[];
   switchSession?: (path: string) => Promise<ReturnType<typeof fakeSession> | null>;
   newSession?: () => Promise<ReturnType<typeof fakeSession> | null>;
   sendUserMessage?: (agentId: string, text: string) => Promise<void>;
 };
+
+function historyItem(path: string, title: string): SessionHistoryItem {
+  return {
+    path,
+    id: path,
+    cwd: "/tmp/project",
+    created: new Date("2026-08-08T10:00:00.000Z"),
+    modified: new Date("2026-08-08T12:00:00.000Z"),
+    messageCount: 4,
+    firstMessage: title,
+    allMessagesText: title,
+    historyMetadata: {
+      latestUserMessageAt: new Date("2026-08-08T12:00:00.000Z"),
+      fileBytes: 2048,
+      tokens: { outgoing: 120, incoming: 30, cacheRead: 50 },
+    },
+  };
+}
 
 async function renderApp(options: RenderOptions = {}) {
   const setup = await createTestRenderer({
@@ -125,13 +145,10 @@ async function renderApp(options: RenderOptions = {}) {
       onNewSession={options.newSession ?? (async () => session)}
       loadSessions={async () => {
         historyLoads++;
-        return [{
-          path: "/tmp/older-session.jsonl",
-          name: "Older session",
-          firstMessage: "Earlier work",
-          modified: new Date("2026-08-08T12:00:00Z"),
-          messageCount: 4,
-        }] as any;
+        return options.historySessions ?? [historyItem(
+          "/tmp/older-session.jsonl",
+          "Older session",
+        )];
       }}
       onSwitchSession={options.switchSession ?? (async () => session)}
       settings={settings}
@@ -179,6 +196,14 @@ function expectInput(frame: string, text: string) {
 }
 
 describe("session history keyboard shortcuts", () => {
+  test("blocks history before attachments or active work can be lost", () => {
+    expect(historyOpenBlockReason({ hasPendingImages: true, busy: false }))
+      .toBe("send or remove attached images before switching sessions");
+    expect(historyOpenBlockReason({ hasPendingImages: false, busy: true }))
+      .toBe("wait for the current turn to finish before opening history");
+    expect(historyOpenBlockReason({ hasPendingImages: false, busy: false })).toBeNull();
+  });
+
   test("opens with a distinguishable Ctrl+H and restores input focus after Escape", async () => {
     const { setup, historyLoads } = await renderApp();
 
@@ -208,6 +233,31 @@ describe("session history keyboard shortcuts", () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Session history");
     expect(frame).not.toContain("❯ /history");
+  });
+
+  test("keeps the current session visible, selected, and marked", async () => {
+    let switches = 0;
+    const current = historyItem("/tmp/current-session.jsonl", "Current session");
+    const older = historyItem("/tmp/older-session.jsonl", "Older session");
+    const { setup } = await renderApp({
+      historySessions: [older, current],
+      switchSession: async () => {
+        switches++;
+        return fakeSession();
+      },
+    });
+
+    setup.mockInput.pressKey("h", { ctrl: true });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("● Current session");
+
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(switches).toBe(0);
+    expect(setup.captureCharFrame()).not.toContain("Session history");
+    await setup.mockInput.typeText("after current selection");
+    await settle(setup);
+    expectInput(setup.captureCharFrame(), "after current selection");
   });
 
   test("plain Backspace edits non-empty input and does nothing on empty input", async () => {
@@ -346,6 +396,24 @@ describe("session history keyboard shortcuts", () => {
     setup.mockInput.pressEnter();
     await settle(setup);
     expect(currentPrompts).toEqual(["after cancelled switch"]);
+  });
+
+  test("restores prompt focus and reports an error when a switch fails", async () => {
+    const { setup } = await renderApp({
+      switchSession: async () => {
+        throw new Error("fixture switch failure");
+      },
+    });
+
+    setup.mockInput.pressKey("h", { ctrl: true });
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("fixture switch failure");
+    await setup.mockInput.typeText("after failed switch");
+    await settle(setup);
+    expectInput(setup.captureCharFrame(), "after failed switch");
   });
 
   test("keeps the current session and prompt focus when /new is cancelled", async () => {

@@ -82,7 +82,8 @@ export function usageFromEntries(
 ): AgentUsage {
   let result = emptyAgentUsage();
   for (const entry of entries) {
-    const usage = entry?.type === "message" && entry.message?.role === "assistant"
+    const usage = entry?.type === "message"
+      && (entry.message?.role === "assistant" || entry.message?.role === "toolResult")
       ? entry.message.usage
       : (entry?.type === "compaction" || entry?.type === "branch_summary")
         ? entry.usage

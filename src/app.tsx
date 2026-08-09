@@ -2,7 +2,7 @@ import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 import { randomUUID } from "node:crypto";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import type { Model } from "@earendil-works/pi-ai";
-import type { AgentSession, ModelRuntime, SessionInfo } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimationProvider, supportsTrueColor, useWorkingRule, type WorkingRuleRole } from "./animation";
 import {
@@ -65,6 +65,7 @@ import {
 import { matchingCommands, moveCommandSelection } from "./commands";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
+import type { SessionHistoryItem } from "./session-history-metadata";
 import { setWritingStyle, WRITING_STYLES } from "./writing-style";
 import {
   EXPLANATION_STRENGTHS,
@@ -115,6 +116,15 @@ const QUIT_WINDOW_MS = 2000;
 const MAX_INPUT_ROWS = 8;
 /** Keys that move around without changing the text. */
 const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
+
+export function historyOpenBlockReason(options: {
+  hasPendingImages: boolean;
+  busy: boolean;
+}): string | null {
+  if (options.hasPendingImages) return "send or remove attached images before switching sessions";
+  if (options.busy) return "wait for the current turn to finish before opening history";
+  return null;
+}
 
 export function promptPlaceholder(options: {
   activeAgentName?: string;
@@ -323,7 +333,7 @@ export function App({
   session: AgentSession;
   modelRuntime: ModelRuntime;
   onNewSession: () => Promise<AgentSession | null>;
-  loadSessions: () => Promise<SessionInfo[]>;
+  loadSessions: () => Promise<SessionHistoryItem[]>;
   onSwitchSession: (path: string) => Promise<AgentSession | null>;
   settings: PumSettings;
   /** Provider ids that carry the hosted web-search tool; empty means none. */
@@ -358,7 +368,7 @@ export function App({
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpScrollOffset, setHelpScrollOffset] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historySessions, setHistorySessions] = useState<SessionInfo[]>([]);
+  const [historySessions, setHistorySessions] = useState<SessionHistoryItem[]>([]);
   const [page, setPage] = useState<"main" | "models" | "checkModels">("main");
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsSearchFocused, setSettingsSearchFocused] = useState(true);
@@ -1077,12 +1087,12 @@ export function App({
   };
 
   const openHistory = () => {
-    if (pendingImages.current.length > 0) {
-      append({ kind: "text", role: "error", text: "send or remove attached images before switching sessions" });
-      return;
-    }
-    if (busyRef.current) {
-      append({ kind: "text", role: "error", text: "wait for the current turn to finish before opening history" });
+    const blocked = historyOpenBlockReason({
+      hasPendingImages: pendingImages.current.length > 0,
+      busy: busyRef.current,
+    });
+    if (blocked) {
+      append({ kind: "text", role: "error", text: blocked });
       return;
     }
     settingsOpenRef.current = false;
@@ -1091,8 +1101,7 @@ export function App({
     setTriggerPopup(false, false);
     loadSessions()
       .then((sessions) => {
-        const currentPath = session.sessionFile;
-        setHistorySessions(sessions.filter((candidate) => candidate.path !== currentPath));
+        setHistorySessions(sessions);
         setHistoryOpen(true);
       })
       .catch((err) => append({ kind: "text", role: "error", text: String(err) }));
@@ -1100,6 +1109,10 @@ export function App({
 
   const selectHistorySession = (path: string) => {
     setHistoryOpen(false);
+    if (path === session.sessionFile) {
+      queueMicrotask(() => inputRef.current?.focus());
+      return;
+    }
     setWorking(true);
     onSwitchSession(path)
       .then((next) => {
@@ -1110,8 +1123,7 @@ export function App({
         if (activeAgentIdRef.current !== null) selectAgentView(null);
         focusInputAfterSwitch.current = true;
         setSession(next);
-        // A host can return the current session when the selected path already
-        // points at it. In that case the session effect does not run.
+        // A host can return the same object after replacing its runtime state.
         queueMicrotask(() => inputRef.current?.focus());
       })
       .catch((err) => {
@@ -1701,6 +1713,7 @@ export function App({
       if (key.name === "escape") {
         key.stopPropagation();
         setHistoryOpen(false);
+        queueMicrotask(() => inputRef.current?.focus());
       }
       return; // navigation and Enter belong to the focused select
     }
@@ -2272,6 +2285,9 @@ export function App({
           <SessionHistoryPopup
             theme={theme}
             sessions={historySessions}
+            currentPath={session.sessionFile}
+            terminalWidth={width}
+            terminalHeight={height}
             onSelect={selectHistorySession}
           />
         ) : null}
