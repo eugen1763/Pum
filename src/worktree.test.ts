@@ -3,12 +3,15 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathsHaveSameIdentity } from "./platform";
 import {
+  canonicalizeManagedWorktreeRecords,
   createWorktree,
   listWorktrees,
   mergeWorktree,
   parseWorktreePorcelain,
   removeWorktree,
+  worktreeStatus,
 } from "./worktree";
 
 const root = mkdtempSync(join(tmpdir(), "pum-worktree-test-"));
@@ -48,6 +51,31 @@ describe("worktree porcelain parsing", () => {
     expect(parseWorktreePorcelain(output, "/repo/.pum/worktrees", "linux")[0]?.name)
       .toBe("agent one");
   });
+
+  test("canonicalizes Windows short paths before managed containment", async () => {
+    const records = [{
+      name: "AGENT~1",
+      path: "C:\\Users\\RUNNER~1\\repo\\.pum\\worktrees\\AGENT~1",
+      branch: "pum/agent-one",
+      baseBranch: "",
+      baseCommit: "abc123",
+    }, {
+      name: "outside",
+      path: "C:\\Users\\runneradmin\\outside",
+      branch: "pum/outside",
+      baseBranch: "",
+      baseCommit: "def456",
+    }];
+    const resolvePath = async (path: string) => path
+      .replace("RUNNER~1", "runneradmin")
+      .replace("AGENT~1", "agent-one");
+    expect(await canonicalizeManagedWorktreeRecords(
+      records,
+      "C:\\Users\\runneradmin\\repo\\.pum\\worktrees",
+      "win32",
+      resolvePath,
+    )).toEqual([{ ...records[0], name: "agent-one", path: "C:\\Users\\runneradmin\\repo\\.pum\\worktrees\\agent-one" }]);
+  });
 });
 
 describe("PUM worktrees", () => {
@@ -61,10 +89,15 @@ describe("PUM worktrees", () => {
 
     const record = await createWorktree(root, "test-agent");
     expect(record.branch).toBe("pum/test-agent");
-    expect(record.path).toBe(join(root, ".pum", "worktrees", "test-agent"));
+    expect(await pathsHaveSameIdentity(
+      record.path,
+      join(root, ".pum", "worktrees", "test-agent"),
+    )).toBe(true);
 
     const listed = await listWorktrees(root);
     expect(listed.some((item) => item.branch === record.branch)).toBe(true);
+    await expect(worktreeStatus(root, { ...record, path: root }))
+      .rejects.toThrow("outside the managed directory");
 
     git(record.path, "config", "user.email", "pum@example.test");
     git(record.path, "config", "user.name", "PUM Test");

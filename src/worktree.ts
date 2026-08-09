@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { isPathInside, type RuntimePlatform } from "./platform";
 import { promisify } from "node:util";
@@ -52,7 +52,25 @@ export function randomWorktreeName(): string {
 }
 
 async function repositoryRoot(cwd: string): Promise<string> {
-  return git(cwd, ["rev-parse", "--show-toplevel"]);
+  return realpath(await git(cwd, ["rev-parse", "--show-toplevel"]));
+}
+
+async function managedRoot(root: string): Promise<string> {
+  const directory = await realpath(resolve(root, ".pum", "worktrees"));
+  if (!isPathInside(root, directory)) {
+    throw new Error(`Managed worktree directory resolves outside the project: ${directory}`);
+  }
+  return directory;
+}
+
+async function managedWorktreePath(cwd: string, path: string): Promise<string> {
+  const root = await repositoryRoot(cwd);
+  const parent = await managedRoot(root);
+  const canonical = await realpath(path);
+  if (!isPathInside(parent, canonical)) {
+    throw new Error(`Worktree path resolves outside the managed directory: ${path}`);
+  }
+  return canonical;
 }
 
 async function excludeManagedDirectory(root: string): Promise<void> {
@@ -80,16 +98,20 @@ export async function createWorktree(cwd: string, requestedName?: string): Promi
   const directory = resolve(root, ".pum", "worktrees", name);
 
   await mkdir(join(root, ".pum", "worktrees"), { recursive: true });
+  const parent = await managedRoot(root);
   await excludeManagedDirectory(root);
   await git(root, ["worktree", "add", "-b", branch, directory, baseCommit]);
 
-  return { name, path: directory, branch, baseBranch, baseCommit };
+  const canonicalDirectory = await realpath(directory);
+  if (!isPathInside(parent, canonicalDirectory)) {
+    throw new Error(`Created worktree resolves outside the managed directory: ${canonicalDirectory}`);
+  }
+  return { name, path: canonicalDirectory, branch, baseBranch, baseCommit };
 }
 
-export function parseWorktreePorcelain(
+function parseWorktreeRecords(
   output: string,
-  managedRoot: string,
-  platform: RuntimePlatform = process.platform,
+  platform: RuntimePlatform,
 ): WorktreeRecord[] {
   const nulDelimited = output.includes("\0");
   const blocks = nulDelimited ? output.split(/\0\0+/) : output.split(/\r?\n\r?\n+/);
@@ -105,7 +127,7 @@ export function parseWorktreePorcelain(
       if (space > 0) fields.set(line.slice(0, space), line.slice(space + 1));
     }
     const path = fields.get("worktree");
-    if (!path || !isPathInside(managedRoot, path, platform)) continue;
+    if (!path) continue;
     const branchRef = fields.get("branch") ?? "";
     records.push({
       name: paths.basename(path),
@@ -118,23 +140,63 @@ export function parseWorktreePorcelain(
   return records;
 }
 
+export function parseWorktreePorcelain(
+  output: string,
+  managedRoot: string,
+  platform: RuntimePlatform = process.platform,
+): WorktreeRecord[] {
+  return parseWorktreeRecords(output, platform)
+    .filter((record) => isPathInside(managedRoot, record.path, platform));
+}
+
+export async function canonicalizeManagedWorktreeRecords(
+  records: WorktreeRecord[],
+  parent: string,
+  platform: RuntimePlatform = process.platform,
+  resolvePath: (path: string) => Promise<string> = realpath,
+): Promise<WorktreeRecord[]> {
+  const paths = platform === "win32" ? win32 : posix;
+  const canonicalParent = await resolvePath(parent);
+  const canonicalRecords: WorktreeRecord[] = [];
+  for (const record of records) {
+    let path: string;
+    try {
+      path = await resolvePath(record.path);
+    } catch {
+      continue;
+    }
+    if (!isPathInside(canonicalParent, path, platform)) continue;
+    canonicalRecords.push({ ...record, name: paths.basename(path), path });
+  }
+  return canonicalRecords;
+}
+
 export async function listWorktrees(cwd: string): Promise<WorktreeRecord[]> {
   const root = await repositoryRoot(cwd);
-  const managedRoot = resolve(root, ".pum", "worktrees");
+  let parent: string;
+  try {
+    parent = await managedRoot(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
   const output = await git(root, ["worktree", "list", "--porcelain", "-z"]);
-  return parseWorktreePorcelain(output, managedRoot);
+  const records = parseWorktreeRecords(output, process.platform);
+  return canonicalizeManagedWorktreeRecords(records, parent);
 }
 
 export async function worktreeStatus(cwd: string, record: WorktreeRecord): Promise<string> {
-  const status = await git(record.path, ["status", "--short", "--branch"]);
+  const path = await managedWorktreePath(cwd, record.path);
+  const status = await git(path, ["status", "--short", "--branch"]);
   return status || `## ${record.branch}`;
 }
 
 export async function mergeWorktree(cwd: string, record: WorktreeRecord): Promise<string> {
   const root = await repositoryRoot(cwd);
+  const path = await managedWorktreePath(root, record.path);
   const mainStatus = await git(root, ["status", "--porcelain"]);
   if (mainStatus) throw new Error(`The current worktree must be clean before merging:\n${mainStatus}`);
-  const childStatus = await git(record.path, ["status", "--porcelain"]);
+  const childStatus = await git(path, ["status", "--porcelain"]);
   if (childStatus) throw new Error(`Worktree ${record.name} has uncommitted changes`);
   return git(root, ["merge", "--no-ff", record.branch]);
 }
@@ -145,12 +207,13 @@ export async function removeWorktree(
   force = false,
 ): Promise<void> {
   const root = await repositoryRoot(cwd);
+  const path = await managedWorktreePath(root, record.path);
   if (!force) {
     const merged = await git(root, ["branch", "--merged", "HEAD", "--format=%(refname:short)"]);
     if (!merged.split(/\r?\n/).includes(record.branch)) {
       throw new Error(`Branch ${record.branch} is not merged; use force to remove it`);
     }
   }
-  await git(root, ["worktree", "remove", ...(force ? ["--force"] : []), record.path]);
+  await git(root, ["worktree", "remove", ...(force ? ["--force"] : []), path]);
   await git(root, ["branch", force ? "-D" : "-d", record.branch]);
 }

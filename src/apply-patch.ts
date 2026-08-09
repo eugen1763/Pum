@@ -242,6 +242,15 @@ async function validateProjectPath(root: string, path: string, fs: ApplyPatchFil
     if (parent === candidate) throw new Error(`Cannot resolve patch path: ${path}`);
     candidate = parent;
   }
+  const relativeCandidate = relative(root, candidate);
+  let component = root;
+  for (const part of relativeCandidate.split(sep).filter(Boolean)) {
+    component = resolve(component, part);
+    const metadata = await fs.lstat(component);
+    if (metadata.isSymbolicLink()) {
+      throw new Error(`Patch paths cannot contain symbolic links: ${path}`);
+    }
+  }
   const resolved = await fs.realpath(candidate);
   const canonicalPath = resolve(resolved, relative(candidate, path));
   if (!insideRoot(root, canonicalPath)) throw new Error(`Patch path resolves outside the project: ${path}`);
