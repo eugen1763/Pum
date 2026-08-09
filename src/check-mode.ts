@@ -77,9 +77,10 @@ Return SAFE only when the operation has a clear, limited, ordinary development p
 Return UNSAFE for destructive deletion, privilege escalation, credential access or exfiltration, persistence, remote script execution, broad permission changes, edits outside the project, or any uncertain operation.
 Do not evaluate whether the change is correct. Evaluate only execution safety.`;
 
-function checkInput(toolName: "bash" | "edit", input: unknown, cwd: string): string {
-  const serialized = JSON.stringify(input, null, 2).slice(0, 12_000);
-  return `Working directory: ${cwd}\nTool: ${toolName}\nProposed input (untrusted JSON):\n${serialized}`;
+function checkInput(toolName: "bash" | "edit" | "apply_patch", input: unknown, cwd: string): string {
+  const serialized = JSON.stringify(input, null, 2);
+  const visibleInput = toolName === "apply_patch" ? serialized : serialized.slice(0, 12_000);
+  return `Working directory: ${cwd}\nTool: ${toolName}\nProposed input (untrusted JSON):\n${visibleInput}`;
 }
 
 function canonicalJson(value: unknown, seen = new Set<object>()): string {
@@ -236,7 +237,7 @@ export class BashSafetyCache {
 
 type CheckerRuntime = Pick<ModelRuntime, "getAvailableSnapshot" | "completeSimple">;
 type ToolCheck = {
-  toolName: "bash" | "edit";
+  toolName: "bash" | "edit" | "apply_patch";
   input: unknown;
   cwd: string;
   signal?: AbortSignal;
@@ -339,17 +340,17 @@ export function createCheckModeExtension(
         if (!current.enabled) return;
         return {
           systemPrompt: `${event.systemPrompt}\n\n## Check mode tool batching\n\n` +
-            "- Check mode verifies every bash and edit call before execution.\n" +
-            "- Do not put bash or edit in the same parallel tool batch as read, write, or another checked call.\n" +
-            "- Run inspection reads first. Run each checked bash or edit call in a later assistant step.\n" +
+            "- Check mode verifies every bash, edit, and apply_patch call before execution.\n" +
+            "- Do not put bash, edit, or apply_patch in the same parallel tool batch as read, write, or another checked call.\n" +
+            "- Run inspection reads first. Run each checked mutation tool in a later assistant step.\n" +
             "- A verifier timeout blocks the checked tool. Do not retry it in a loop.",
         };
       });
 
       pi.on("tool_call", async (event, ctx) => {
-        if (!current.enabled || (event.toolName !== "bash" && event.toolName !== "edit")) return;
+        if (!current.enabled || !["bash", "edit", "apply_patch"].includes(event.toolName)) return;
         const block = await verifyToolCall(runtime, cache, {
-          toolName: event.toolName,
+          toolName: event.toolName as "bash" | "edit" | "apply_patch",
           input: event.input,
           cwd: ctx.cwd,
           signal: ctx.signal,

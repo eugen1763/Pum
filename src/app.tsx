@@ -752,7 +752,9 @@ export function App({
               : event.isError
                 ? "error"
                 : "ok",
-            detail: event.toolName === "edit" ? editCounts(event.result) : undefined,
+            detail: event.toolName === "edit" || event.toolName === "apply_patch"
+              ? editCounts(event.result)
+              : undefined,
           });
           break;
         case "agent_start":

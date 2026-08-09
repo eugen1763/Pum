@@ -17,6 +17,24 @@ export function toolArg(name: string, args: any, cwd: string): string {
   if (name === "bash" && typeof args.command === "string") {
     return args.command.split("\n")[0]!.trim();
   }
+  if (name === "apply_patch" && typeof args.patch === "string") {
+    const paths: string[] = [];
+    let updateIndex = -1;
+    for (const line of args.patch.replace(/\r\n/g, "\n").split("\n")) {
+      const file = line.match(/^\*\*\* (Add|Update|Delete) File: (.+)$/);
+      if (file) {
+        paths.push(file[2]!.trim().replaceAll("\\", "/"));
+        updateIndex = file[1] === "Update" ? paths.length - 1 : -1;
+        continue;
+      }
+      const move = line.match(/^\*\*\* Move to: (.+)$/);
+      if (move && updateIndex >= 0) {
+        paths[updateIndex] = `${paths[updateIndex]} → ${move[1]!.trim().replaceAll("\\", "/")}`;
+      }
+    }
+    if (paths.length === 1) return paths[0]!;
+    if (paths.length > 1) return `${paths.length} files · ${paths[0]}`;
+  }
   if (name === "spawn_subagent" && typeof args.task === "string") {
     return typeof args.name === "string" ? `${args.name} · ${args.task}` : args.task;
   }
@@ -37,10 +55,7 @@ export function toolArg(name: string, args: any, cwd: string): string {
   return typeof first === "string" ? first.split("\n")[0]! : "";
 }
 
-/**
- * Count changed lines from the edit tool's unified patch (EditToolDetails.patch),
- * skipping the `+++`/`---` file headers.
- */
+/** Count changed lines from a tool result's unified patch details. */
 export function editCounts(result: any): string | undefined {
   const patch = result?.details?.patch;
   if (typeof patch !== "string") return undefined;

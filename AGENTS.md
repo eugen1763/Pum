@@ -18,7 +18,8 @@ bun run start    # open the TUI in the current directory
 | `src/animation.tsx` | One frame clock; shimmer, spinner, caret |
 | `src/status-bar.tsx` | Top bar; one row, or two when narrow |
 | `src/transcript.tsx` | Row rendering per role |
-| `src/tool-line.ts` | Which argument to show, and `+n −n` from an edit patch |
+| `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
+| `src/apply-patch.ts` | Codex patch parser, validation, atomic commit, and pi tool |
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
 | `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
 | `src/history.ts` | Prompt history, one list per working directory |
@@ -32,7 +33,7 @@ bun run start    # open the TUI in the current directory
 | `src/login-controller.ts` | Provider auth state machine and popup keyboard actions |
 | `src/login-flow.ts` | Provider registry, custom discovery, redaction, and atomic config writes |
 | `src/settings.ts` | PUM's own `pum.json` |
-| `src/check-mode.ts` | Optional model safety gate for `bash` and `edit` |
+| `src/check-mode.ts` | Optional model safety gate for `bash`, `edit`, and `apply_patch` |
 | `src/writing-style.ts` | Configurable per-turn system-prompt writing guidance |
 | `src/config.ts` | Where the config dir lives |
 
@@ -80,7 +81,13 @@ These were chosen deliberately. Change them only on purpose.
   endpoint and probes only the OpenAI-compatible `/models` route. PUM does not
   infer a different API shape from a failed probe. Config writes use a temporary
   file and atomic rename.
-- **All four tools run without asking.** No approval prompt.
+- **Coding tools run without asking.** No approval prompt.
+- **`apply_patch` is an atomic project-local mutation tool.** It parses and
+  validates the complete Codex patch before writes. It rejects traversal,
+  absolute paths, escaping symlinks, conflicting paths, missing context, and
+  ambiguous context. It acquires pi mutation queues for every touched path,
+  stages outputs, backs up existing files, and restores all files after a
+  commit failure.
 - **Sessions persist** to `<config dir>/sessions`.
 - **Colours are never literals.** Everything reads a semantic token from
   `theme.ts`. Three presets ship; `theme.json` in the config dir overrides any
@@ -194,23 +201,23 @@ These were chosen deliberately. Change them only on purpose.
   `createAgentSession` reads them back at startup. Do not duplicate that here.
   `pum.json` holds only what pi does not know about, including UI preferences,
   web search, check mode, and writing style.
-- **Check mode is fail-closed.** Its inline extension intercepts `bash` and
-  `edit` in `tool_call`, sends only the cwd and proposed input to the configured
-  verifier model, and requires a clear `SAFE` response. Missing models, request
-  failures, unclear replies, verifier watchdog timeouts, and `UNSAFE` replies
+- **Check mode is fail-closed.** Its inline extension intercepts `bash`, `edit`,
+  and `apply_patch` in `tool_call`. It sends only the cwd and proposed input to
+  the configured verifier model and requires a clear `SAFE` response. Missing
+  models, request failures, unclear replies, verifier watchdog timeouts, and `UNSAFE` replies
   block the tool. The watchdog aborts after 15 seconds even if the provider
   ignores its own request timeout.
 - **Checked tools stay out of parallel mixed batches.** pi prepares every tool
-  in a parallel assistant batch before it executes any tool. A waiting `bash`
-  or `edit` safety check would otherwise make unrelated `read` calls look stuck.
+  in a parallel assistant batch before it executes any tool. A waiting `bash`,
+  `edit`, or `apply_patch` check would make unrelated `read` calls look stuck.
   Run reads first, then issue each checked tool in a later assistant step.
 - **The check cache is narrow and exact.** `check-mode-cache.json` stores at
   most 256 explicit `SAFE` decisions for simple, read-only Git inspection
   commands. A hit matches the verifier model, cwd, and canonical complete
-  `bash` input. `edit` always reaches the verifier. The policy treats the
-  recognized built-in Git inspection operations as stable across repository
-  content changes. Project scripts, shell composition, output-writing options,
-  and explicit helper options never enter the cache because mutable project
+  `bash` input. `edit` and `apply_patch` always reach the verifier. The policy
+  treats recognized built-in Git inspection operations as stable across
+  repository content changes. Project scripts, shell composition,
+  output-writing options, and explicit helper options never enter the cache because mutable project
   state can change their safety. Cache errors degrade to misses and never
   replace a verifier decision.
 

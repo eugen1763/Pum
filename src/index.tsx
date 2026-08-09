@@ -23,6 +23,7 @@ import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
 import { shutdownSignals } from "./platform";
 import { createShutdown } from "./shutdown";
+import { applyPatchExtension } from "./apply-patch";
 
 mkdirSync(AGENT_DIR, { recursive: true });
 
@@ -67,6 +68,7 @@ const sessionRuntime = await createAgentSessionRuntime(
           writingStyleExtension,
           explanationStrengthExtension,
           checkModeExtension,
+          applyPatchExtension,
           subagentExtension,
         ],
       },
@@ -77,7 +79,7 @@ const sessionRuntime = await createAgentSessionRuntime(
         sessionManager,
         sessionStartEvent,
         tools: [
-          "read", "write", "edit", "bash",
+          "read", "write", "edit", "apply_patch", "bash",
           "spawn_subagent", "message_agent", "list_subagents", "stop_subagent", "worktree",
         ],
       })),

@@ -145,15 +145,24 @@ describe("bash safety cache", () => {
     expect(Date.now() - started).toBeLessThan(500);
   });
 
-  test("never bypasses verification for edit calls", async () => {
+  test("never bypasses verification for file mutation calls", async () => {
     const { cache } = temporaryCache();
     cache.add(config.model, "/repo", { path: "a", edits: [] });
-    const verifier = runtime([result("SAFE"), result("SAFE")]);
-    const call = { toolName: "edit" as const, input: { path: "a", edits: [] }, cwd: "/repo", config };
+    cache.add(config.model, "/repo", { patch: "*** Begin Patch\n*** End Patch" });
+    const verifier = runtime([result("SAFE"), result("SAFE"), result("SAFE"), result("SAFE")]);
+    const editCall = { toolName: "edit" as const, input: { path: "a", edits: [] }, cwd: "/repo", config };
+    const patchCall = {
+      toolName: "apply_patch" as const,
+      input: { patch: "*** Begin Patch\n*** End Patch" },
+      cwd: "/repo",
+      config,
+    };
 
-    await verifyToolCall(verifier, cache, call);
-    await verifyToolCall(verifier, cache, call);
-    expect(verifier.calls).toBe(2);
+    await verifyToolCall(verifier, cache, editCall);
+    await verifyToolCall(verifier, cache, editCall);
+    await verifyToolCall(verifier, cache, patchCall);
+    await verifyToolCall(verifier, cache, patchCall);
+    expect(verifier.calls).toBe(4);
   });
 
   test("only admits simple read-only Git inspection commands", () => {
@@ -177,20 +186,26 @@ describe("bash safety cache", () => {
     setCheckModeConfig({ enabled: true, model: "missing/model" });
 
     const prompt = await handlers.get("before_agent_start")?.({ systemPrompt: "base" });
-    expect(prompt.systemPrompt).toContain("Do not put bash or edit in the same parallel tool batch");
+    expect(prompt.systemPrompt).toContain("Do not put bash, edit, or apply_patch in the same parallel tool batch");
     expect(prompt.systemPrompt).toContain("Do not retry it in a loop");
 
-    const block = await handlers.get("tool_call")?.(
-      { toolName: "bash", toolCallId: "call-1", input: { command: "echo test" } },
-      { cwd: process.cwd() },
-    );
-    const patch = await handlers.get("tool_result")?.({
-      toolName: "bash",
-      toolCallId: "call-1",
-      details: {},
-    });
+    for (const [toolName, input] of [
+      ["bash", { command: "echo test" }],
+      ["apply_patch", { patch: "*** Begin Patch\n*** End Patch" }],
+    ] as const) {
+      const id = `call-${toolName}`;
+      const block = await handlers.get("tool_call")?.(
+        { toolName, toolCallId: id, input },
+        { cwd: process.cwd() },
+      );
+      const patch = await handlers.get("tool_result")?.({
+        toolName,
+        toolCallId: id,
+        details: {},
+      });
 
-    expect(block).toMatchObject({ block: true });
-    expect(isRejectedToolResult({ details: patch.details })).toBe(true);
+      expect(block).toMatchObject({ block: true });
+      expect(isRejectedToolResult({ details: patch.details })).toBe(true);
+    }
   });
 });
