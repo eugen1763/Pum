@@ -79,7 +79,7 @@ import type { SubagentManager } from "./subagents/manager";
 import { runWorktreeCommand } from "./worktree-command";
 import { CANCEL_WINDOW_MS, confirmsCancellation } from "./cancel-confirmation";
 import { buildStashBatchPrompt, selectedRange } from "./stash-batch";
-import { addTurnUsage, emptyAgentUsage } from "./agent-usage";
+import { addTurnUsage, usageFromEntries } from "./agent-usage";
 import { AgentSelectorPopup, buildAgentTree, moveAgentSelection } from "./agent-selector";
 import { LoginPopup, type LoginPage } from "./login-popup";
 import { LoginController } from "./login-controller";
@@ -221,6 +221,14 @@ export function PromptStash({
   );
 }
 
+function sessionUsage(session: AgentSession) {
+  const manager = session.sessionManager as any;
+  const entries = typeof manager.getEntries === "function"
+    ? manager.getEntries()
+    : manager.buildContextEntries();
+  return usageFromEntries(entries, session.agent.state.model.contextWindow);
+}
+
 function messageText(message: any): string {
   if (typeof message?.content === "string") return message.content.trim();
   if (!Array.isArray(message?.content)) return "";
@@ -326,7 +334,7 @@ export function App({
   );
   const [modelId, setModelId] = useState(session.agent.state.model.id);
   const [branch, setBranch] = useState<string | null>(null);
-  const [usage, setUsage] = useState(emptyAgentUsage);
+  const [usage, setUsage] = useState(() => sessionUsage(initialSession));
   const [elapsedSec, setElapsedSec] = useState(0);
   const [stash, setStash] = useState<StashedPrompt[]>(() => promptStashStore.load(cwd));
   /** -1 means the input is selected; non-negative values select stash rows. */
@@ -659,6 +667,7 @@ export function App({
       if (event.type === "main-line") append(event.line);
       else if (event.type === "main-pending-add") addPending(event.pending);
       else if (event.type === "main-pending-resolve") resolvePending(event.id);
+      else if (event.type === "main-pending-drop") dropPending(event.id);
       setAgentRevision((revision) => revision + 1);
     }),
     [subagentManager],
@@ -696,7 +705,7 @@ export function App({
       stream: null,
       pending: [],
     });
-    setUsage(emptyAgentUsage());
+    setUsage(sessionUsage(session));
     if (focusInputAfterSwitch.current) {
       focusInputAfterSwitch.current = false;
       inputRef.current?.focus();
@@ -1703,7 +1712,9 @@ export function App({
           modelId={visibleModelId}
           thinkingLevel={visibleThinkingLevel}
           branch={visibleBranch}
-          tokens={visibleUsage.tokens}
+          outgoingTokens={visibleUsage.outgoing}
+          incomingTokens={visibleUsage.incoming}
+          cacheReadTokens={visibleUsage.cacheRead}
           cost={visibleUsage.cost}
           contextPct={visibleUsage.contextPct}
           busy={visibleBusy}

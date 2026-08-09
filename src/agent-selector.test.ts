@@ -21,7 +21,7 @@ function agent(id: string, parentAgentId: string | null, startedAt: number): Sub
     transcript: { lines: [], stream: null, pending: [] },
     startedAt,
     updatedAt: startedAt,
-    usage: { tokens: 0, cost: 0, contextPct: null },
+    usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
   };
 }
 

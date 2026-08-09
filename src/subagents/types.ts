@@ -68,7 +68,8 @@ export type SubagentManagerEvent =
   | { type: "changed" }
   | { type: "main-line"; line: Line }
   | { type: "main-pending-add"; pending: PendingLine }
-  | { type: "main-pending-resolve"; id: string };
+  | { type: "main-pending-resolve"; id: string }
+  | { type: "main-pending-drop"; id: string };
 
 export type SpawnSubagentOptions = {
   task: string;

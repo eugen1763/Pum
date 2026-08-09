@@ -30,7 +30,7 @@ function addTestAgent(manager: SubagentManager, id: string, status: SubagentStat
       transcript: { lines: [], stream: null, pending: [] },
       startedAt: 1,
       updatedAt: 1,
-      usage: { tokens: 0, cost: 0, contextPct: null },
+      usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
     },
   });
 }
@@ -184,6 +184,138 @@ describe("SubagentManager extension", () => {
     expect(result.systemPrompt).toContain("keep the work pending for deliberate routing");
   });
 
+  test("notifies an idle main after a user instruction reaches a subagent", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "idle");
+    const record = (manager as any).records.get("worker");
+    const deliveries: any[] = [];
+    const events: any[] = [];
+    manager.subscribe((event) => events.push(event));
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any, options: any) {
+        deliveries.push({ message, options });
+      },
+    };
+    (manager as any).parentSessionId = "main-session";
+    record.session = {
+      isStreaming: false,
+      sessionId: "child-session",
+      sessionManager: { appendCustomEntry() {} },
+      prompt: async (text: string) => {
+        (manager as any).processSessionEvent(record, {
+          type: "message_start",
+          message: { role: "user", content: text },
+        });
+      },
+    };
+
+    await manager.sendUserMessage("worker", "Check the parser edge case.");
+    await Promise.resolve();
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].options).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    expect(deliveries[0].message.content).toContain("subagent worker");
+    expect(deliveries[0].message.content).toContain("Check the parser edge case.");
+    expect(events.filter((event) => event.type === "main-pending-add")).toHaveLength(1);
+    expect(events.some((event) => event.type === "main-line")).toBe(false);
+  });
+
+  test("steers a busy main and resolves the notice without splitting its stream", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const record = (manager as any).records.get("worker");
+    const handlers = new Map<string, Function[]>();
+    const deliveries: any[] = [];
+    const events: any[] = [];
+    manager.subscribe((event) => events.push(event));
+    const pi = {
+      on(name: string, handler: Function) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      registerTool() {},
+      appendEntry() {},
+      sendMessage(message: any, options: any) {
+        deliveries.push({ message, options });
+      },
+    };
+    (manager.mainExtension() as any).factory(pi);
+    (manager as any).parentSessionId = "main-session";
+    handlers.get("agent_start")?.[0]?.({});
+    record.session = {
+      isStreaming: true,
+      sessionId: "child-session",
+      sessionManager: { appendCustomEntry() {} },
+      steer: async (text: string) => {
+        (manager as any).processSessionEvent(record, {
+          type: "message_start",
+          message: { role: "user", content: text },
+        });
+      },
+    };
+
+    await manager.sendUserMessage("worker", "Use the new fixture.");
+    const pending = events.find((event) => event.type === "main-pending-add").pending;
+    handlers.get("message_start")?.[0]?.({
+      message: {
+        role: "custom",
+        customType: "pum.agent_message",
+        details: { id: pending.id },
+      },
+    });
+
+    expect(deliveries[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
+    expect(events).toContainEqual({ type: "main-pending-resolve", id: pending.id });
+  });
+
+  test("cleans up a failed subagent steer without notifying main", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const record = (manager as any).records.get("worker");
+    const deliveries: any[] = [];
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); },
+    };
+    record.session = {
+      isStreaming: true,
+      sessionId: "child-session",
+      sessionManager: { appendCustomEntry() {} },
+      steer: async () => { throw new Error("delivery failed"); },
+    };
+
+    await expect(manager.sendUserMessage("worker", "Do not lose this.")).rejects.toThrow("delivery failed");
+    expect(record.snapshot.transcript.pending).toEqual([]);
+    expect(record.userInstructionNotices.size).toBe(0);
+    expect(deliveries).toEqual([]);
+  });
+
+  test("does not notify main when queued subagent delivery is cancelled", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const record = (manager as any).records.get("worker");
+    const deliveries: any[] = [];
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); },
+    };
+    record.session = {
+      isStreaming: true,
+      sessionId: "child-session",
+      sessionManager: { appendCustomEntry() {} },
+      steer: async () => {},
+      clearQueue: () => ({ steering: ["Cancel this instruction."], followUp: [] }),
+      abort: async () => {},
+    };
+
+    await manager.sendUserMessage("worker", "Cancel this instruction.");
+    await manager.abortAgent("worker");
+
+    expect(record.snapshot.transcript.pending).toEqual([]);
+    expect(record.userInstructionNotices.size).toBe(0);
+    expect(deliveries).toEqual([]);
+  });
+
   test("restores parent metadata and migrates legacy records to main", async () => {
     const base = {
       name: "worker",
@@ -246,9 +378,21 @@ describe("SubagentManager extension", () => {
     } as any, "/repo");
 
     expect(manager.getAgent("child")?.parentAgentId).toBe("parent");
-    expect(manager.getAgent("child")?.usage).toEqual({ tokens: 700, cost: 0.2, contextPct: 35 });
+    expect(manager.getAgent("child")?.usage).toEqual({
+      outgoing: 700,
+      incoming: 0,
+      cacheRead: 0,
+      cost: 0.2,
+      contextPct: 35,
+    });
     expect(manager.getAgent("legacy")?.parentAgentId).toBeNull();
-    expect(manager.getAgent("legacy")?.usage).toEqual({ tokens: 0, cost: 0, contextPct: null });
+    expect(manager.getAgent("legacy")?.usage).toEqual({
+      outgoing: 0,
+      incoming: 0,
+      cacheRead: 0,
+      cost: 0,
+      contextPct: null,
+    });
   });
 
   test("binds the main session even when session_start was missed", async () => {

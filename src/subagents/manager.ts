@@ -12,7 +12,12 @@ import { Type } from "typebox";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { addTurnUsage, emptyAgentUsage, usageFromEntries } from "../agent-usage";
+import {
+  addTurnUsage,
+  emptyAgentUsage,
+  normalizeAgentUsage,
+  usageFromEntries,
+} from "../agent-usage";
 import { replayEntries } from "../replay";
 import { isRejectedToolResult } from "../check-mode";
 import {
@@ -125,6 +130,7 @@ type RuntimeRecord = {
   unsubscribeSearch?: () => void;
   dispose?: () => Promise<void> | void;
   finishRequested?: string;
+  userInstructionNotices?: Map<string, string>;
 };
 
 type ManagerOptions = {
@@ -184,6 +190,7 @@ export class SubagentManager {
   private mainSessionManager?: ExtensionContext["sessionManager"];
   private mainCwd = process.cwd();
   private parentSessionId = "detached";
+  private mainRunning = false;
   private worktreeQueue: Promise<void> = Promise.resolve();
   private readonly messageTimes = new Map<string, number[]>();
 
@@ -241,6 +248,7 @@ export class SubagentManager {
     this.mainSessionManager = sessionManager;
     this.mainCwd = cwd;
     this.parentSessionId = sessionId;
+    this.mainRunning = false;
 
     const restored = new Map<string, Omit<SubagentSnapshot, "transcript">>();
     for (const entry of sessionManager.getEntries()) {
@@ -266,7 +274,7 @@ export class SubagentManager {
       const snapshot = {
         ...restoredSnapshot,
         parentAgentId: restoredSnapshot.parentAgentId ?? null,
-        usage: restoredSnapshot.usage ?? emptyAgentUsage(),
+        usage: normalizeAgentUsage(restoredSnapshot.usage),
       } as SubagentSnapshot;
       let transcript = emptyTranscript();
       if (snapshot.sessionFile && existsSync(snapshot.sessionFile)) {
@@ -279,7 +287,8 @@ export class SubagentManager {
             stream: null,
             pending: [],
           };
-          if (!restoredSnapshot.usage) {
+          const retainedUsage = restoredSnapshot.usage as any;
+          if (!retainedUsage || typeof retainedUsage.outgoing !== "number") {
             snapshot.usage = usageFromEntries(
               childManager.getEntries(),
               this.resolveModel(snapshot.modelId).contextWindow,
@@ -292,7 +301,10 @@ export class SubagentManager {
       const status: SubagentStatus = ["running", "starting"].includes(snapshot.status)
         ? "interrupted"
         : snapshot.status;
-      this.records.set(snapshot.id, { snapshot: { ...snapshot, status, transcript } });
+      this.records.set(snapshot.id, {
+        snapshot: { ...snapshot, status, transcript },
+        userInstructionNotices: new Map(),
+      });
     }
     this.emit();
   }
@@ -354,9 +366,10 @@ export class SubagentManager {
     this.updateTranscript(record, (value) => resolvePendingDelivery(value, id));
   }
 
-  private resolvePendingText(record: RuntimeRecord, text: string): void {
+  private resolvePendingText(record: RuntimeRecord, text: string): PendingLine | undefined {
     const pending = record.snapshot.transcript.pending.find((item) => item.deliveryText === text);
     if (pending) this.resolvePending(record, pending.id);
+    return pending;
   }
 
   private dropPending(record: RuntimeRecord, id: string): void {
@@ -394,7 +407,16 @@ export class SubagentManager {
                 .join("")
                 .trim()
               : "";
-          if (text) this.resolvePendingText(record, text);
+          if (text) {
+            const pending = this.resolvePendingText(record, text);
+            if (pending) {
+              const instruction = record.userInstructionNotices?.get(pending.id);
+              if (instruction !== undefined) {
+                record.userInstructionNotices?.delete(pending.id);
+                this.notifyMainOfUserInstruction(record, instruction);
+              }
+            }
+          }
         }
         break;
       }
@@ -581,6 +603,12 @@ export class SubagentManager {
         pi.on("before_agent_start", (event) => ({
           systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}\n\n${buildSubagentCapacityPrompt(this.activeCount())}`,
         }));
+        pi.on("agent_start", () => {
+          this.mainRunning = true;
+        });
+        pi.on("agent_settled", () => {
+          this.mainRunning = false;
+        });
         pi.on("message_start", (event) => {
           const message = event.message;
           if (message.role !== "custom" || message.customType !== AGENT_MESSAGE_CUSTOM_TYPE) return;
@@ -741,7 +769,7 @@ export class SubagentManager {
         updatedAt: now,
         usage: emptyAgentUsage(),
       };
-      const created: RuntimeRecord = { snapshot };
+      const created: RuntimeRecord = { snapshot, userInstructionNotices: new Map() };
       this.records.set(id, created);
       this.persist({ event: "spawned", id, at: now, snapshot: snapshotMetadata(snapshot) });
       this.emit();
@@ -845,11 +873,14 @@ export class SubagentManager {
       deliveryText: text,
     };
     this.addPending(record, pending);
+    record.userInstructionNotices ??= new Map();
+    record.userInstructionNotices.set(pending.id, displayText);
     this.updateStatus(record, "running");
     if (record.session!.isStreaming) {
       try {
         await withSearchRoute(record.session!.sessionId, () => record.session!.steer(text, images));
       } catch (error) {
+        record.userInstructionNotices.delete(pending.id);
         this.dropPending(record, pending.id);
         throw error;
       }
@@ -857,6 +888,7 @@ export class SubagentManager {
       record.session!.sessionId,
       () => record.session!.prompt(text, { images }),
     ).catch((error) => {
+      record.userInstructionNotices?.delete(pending.id);
       this.dropPending(record, pending.id);
       this.updateStatus(record, "failed", String(error));
       this.notifyMain(record, "failed", String(error));
@@ -866,6 +898,21 @@ export class SubagentManager {
   async abortAgent(id: string): Promise<void> {
     const record = this.findRecord(id);
     if (!record?.session) return;
+    const queued = record.session.clearQueue();
+    const cancelled = new Set([...queued.steering, ...queued.followUp]);
+    if (cancelled.size > 0) {
+      for (const pending of record.snapshot.transcript.pending) {
+        if (pending.deliveryText && cancelled.has(pending.deliveryText)) {
+          record.userInstructionNotices?.delete(pending.id);
+        }
+      }
+      this.updateTranscript(record, (value) => ({
+        ...value,
+        pending: value.pending.filter(
+          (pending) => !pending.deliveryText || !cancelled.has(pending.deliveryText),
+        ),
+      }));
+    }
     await record.session.abort();
   }
 
@@ -923,7 +970,10 @@ export class SubagentManager {
     if (recipientTarget === "main") {
       if (!this.mainApi) throw new Error("Main agent is unavailable");
       this.emit({ type: "main-pending-add", pending });
-      this.wakeMain(customMessage, customMessage.content);
+      if (!this.wakeMain(customMessage, customMessage.content)) {
+        this.emit({ type: "main-pending-drop", id: pending.id });
+        throw new Error("Main agent is unavailable");
+      }
     } else if (recipient) {
       await this.ensureRuntime(recipient);
       if (!recipient.api) throw new Error(`Agent message API is unavailable: ${recipient.snapshot.name}`);
@@ -943,15 +993,46 @@ export class SubagentManager {
       details?: unknown;
     },
     _fallback: string,
-  ): void {
+    deliverAs: "steer" | "followUp" = "followUp",
+  ): boolean {
     const api = this.mainApi;
-    if (!api) return;
+    if (!api) return false;
     // The explicit main-session binding makes the structured custom message a
     // reliable wake signal. Do not add a user-message fallback because it
     // creates a second visible turn after the custom message already wakes one.
-    withSearchRoute(this.parentSessionId, () => {
-      api.sendMessage(message, { deliverAs: "followUp", triggerTurn: true });
-    });
+    try {
+      withSearchRoute(this.parentSessionId, () => {
+        api.sendMessage(message, { deliverAs, triggerTurn: true });
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private notifyMainOfUserInstruction(record: RuntimeRecord, instruction: string): void {
+    if (!this.mainApi) return;
+    const text = `User added instructions to subagent ${record.snapshot.name}:\n${instruction}`;
+    const data: AgentMessageData = {
+      id: randomUUID().slice(0, 12),
+      sender: "user",
+      recipient: "main",
+      text,
+      at: Date.now(),
+    };
+    const pending: PendingLine = { id: data.id, line: this.agentMessageLine(data) };
+    this.emit({ type: "main-pending-add", pending });
+    const delivered = this.wakeMain(
+      {
+        customType: AGENT_MESSAGE_CUSTOM_TYPE,
+        content: text,
+        display: true,
+        details: data,
+      },
+      text,
+      this.mainRunning ? "steer" : "followUp",
+    );
+    if (!delivered) this.emit({ type: "main-pending-drop", id: pending.id });
   }
 
   private notifyMain(record: RuntimeRecord, status: SubagentStatus, summary?: string): void {
