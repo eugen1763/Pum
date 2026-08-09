@@ -21,7 +21,6 @@ import {
   type ExternalTriggerCustomEvent,
   type ExternalTriggerEventData,
   type PublicTriggerManager,
-  type TriggerInvocationMode,
   type TriggerLastResult,
   type TriggerManagerEvent,
   type TriggerManagerOptions,
@@ -248,23 +247,14 @@ export class TriggerManager implements PublicTriggerManager {
     await this.cancelRecord(record, "cancelled", "Trigger cancelled");
   }
 
-  async invoke(id: string, mode: TriggerInvocationMode, requester?: TriggerRequester): Promise<TriggerSnapshot | void> {
+  async invoke(id: string, requester?: TriggerRequester): Promise<TriggerSnapshot | void> {
     const record = this.authorizedRecord(id, requester);
     this.refreshExpiry(record);
     if (["cancelled", "expired", "unavailable"].includes(record.snapshot.state)) {
       throw new Error(`Trigger is ${record.snapshot.state}`);
     }
-    if (mode === "fire") await this.fireRecord(record, true);
-    else await this.start(record, true, true, "invoke-run");
+    await this.start(record, true, true, "invoke-run");
     return cloneSnapshot(record.snapshot);
-  }
-
-  run(id: string, requester?: TriggerRequester): Promise<TriggerSnapshot | void> {
-    return this.invoke(id, "run", requester);
-  }
-
-  fire(id: string, requester?: TriggerRequester): Promise<TriggerSnapshot | void> {
-    return this.invoke(id, "fire", requester);
   }
 
   list(requester?: TriggerRequester): TriggerSnapshot[] { return this.getTriggers(requester) }
@@ -438,7 +428,7 @@ export class TriggerManager implements PublicTriggerManager {
     this.refreshExpiry(record);
     if (this.isTerminal(record) || (record.snapshot.paused && !forceWhilePaused)) return;
     if (record.snapshot.fireCount >= record.snapshot.maxFires) {
-      this.expire(record, "Maximum fire count reached");
+      this.expire(record, "Maximum run count reached");
       return;
     }
     if (record.snapshot.state === "running" || record.snapshot.state === "waiting" || this.runningCount >= this.runningLimit) {
@@ -532,7 +522,6 @@ export class TriggerManager implements PublicTriggerManager {
         durationMs: Math.max(0, finishedAt - startedAt),
         exitCode: exit.exitCode,
         signal: exit.signal,
-        synthetic: false,
         manual,
         output,
       };
@@ -553,48 +542,6 @@ export class TriggerManager implements PublicTriggerManager {
         this.drainCoalesced();
       }
     }
-  }
-
-  private async fireRecord(record: TriggerRecord, manual: boolean): Promise<void> {
-    if (record.snapshot.state === "running") {
-      record.rerunRequested = true;
-      record.snapshot.coalescedCount += 1;
-      this.emitExternal(record, "coalesced", "A fire was coalesced behind the active process");
-      return;
-    }
-    if (record.snapshot.fireCount >= record.snapshot.maxFires) {
-      this.expire(record, "Maximum fire count reached");
-      return;
-    }
-    const now = this.options.clock.now();
-    const result: TriggerLastResult = {
-      startedAt: now,
-      finishedAt: now,
-      durationMs: 0,
-      exitCode: null,
-      signal: null,
-      synthetic: true,
-      manual,
-    };
-    record.snapshot.lastResult = result;
-    record.snapshot.output = undefined;
-    record.snapshot.fireCount += 1;
-    if (record.snapshot.state === "waiting") {
-      record.snapshot.coalescedCount += 1;
-      const pending = [...this.pending.values()].find((delivery) => delivery.triggerId === record.snapshot.id);
-      if (pending) {
-        pending.event = this.eventData(record, "coalesced", "Equivalent pending fire coalesced", result);
-        pending.message = renderTriggerTemplate(
-          record.messageTemplate,
-          triggerTemplateValues(record.snapshot, pending.event),
-        );
-        pending.event.renderedMessage = pending.message;
-      }
-      this.emitExternal(record, "coalesced", "Equivalent pending fire coalesced");
-      return;
-    }
-    await this.queueDelivery(record, result);
-    this.afterRun(record);
   }
 
   private async queueDelivery(record: TriggerRecord, result: TriggerLastResult, writer?: TriggerOutputWriter): Promise<void> {
@@ -682,7 +629,7 @@ export class TriggerManager implements PublicTriggerManager {
     if (record.snapshot.state !== "waiting") this.refreshExpiry(record);
     if (this.isTerminal(record) || record.snapshot.state === "waiting") return;
     if (record.snapshot.fireCount >= record.snapshot.maxFires) {
-      this.expire(record, "Maximum fire count reached");
+      this.expire(record, "Maximum run count reached");
       return;
     }
     if (record.snapshot.mode === "repeat" && !record.snapshot.paused) {
@@ -831,7 +778,6 @@ export class TriggerManager implements PublicTriggerManager {
       durationMs: clonedResult?.durationMs ?? null,
       exitCode: clonedResult?.exitCode ?? null,
       signal: clonedResult?.signal ?? null,
-      synthetic: clonedResult?.synthetic ?? false,
       manual: clonedResult?.manual ?? false,
       output: clonedResult?.output,
       result: clonedResult,

@@ -10,7 +10,7 @@ import {
 } from "./subagents/types";
 
 describe("subagent transcript replay", () => {
-  test("restores agent messages and synthetic tool state", () => {
+  test("restores agent messages and persisted tool state", () => {
     const message = {
       id: "message-1",
       sender: "worker-a",

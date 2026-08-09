@@ -32,7 +32,6 @@ const result = {
   durationMs: 1,
   exitCode: 0,
   signal: null,
-  synthetic: false,
   manual: false,
   output: { path: "/private/out.log", bytes: 12, truncated: false, exists: true },
 };
@@ -54,7 +53,6 @@ const event: ExternalTriggerEventData = {
   durationMs: 1,
   exitCode: 0,
   signal: null,
-  synthetic: false,
   manual: false,
   output: result.output,
   result,

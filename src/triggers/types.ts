@@ -29,8 +29,6 @@ export type TriggerTarget = {
   label: string;
 };
 
-export type TriggerInvocationMode = "run" | "fire";
-
 export type TriggerOutputMetadata = {
   path: string;
   bytes: number;
@@ -44,7 +42,6 @@ export type TriggerLastResult = {
   durationMs: number;
   exitCode: number | null;
   signal: string | null;
-  synthetic: boolean;
   manual: boolean;
   output?: TriggerOutputMetadata;
 };
@@ -123,7 +120,6 @@ export type ExternalTriggerEventData = {
   durationMs: number | null;
   exitCode: number | null;
   signal: string | null;
-  synthetic: boolean;
   manual: boolean;
   renderedMessage?: string;
   output?: TriggerOutputMetadata;
@@ -220,7 +216,7 @@ export interface PublicTriggerManager {
   pause(id: string, requester?: TriggerRequester): Promise<TriggerSnapshot>;
   resume(id: string, requester?: TriggerRequester): Promise<TriggerSnapshot>;
   cancel(id: string, requester?: TriggerRequester): Promise<void>;
-  invoke(id: string, mode: TriggerInvocationMode, requester?: TriggerRequester): Promise<TriggerSnapshot | void>;
+  invoke(id: string, requester?: TriggerRequester): Promise<TriggerSnapshot | void>;
   invalidateSession(sessionId: string): Promise<void> | void;
   invalidateAgent(sessionId: string, agentId: string): Promise<void> | void;
   markTargetSettled(sessionId: string, agentId: string | null): Promise<void> | void;

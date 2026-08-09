@@ -1436,7 +1436,7 @@ export function App({
     if (action === "pause") result = triggerManager.pause(trigger.id);
     else if (action === "resume") result = triggerManager.resume(trigger.id);
     else if (action === "cancel") result = triggerManager.cancel(trigger.id);
-    else result = triggerManager.invoke(trigger.id, action);
+    else result = triggerManager.invoke(trigger.id);
     Promise.resolve(result).catch((error) => append({
       kind: "text",
       role: "error",

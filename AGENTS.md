@@ -286,7 +286,11 @@ These were chosen deliberately. Change them only on purpose.
   subagent selector that `SubagentManager` resolves to an exact session, agent,
   and worktree. Never accept model-supplied raw `TriggerTarget` fields.
   `create_trigger`, `resume_trigger`, and `invoke_trigger` can start checked
-  processes and stay out of mixed parallel batches.
+  processes and stay out of mixed parallel batches. `invoke_trigger` accepts
+  only a trigger id and always runs the configured executable. The TUI and
+  model tools expose no synthetic trigger action. Persisted `fireCount` and
+  `maxFires` field names remain stable for session compatibility; the UI labels
+  these values as runs.
 - **Trigger output and templates stay inert.** Commands use executable plus
   argv with no shell by default. The inherited environment is a small sanitized
   allowlist. Combined stdout/stderr goes to a private temporary file, drains

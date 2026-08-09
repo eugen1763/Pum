@@ -157,7 +157,7 @@ describe("TriggerManager lifecycle", () => {
     expect(h.writers[0]?.removed).toBe(true);
   });
 
-  test("supports pause, resume, manual run, synthetic fire, and expiry", async () => {
+  test("supports pause, resume, checked manual run, and expiry", async () => {
     const h = harness();
     await h.manager.create(input({ id: "paused", mode: "repeat", restartDelayMs: 60_000, maxFires: 4 }), requester);
     expect((await h.manager.pause("paused")).state).toBe("paused");
@@ -169,12 +169,9 @@ describe("TriggerManager lifecycle", () => {
     await flushAsync();
     expect(h.spawnCalls).toHaveLength(1);
     await h.manager.markTargetSettled("session-1", null);
-    await h.manager.invoke("paused", "fire");
-    expect(h.manager.inspect("paused").lastResult).toMatchObject({ synthetic: true, manual: true });
-    await h.manager.markTargetSettled("session-1", null);
-    await h.manager.invoke("paused", "run");
+    await h.manager.invoke("paused");
     await flushAsync();
-    expect(h.manager.inspect("paused").lastResult).toMatchObject({ synthetic: false, manual: true });
+    expect(h.manager.inspect("paused").lastResult).toMatchObject({ manual: true });
     expect(h.safetyCalls.map((call) => call.proposal.operation)).toEqual(["create", "resume", "invoke-run"]);
 
     const expiring = await h.manager.create(input({ id: "expiry", expiresAt: h.clock.now() + 100 }), requester);
@@ -184,7 +181,7 @@ describe("TriggerManager lifecycle", () => {
     expect(h.manager.inspect("expiry").state).toBe("expired");
   });
 
-  test("rejects repeats below 60 seconds and enforces trigger and fire limits", async () => {
+  test("rejects repeats below 60 seconds and enforces trigger and run limits", async () => {
     const h = harness({ triggerLimit: 1 });
     await expect(h.manager.create(input({ mode: "repeat", restartDelayMs: 59_999 }), requester)).rejects.toThrow("at least 60000ms");
     await h.manager.create(input({ id: "only", maxFires: 1 }), requester);
@@ -225,7 +222,6 @@ describe("TriggerManager lifecycle", () => {
       executable: "tool",
       args: ["--check"],
       exitCode: 2,
-      synthetic: false,
       renderedMessage: expect.stringContaining("pause-hold"),
     });
   });
@@ -341,7 +337,7 @@ describe("TriggerManager limits, coalescing, and races", () => {
     expect(h.writers[0]?.text().length).toBe(32);
   });
 
-  test("enforces the global pending maximum of five and coalesces the sixth fire", async () => {
+  test("enforces the global pending maximum of five and coalesces the sixth run", async () => {
     const gates = Array.from({ length: 5 }, () => deferred<{ deliveryId: string }>());
     let deliveryIndex = 0;
     const h = harness({
@@ -352,7 +348,7 @@ describe("TriggerManager limits, coalescing, and races", () => {
       const id = `pending-${index}`;
       await h.manager.create(input({ id }), requester);
       await h.manager.pause(id);
-      void h.manager.invoke(id, "fire");
+      await h.manager.invoke(id);
     }
     await flushAsync();
     expect(h.manager.getTriggers().filter((item) => item.state === "waiting")).toHaveLength(5);
@@ -429,7 +425,7 @@ describe("TriggerManager limits, coalescing, and races", () => {
     await h.manager.create(input({ id: "race", mode: "repeat", restartDelayMs: 60_000 }), requester);
     h.clock.runDue();
     await flushAsync(4);
-    void h.manager.invoke("race", "run");
+    void h.manager.invoke("race");
     await flushAsync();
     expect(spawns).toBe(1);
     expect(h.manager.inspect("race").coalescedCount).toBe(1);

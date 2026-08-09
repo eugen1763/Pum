@@ -30,7 +30,6 @@ function triggerEvent(overrides: Partial<TriggerEventData> = {}): TriggerEventDa
     durationMs: 1,
     exitCode: 0,
     signal: null,
-    synthetic: false,
     manual: false,
     text: "Tests completed.",
     ...overrides,

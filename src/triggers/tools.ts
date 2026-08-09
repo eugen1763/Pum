@@ -103,11 +103,6 @@ function createTriggerSchema(audience: "main" | "subagent") {
   }, { additionalProperties: false });
 }
 
-const InvokeTriggerSchema = Type.Object({
-  id: TriggerIdSchema,
-  mode: StringEnum(["run", "fire"] as const),
-}, { additionalProperties: false });
-
 function resultText(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
@@ -280,17 +275,17 @@ export function registerTriggerTools(
 
   pi.registerTool({
     name: "invoke_trigger",
-    label: "Invoke Trigger",
-    description: "Run the executable now or synthesize one fire event for this target.",
+    label: "Run Trigger",
+    description: "Run the configured executable now.",
     promptGuidelines: [
-      "Run invoke_trigger in a separate tool step because run mode can require an exact approval.",
+      "Run invoke_trigger in a separate tool step because it can require an exact approval.",
     ],
-    parameters: InvokeTriggerSchema,
+    parameters: TriggerIdInputSchema,
     execute: async (_id, input, _signal, _update, ctx) => {
       const owner = await requester(ctx);
       await inspectAuthorized(owner, input.id);
-      const result = await manager.invoke(input.id, input.mode as "run" | "fire", mutationRequester(owner));
-      return resultText(result ?? { id: input.id, action: input.mode });
+      const result = await manager.invoke(input.id, mutationRequester(owner));
+      return resultText(result ?? { id: input.id, action: "run" });
     },
   });
 }

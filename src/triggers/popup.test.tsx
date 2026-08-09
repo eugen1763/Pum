@@ -87,7 +87,7 @@ describe("external trigger popup helpers", () => {
     expect(triggerActionForKey({ name: "p" }, trigger("active", 1))).toBe("pause");
     expect(triggerActionForKey({ name: "p" }, trigger("paused", 1, "paused"))).toBe("resume");
     expect(triggerActionForKey({ name: "r" })).toBe("run");
-    expect(triggerActionForKey({ name: "f" })).toBe("fire");
+    expect(triggerActionForKey({ name: "f" })).toBeNull();
     expect(triggerActionForKey({ name: "c" })).toBe("cancel");
     expect(triggerActionForKey({ name: "x" })).toBeNull();
   });
@@ -110,7 +110,7 @@ describe("external trigger popup helpers", () => {
       Directory: "/tmp/project",
       Mode: "repeat · 60s",
       Runtime: "—",
-      Fires: "2/8",
+      Runs: "2/8",
       Pending: "3 · 1 coalesced",
       Next: "—",
       Output: "—",
@@ -127,7 +127,7 @@ describe("external trigger popup layout", () => {
     expect(frame).toContain("/usr/bin/printf -- alpha");
     expect(frame).toContain("p pause/resume");
     expect(frame).toContain("r run");
-    expect(frame).toContain("f fire");
+    expect(frame).not.toContain("f fire");
     expect(frame).toContain("c cancel");
     expect(frame).toContain("esc close");
   });
