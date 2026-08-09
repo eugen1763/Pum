@@ -146,7 +146,7 @@ describe("background subagents", () => {
     await manager.routeMessage(spawned.id, "main", "The peer review has started.");
     expect(notices.some((notice) => notice.includes("Message from integration-agent"))).toBe(true);
 
-    expect(wakeMessages.some((notice) => notice.includes("PUM internal subagent wake"))).toBe(true);
+    expect(wakeMessages).toEqual([]);
 
     const merged = await (manager as any).worktreeAction(repo, "merge", spawned.id);
     expect(merged.content[0].text).toContain("Closed integration-agent and removed its worktree");

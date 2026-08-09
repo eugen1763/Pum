@@ -33,7 +33,6 @@ import {
   AGENT_MESSAGE_CUSTOM_TYPE,
   AGENT_MESSAGE_DISPLAY_TYPE,
   SUBAGENT_CUSTOM_TYPE,
-  SUBAGENT_WAKE_PREFIX,
   TOOL_EVENT_CUSTOM_TYPE,
   type AgentMessageData,
   type AgentTranscript,
@@ -740,19 +739,15 @@ export class SubagentManager {
       display: boolean;
       details?: unknown;
     },
-    fallback: string,
+    _fallback: string,
   ): void {
     const api = this.mainApi;
     if (!api) return;
-    // Keep the structured custom message in context and use a hidden user
-    // message as the reliable wake signal. Route both operations to the main
-    // session so hosted web searches cannot leak into a subagent transcript.
+    // The explicit main-session binding makes the structured custom message a
+    // reliable wake signal. Do not add a user-message fallback because it
+    // creates a second visible turn after the custom message already wakes one.
     withSearchRoute(this.parentSessionId, () => {
-      api.sendMessage(message, { deliverAs: "followUp" });
-      api.sendUserMessage(
-        `${SUBAGENT_WAKE_PREFIX}\n${fallback}`,
-        { deliverAs: "followUp" },
-      );
+      api.sendMessage(message, { deliverAs: "followUp", triggerTurn: true });
     });
   }
 
