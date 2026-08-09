@@ -23,6 +23,9 @@ export type Theme = {
   success: string;
   error: string;
   warn: string;
+  /** Foreground and background for tool calls blocked before execution. */
+  rejection: string;
+  rejectionBg: string;
   selectionBg: string;
   popupBg: string;
   /** The bright colour a shimmer sweeps toward. */
@@ -54,6 +57,8 @@ const tokyonight: Theme = {
   success: "#9ece6a",
   error: "#f7768e",
   warn: "#ff9e64",
+  rejection: "#e0af68",
+  rejectionBg: "#332b24",
   selectionBg: "#33467c",
   popupBg: "#1f2335",
   highlight: "#ffffff",
@@ -83,6 +88,8 @@ const gruvbox: Theme = {
   success: "#b8bb26",
   error: "#fb4934",
   warn: "#fe8019",
+  rejection: "#fabd2f",
+  rejectionBg: "#3c3836",
   selectionBg: "#504945",
   popupBg: "#32302f",
   highlight: "#fbf1c7",
@@ -112,6 +119,8 @@ const catppuccin: Theme = {
   success: "#a6e3a1",
   error: "#f38ba8",
   warn: "#fab387",
+  rejection: "#f9e2af",
+  rejectionBg: "#3b342f",
   selectionBg: "#45475a",
   popupBg: "#181825",
   highlight: "#f5e0dc",
@@ -141,6 +150,8 @@ const nord: Theme = {
   success: "#a3be8c",
   error: "#bf616a",
   warn: "#d08770",
+  rejection: "#ebcb8b",
+  rejectionBg: "#3b3b3b",
   selectionBg: "#4c566a",
   popupBg: "#3b4252",
   highlight: "#eceff4",
@@ -170,6 +181,8 @@ const dracula: Theme = {
   success: "#50fa7b",
   error: "#ff5555",
   warn: "#ffb86c",
+  rejection: "#f1fa8c",
+  rejectionBg: "#3d3f36",
   selectionBg: "#44475a",
   popupBg: "#21222c",
   highlight: "#ffffff",
@@ -199,6 +212,8 @@ const rosepine: Theme = {
   success: "#31748f",
   error: "#eb6f92",
   warn: "#f6c177",
+  rejection: "#f6c177",
+  rejectionBg: "#393029",
   selectionBg: "#403d52",
   popupBg: "#1f1d2e",
   highlight: "#fffaf3",
@@ -228,6 +243,8 @@ const solarized: Theme = {
   success: "#859900",
   error: "#dc322f",
   warn: "#cb4b16",
+  rejection: "#b58900",
+  rejectionBg: "#343b35",
   selectionBg: "#0b4b59",
   popupBg: "#073642",
   highlight: "#fdf6e3",
@@ -257,6 +274,8 @@ const kanagawa: Theme = {
   success: "#98bb6c",
   error: "#e46876",
   warn: "#ffa066",
+  rejection: "#e6c384",
+  rejectionBg: "#39352d",
   selectionBg: "#2d4f67",
   popupBg: "#16161d",
   highlight: "#c8c093",
@@ -286,6 +305,8 @@ const githubLight: Theme = {
   success: "#1a7f37",
   error: "#cf222e",
   warn: "#bc4c00",
+  rejection: "#9a6700",
+  rejectionBg: "#fff1c2",
   selectionBg: "#b6d7ff",
   popupBg: "#f6f8fa",
   highlight: "#000000",
