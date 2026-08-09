@@ -28,6 +28,12 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+const virtualFileSystem: CheckPolicyFileSystem = {
+  exists: () => false,
+  isSymbolicLink: () => false,
+  realpath: (path) => path,
+};
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -124,9 +130,9 @@ describe("deterministic hard blocks", () => {
   });
 
   test("allows only the exact POSIX null device through project-boundary hard rules", () => {
-    const cwd = temporaryProject();
-    const read = analyzeCheckPolicy({ command: "cat /dev/null", cwd });
-    const redirection = analyzeCheckPolicy({ command: "printf x > /dev/null", cwd });
+    const cwd = "/work/repo";
+    const read = analyzeCheckPolicy({ command: "cat /dev/null", cwd, fileSystem: virtualFileSystem });
+    const redirection = analyzeCheckPolicy({ command: "printf x > /dev/null", cwd, fileSystem: virtualFileSystem });
 
     expect(read.decision).toBe("allow");
     expect(read.findings).toEqual([]);
@@ -143,25 +149,30 @@ describe("deterministic hard blocks", () => {
       "/tmp/out",
     ];
     for (const path of blocked) {
-      const operandResult = analyzeCheckPolicy({ command: `cat ${shellQuote(path)}`, cwd });
+      const operandResult = analyzeCheckPolicy({ command: `cat ${shellQuote(path)}`, cwd, fileSystem: virtualFileSystem });
       expect(operandResult.decision).toBe("block");
       expect(operandResult.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path }));
 
-      const redirectionResult = analyzeCheckPolicy({ command: `printf x > ${shellQuote(path)}`, cwd });
+      const redirectionResult = analyzeCheckPolicy({ command: `printf x > ${shellQuote(path)}`, cwd, fileSystem: virtualFileSystem });
       expect(redirectionResult.decision).toBe("block");
       expect(redirectionResult.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path }));
     }
 
-    const credential = analyzeCheckPolicy({ command: "cat .env > /dev/null", cwd });
+    const credential = analyzeCheckPolicy({ command: "cat .env > /dev/null", cwd, fileSystem: virtualFileSystem });
     expect(credential.decision).toBe("block");
     expect(credential.findings.map((finding) => finding.code)).toContain("credential-access");
   });
 
   test("does not extend the null-device exception to a project symlink", () => {
-    const cwd = temporaryProject();
-    symlinkSync("/dev/null", join(cwd, "null-link"));
+    const cwd = "/work/repo";
+    const link = "/work/repo/null-link";
+    const fs: CheckPolicyFileSystem = {
+      exists: (path) => path === cwd || path === link,
+      isSymbolicLink: (path) => path === link,
+      realpath: (path) => path === link ? "/dev/null" : path,
+    };
 
-    const result = analyzeCheckPolicy({ command: "cat null-link", cwd });
+    const result = analyzeCheckPolicy({ command: "cat null-link", cwd, fileSystem: fs });
     expect(result.decision).toBe("block");
     expect(result.findings).toContainEqual(expect.objectContaining({ code: "escaping-symlink", path: "null-link" }));
   });
@@ -339,9 +350,9 @@ describe("structured executable proposals", () => {
   });
 
   test("allows only the exact POSIX null device in direct argv", () => {
-    const cwd = temporaryProject();
+    const cwd = "/work/repo";
     const allowed = analyzeExecutablePolicy({
-      executable: "cat", args: ["/dev/null"], cwd, projectCwd: cwd,
+      executable: "cat", args: ["/dev/null"], cwd, projectCwd: cwd, fileSystem: virtualFileSystem,
     });
 
     expect(allowed.decision).toBe("allow");
@@ -349,7 +360,7 @@ describe("structured executable proposals", () => {
 
     for (const path of ["/dev/zero", "/dev/null/child", "/dev/../dev/null", "/dev//null", "//dev/null", "/tmp/out"]) {
       const result = analyzeExecutablePolicy({
-        executable: "cat", args: [path], cwd, projectCwd: cwd,
+        executable: "cat", args: [path], cwd, projectCwd: cwd, fileSystem: virtualFileSystem,
       });
       expect(result.decision).toBe("block");
       expect(result.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path }));
