@@ -10,23 +10,31 @@ export type ToolCall = {
   detail?: string;
 };
 
-const MAX_ARG = 60;
-
-const truncate = (s: string) => (s.length > MAX_ARG ? `${s.slice(0, MAX_ARG - 1)}…` : s);
-
 /** Tool args are typed `any`, so every access here is defensive. */
 export function toolArg(name: string, args: any, cwd: string): string {
   if (!args || typeof args !== "object") return "";
 
   if (name === "bash" && typeof args.command === "string") {
-    return truncate(args.command.split("\n")[0]!.trim());
+    return args.command.split("\n")[0]!.trim();
+  }
+  if (name === "spawn_subagent" && typeof args.task === "string") {
+    return typeof args.name === "string" ? `${args.name} · ${args.task}` : args.task;
+  }
+  if (name === "message_agent" && typeof args.target === "string") {
+    return typeof args.message === "string" ? `${args.target} · ${args.message}` : args.target;
+  }
+  if (name === "stop_subagent" && typeof args.target === "string") return args.target;
+  if (name === "finish_subagent" && typeof args.summary === "string") return args.summary;
+  if (name === "worktree" && typeof args.action === "string") {
+    const target = args.target ?? args.name;
+    return target ? `${args.action} ${target}` : args.action;
   }
   if (typeof args.path === "string") {
     const rel = relative(cwd, args.path);
-    return truncate(rel && !rel.startsWith("..") ? rel : args.path);
+    return rel && !rel.startsWith("..") ? rel : args.path;
   }
   const first = Object.values(args).find((v) => typeof v === "string");
-  return typeof first === "string" ? truncate(first.split("\n")[0]!) : "";
+  return typeof first === "string" ? first.split("\n")[0]! : "";
 }
 
 /**

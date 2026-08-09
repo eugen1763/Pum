@@ -1,4 +1,11 @@
-import { StyledText, fg, type RGBA, type TextRenderable } from "@opentui/core";
+import {
+  StyledText,
+  fg,
+  type MarkdownRenderable,
+  type RGBA,
+  type TextChunk,
+  type TextRenderable,
+} from "@opentui/core";
 import { useRenderer } from "@opentui/react";
 import {
   createContext,
@@ -28,7 +35,16 @@ const SHIMMER_WIDTH = 7;
 const SHIMMER_TAIL = 120;
 
 const CARET = "▊";
+/**
+ * Same display width as the caret, so blinking never changes layout.
+ * Braille blank is not whitespace, so it cannot turn a partial `#` into a
+ * Markdown heading when the caret blinks off.
+ */
+export const CARET_PLACEHOLDER = "\u2800";
 const CARET_PERIOD_MS = 900;
+
+const RULE_CHARS_PER_MS = 0.08;
+const RULE_HIGHLIGHT_WIDTH = 10;
 
 type Subscriber = (elapsedMs: number) => void;
 
@@ -118,8 +134,11 @@ export function useShimmerText(opts: {
   latest.current = text;
 
   const plain = useCallback(() => {
-    if (ref.current) ref.current.content = new StyledText([fg(color)(latest.current)]);
-  }, [color]);
+    if (!ref.current) return;
+    const chunks = [fg(color)(latest.current)];
+    if (caret) chunks.push(fg(color)(CARET));
+    ref.current.content = new StyledText(chunks);
+  }, [color, caret]);
 
   useEffect(() => {
     if (!active || !enabled) {
@@ -131,8 +150,9 @@ export function useShimmerText(opts: {
     const stop = subscribe((elapsedMs) => {
       if (!ref.current) return;
       const styled = shimmer(latest.current, base, hi, elapsedMs);
-      if (caret && elapsedMs % CARET_PERIOD_MS < CARET_PERIOD_MS * 0.6) {
-        styled.chunks.push(fg(hi)(CARET));
+      if (caret) {
+        const visible = elapsedMs % CARET_PERIOD_MS < CARET_PERIOD_MS * 0.6;
+        styled.chunks.push(fg(visible ? hi : base)(visible ? CARET : CARET_PLACEHOLDER));
       }
       ref.current.content = styled;
     });
@@ -146,6 +166,149 @@ export function useShimmerText(opts: {
   useEffect(() => {
     if (!active || !enabled) plain();
   }, [text, active, enabled, plain]);
+
+  return ref;
+}
+
+/** Own styled text and append a width-stable blinking caret while active. */
+export function useBlinkingText(opts: {
+  chunks: TextChunk[];
+  contentKey: string;
+  caretColor: string;
+  active: boolean;
+}): RefObject<TextRenderable | null> {
+  const { chunks, contentKey, caretColor, active } = opts;
+  const ref = useRef<TextRenderable>(null);
+  const { subscribe, enabled } = useClock();
+  const latest = useRef(chunks);
+  const caretVisible = useRef(true);
+  latest.current = chunks;
+
+  const paint = useCallback(() => {
+    if (!ref.current) return;
+    const caret = caretVisible.current ? CARET : CARET_PLACEHOLDER;
+    ref.current.content = new StyledText([...latest.current, fg(caretColor)(caret)]);
+  }, [caretColor]);
+
+  useEffect(() => {
+    if (!active) return;
+    if (!enabled) {
+      caretVisible.current = true;
+      paint();
+      return;
+    }
+
+    let lastVisible = caretVisible.current;
+    const stop = subscribe((elapsedMs) => {
+      const nextVisible = elapsedMs % CARET_PERIOD_MS < CARET_PERIOD_MS * 0.6;
+      if (nextVisible === lastVisible) return;
+      lastVisible = nextVisible;
+      caretVisible.current = nextVisible;
+      paint();
+    });
+    paint();
+    return stop;
+  }, [active, enabled, paint, subscribe]);
+
+  useEffect(() => {
+    if (active) paint();
+  }, [contentKey, active, paint]);
+
+  return ref;
+}
+
+/** Keep both caret frames equivalent to the Markdown parser. */
+export function markdownCaretContent(text: string, visible: boolean): string {
+  return text + (visible ? CARET : CARET_PLACEHOLDER);
+}
+
+/** Keep a blinking caret at the end of incrementally rendered Markdown. */
+export function useMarkdownCaret(
+  text: string,
+  active: boolean,
+): RefObject<MarkdownRenderable | null> {
+  const ref = useRef<MarkdownRenderable>(null);
+  const { subscribe, enabled } = useClock();
+  const latest = useRef(text);
+  const caretVisible = useRef(true);
+  latest.current = text;
+
+  const paint = useCallback(() => {
+    if (ref.current) {
+      ref.current.content = markdownCaretContent(latest.current, caretVisible.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!active) return;
+    if (!enabled) {
+      caretVisible.current = true;
+      paint();
+      return;
+    }
+
+    let lastVisible = caretVisible.current;
+    const stop = subscribe((elapsedMs) => {
+      const nextVisible = elapsedMs % CARET_PERIOD_MS < CARET_PERIOD_MS * 0.6;
+      if (nextVisible === lastVisible) return;
+      lastVisible = nextVisible;
+      caretVisible.current = nextVisible;
+      paint();
+    });
+    paint();
+    return stop;
+  }, [active, enabled, paint, subscribe]);
+
+  useEffect(() => {
+    if (active) paint();
+  }, [text, active, paint]);
+
+  return ref;
+}
+
+/** A fast, one-direction light sweep for horizontal rules. */
+export function useSlidingRule(opts: {
+  width: number;
+  color: string;
+  highlight: string;
+  active: boolean;
+}): RefObject<TextRenderable | null> {
+  const { width, color, highlight, active } = opts;
+  const ref = useRef<TextRenderable>(null);
+  const { subscribe, enabled } = useClock();
+
+  const plain = useCallback(() => {
+    if (ref.current) ref.current.content = new StyledText([fg(color)("─".repeat(width))]);
+  }, [color, width]);
+
+  useEffect(() => {
+    if (!active || !enabled || width <= 0) {
+      plain();
+      return;
+    }
+
+    const base = rgba(color);
+    const hi = rgba(highlight);
+    return subscribe((elapsedMs) => {
+      if (!ref.current) return;
+      const head = (elapsedMs * RULE_CHARS_PER_MS) % width;
+      const chunks = [];
+      for (let i = 0; i < width; i++) {
+        const clockwise = (head - i + width) % width;
+        const counterclockwise = (i - head + width) % width;
+        const distance = Math.min(clockwise, counterclockwise);
+        const strength = distance < RULE_HIGHLIGHT_WIDTH
+          ? 1 - distance / RULE_HIGHLIGHT_WIDTH
+          : 0;
+        chunks.push(fg(strength > 0 ? mix(base, hi, strength * 0.8) : base)("─"));
+      }
+      ref.current.content = new StyledText(chunks);
+    });
+  }, [active, enabled, width, color, highlight, plain, subscribe]);
+
+  useEffect(() => {
+    if (!active || !enabled) plain();
+  }, [width, color, active, enabled, plain]);
 
   return ref;
 }

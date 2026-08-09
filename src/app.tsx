@@ -1,66 +1,164 @@
-import type { InputRenderable } from "@opentui/core";
+import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime, SessionInfo } from "@earendil-works/pi-coding-agent";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { AnimationProvider, supportsTrueColor } from "./animation";
+import { AnimationProvider, supportsTrueColor, useSlidingRule } from "./animation";
 import { ROWS, SettingsPopup, THINKING_LEVELS, type ThinkingLevel } from "./settings-popup";
 import { saveSettings, type PumSettings } from "./settings";
 import { StatusBar } from "./status-bar";
-import { StreamLine, TextLine, ToolLine, type Line, type Role } from "./transcript";
+import {
+  AgentMessageLine,
+  needsTranscriptGap,
+  StreamLine,
+  TextLine,
+  ToolLine,
+  type Line,
+  type Role,
+} from "./transcript";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup } from "./help-popup";
-import { appendHistory, loadHistory } from "./history";
-import { loadPromptStash, appendPromptStash } from "./prompt-stash";
+import { appendHistory, loadHistory, removeHistory } from "./history";
+import {
+  appendPromptStash,
+  loadPromptStash,
+  markPromptStashExecuted,
+  markPromptStashExecutedMany,
+  removePromptStash,
+  replacePromptStash,
+  type StashedPrompt,
+} from "./prompt-stash";
 import { replayEntries } from "./replay";
 import { loadTheme, PRESET_NAMES, type Theme } from "./theme";
 import { buildSyntaxStyle } from "./syntax";
 import { observeSearchCalls, persistSearchCall, webSearch } from "./web-search";
 import { matchingCommands } from "./commands";
 import { SessionHistoryPopup } from "./session-history-popup";
+import { setWritingStyle, WRITING_STYLES } from "./writing-style";
+import { setCheckModeConfig } from "./check-mode";
+import {
+  captureClipboardImage,
+  cleanupPendingImages,
+  imageContent,
+  removePendingImage,
+  type PendingImage,
+} from "./image-paste";
+import type { SubagentManager } from "./subagents/manager";
+import { runWorktreeCommand } from "./worktree-command";
+import { CANCEL_WINDOW_MS, confirmsCancellation } from "./cancel-confirmation";
+import { buildStashBatchPrompt, selectedRange } from "./stash-batch";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream };
 
 const QUIT_WINDOW_MS = 2000;
+const MAX_INPUT_ROWS = 8;
 /** Keys that move around without changing the text. */
 const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 
 /** A blank row. An empty <text> measures to nothing, so this needs a height. */
 const Gap = () => <box style={{ height: 1, flexShrink: 0 }} />;
 
+function InputRule({
+  theme,
+  width,
+  busy,
+  dimmed,
+}: {
+  theme: Theme;
+  width: number;
+  busy: boolean;
+  dimmed: boolean;
+}) {
+  const ref = useSlidingRule({
+    width,
+    color: dimmed ? theme.dim : theme.border,
+    highlight: theme.highlight,
+    active: busy,
+  });
+  return <text ref={ref} style={{ flexShrink: 0 }} />;
+}
+
+function PromptStashRow({
+  theme,
+  prompt,
+  index,
+  selected,
+}: {
+  theme: Theme;
+  prompt: StashedPrompt;
+  index: number;
+  selected: boolean;
+}) {
+  const color = prompt.executed ? theme.dim : theme.fg;
+
+  return (
+    <box
+      id={`stash-prompt-${index}`}
+      style={{
+        flexDirection: "row",
+        width: "100%",
+        flexShrink: 0,
+        backgroundColor: selected ? theme.selectionBg : "transparent",
+      }}
+    >
+      <text content={prompt.executed ? "✓ " : "○ "} fg={prompt.executed ? theme.success : theme.dim} />
+      <text
+        content={prompt.text}
+        fg={color}
+        wrapMode="word"
+        style={{ flexGrow: 1, minWidth: 0 }}
+      />
+    </box>
+  );
+}
+
 function PromptStash({
   theme,
   prompts,
   cursor,
+  selectedIndices,
+  height,
 }: {
   theme: Theme;
-  prompts: string[];
+  prompts: StashedPrompt[];
   cursor: number;
+  selectedIndices: ReadonlySet<number>;
+  height: number;
 }) {
+  const scrollRef = useRef<ScrollBoxRenderable>(null);
+
+  useEffect(() => {
+    if (!scrollRef.current) return;
+    // Open at the newest entries, immediately above the input. Once keyboard
+    // navigation starts, scroll the actual selected row into view rather than
+    // estimating its position — prompts may wrap onto multiple lines.
+    if (cursor < 0) scrollRef.current.scrollTo({ x: 0, y: 1_000_000 });
+    else scrollRef.current.scrollChildIntoView(`stash-prompt-${cursor}`);
+  }, [cursor]);
+
   return (
-    <box style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}>
+    <scrollbox
+      ref={scrollRef}
+      style={{
+        height: Math.min(15, Math.max(1, height - 7)),
+        flexShrink: 0,
+      }}
+      verticalScrollbarOptions={{ visible: true }}
+    >
+      <box style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}>
       {prompts.map((prompt, i) => (
-        <box
-          key={`${i}:${prompt}`}
-          style={{
-            flexDirection: "row",
-            width: "100%",
-            flexShrink: 0,
-            backgroundColor: i === cursor ? theme.selectionBg : "transparent",
-          }}
-        >
-          <text content="  " fg={theme.dim} />
-          <text
-            content={prompt}
-            fg={i === cursor ? theme.fg : theme.dim}
-            wrapMode="word"
-            style={{ flexGrow: 1, minWidth: 0 }}
-          />
-        </box>
+        <PromptStashRow
+          key={`${i}:${prompt.text}`}
+          theme={theme}
+          prompt={prompt}
+          index={i}
+          selected={selectedIndices.size > 0 ? selectedIndices.has(i) : i === cursor}
+        />
       ))}
-    </box>
+      </box>
+    </scrollbox>
   );
 }
 
@@ -81,6 +179,7 @@ export function App({
   onSwitchSession,
   settings: initial,
   searchProviders,
+  subagentManager,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -90,6 +189,7 @@ export function App({
   settings: PumSettings;
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
+  subagentManager: SubagentManager;
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -104,11 +204,12 @@ export function App({
   }));
   const [busy, setBusy] = useState(false);
   const [quitArmed, setQuitArmed] = useState(false);
+  const [cancelArmed, setCancelArmed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySessions, setHistorySessions] = useState<SessionInfo[]>([]);
-  const [page, setPage] = useState<"main" | "models">("main");
+  const [page, setPage] = useState<"main" | "models" | "checkModels">("main");
   const [cursor, setCursor] = useState(0);
   const [settings, setSettings] = useState(initial);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(
@@ -118,23 +219,54 @@ export function App({
   const [branch, setBranch] = useState<string | null>(null);
   const [usage, setUsage] = useState({ tokens: 0, cost: 0, contextPct: null as number | null });
   const [elapsedSec, setElapsedSec] = useState(0);
-  const [stash, setStash] = useState<string[]>(() => loadPromptStash(cwd));
+  const [stash, setStash] = useState<StashedPrompt[]>(() => loadPromptStash(cwd));
   /** -1 means the input is selected; non-negative values select stash rows. */
   const [stashCursor, setStashCursor] = useState(-1);
+  const [stashSelection, setStashSelection] = useState<Set<number>>(() => new Set());
   const [stashOpen, setStashOpen] = useState(false);
   const [commandInput, setCommandInput] = useState("");
+  const [inputRows, setInputRows] = useState(1);
+  const [inputCursorRow, setInputCursorRow] = useState(0);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const [agentElapsedSec, setAgentElapsedSec] = useState(0);
+  const [, setAgentRevision] = useState(0);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
-  const { width } = useTerminalDimensions();
+  const { width, height } = useTerminalDimensions();
   const syntaxStyle = useMemo(() => buildSyntaxStyle(theme), [theme]);
   const animations = settings.animations && supportsTrueColor();
+  const agents = subagentManager.getAgents();
+  const activeAgent = activeAgentId
+    ? agents.find((agent) => agent.id === activeAgentId)
+    : undefined;
+  const visibleTx = activeAgent?.transcript ?? tx;
+  const visibleBusy = activeAgent
+    ? activeAgent.status === "starting" || activeAgent.status === "running"
+    : busy;
+  const visibleModelId = activeAgent?.modelId.split("/").slice(1).join("/") || modelId;
+  const visibleThinkingLevel = activeAgent?.thinkingLevel ?? thinkingLevel;
+  const visibleBranch = activeAgent?.worktree.branch ?? branch;
+  const visibleElapsedSec = activeAgent ? agentElapsedSec : elapsedSec;
 
-  const inputRef = useRef<InputRenderable>(null);
+  const inputRef = useRef<TextareaRenderable>(null);
+  const focusInputAfterSwitch = useRef(false);
   const stashRef = useRef(stash);
   const stashOpenRef = useRef(false);
   const stashCursorRef = useRef(-1);
+  const stashSelectionRef = useRef<Set<number>>(new Set());
+  const stashSelectionAnchor = useRef<number | null>(null);
+  const pendingImages = useRef<PendingImage[]>([]);
+  const nextImageId = useRef(1);
+  const lastInputValue = useRef("");
+  const imagePasteBusy = useRef(false);
+  const viewDrafts = useRef(new Map<string, string>());
+  /** Cache row currently checked out into the input for editing. */
+  const editingStashIndex = useRef<number | null>(null);
   const quitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const lastQuitPress = useRef(0);
+  const cancelTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const lastCancelPress = useRef<number | null>(null);
+  const cancelTarget = useRef<string | null>(null);
   // Prompt history. `cursor` is null while editing a fresh line; `draft` holds
   // that line so walking back down restores it.
   const history = useRef<string[]>(loadHistory(process.cwd()));
@@ -145,6 +277,12 @@ export function App({
   // Mirrors `busy` for the keyboard handler: a keypress can land before React
   // has re-rendered, and the handler's closure would still read the old value.
   const busyRef = useRef(false);
+  const resetCancelArm = () => {
+    lastCancelPress.current = null;
+    cancelTarget.current = null;
+    clearTimeout(cancelTimer.current);
+    setCancelArmed(false);
+  };
   const setWorking = (value: boolean) => {
     busyRef.current = value;
     setBusy(value);
@@ -152,9 +290,18 @@ export function App({
   // The event subscription is set up once, so it reads the toggle via a ref.
   const showThinkingRef = useRef(initial.showThinking);
 
+  const setSelectedStashRange = (indices: Set<number>, anchor: number | null) => {
+    stashSelectionRef.current = indices;
+    stashSelectionAnchor.current = anchor;
+    setStashSelection(indices);
+  };
+
+  const clearStashSelection = () => setSelectedStashRange(new Set(), null);
+
   const setStashMode = (open: boolean) => {
     stashOpenRef.current = open;
     stashCursorRef.current = -1;
+    clearStashSelection();
     setStashOpen(open);
     setStashCursor(-1);
   };
@@ -164,10 +311,166 @@ export function App({
     setStashCursor(index);
   };
 
-  const addToStash = (prompt: string) => {
-    const next = appendPromptStash(cwd, prompt);
+  const addToStash = (prompt: string, executed = false) => {
+    const next = appendPromptStash(cwd, prompt, executed);
     stashRef.current = next;
     setStash(next);
+  };
+
+  const executeStashedPrompt = (index: number) => {
+    const next = markPromptStashExecuted(cwd, index);
+    stashRef.current = next;
+    setStash(next);
+  };
+
+  const replaceStashedPrompt = (index: number, prompt: string, executed: boolean) => {
+    const next = replacePromptStash(cwd, index, prompt, executed);
+    stashRef.current = next;
+    setStash(next);
+  };
+
+  const deleteStashedPrompt = (index: number) => {
+    clearStashSelection();
+    const prompt = stashRef.current[index];
+    if (!prompt) return;
+    const next = removePromptStash(cwd, index);
+    stashRef.current = next;
+    setStash(next);
+    history.current = removeHistory(cwd, prompt.text);
+    histCursor.current = null;
+
+    const editingIndex = editingStashIndex.current;
+    if (editingIndex === index) editingStashIndex.current = null;
+    else if (editingIndex !== null && editingIndex > index) {
+      editingStashIndex.current = editingIndex - 1;
+    }
+
+    if (next.length === 0) setStashMode(false);
+    else setSelectedStash(Math.min(index, next.length - 1));
+  };
+
+  const clearPendingImages = () => {
+    for (const image of pendingImages.current) removePendingImage(image);
+    pendingImages.current = [];
+    nextImageId.current = 1;
+  };
+
+  const syncInputMetrics = () => {
+    const input = inputRef.current;
+    if (!input) return;
+    const rows = Math.min(
+      MAX_INPUT_ROWS,
+      Math.max(1, input.editorView.getTotalVirtualLineCount()),
+    );
+    const cursorRow = Math.max(0, Math.min(rows - 1, input.visualCursor.visualRow));
+    setInputRows(rows);
+    setInputCursorRow(cursorRow);
+  };
+
+  const scheduleInputMetrics = () => queueMicrotask(syncInputMetrics);
+
+  const setEditorText = (
+    value: string,
+    cursorOffset = value.length,
+    preserveImages = false,
+  ) => {
+    if (!preserveImages && pendingImages.current.length > 0) clearPendingImages();
+    const input = inputRef.current;
+    if (input) {
+      input.setText(value);
+      input.cursorOffset = Math.max(0, Math.min(cursorOffset, value.length));
+    }
+    lastInputValue.current = value;
+    setCommandInput(value);
+    scheduleInputMetrics();
+  };
+
+  const handleInput = (nextValue: string) => {
+    const previous = lastInputValue.current;
+    let value = nextValue;
+    let cleanupCursor: number | null = null;
+    const kept: PendingImage[] = [];
+
+    for (const image of pendingImages.current) {
+      const exactStart = value.indexOf(image.marker);
+      if (exactStart >= 0) {
+        kept.push({ ...image, start: exactStart, end: exactStart + image.marker.length });
+        continue;
+      }
+
+      // The marker changed. Remove its remaining fragment from the new value
+      // and delete the corresponding temporary image immediately.
+      let prefix = 0;
+      while (
+        prefix < previous.length &&
+        prefix < nextValue.length &&
+        previous[prefix] === nextValue[prefix]
+      ) prefix++;
+      const delta = nextValue.length - previous.length;
+      const start = Math.max(0, Math.min(value.length, Math.min(image.start, prefix)));
+      const end = Math.max(start, Math.min(value.length, image.end + delta));
+      value = value.slice(0, start) + value.slice(end);
+      cleanupCursor = cleanupCursor === null ? start : Math.min(cleanupCursor, start);
+      removePendingImage(image);
+    }
+
+    // Recalculate marker positions after any atomic marker removal.
+    pendingImages.current = kept.flatMap((image) => {
+      const start = value.indexOf(image.marker);
+      if (start < 0) {
+        removePendingImage(image);
+        return [];
+      }
+      return [{ ...image, start, end: start + image.marker.length }];
+    });
+
+    if (value !== nextValue && inputRef.current) {
+      inputRef.current.setText(value);
+      inputRef.current.cursorOffset = Math.min(cleanupCursor ?? value.length, value.length);
+    }
+    lastInputValue.current = value;
+    setCommandInput(value);
+    scheduleInputMetrics();
+  };
+
+  const handleTextareaChange = () => handleInput(inputRef.current?.plainText ?? "");
+
+  const pasteClipboardImage = async () => {
+    if (imagePasteBusy.current) return;
+    if (!session.agent.state.model.input.includes("image")) {
+      append({ kind: "text", role: "error", text: "the current model does not support image input" });
+      return;
+    }
+
+    imagePasteBusy.current = true;
+    try {
+      const captured = await captureClipboardImage();
+      const input = inputRef.current;
+      if (!input) {
+        removePendingImage({ ...captured, id: 0, marker: "", start: 0, end: 0 });
+        return;
+      }
+
+      const id = nextImageId.current++;
+      const marker = `[Image #${id}]`;
+      const current = input.plainText;
+      const leadingSpace = current && !/\s$/.test(current) ? " " : "";
+      const start = current.length + leadingSpace.length;
+      const value = `${current}${leadingSpace}${marker}`;
+      const image: PendingImage = {
+        ...captured,
+        id,
+        marker,
+        start,
+        end: start + marker.length,
+      };
+      pendingImages.current.push(image);
+      setEditorText(value, value.length, true);
+    } catch (error) {
+      append({ kind: "text", role: "error", text: `image paste failed: ${String(error)}` });
+    } finally {
+      imagePasteBusy.current = false;
+    }
   };
 
   const append = (line: Line) =>
@@ -175,6 +478,20 @@ export function App({
       const f = flushed(t);
       return { ...f, lines: [...f.lines, line] };
     });
+
+  useEffect(
+    () => subagentManager.subscribe((event) => {
+      if (event.type === "main-line") append(event.line);
+      setAgentRevision((revision) => revision + 1);
+    }),
+    [subagentManager],
+  );
+
+  useEffect(() => {
+    if (activeAgentId && !agents.some((agent) => agent.id === activeAgentId)) {
+      setActiveAgentId(null);
+    }
+  }, [activeAgentId, agents.map((agent) => agent.id).join(":")]);
 
   const delta = (kind: "assistant" | "thinking", text: string) =>
     setTx((t) => {
@@ -198,6 +515,10 @@ export function App({
       stream: null,
     });
     setUsage({ tokens: 0, cost: 0, contextPct: null });
+    if (focusInputAfterSwitch.current) {
+      focusInputAfterSwitch.current = false;
+      inputRef.current?.focus();
+    }
 
     return session.subscribe((event) => {
       switch (event.type) {
@@ -225,6 +546,9 @@ export function App({
             detail: event.toolName === "edit" ? editCounts(event.result) : undefined,
           });
           break;
+        case "agent_start":
+          setWorking(true);
+          break;
         case "turn_end": {
           const u = (event.message as any)?.usage;
           if (u) {
@@ -251,7 +575,25 @@ export function App({
     });
   }, [session]);
 
-  useEffect(() => () => clearTimeout(quitTimer.current), []);
+  useEffect(
+    () => () => {
+      clearTimeout(quitTimer.current);
+      clearTimeout(cancelTimer.current);
+      clearPendingImages();
+      cleanupPendingImages();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    resetCancelArm();
+  }, [activeAgentId, visibleBusy]);
+
+  // Recalculate visual rows after wrapping, terminal resizes, or editor height changes.
+  useEffect(() => {
+    const timer = setTimeout(syncInputMetrics, 0);
+    return () => clearTimeout(timer);
+  }, [width, commandInput, inputRows, quitArmed, cancelArmed]);
 
   // Hosted web searches are not pi tool calls, so they arrive out of band.
   useEffect(() => {
@@ -280,7 +622,7 @@ export function App({
     return watchBranch(cwd, () => setBranch(readBranch(cwd)));
   }, []);
 
-  // Turn timer, only while working.
+  // Turn timer, only while the main agent is working.
   useEffect(() => {
     if (!busy) return;
     setElapsedSec(0);
@@ -289,10 +631,26 @@ export function App({
     return () => clearInterval(id);
   }, [busy]);
 
+  useEffect(() => {
+    if (!activeAgent || !visibleBusy) {
+      setAgentElapsedSec(0);
+      return;
+    }
+    const started = activeAgent.runStartedAt ?? activeAgent.updatedAt;
+    const updateElapsed = () => setAgentElapsedSec(Math.floor((Date.now() - started) / 1000));
+    updateElapsed();
+    const id = setInterval(updateElapsed, 1000);
+    return () => clearInterval(id);
+  }, [activeAgent?.id, activeAgent?.status, activeAgent?.runStartedAt, visibleBusy]);
+
   const update = (patch: Partial<PumSettings>) => {
     const next = { ...settings, ...patch };
     setSettings(next);
     if (patch.webSearch !== undefined) webSearch.enabled = patch.webSearch;
+    if (patch.writingStyle !== undefined) setWritingStyle(patch.writingStyle);
+    if (patch.checkMode !== undefined || patch.checkModel !== undefined) {
+      setCheckModeConfig({ enabled: next.checkMode, model: next.checkModel });
+    }
     if (patch.showThinking !== undefined) showThinkingRef.current = patch.showThinking;
     saveSettings(next);
   };
@@ -311,12 +669,23 @@ export function App({
     update({ theme: next });
   };
 
+  const stepWritingStyle = (step: number) => {
+    const i = WRITING_STYLES.indexOf(settings.writingStyle);
+    const next = WRITING_STYLES[(i + step + WRITING_STYLES.length) % WRITING_STYLES.length]!;
+    update({ writingStyle: next });
+  };
+
   const selectModel = (model: Model<any>) => {
     setPage("main");
     session
       .setModel(model)
       .then(() => setModelId(session.agent.state.model.id))
       .catch((err) => append({ kind: "text", role: "error", text: String(err) }));
+  };
+
+  const selectCheckModel = (model: Model<any>) => {
+    setPage("main");
+    update({ checkModel: `${model.provider}/${model.id}` });
   };
 
   const openHistory = () => {
@@ -339,18 +708,22 @@ export function App({
     setHistoryOpen(false);
     setWorking(true);
     onSwitchSession(path)
-      .then((next) => setSession(next))
+      .then((next) => {
+        focusInputAfterSwitch.current = true;
+        setSession(next);
+      })
       .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
       .finally(() => setWorking(false));
   };
 
   const cancel = () => {
+    resetCancelArm();
     append({ kind: "text", role: "system", text: "cancelled" });
     // Hand a prompt back for editing: the queued steer if there is one, since
     // that is the newest thing written, otherwise the prompt that was running.
     const queued = session.clearQueue().steering;
     const restore = queued.length ? queued[queued.length - 1]! : inFlight.current;
-    if (inputRef.current && !inputRef.current.value) inputRef.current.value = restore;
+    if (inputRef.current && !inputRef.current.plainText) setEditorText(restore);
     histCursor.current = null;
     session.abort().finally(() => setWorking(false));
   };
@@ -359,33 +732,45 @@ export function App({
   const recall = (direction: -1 | 1) => {
     const input = inputRef.current;
     const list = history.current;
+    editingStashIndex.current = null;
     if (!input || list.length === 0) return;
 
     if (histCursor.current === null) {
       if (direction === 1) return; // already on the draft line
-      draft.current = input.value;
+      draft.current = input.plainText;
       histCursor.current = list.length - 1;
     } else {
       const next = histCursor.current + direction;
       if (next >= list.length) {
         histCursor.current = null;
-        input.value = draft.current;
+        setEditorText(draft.current);
         return;
       }
       histCursor.current = Math.max(0, next);
     }
-    input.value = list[histCursor.current]!;
+    setEditorText(list[histCursor.current]!);
   };
 
-  const moveStash = (direction: -1 | 1) => {
+  const moveStash = (direction: -1 | 1, extend = false) => {
     const list = stashRef.current;
     if (list.length === 0) return;
     const current = stashCursorRef.current;
-    if (direction === -1) {
-      setSelectedStash(current < 0 ? list.length - 1 : Math.max(0, current - 1));
-    } else if (current >= 0) {
-      setSelectedStash(current + 1 < list.length ? current + 1 : -1);
+
+    if (!extend) {
+      clearStashSelection();
+      if (direction === -1) {
+        setSelectedStash(current < 0 ? list.length - 1 : Math.max(0, current - 1));
+      } else if (current >= 0) {
+        setSelectedStash(current + 1 < list.length ? current + 1 : -1);
+      }
+      return;
     }
+
+    const start = current < 0 ? (direction === -1 ? list.length - 1 : 0) : current;
+    const anchor = stashSelectionAnchor.current ?? start;
+    const next = Math.max(0, Math.min(list.length - 1, start + direction));
+    setSelectedStash(next);
+    setSelectedStashRange(selectedRange(anchor, next), anchor);
   };
 
   const runCommand = (text: string): boolean => {
@@ -393,17 +778,17 @@ export function App({
     const compress = /^\/compress(?:\s+(.*))?$/s.exec(trimmed);
     const clear = /^\/(?:clear|new)$/.test(trimmed);
     const historyCommand = trimmed === "/history";
-    if (!compress && !clear && !historyCommand) return false;
+    const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
+    if (!compress && !clear && !historyCommand && !worktreeCommand) return false;
+    editingStashIndex.current = null;
 
     if (historyCommand) {
-      if (inputRef.current) inputRef.current.value = "";
-      setCommandInput("");
+      setEditorText("");
       openHistory();
       return true;
     }
 
-    if (inputRef.current) inputRef.current.value = "";
-    setCommandInput("");
+    setEditorText("");
     histCursor.current = null;
     draft.current = "";
 
@@ -413,7 +798,15 @@ export function App({
     }
 
     setWorking(true);
-    if (clear) {
+    if (worktreeCommand) {
+      runWorktreeCommand({
+        name: worktreeCommand[1],
+        manager: subagentManager,
+        append: (call) => append({ kind: "tool", call }),
+        patch: patchTool,
+        settled: () => setWorking(false),
+      });
+    } else if (clear) {
       onNewSession()
         .then((next) => setSession(next))
         .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
@@ -432,31 +825,100 @@ export function App({
     return true;
   };
 
-  const submitPrompt = (value?: string) => {
-    const text = value ?? inputRef.current?.value ?? "";
-    if (!text.trim()) return;
-    if (runCommand(text)) return;
-    if (inputRef.current) inputRef.current.value = "";
-    addToStash(text);
-    history.current = appendHistory(cwd, text);
+  const submitPrompt = (value?: string, stashIndex?: number) => {
+    const displayText = value ?? inputRef.current?.plainText ?? "";
+    const attachments = value === undefined ? [...pendingImages.current] : [];
+    let promptText = displayText;
+    for (const image of attachments) promptText = promptText.replace(image.marker, "");
+    promptText = promptText.replace(/[ \t]{2,}/g, " ").trim();
+
+    if (!promptText && attachments.length === 0) return;
+
+    let images;
+    try {
+      images = attachments.map(imageContent);
+    } catch (error) {
+      append({ kind: "text", role: "error", text: `image attachment failed: ${String(error)}` });
+      return;
+    }
+
+    setEditorText("");
+    clearPendingImages();
+
+    if (activeAgentId) {
+      void subagentManager
+        .sendUserMessage(activeAgentId, promptText, images, displayText.trim())
+        .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
+      return;
+    }
+
+    if (attachments.length === 0 && runCommand(promptText)) return;
+
+    if (promptText && stashIndex === undefined) {
+      const editingIndex = editingStashIndex.current;
+      if (editingIndex === null) addToStash(promptText, true);
+      else replaceStashedPrompt(editingIndex, promptText, true);
+    }
+    editingStashIndex.current = null;
+    if (promptText) history.current = appendHistory(cwd, promptText);
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
-    append({ kind: "text", role: "user", text });
+    append({ kind: "text", role: "user", text: displayText.trim() });
 
     // Working already: queue it as steering, delivered once the current step's
     // tool calls finish, rather than starting a second turn.
     if (busyRef.current) {
-      session.steer(text).catch((err) => {
+      session.steer(promptText, images).catch((err) => {
         append({ kind: "text", role: "error", text: String(err) });
       });
       return;
     }
 
-    inFlight.current = text;
+    inFlight.current = promptText;
     setWorking(true);
-    session.prompt(text).catch((err) => {
+    session.prompt(promptText, { images }).catch((err) => {
       append({ kind: "text", role: "error", text: String(err) });
+      setWorking(false);
+    });
+  };
+
+  const runSelectedStashBatch = () => {
+    const indices = [...stashSelectionRef.current].sort((a, b) => a - b);
+    const prompts = indices.flatMap((index) => {
+      const prompt = stashRef.current[index];
+      return prompt ? [prompt.text] : [];
+    });
+    if (prompts.length === 0) return;
+
+    const orchestrationPrompt = buildStashBatchPrompt(prompts);
+    const displayText = [
+      `Run ${prompts.length} cached tasks with worktree subagents:`,
+      ...prompts.map((prompt, index) => `${index + 1}. ${prompt}`),
+    ].join("\n");
+
+    const next = markPromptStashExecutedMany(cwd, indices);
+    stashRef.current = next;
+    setStash(next);
+    for (const prompt of prompts) history.current = appendHistory(cwd, prompt);
+    editingStashIndex.current = null;
+    histCursor.current = null;
+    draft.current = "";
+    setStashMode(false);
+    setEditorText("");
+    append({ kind: "text", role: "user", text: displayText });
+
+    if (busyRef.current) {
+      session.steer(orchestrationPrompt).catch((error) => {
+        append({ kind: "text", role: "error", text: String(error) });
+      });
+      return;
+    }
+
+    inFlight.current = orchestrationPrompt;
+    setWorking(true);
+    session.prompt(orchestrationPrompt).catch((error) => {
+      append({ kind: "text", role: "error", text: String(error) });
       setWorking(false);
     });
   };
@@ -466,6 +928,9 @@ export function App({
     { step: stepTheme },
     { step: () => update({ animations: !settings.animations }) },
     { step: () => update({ webSearch: !settings.webSearch }) },
+    { step: stepWritingStyle },
+    { step: () => update({ checkMode: !settings.checkMode }) },
+    { enter: () => setPage("checkModels") },
     { step: stepThinking },
     { step: () => update({ showThinking: !settings.showThinking }) },
     { enter: () => setPage("models") },
@@ -475,14 +940,35 @@ export function App({
     `‹ ${theme.name} ›`,
     `‹ ${settings.animations ? "on" : "off"} ›${settings.animations && !animations ? "  (no truecolor)" : ""}`,
     `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on this provider)"}`,
+    `‹ ${settings.writingStyle} ›`,
+    `‹ ${settings.checkMode ? "on" : "off"} ›`,
+    `${settings.checkModel} ›`,
     `‹ ${thinkingLevel} ›`,
     `‹ ${settings.showThinking ? "on" : "off"} ›`,
     `${modelId} ›`,
   ];
 
+  const cycleAgentView = (direction: -1 | 1) => {
+    if (pendingImages.current.length > 0) {
+      append({ kind: "text", role: "error", text: "send or remove attached images before switching agents" });
+      return;
+    }
+    const ids: Array<string | null> = [null, ...agents.map((agent) => agent.id)];
+    if (ids.length === 1) return;
+    const current = ids.findIndex((id) => id === activeAgentId);
+    const next = (current + direction + ids.length) % ids.length;
+    viewDrafts.current.set(activeAgentId ?? "main", inputRef.current?.plainText ?? "");
+    const target = ids[next] ?? null;
+    setActiveAgentId(target);
+    setEditorText(viewDrafts.current.get(target ?? "main") ?? "");
+    setStashMode(false);
+    histCursor.current = null;
+  };
+
   useKeyboard((key) => {
     if (key.ctrl && key.name === "c") {
       key.stopPropagation();
+      resetCancelArm();
       // Keyed off a timestamp, not `quitArmed`: two fast presses can land in
       // one React batch, where the state has not updated between them yet.
       const now = Date.now();
@@ -499,6 +985,7 @@ export function App({
       clearTimeout(quitTimer.current);
       setQuitArmed(false);
     }
+    if (key.name !== "escape" && lastCancelPress.current !== null) resetCancelArm();
 
     if (helpOpen) {
       key.stopPropagation();
@@ -522,7 +1009,7 @@ export function App({
 
     // `?` on an empty prompt opens help instead of typing a question mark.
     // With text already in the line it is just a character.
-    if (key.sequence === "?" && !settingsOpen && !inputRef.current?.value) {
+    if (key.sequence === "?" && !settingsOpen && !inputRef.current?.plainText) {
       key.stopPropagation();
       setHelpOpen(true);
       return;
@@ -531,11 +1018,11 @@ export function App({
     if (settingsOpen) {
       if (key.name === "escape") {
         key.stopPropagation();
-        if (page === "models") setPage("main");
+        if (page !== "main") setPage("main");
         else setSettingsOpen(false);
         return;
       }
-      if (page === "models") return; // up/down/return belong to the <select>
+      if (page !== "main") return; // up/down/return belong to the <select>
 
       key.stopPropagation();
       const action = rowActions[cursor];
@@ -548,24 +1035,115 @@ export function App({
       return;
     }
 
-    const isReturn = key.name === "return" || key.name === "enter";
-    const inputValue = inputRef.current?.value ?? "";
-
-    if ((key.meta || key.option) && isReturn) {
+    const isAgentCycle =
+      (key.name === "tab" && key.shift) ||
+      key.name === "backtab" ||
+      key.sequence === "\u001b[Z";
+    if (isAgentCycle) {
       key.stopPropagation();
+      cycleAgentView(key.ctrl ? -1 : 1);
+      return;
+    }
+
+    const isReturn =
+      key.name === "return" ||
+      key.name === "enter" ||
+      key.name === "kpenter" ||
+      key.name === "linefeed";
+    const hasAlt = key.meta || key.option;
+    // Ctrl+Alt+Enter is an explicit cache alias for terminals that reserve
+    // Alt+Enter, such as Windows Terminal's default fullscreen binding.
+    const isCacheReturn = hasAlt && isReturn;
+    const isNewlineReturn = (key.ctrl || key.shift) && !hasAlt && isReturn;
+    const isPlainReturn =
+      isReturn && !key.ctrl && !key.shift && !key.meta && !key.option;
+    const inputValue = inputRef.current?.plainText ?? "";
+    const isContinuationReturn =
+      isPlainReturn &&
+      inputValue.endsWith("\\") &&
+      (inputRef.current?.cursorOffset ?? 0) >= inputValue.length;
+    const isWordBackspace =
+      (key.ctrl && (key.name === "backspace" || key.name === "w")) ||
+      (key.name === "backspace" && key.sequence === "\b");
+
+    if ((key.meta || key.option) && key.name === "v") {
+      key.stopPropagation();
+      void pasteClipboardImage();
+      return;
+    }
+
+    if (isNewlineReturn) {
+      key.stopPropagation();
+      inputRef.current?.newLine();
+      handleTextareaChange();
+      histCursor.current = null;
+      if (stashOpenRef.current) setSelectedStash(-1);
+      return;
+    }
+
+    // Terminals encode Ctrl+Backspace as Ctrl+Backspace, Ctrl+W, or ^H.
+    if (isWordBackspace) {
+      key.stopPropagation();
+      inputRef.current?.deleteWordBackward();
+      handleTextareaChange();
+      histCursor.current = null;
+      if (stashOpenRef.current) setSelectedStash(-1);
+      return;
+    }
+
+    if (
+      stashOpenRef.current &&
+      stashCursorRef.current >= 0 &&
+      key.name === "delete"
+    ) {
+      key.stopPropagation();
+      deleteStashedPrompt(stashCursorRef.current);
+      return;
+    }
+
+    // Alt+Enter and Ctrl+Alt+Enter cache without executing.
+    if (isCacheReturn) {
+      key.stopPropagation();
+      if (activeAgentId) {
+        append({ kind: "text", role: "error", text: "prompt caching is available only in the main agent view" });
+        return;
+      }
+      if (pendingImages.current.length > 0) {
+        append({
+          kind: "text",
+          role: "error",
+          text: "image prompts cannot be stored in the cache; send or remove the image first",
+        });
+        return;
+      }
       if (inputValue.trim()) {
-        addToStash(inputValue);
-        if (inputRef.current) inputRef.current.value = "";
+        const editingIndex = editingStashIndex.current;
+        if (editingIndex === null) addToStash(inputValue);
+        else replaceStashedPrompt(editingIndex, inputValue, false);
+        editingStashIndex.current = null;
+        setEditorText("");
         setSelectedStash(-1);
       }
       return;
     }
 
-    if (key.name === "tab") {
+    if (key.name === "tab" && !key.shift) {
+      if (activeAgentId) return;
       if (stashOpenRef.current || !inputValue.trim()) {
         key.stopPropagation();
-        if (stashOpenRef.current) setStashMode(false);
-        else if (stashRef.current.length > 0) setStashMode(true);
+        if (stashOpenRef.current) {
+          const index = stashCursorRef.current;
+          const prompt = index >= 0 ? stashRef.current[index] : undefined;
+          if (prompt && inputRef.current) {
+            setEditorText(prompt.text);
+            editingStashIndex.current = index;
+            histCursor.current = null;
+            draft.current = "";
+          }
+          setStashMode(false);
+        } else if (stashRef.current.length > 0) {
+          setStashMode(true);
+        }
         return;
       }
       const matches = matchingCommands(inputValue);
@@ -573,16 +1151,44 @@ export function App({
         key.stopPropagation();
         const current = matches.findIndex((command) => command.name === inputValue);
         const next = matches[(current + 1) % matches.length]!;
-        inputRef.current!.value = next.name;
-        setCommandInput(next.name);
+        setEditorText(next.name);
         return;
       }
     }
 
-    if (stashOpenRef.current && isReturn && stashCursorRef.current >= 0) {
+    if (isContinuationReturn) {
       key.stopPropagation();
-      const prompt = stashRef.current[stashCursorRef.current];
-      if (prompt) submitPrompt(prompt);
+      inputRef.current?.deleteCharBackward();
+      inputRef.current?.newLine();
+      handleTextareaChange();
+      histCursor.current = null;
+      if (stashOpenRef.current) setSelectedStash(-1);
+      return;
+    }
+
+    if (stashOpenRef.current && isPlainReturn) {
+      key.stopPropagation();
+      if (stashSelectionRef.current.size > 0) {
+        runSelectedStashBatch();
+        return;
+      }
+      const index = stashCursorRef.current;
+      if (index >= 0) {
+        const prompt = stashRef.current[index];
+        if (prompt) {
+          executeStashedPrompt(index);
+          submitPrompt(prompt.text, index);
+        }
+      } else if (inputValue.trim()) {
+        addToStash(inputValue);
+        setEditorText("");
+      }
+      return;
+    }
+
+    if (isPlainReturn) {
+      key.stopPropagation();
+      submitPrompt();
       return;
     }
 
@@ -594,19 +1200,49 @@ export function App({
     }
 
     if (key.name === "up" || key.name === "down") {
+      if (activeAgentId) return;
+      if (stashOpenRef.current) {
+        key.stopPropagation();
+        moveStash(key.name === "up" ? -1 : 1, key.shift);
+        return;
+      }
+      // Keep arrow navigation inside multiline or visually wrapped prompts.
+      if ((inputRef.current?.editorView.getTotalVirtualLineCount() ?? 1) > 1) return;
       key.stopPropagation();
-      if (stashOpenRef.current) moveStash(key.name === "up" ? -1 : 1);
-      else recall(key.name === "up" ? -1 : 1);
+      recall(key.name === "up" ? -1 : 1);
       return;
     }
 
     if (key.name === "escape") {
       if (stashOpenRef.current) {
         key.stopPropagation();
+        resetCancelArm();
         setStashMode(false);
-      } else if (busyRef.current) {
+      } else if (
+        inputValue.startsWith("/") &&
+        !/\s/.test(inputValue) &&
+        matchingCommands(inputValue).length > 0
+      ) {
         key.stopPropagation();
-        cancel();
+        resetCancelArm();
+        setEditorText("");
+      } else if ((activeAgentId && visibleBusy) || (!activeAgentId && busyRef.current)) {
+        key.stopPropagation();
+        const now = Date.now();
+        const target = activeAgentId ?? "main";
+        if (confirmsCancellation(lastCancelPress.current, cancelTarget.current, target, now)) {
+          resetCancelArm();
+          if (activeAgentId) void subagentManager.abortAgent(activeAgentId);
+          else cancel();
+        } else {
+          lastCancelPress.current = now;
+          cancelTarget.current = target;
+          setCancelArmed(true);
+          clearTimeout(cancelTimer.current);
+          cancelTimer.current = setTimeout(resetCancelArm, CANCEL_WINDOW_MS);
+        }
+      } else {
+        resetCancelArm();
       }
       return;
     }
@@ -618,11 +1254,10 @@ export function App({
     }
   });
 
-  const lastLine = tx.lines[tx.lines.length - 1];
-  const streamGap =
-    tx.stream?.kind === "assistant" &&
-    !!lastLine &&
-    !(lastLine.kind === "text" && lastLine.role === "user");
+  const lastLine = visibleTx.lines[visibleTx.lines.length - 1];
+  const streamGap = visibleTx.stream
+    ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
+    : false;
 
   return (
     <AnimationProvider enabled={animations}>
@@ -634,65 +1269,84 @@ export function App({
         />
         <StatusBar
           theme={theme}
-          modelId={modelId}
-          thinkingLevel={thinkingLevel}
-          branch={branch}
+          modelId={visibleModelId}
+          thinkingLevel={visibleThinkingLevel}
+          branch={visibleBranch}
           tokens={usage.tokens}
           cost={usage.cost}
           contextPct={usage.contextPct}
-          busy={busy}
-          elapsedSec={elapsedSec}
+          busy={visibleBusy}
+          elapsedSec={visibleElapsedSec}
+          agentCount={agents.length}
+          runningAgentCount={agents.filter((agent) => agent.status === "running" || agent.status === "starting").length}
+          activeAgentName={activeAgent?.name}
         />
         <scrollbox
+          key={activeAgentId ?? "main"}
           style={{ flexGrow: 1, paddingLeft: 1, paddingRight: 1 }}
           stickyScroll
           stickyStart="bottom"
           verticalScrollbarOptions={{ visible: true }}
         >
-          {tx.lines.map((line, i) => {
+          {visibleTx.lines.map((line, i) => {
+            const workingCaret = visibleBusy && !visibleTx.stream && i === visibleTx.lines.length - 1;
             const row =
               line.kind === "tool" ? (
-                <ToolLine theme={theme} call={line.call} />
+                <ToolLine theme={theme} call={line.call} workingCaret={workingCaret} />
+              ) : line.kind === "agent-message" ? (
+                <AgentMessageLine theme={theme} line={line} />
               ) : (
                 <TextLine
                   theme={theme}
                   syntaxStyle={syntaxStyle}
                   role={line.role as Role}
                   text={line.text}
+                  workingCaret={workingCaret}
                 />
               );
-            // A user turn gets a blank row on each side, and the answer gets
-            // one above it so it reads as its own block rather than trailing
-            // the tool calls. A user turn already emits a trailing gap, so
-            // never add a second one straight after it.
-            const isUser = line.kind === "text" && line.role === "user";
-            const prev = tx.lines[i - 1];
-            const afterUser = prev?.kind === "text" && prev.role === "user";
-            const isAnswer = line.kind === "text" && line.role === "assistant";
-            const gapBefore = (isUser && i > 0) || (isAnswer && !!prev && !afterUser);
+            const gapBefore = needsTranscriptGap(visibleTx.lines[i - 1], line);
+            const lineKey =
+              line.kind === "tool"
+                ? `tool:${line.call.id}`
+                : line.kind === "agent-message"
+                  ? `agent:${line.sender}:${line.recipient}:${i}:${line.text}`
+                  : `text:${line.role}:${i}:${line.text}`;
             return (
-              <Fragment key={i}>
+              <Fragment key={lineKey}>
                 {gapBefore ? <Gap /> : null}
                 {row}
-                {isUser ? <Gap /> : null}
               </Fragment>
             );
           })}
-          {tx.stream ? (
+          {visibleTx.stream ? (
             <>
               {/* Same gap while the answer is still arriving, so it does not
                   jump down a row when the message settles. */}
               {streamGap ? <Gap /> : null}
-              <StreamLine theme={theme} role={tx.stream.kind} text={tx.stream.text} />
+              <StreamLine
+                theme={theme}
+                syntaxStyle={syntaxStyle}
+                role={visibleTx.stream.kind}
+                text={visibleTx.stream.text}
+              />
             </>
           ) : null}
         </scrollbox>
-        <text
-          content={"─".repeat(Math.max(0, width))}
-          fg={stashOpen ? theme.dim : theme.border}
-          style={{ flexShrink: 0 }}
+        <InputRule
+          theme={theme}
+          width={Math.max(0, width)}
+          busy={visibleBusy}
+          dimmed={stashOpen}
         />
-        {stashOpen ? <PromptStash theme={theme} prompts={stash} cursor={stashCursor} /> : null}
+        {stashOpen ? (
+          <PromptStash
+            theme={theme}
+            prompts={stash}
+            cursor={stashCursor}
+            selectedIndices={stashSelection}
+            height={height}
+          />
+        ) : null}
         {matchingCommands(commandInput).length > 0 ? (
           <box style={{ height: 1, flexShrink: 0, paddingLeft: 2 }}>
             <text
@@ -701,22 +1355,62 @@ export function App({
             />
           </box>
         ) : null}
-        <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
-          <text content="❯ " fg={theme.accent} />
-          <input
+        <box
+          style={{
+            flexDirection: "row",
+            width: "100%",
+            height: inputRows,
+            flexShrink: 0,
+          }}
+        >
+          <box
+            style={{
+              flexDirection: "column",
+              width: 2,
+              height: inputRows,
+              flexShrink: 0,
+            }}
+          >
+            {Array.from({ length: inputRows }, (_, row) => (
+              <box key={row} style={{ width: 2, height: 1, flexShrink: 0 }}>
+                {row === inputCursorRow ? <text content="❯ " fg={theme.accent} /> : null}
+              </box>
+            ))}
+          </box>
+          <textarea
             ref={inputRef}
-            placeholder={busy ? "Steer…" : "Ask something…"}
+            placeholder={
+              activeAgent
+                ? visibleBusy
+                  ? `Steer ${activeAgent.name}…`
+                  : `Message ${activeAgent.name}…`
+                : stashOpen
+                  ? "Cache..."
+                  : busy
+                    ? "Steer…"
+                    : "Ask something…"
+            }
+            placeholderColor={theme.dim}
+            textColor={theme.fg}
+            cursorColor={theme.accent}
+            selectionBg={theme.selectionBg}
+            wrapMode="char"
+            scrollMargin={1}
             focused={!settingsOpen && !helpOpen}
-            onInput={setCommandInput}
+            onContentChange={handleTextareaChange}
+            onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
-            style={{ flexGrow: 1 }}
+            style={{ flexGrow: 1, minWidth: 0, height: inputRows }}
           />
+          <box style={{ width: 2, height: inputRows, flexShrink: 0 }} />
+          {cancelArmed ? <text content=" esc again to cancel " fg={theme.warn} /> : null}
           {quitArmed ? <text content=" ctrl+c again to quit " fg={theme.warn} /> : null}
         </box>
-        <text
-          content={"─".repeat(Math.max(0, width))}
-          fg={stashOpen ? theme.dim : theme.border}
-          style={{ flexShrink: 0 }}
+        <InputRule
+          theme={theme}
+          width={Math.max(0, width)}
+          busy={visibleBusy}
+          dimmed={stashOpen}
         />
         {helpOpen ? <HelpPopup theme={theme} /> : null}
         {historyOpen ? (
@@ -734,6 +1428,7 @@ export function App({
             values={rowValues}
             models={modelRuntime.getAvailableSnapshot()}
             onSelectModel={selectModel}
+            onSelectCheckModel={selectCheckModel}
           />
         ) : null}
       </box>

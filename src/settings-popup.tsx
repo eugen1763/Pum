@@ -9,6 +9,9 @@ export const ROWS = [
   "Theme",
   "Animations",
   "Web search",
+  "Writing style",
+  "Check mode",
+  "Check model",
   "Thinking level",
   "Show thinking",
   "Model",
@@ -17,11 +20,12 @@ export const ROWS = [
 
 export type PopupProps = {
   theme: Theme;
-  page: "main" | "models";
+  page: "main" | "models" | "checkModels";
   cursor: number;
   values: string[];
   models: readonly Model<any>[];
   onSelectModel: (model: Model<any>) => void;
+  onSelectCheckModel: (model: Model<any>) => void;
 };
 
 /**
@@ -35,10 +39,13 @@ export function SettingsPopup({
   values,
   models,
   onSelectModel,
+  onSelectCheckModel,
 }: PopupProps) {
   return (
     <box
-      title={page === "main" ? " Settings " : " Model "}
+      title={
+        page === "main" ? " Settings " : page === "models" ? " Model " : " Check model "
+      }
       style={{
         position: "absolute",
         top: "15%",
@@ -76,7 +83,12 @@ export function SettingsPopup({
           focused
           style={{ flexGrow: 1 }}
           options={models.map((m) => ({ name: m.id, description: m.provider, value: m }))}
-          onSelect={(_index, option) => option && onSelectModel(option.value as Model<any>)}
+          onSelect={(_index, option) => {
+            if (!option) return;
+            const model = option.value as Model<any>;
+            if (page === "checkModels") onSelectCheckModel(model);
+            else onSelectModel(model);
+          }}
         />
       )}
     </box>

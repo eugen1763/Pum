@@ -23,9 +23,14 @@ bun run start    # open the TUI in the current directory
 | `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
 | `src/history.ts` | Prompt history, one list per working directory |
 | `src/prompt-stash.ts` | Stashed prompts, one list per working directory |
+| `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
+| `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
+| `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
 | `src/settings.ts` | PUM's own `pum.json` |
+| `src/check-mode.ts` | Optional model safety gate for `bash` and `edit` |
+| `src/writing-style.ts` | Configurable per-turn system-prompt writing guidance |
 | `src/config.ts` | Where the config dir lives |
 
 ## Keys
@@ -33,9 +38,15 @@ bun run start    # open the TUI in the current directory
 | Key | Effect |
 |---|---|
 | Enter | Send the prompt |
-| Alt+Enter | Stash the prompt without sending |
+| Ctrl+Enter / Shift+Enter | Insert a new line |
+| `\` then Enter | Insert a new line fallback |
+| Alt+Enter / Ctrl+Alt+Enter | Stash the prompt without sending |
+| Alt+V | Attach an image from the graphical clipboard |
 | Tab | Open/close the prompt stash on an empty input |
-| Esc | Cancel the running turn |
+| Shift+Up / Shift+Down | Extend a prompt-stash selection |
+| Enter on a stash selection | Ask the main agent to coordinate and merge worktree subagents |
+| Shift+Tab / Ctrl+Shift+Tab | Cycle agent transcripts forward/backward |
+| Esc | Once warns, twice within 2s cancels the selected agent's running turn |
 | Ctrl+P | Open settings; Esc closes, or steps back from the model list |
 | Ctrl+C | Once arms and shows a hint, twice within 2s quits |
 
@@ -60,19 +71,42 @@ These were chosen deliberately. Change them only on purpose.
 - **Compact by default.** No borders around the input, no blank rows between
   turns, no padding that does not earn its place. A user turn is a full-width
   background bar; everything after it indents two columns.
+- **The prompt is a wrapping multiline textarea.** Enter sends. Ctrl+Enter and
+  Shift+Enter add a line. A trailing `\` plus Enter is the fallback and removes
+  the `\`. It grows to eight rows, then scrolls. Wrapping reserves two right
+  columns. The `❯` gutter follows the cursor's visible row.
 - **Animation is on by default** and turns itself off without true colour.
-- **Enter steers while the agent is working.** `submit()` routes to
-  `session.steer()` instead of `prompt()`, so the message lands after the
-  current step's tool calls rather than starting a second turn. Esc then hands
-  back the queued steer, not the original prompt.
+- **Image markers are atomic input attachments.** Alt+V stores clipboard image
+  bytes under the system temp directory and inserts `[Image #n]`. Any marker
+  edit removes the full marker and file. Sending converts files to pi image
+  content, then removes the temporary files.
+- **Enter steers while the selected agent is working.** Main-agent input uses
+  `session.steer()`. Subagent input routes through `SubagentManager`.
+- **Escape requires confirmation while working.** The first press shows a hint.
+  A second press within two seconds cancels the same selected agent.
+- **Cache range execution is main-agent orchestration.** Shift+Up and Shift+Down
+  select a contiguous stash range. Enter sends a generated coordination prompt
+  to the main agent. The main agent can group related tasks, spawns independent
+  worktree agents in parallel, and merges successful agents after all groups finish.
+- **Subagents are persistent background AgentSessions.** Each subagent gets a
+  managed Git worktree and an independent session file. Spawn tools return after
+  setup, not after the task. Completion becomes a custom message to the main
+  agent. Shift+Tab changes only the visible transcript and input target.
+  Finished agents remain reusable until merge or removal. A successful managed
+  merge closes the agent, removes the worktree and branch, and removes its view.
+  Resume restores retained agents. Previously running agents become interrupted.
+- **Inter-agent messages are durable.** The recipient gets a custom context
+  message. The sender gets a display-only custom entry. Both render with the
+  `agentMessage` and `agentMessageBg` theme tokens.
+- **Direct `/worktree` operations persist synthetic tool events.** Normal agent
+  tool calls already persist through pi's assistant and tool-result entries.
 - **`?` on an empty prompt opens the controls** instead of typing. With any
   text in the line it is an ordinary character. `help-popup.tsx` holds the
   list — keep it in step with the keyboard dispatch in `app.tsx`.
-- **Markdown renders only on settled answers.** `<markdown>` is a tree of child
-  renderables, so the shimmer — which writes `StyledText` onto a single `<text>`
-  — cannot run over it. The streaming line stays plain text and swaps to
-  markdown when the message completes, which also means markdown is parsed on
-  complete input and never reflows mid-answer.
+- **Assistant Markdown renders while streaming.** OpenTUI's `<markdown>` has a
+  streaming mode for unstable trailing blocks. `useMarkdownCaret()` owns its
+  content and appends the blinking caret. Thinking traces remain plain text so
+  shimmer can write a `StyledText` directly onto one `<text>` renderable.
 - **`<markdown>` and `<code>` require a `syntaxStyle` and OpenTUI ships no
   default.** `syntax.ts` builds one from the theme; it is rebuilt whenever the
   theme changes, which is what makes markdown recolour on a theme switch.
@@ -115,16 +149,21 @@ These were chosen deliberately. Change them only on purpose.
 - **Model and thinking level are pi's to persist.** `setModel()` and
   `setThinkingLevel()` write to `<config dir>/settings.json`, and
   `createAgentSession` reads them back at startup. Do not duplicate that here.
-  `pum.json` holds only what pi does not know about — currently `showThinking`.
+  `pum.json` holds only what pi does not know about, including UI preferences,
+  web search, check mode, and writing style.
+- **Check mode is fail-closed.** Its inline extension intercepts `bash` and
+  `edit` in `tool_call`, sends only the cwd and proposed input to the configured
+  verifier model, and requires a clear `SAFE` response. Missing models, request
+  failures, unclear replies, and `UNSAFE` replies block the tool.
 
 ## Things that bite
 
 Each of these cost real debugging. They are not obvious from the docs.
 
-- **`useKeyboard` sees keys before the focused `<input>`**, and
+- **`useKeyboard` sees keys before the focused `<textarea>`**, and
   `key.stopPropagation()` keeps them from reaching it. Escape and Ctrl+P are
-  unbound in the input, so they are safe as global shortcuts. All shortcuts live
-  in the one handler in `app.tsx`.
+  unbound in the textarea, so they are safe as global shortcuts. All shortcuts
+  live in the one handler in `app.tsx`.
 - **Two fast Ctrl+C presses arrive in one React batch**, so state read inside the
   handler is still stale on the second. The quit check compares timestamps held
   in a ref. Any keyboard rule that depends on "did this just happen" needs the
@@ -141,8 +180,8 @@ Each of these cost real debugging. They are not obvious from the docs.
 - **The popup's main page has no focusable children.** Rows are plain `<text>`
   and the cursor is state. That avoids the missing-checkbox problem and the
   focus juggling at once. Only the model list is a real focusable `<select>`.
-- **`<input onSubmit>` is typed as taking an empty `SubmitEvent`** though it
-  passes a string at runtime. Read the value off the ref instead.
+- **`<textarea onSubmit>` receives no text value.** Read `plainText` from the
+  textarea ref instead.
 - **A `<text>` whose `content` is a `StyledText` measures to nothing.** It
   renders as a zero-height row unless you give it a size — `flexGrow: 1`, or an
   explicit `height` on its parent. This silently swallowed the whole status bar.
@@ -167,6 +206,8 @@ Each of these cost real debugging. They are not obvious from the docs.
   arrive before React has re-rendered, so the handler still sees the previous
   value. This bit twice: the double Ctrl+C, and Esc-to-cancel silently doing
   nothing right after a submit. `busyRef` mirrors `busy` for this reason.
+  Escape confirmation also uses timestamp and selected-agent refs. Reset these
+  refs when the timer expires, the selected transcript changes, or work settles.
 - **Do not use `useTimeline`.** It builds a new `Timeline` every render but only
   registers the first, so it stops updating after one re-render. Animation here
   runs off a single `renderer.setFrameCallback` instead, writing `content`

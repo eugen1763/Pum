@@ -13,10 +13,22 @@ export type StatusProps = {
   contextPct: number | null;
   busy: boolean;
   elapsedSec: number;
+  agentCount: number;
+  runningAgentCount: number;
+  activeAgentName?: string;
 };
 
-const fmtTokens = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
+const fmtTokens = (n: number) => {
+  if (n < 1000) return `${n}`;
+  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1_000_000).toFixed(1)}m`;
+};
 const fmtCost = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+const fmtElapsed = (seconds: number) => {
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${remaining}s` : `${remaining}s`;
+};
 
 function Working({ theme, elapsedSec }: { theme: Theme; elapsedSec: number }) {
   const spinner = useSpinner(true);
@@ -31,13 +43,25 @@ function Working({ theme, elapsedSec }: { theme: Theme; elapsedSec: number }) {
       <text ref={spinner} fg={theme.accent} />
       <text content=" " />
       <text ref={label} />
-      <text content={` ${elapsedSec}s  `} fg={theme.dim} />
+      <text content={` ${fmtElapsed(elapsedSec)}  `} fg={theme.dim} />
     </box>
   );
 }
 
 export function StatusBar(props: StatusProps) {
-  const { theme, modelId, thinkingLevel, branch, tokens, cost, contextPct, busy } = props;
+  const {
+    theme,
+    modelId,
+    thinkingLevel,
+    branch,
+    tokens,
+    cost,
+    contextPct,
+    busy,
+    agentCount,
+    runningAgentCount,
+    activeAgentName,
+  } = props;
   const { width } = useTerminalDimensions();
 
   const left = [
@@ -47,6 +71,13 @@ export function StatusBar(props: StatusProps) {
     fg(theme.dim)(" · "),
     fg(theme.dim)(thinkingLevel),
   ];
+  if (agentCount > 0) {
+    left.push(
+      fg(theme.dim)(" · "),
+      fg(runningAgentCount > 0 ? theme.accent : theme.success)(`◇ ${agentCount}`),
+    );
+    if (activeAgentName) left.push(fg(theme.dim)(` · ${activeAgentName}`));
+  }
 
   const right: TextChunk[] = [];
   const push = (text: string, color: string) => {

@@ -45,6 +45,9 @@ export function SessionHistoryPopup({
       {sessions.length > 0 ? (
         <select
           focused
+          backgroundColor={theme.popupBg}
+          focusedBackgroundColor={theme.popupBg}
+          selectedBackgroundColor={theme.popupBg}
           style={{ flexGrow: 1 }}
           options={sessions.map(optionFor)}
           onSelect={(_index, option) => {

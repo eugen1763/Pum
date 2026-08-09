@@ -21,6 +21,10 @@ export const COMMANDS: Command[] = [
     name: "/history",
     description: "Browse saved sessions for this directory",
   },
+  {
+    name: "/worktree",
+    description: "Create a PUM Git worktree from the current branch",
+  },
 ];
 
 export function matchingCommands(input: string): Command[] {

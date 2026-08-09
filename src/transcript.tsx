@@ -1,5 +1,10 @@
 import { StyledText, fg, type SyntaxStyle } from "@opentui/core";
-import { useShimmerText, useSpinner } from "./animation";
+import {
+  useBlinkingText,
+  useMarkdownCaret,
+  useShimmerText,
+  useSpinner,
+} from "./animation";
 import type { Theme } from "./theme";
 import type { ToolCall } from "./tool-line";
 
@@ -7,10 +12,42 @@ export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
 export type Line =
   | { kind: "text"; role: Role; text: string }
-  | { kind: "tool"; call: ToolCall };
+  | { kind: "tool"; call: ToolCall }
+  | { kind: "agent-message"; sender: string; recipient: string; text: string };
+
+type LineGroup = "tool" | "thinking" | "other";
+
+const lineGroup = (line: Line): LineGroup => {
+  if (line.kind === "tool") return "tool";
+  return line.kind === "text" && line.role === "thinking" ? "thinking" : "other";
+};
+
+/** Exactly one gap around tool/thinking groups, but none inside either group. */
+export function needsTranscriptGap(prev: Line | undefined, line: Line): boolean {
+  if (!prev) return false;
+  const prevGroup = lineGroup(prev);
+  const group = lineGroup(line);
+
+  if (prevGroup !== group && (prevGroup !== "other" || group !== "other")) return true;
+  if (group !== "other") return false;
+
+  // Preserve the normal turn layout for rows outside tool/thinking groups.
+  const isUser = line.kind === "text" && line.role === "user";
+  const prevIsUser = prev.kind === "text" && prev.role === "user";
+  const isAnswer = line.kind === "text" && line.role === "assistant";
+  const isAgentMessage = line.kind === "agent-message" || prev.kind === "agent-message";
+  return isUser || prevIsUser || isAnswer || isAgentMessage;
+}
 
 const GUTTER = "  ";
 const PROMPT = "❯ ";
+
+/** Remove provider trace wrappers and compact adjacent thinking entries. */
+export function normalizeThinkingText(text: string): string {
+  return text
+    .replaceAll("**", "")
+    .replace(/\n[ \t]*\n+/g, "\n");
+}
 
 export function roleColor(theme: Theme, role: Role): string {
   switch (role) {
@@ -67,22 +104,34 @@ export function TextLine({
   syntaxStyle,
   role,
   text,
+  workingCaret = false,
 }: {
   theme: Theme;
   syntaxStyle: SyntaxStyle;
   role: Role;
   text: string;
+  workingCaret?: boolean;
 }) {
   const color = roleColor(theme, role);
   const isUser = role === "user";
+  const isAssistant = role === "assistant";
+  const displayText = role === "thinking" ? normalizeThinkingText(text) : text;
+  const textCaret = useBlinkingText({
+    chunks: [fg(color)(displayText)],
+    contentKey: `${role}:${displayText}`,
+    caretColor: color,
+    active: workingCaret && !isAssistant,
+  });
+  const markdownCaret = useMarkdownCaret(text, workingCaret && isAssistant);
 
-  // Only a finished answer is rendered as markdown. Prompts are shown as
-  // typed, and thinking, tool and error lines are not markdown to begin with.
-  if (role === "assistant") {
+  // Assistant text is already styled while streaming, so settlement only
+  // finalizes Markdown parsing and does not swap through a plain-text phase.
+  if (isAssistant) {
     return (
       <Row glyph={GUTTER} glyphColor={color}>
         <markdown
-          content={text}
+          ref={workingCaret ? markdownCaret : undefined}
+          content={workingCaret ? undefined : text}
           syntaxStyle={syntaxStyle}
           fg={color}
           style={{ flexGrow: 1, minWidth: 0 }}
@@ -97,7 +146,13 @@ export function TextLine({
       glyphColor={color}
       background={isUser ? theme.userBg : undefined}
     >
-      <text content={text} fg={color} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
+      <text
+        ref={workingCaret ? textCaret : undefined}
+        content={workingCaret ? undefined : displayText}
+        fg={color}
+        wrapMode="word"
+        style={{ flexGrow: 1, minWidth: 0 }}
+      />
     </Row>
   );
 }
@@ -105,51 +160,111 @@ export function TextLine({
 /** The line currently streaming in: shimmered, with a caret riding the end. */
 export function StreamLine({
   theme,
+  syntaxStyle,
   role,
   text,
 }: {
   theme: Theme;
+  syntaxStyle: SyntaxStyle;
   role: "assistant" | "thinking";
   text: string;
 }) {
   const color = roleColor(theme, role);
-  const ref = useShimmerText({
-    text,
+  const displayText = role === "thinking" ? normalizeThinkingText(text) : text;
+  const shimmer = useShimmerText({
+    text: displayText,
     color,
     highlight: theme.highlight,
-    active: true,
+    active: role === "thinking",
     caret: true,
   });
+  const markdown = useMarkdownCaret(text, role === "assistant");
+
   return (
     <Row glyph={GUTTER} glyphColor={color}>
-      <text ref={ref} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
+      {role === "assistant" ? (
+        <markdown
+          ref={markdown}
+          streaming
+          syntaxStyle={syntaxStyle}
+          fg={color}
+          style={{ flexGrow: 1, minWidth: 0 }}
+        />
+      ) : (
+        <text ref={shimmer} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
+      )}
     </Row>
   );
 }
 
-export function ToolLine({ theme, call }: { theme: Theme; call: ToolCall }) {
-  const spinner = useSpinner(call.state === "running");
+export function AgentMessageLine({ theme, line }: { theme: Theme; line: Extract<Line, { kind: "agent-message" }> }) {
+  return (
+    <Row glyph="◇ " glyphColor={theme.agentMessage} background={theme.agentMessageBg}>
+      <box style={{ flexDirection: "column", flexGrow: 1, minWidth: 0 }}>
+        <text content={`${line.sender} → ${line.recipient}`} fg={theme.agentMessage} />
+        <text
+          content={line.text}
+          fg={theme.agentMessage}
+          wrapMode="word"
+          style={{ flexGrow: 1, minWidth: 0 }}
+        />
+      </box>
+    </Row>
+  );
+}
 
-  const chunks = [fg(theme.tool)(`⚒ ${call.name}`)];
-  if (call.arg) {
-    chunks.push(fg(theme.dim)(" · "), fg(theme.toolArg)(call.arg));
-  }
-  if (call.detail) {
-    chunks.push(fg(theme.dim)(`  ${call.detail}`));
-  }
+export function ToolLine({
+  theme,
+  call,
+  workingCaret = false,
+}: {
+  theme: Theme;
+  call: ToolCall;
+  workingCaret?: boolean;
+}) {
+  const spinner = useSpinner(call.state === "running");
+  const failed = call.state === "error";
+  const toolColor = failed ? theme.error : theme.tool;
+  const argColor = failed ? theme.error : theme.toolArg;
+  const detailColor = failed ? theme.error : theme.dim;
+
+  const prefix = call.arg
+    ? new StyledText([fg(toolColor)(call.name), fg(detailColor)(" · ")])
+    : null;
+  const bodyChunks = call.arg
+    ? [fg(argColor)(call.arg)]
+    : [fg(toolColor)(call.name)];
+  if (call.detail) bodyChunks.push(fg(detailColor)(`  ${call.detail}`));
+
+  const caret = useBlinkingText({
+    chunks: bodyChunks,
+    contentKey: `${call.name}:${call.arg}:${call.state}:${call.detail ?? ""}`,
+    caretColor: failed ? theme.error : theme.accent,
+    active: workingCaret,
+  });
 
   return (
-    <Row glyph={GUTTER} glyphColor={theme.tool}>
-      <text content={new StyledText(chunks)} style={{ flexGrow: 1 }} />
-      <text content=" " />
-      {call.state === "running" ? (
-        <text ref={spinner} fg={theme.accent} />
-      ) : (
+    <Row glyph={GUTTER} glyphColor={toolColor}>
+      <box style={{ flexDirection: "row", flexGrow: 1, minWidth: 0 }}>
+        {prefix ? <text content={prefix} style={{ flexShrink: 0 }} /> : null}
         <text
-          content={call.state === "ok" ? "✓" : "✗"}
-          fg={call.state === "ok" ? theme.success : theme.error}
+          ref={workingCaret ? caret : undefined}
+          content={workingCaret ? undefined : new StyledText(bodyChunks)}
+          wrapMode="word"
+          style={{ flexGrow: 1, minWidth: 0 }}
         />
-      )}
+      </box>
+      <box style={{ width: 1, flexShrink: 0 }} />
+      <box style={{ width: 1, flexShrink: 0 }}>
+        {call.state === "running" ? (
+          <text ref={spinner} fg={theme.accent} />
+        ) : (
+          <text
+            content={call.state === "ok" ? "✓" : "✗"}
+            fg={call.state === "ok" ? theme.success : theme.error}
+          />
+        )}
+      </box>
     </Row>
   );
 }

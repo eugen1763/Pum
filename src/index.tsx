@@ -14,6 +14,9 @@ import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { loadSettings } from "./settings";
 import { installWebSearch, webSearch } from "./web-search";
+import { setWritingStyle, writingStyleExtension } from "./writing-style";
+import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
+import { SubagentManager } from "./subagents/manager";
 
 mkdirSync(AGENT_DIR, { recursive: true });
 
@@ -33,6 +36,15 @@ const modelRuntime = await ModelRuntime.create({
 });
 
 const settings = loadSettings();
+setWritingStyle(settings.writingStyle);
+setCheckModeConfig({ enabled: settings.checkMode, model: settings.checkModel });
+const checkModeExtension = createCheckModeExtension(modelRuntime);
+const subagentManager = new SubagentManager({
+  modelRuntime,
+  agentDir: AGENT_DIR,
+  childExtensionFactories: [writingStyleExtension, checkModeExtension],
+});
+const subagentExtension = subagentManager.mainExtension();
 // Hosted web search rides on the provider, so it must be wrapped before the
 // session picks a model.
 webSearch.enabled = settings.webSearch;
@@ -49,13 +61,23 @@ const resume = process.argv.includes("-r") || process.argv.includes("--resume");
 const cwd = process.cwd();
 const sessionRuntime = await createAgentSessionRuntime(
   async ({ cwd, sessionManager, sessionStartEvent }) => {
-    const services = await createAgentSessionServices({ cwd, agentDir: AGENT_DIR, modelRuntime });
+    const services = await createAgentSessionServices({
+      cwd,
+      agentDir: AGENT_DIR,
+      modelRuntime,
+      resourceLoaderOptions: {
+        extensionFactories: [writingStyleExtension, checkModeExtension, subagentExtension],
+      },
+    });
     return {
       ...(await createAgentSessionFromServices({
         services,
         sessionManager,
         sessionStartEvent,
-        tools: ["read", "write", "edit", "bash"],
+        tools: [
+          "read", "write", "edit", "bash",
+          "spawn_subagent", "message_agent", "list_subagents", "stop_subagent", "worktree",
+        ],
       })),
       services,
       diagnostics: services.diagnostics,
@@ -88,5 +110,6 @@ createRoot(renderer).render(
     modelRuntime={modelRuntime}
     settings={settings}
     searchProviders={searchProviders}
+    subagentManager={subagentManager}
   />,
 );

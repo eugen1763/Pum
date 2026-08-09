@@ -36,3 +36,16 @@ export function appendHistory(cwd: string, prompt: string): string[] {
   }
   return trimmed;
 }
+
+/** Remove every exact occurrence of a prompt from this directory's history. */
+export function removeHistory(cwd: string, prompt: string): string[] {
+  const file = readFile();
+  const next = loadHistory(cwd).filter((entry) => entry !== prompt);
+  file[cwd] = next;
+  try {
+    writeFileSync(HISTORY_PATH, JSON.stringify(file, null, 2));
+  } catch {
+    // history is a convenience; never break input handling over it
+  }
+  return next;
+}

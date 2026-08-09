@@ -4,16 +4,57 @@ import {
   WEB_SEARCH_CUSTOM_TYPE,
   type SearchCallRecord,
 } from "./web-search";
+import {
+  AGENT_MESSAGE_CUSTOM_TYPE,
+  AGENT_MESSAGE_DISPLAY_TYPE,
+  TOOL_EVENT_CUSTOM_TYPE,
+  type AgentMessageData,
+} from "./subagents/types";
 
 const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content
+  const text = content
     .filter((b: any) => b?.type === "text" && typeof b.text === "string")
     .map((b: any) => b.text)
     .join("")
     .trim();
+  const markers = content
+    .filter((b: any) => b?.type === "image")
+    .map((_b: any, index: number) => `[Image #${index + 1}]`)
+    .join(" ");
+  return [text, markers].filter(Boolean).join(" ");
 };
+
+function agentMessageOf(entry: any): AgentMessageData | undefined {
+  const isDisplay = entry?.type === "custom" && entry.customType === AGENT_MESSAGE_DISPLAY_TYPE;
+  const isMessage = entry?.type === "custom_message" && entry.customType === AGENT_MESSAGE_CUSTOM_TYPE;
+  if (!isDisplay && !isMessage) return undefined;
+  const data = isDisplay ? entry.data : entry.details;
+  if (!data || typeof data !== "object") return undefined;
+  if (typeof data.sender !== "string" || typeof data.recipient !== "string") return undefined;
+  return {
+    id: typeof data.id === "string" ? data.id : `${entry.id ?? "message"}`,
+    sender: data.sender,
+    recipient: data.recipient,
+    text: typeof data.text === "string" ? data.text : textOf(entry.content),
+    at: typeof data.at === "number" ? data.at : 0,
+  };
+}
+
+function toolEventOf(entry: any): ToolCall | undefined {
+  if (entry?.type !== "custom" || entry.customType !== TOOL_EVENT_CUSTOM_TYPE) return undefined;
+  const data = entry.data;
+  if (!data || typeof data.id !== "string" || typeof data.name !== "string") return undefined;
+  if (!["running", "ok", "error"].includes(data.state)) return undefined;
+  return {
+    id: data.id,
+    name: data.name,
+    arg: typeof data.arg === "string" ? data.arg : "",
+    state: data.state,
+    detail: typeof data.detail === "string" ? data.detail : undefined,
+  };
+}
 
 function searchRecordOf(entry: any): SearchCallRecord | undefined {
   if (entry?.type !== "custom" || entry.customType !== WEB_SEARCH_CUSTOM_TYPE) return undefined;
@@ -44,8 +85,35 @@ export function replayEntries(
   const lines: Line[] = [];
   const calls = new Map<string, ToolCall>();
   const searchCalls = new Map<string, ToolCall>();
+  const customCalls = new Map<string, ToolCall>();
+  const agentMessages = new Set<string>();
 
   for (const entry of entries) {
+    const agentMessage = agentMessageOf(entry);
+    if (agentMessage) {
+      if (!agentMessages.has(agentMessage.id)) {
+        agentMessages.add(agentMessage.id);
+        lines.push({
+          kind: "agent-message",
+          sender: agentMessage.sender,
+          recipient: agentMessage.recipient,
+          text: agentMessage.text,
+        });
+      }
+      continue;
+    }
+
+    const customCall = toolEventOf(entry);
+    if (customCall) {
+      const existing = customCalls.get(customCall.id);
+      if (existing) Object.assign(existing, customCall);
+      else {
+        customCalls.set(customCall.id, customCall);
+        lines.push({ kind: "tool", call: customCall });
+      }
+      continue;
+    }
+
     const search = searchRecordOf(entry);
     if (search) {
       const existing = searchCalls.get(search.id);
