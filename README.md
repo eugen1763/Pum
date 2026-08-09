@@ -286,7 +286,7 @@ Use a throwaway `PUM_DIR` for local integration tests. Capture TUI output throug
 
 ## Release status
 
-PUM `0.1` is in beta. Interfaces and persisted formats can still change before the stable release. Review the release notes before upgrading sessions or custom configuration.
+PUM `0.2` is in beta. Interfaces and persisted formats can still change before the stable release. Review the release notes before upgrading sessions or custom configuration.
 
 ## License
 

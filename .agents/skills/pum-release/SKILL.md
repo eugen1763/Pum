@@ -1,7 +1,7 @@
 ---
 name: pum-release
 description: Prepares and publishes a PUM patch release. Use when releasing pum-agent: closes queued agent work, audits README.md and AGENTS.md, writes CHANGELOG.md, bumps the patch version, validates the package, commits, tags, publishes through GitHub Actions, and verifies npm and GitHub Releases.
-compatibility: Requires Bun, Git, GitHub CLI authentication, npm trusted publishing, and the PUM repository release workflow.
+compatibility: Requires Bun, Git, GitHub CLI authentication, npm trusted publishing, an npm NPM_TOKEN secret for dist-tags in the GitHub npm environment, and the PUM repository release workflow.
 ---
 
 # PUM Patch Release
@@ -21,7 +21,7 @@ A release is complete only when all of these are true:
 7. Local validation passes.
 8. The release commit and matching annotated tag are pushed.
 9. Ubuntu and Windows CI pass for the release commit/tag.
-10. npm and the GitHub Release both contain the exact version.
+10. npm and the GitHub Release both contain the exact version. Prereleases have both `beta` and `latest` npm tags.
 
 Do not move or reuse a published tag. If a tagged release fails after publication or the release contents change, prepare a newer version.
 
@@ -74,7 +74,10 @@ Validate that:
 - local tag `v<VERSION>` does not exist;
 - remote tag `v<VERSION>` does not exist;
 - npm does not already contain `pum-agent@<VERSION>`;
-- prerelease versions will publish under npm tag `beta` and stable versions under `latest`.
+- prerelease versions will publish under npm tag `beta` and then move `latest` to the same exact version;
+- stable versions will publish directly under `latest`.
+
+Confirm that the GitHub `npm` environment contains an `NPM_TOKEN` secret. Inspect only secret names, never values. The token must be granular, limited to `pum-agent`, read/write, configured with Bypass 2FA, and given the shortest practical expiration. Trusted publishing remains responsible for `npm publish`; the token is only for `npm dist-tag add`.
 
 ## 3. Audit README.md
 
@@ -230,12 +233,15 @@ Identify the CI and Release workflow runs for the exact commit/tag. Use `gh run 
 
 The release workflow must reject mismatched tags. Never change a release tag to point at a later fix.
 
+The workflow publishes through npm trusted publishing. For a prerelease, it then uses the GitHub `npm` environment secret `NPM_TOKEN` to assign the exact published version to `latest`. Do not perform the normal `latest` promotion manually and do not request an OTP in chat. If the promotion fails, inspect the one failed workflow log and verify that the secret exists, remains unexpired, has package write access, and has Bypass 2FA enabled.
+
 ## 10. Verify publication
 
 After successful workflows, verify all of the following:
 
 - `npm view pum-agent@<VERSION> version` returns the exact version.
-- The expected npm dist-tag points to the release (`beta` for prerelease, `latest` for stable).
+- Stable releases have `latest` pointing to the exact version.
+- Prereleases have both `beta` and `latest` pointing to the exact version.
 - `gh release view v<VERSION>` exists.
 - Prerelease versions are marked as GitHub prereleases.
 - A clean temporary global install exposes the `pum` executable.
@@ -258,7 +264,7 @@ Report:
 - README and AGENTS audit outcome;
 - local validation totals;
 - Ubuntu and Windows CI result;
-- npm publication and dist-tag;
+- npm publication and all required dist-tags;
 - GitHub Release result;
 - installation verification;
 - any manual action still required.

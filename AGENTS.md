@@ -45,6 +45,7 @@ bun run start    # open the TUI in the current directory
 | `src/login-popup.tsx` | Presentational provider login and custom-provider popup |
 | `src/login-controller.ts` | Provider auth state machine and popup keyboard actions |
 | `src/login-flow.ts` | Provider registry, custom discovery, redaction, and atomic config writes |
+| `src/browser-launch.ts` | Validated direct-argv OAuth browser launch with visible fallback |
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/check-mode.ts` | Safety profiles for commands, mutations, and trigger processes |
 | `src/check-policy.ts` | Deterministic shell and structured-process hard rules |
@@ -280,6 +281,12 @@ These were chosen deliberately. Change them only on purpose.
   `createAgentSession` reads them back at startup. Do not duplicate that here.
   `pum.json` holds only what pi does not know about, including UI preferences,
   web search, check mode, and writing style.
+- **Release publication keeps OIDC and dist-tag credentials separate.** The
+  Release workflow uses npm trusted publishing only for `npm publish`.
+  Prereleases publish under `beta`, then use the GitHub `npm` environment secret
+  `NPM_TOKEN` only for exact `npm dist-tag add ... latest`. The token
+  must be granular, limited to `pum-agent`, read/write, expiring, and configured
+  with Bypass 2FA. Never print, persist, or use the token for publication.
 - **Check mode has explicit profiles and deterministic hard blocks.** `strict`
   keeps fail-closed verifier behavior. `balanced` blocks only hard-rule,
   explicitly suspicious, clearly dangerous, obfuscated, malformed, or

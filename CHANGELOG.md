@@ -2,12 +2,15 @@
 
 All notable changes to PUM are documented in this file.
 
-## Unreleased
+## [0.2.0-beta.1] - 2026-08-09
 
 ### Fixed
 - Open provider OAuth and device-code verification URLs automatically with the platform browser, while keeping selectable URL fallback and rejecting unsafe URLs.
 - Copy completed transcript selections to the local clipboard on Windows and macOS, use Linux clipboard commands when available, and use bounded OSC 52 output for remote sessions.
 - Enable selection on transcript Markdown renderables despite the missing OpenTUI 0.5.1 React prop type.
+
+### Changed
+- Made the release workflow promote prereleases to both npm `beta` and `latest` using a package-scoped `NPM_TOKEN`, while keeping package publication on trusted-publishing OIDC.
 
 ## [0.1.3-beta.2] - 2026-08-09
 
@@ -74,6 +77,7 @@ All notable changes to PUM are documented in this file.
 - Added deterministic blocks for project escape, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion.
 - Added sanitized trigger environments, inert templates, strict argument-boundary checks, private bounded output files, and non-overridable hard-block or explicit `UNSAFE` decisions.
 
+[0.2.0-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.3-beta.2...v0.2.0-beta.1
 [0.1.3-beta.2]: https://github.com/eugen1763/Pum/compare/v0.1.3-beta.1...v0.1.3-beta.2
 [0.1.3-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.2-beta.1...v0.1.3-beta.1
 [0.1.2-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.1-beta.1...v0.1.2-beta.1
