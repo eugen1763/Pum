@@ -101,9 +101,10 @@ These were chosen deliberately. Change them only on purpose.
   every checked call that passes hard rules for exact approval, unless an exact
   prior approval matches. Verifier `SAFE`, unclear, error, and unavailable
   results still require the popup. Hard blocks never open the popup. Explicit
-  `UNSAFE` decisions block without the popup, except for the exact
-  `publish-mutation` category from the authoritative main agent. That exception
-  still requires popup approval. Managed subagents cannot use the exception.
+  `UNSAFE` decisions block without the popup, except for narrowly recognized
+  direct npm publish mutations from the authoritative main agent. The exception
+  does not depend on the verifier category. It still requires popup approval.
+  Managed subagents cannot use the exception.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
@@ -258,9 +259,10 @@ These were chosen deliberately. Change them only on purpose.
   or junctions, credential access, privilege escalation, persistence,
   remote-script execution, dangerous destructive Git, and broad deletion.
   Hard blocks never open the popup and cannot be overridden. Explicit verifier
-  `UNSAFE` results also block without the popup. The only exception is an exact
-  `publish-mutation` category for the authoritative main agent. The exception
-  still requires explicit popup approval. Managed subagents remain blocked.
+  `UNSAFE` results also block without the popup. The only exception is a narrow
+  deterministic match for direct `npm publish` or `npm dist-tag add` from the
+  authoritative main agent. The verifier category does not control the match.
+  The exception still requires explicit popup approval. Managed subagents remain blocked.
 - **Check mode verifies complete structured proposals.** Bash requests include
   all stages, operators, pipelines, redirections, substitutions, environment
   assignments, mutation intent, and boundaries. `edit` and `apply_patch`
@@ -277,7 +279,7 @@ These were chosen deliberately. Change them only on purpose.
   child identity comes from session construction, not model input or chat text.
   The store is capped. Settings can clear approvals for the current project.
   PUM never stores hard-blocked operations as approvals. PUM stores an explicit
-  `UNSAFE` approval only for the main-agent `publish-mutation` exception.
+  `UNSAFE` approval only for the recognized main-agent npm publish exception.
 - **Checked tools stay out of parallel mixed batches.** pi prepares every tool
   in a parallel assistant batch before it executes any tool. A waiting `bash`,
   `edit`, `apply_patch`, or external-trigger process check would make unrelated

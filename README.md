@@ -163,7 +163,7 @@ Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_pa
 - **Balanced:** Permit only narrow, recognized project-local operations after hard rules. Send all other calls to the verifier.
 - **Ask:** Show the approval popup for every checked call that passes hard rules, unless an exact session or project approval already matches. A verifier `SAFE`, unclear, error, or unavailable result still requires approval.
 
-Every active profile hard-blocks project escape, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup, except for the exact main-agent `publish-mutation` category. That narrow exception still requires explicit popup approval. Managed subagents cannot use the exception.
+Every active profile hard-blocks project escape, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup. The only exception is a deterministic match for direct main-agent `npm publish` or `npm dist-tag add`. The verifier category does not control this exception. The exception still requires explicit popup approval. Managed subagents cannot use the exception.
 
 For `edit` and `apply_patch`, PUM validates the proposed change and sends a unified diff, changed paths, line counts, sensitivity flags, and project containment. PUM does not mutate files before the decision. Invalid or stale edit context blocks the call.
 
