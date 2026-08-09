@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { MarkdownRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App } from "../app";
@@ -6,6 +7,16 @@ import type { SubagentSnapshot } from "./types";
 
 let destroy: (() => void) | undefined;
 afterEach(() => destroy?.());
+
+function markdownContent(root: BaseRenderable): string[] {
+  const content: string[] = [];
+  const visit = (node: BaseRenderable) => {
+    if (node instanceof MarkdownRenderable) content.push(node.content);
+    for (const child of node.getChildren()) visit(child);
+  };
+  visit(root);
+  return content;
+}
 
 const snapshot: SubagentSnapshot = {
   id: "agent-1",
@@ -306,14 +317,14 @@ describe("subagent transcript UI", () => {
     await setup.renderOnce();
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("worker-one");
-    expect(setup.captureCharFrame()).toContain("Subagent transcript");
+    expect(markdownContent(setup.renderer.root)).toContain("Subagent transcript");
     expect(setup.captureCharFrame()).toContain("↑1.2k · ↓345 · ○2.4k · $0.250 · 40%");
 
     setup.mockInput.pressTab({ shift: true, ctrl: true });
     await new Promise((resolve) => setTimeout(resolve, 10));
     await setup.renderOnce();
     await setup.flush();
-    expect(setup.captureCharFrame()).not.toContain("Subagent transcript");
+    expect(markdownContent(setup.renderer.root)).not.toContain("Subagent transcript");
   });
 
   test("opens the agent tree and selects with Ctrl+L navigation", async () => {
@@ -379,8 +390,9 @@ describe("subagent transcript UI", () => {
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressArrow("right");
-    const selectedFrame = await setup.waitForFrame((frame) => frame.includes("Child transcript"));
+    const selectedFrame = await setup.waitForFrame((frame) => frame.includes("Message child-worker…"));
     expect(selectedFrame).not.toContain("→/enter open");
+    expect(markdownContent(setup.renderer.root)).toContain("Child transcript");
   });
 
   test("caches a selected subagent draft without sending it", async () => {

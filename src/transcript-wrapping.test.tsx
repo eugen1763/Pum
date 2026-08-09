@@ -30,10 +30,12 @@ describe("transcript wrapping", () => {
         <TextLine theme={theme} syntaxStyle={syntaxStyle} role="user" text={long} />
         <AgentMessageLine
           theme={theme}
+          syntaxStyle={syntaxStyle}
           line={{ kind: "agent-message", sender: "long-sender-name", recipient: "long-recipient-name", text: long }}
         />
         <PendingMessageLine
           theme={theme}
+          syntaxStyle={syntaxStyle}
           pending={{ id: "queued", line: { kind: "agent-message", sender: "long-sender-name", recipient: "long-recipient-name", text: long } }}
         />
         <ToolLine
@@ -48,8 +50,8 @@ describe("transcript wrapping", () => {
     const frame = setup.captureCharFrame();
 
     // OpenTUI's test renderer does not paint Markdown tree-sitter content.
-    // The other seven rows exercise the shared constrained transcript column.
-    expect(frame.match(/END/g)?.length).toBe(7);
+    // Thinking, system, error, and tool rows still exercise plain-text wrapping.
+    expect(frame.match(/END/g)?.length).toBe(4);
     expect(frame.split("\n").every((line) => line.length <= 28)).toBe(true);
     expect(frame).toContain("recipient-name");
     expect(frame).toContain("+100");

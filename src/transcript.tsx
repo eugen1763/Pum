@@ -177,26 +177,28 @@ export function TextLine({
 
   // Assistant text is already styled while streaming, so settlement only
   // finalizes Markdown parsing and does not swap through a plain-text phase.
-  if (isAssistant) {
+  // User messages are static Markdown. They never get a streaming caret.
+  if (isAssistant || isUser) {
     return (
-      <Row glyph={GUTTER} glyphColor={color}>
+      <Row
+        glyph={isUser ? PROMPT : GUTTER}
+        glyphColor={color}
+        background={isUser ? theme.userBg : undefined}
+      >
         <markdown
-          ref={workingCaret ? markdownCaret : undefined}
-          content={workingCaret ? undefined : text}
+          ref={isAssistant && workingCaret ? markdownCaret : undefined}
+          content={isAssistant && workingCaret ? undefined : text}
+          streaming={false}
           syntaxStyle={syntaxStyle}
           fg={color}
-          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
+          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
         />
       </Row>
     );
   }
 
   return (
-    <Row
-      glyph={isUser ? PROMPT : GUTTER}
-      glyphColor={color}
-      background={isUser ? theme.userBg : undefined}
-    >
+    <Row glyph={GUTTER} glyphColor={color}>
       <text
         ref={workingCaret ? textCaret : undefined}
         content={workingCaret ? undefined : displayText}
@@ -252,7 +254,15 @@ export function StreamLine({
   );
 }
 
-export function PendingMessageLine({ theme, pending }: { theme: Theme; pending: PendingLine }) {
+export function PendingMessageLine({
+  theme,
+  syntaxStyle,
+  pending,
+}: {
+  theme: Theme;
+  syntaxStyle: SyntaxStyle;
+  pending: PendingLine;
+}) {
   const line = pending.line;
   if (line.kind === "agent-message") {
     return (
@@ -264,11 +274,12 @@ export function PendingMessageLine({ theme, pending }: { theme: Theme; pending: 
             wrapMode="word"
             style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
           />
-          <text
+          <markdown
             content={line.text}
+            streaming={false}
+            syntaxStyle={syntaxStyle}
             fg={theme.dim}
-            wrapMode="word"
-            style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+            style={{ width: "100%", flexGrow: 1, flexShrink: 1, minWidth: 0 }}
           />
         </box>
       </Row>
@@ -277,17 +288,26 @@ export function PendingMessageLine({ theme, pending }: { theme: Theme; pending: 
 
   return (
     <Row glyph="○ " glyphColor={theme.dim} background={theme.userBg}>
-      <text
+      <markdown
         content={line.text}
+        streaming={false}
+        syntaxStyle={syntaxStyle}
         fg={theme.dim}
-        wrapMode="word"
         style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
       />
     </Row>
   );
 }
 
-export function AgentMessageLine({ theme, line }: { theme: Theme; line: Extract<Line, { kind: "agent-message" }> }) {
+export function AgentMessageLine({
+  theme,
+  syntaxStyle,
+  line,
+}: {
+  theme: Theme;
+  syntaxStyle: SyntaxStyle;
+  line: Extract<Line, { kind: "agent-message" }>;
+}) {
   return (
     <Row glyph="◇ " glyphColor={theme.agentMessage} background={theme.agentMessageBg}>
       <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
@@ -297,11 +317,12 @@ export function AgentMessageLine({ theme, line }: { theme: Theme; line: Extract<
           wrapMode="word"
           style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
         />
-        <text
+        <markdown
           content={line.text}
+          streaming={false}
+          syntaxStyle={syntaxStyle}
           fg={theme.agentMessage}
-          wrapMode="word"
-          style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+          style={{ width: "100%", flexGrow: 1, flexShrink: 1, minWidth: 0 }}
         />
       </box>
     </Row>
