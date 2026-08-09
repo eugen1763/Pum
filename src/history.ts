@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_DIR } from "./config";
+import { projectStorageKey } from "./platform";
 
 /** One history list per working directory, so projects do not bleed together. */
 type HistoryFile = Record<string, string[]>;
@@ -18,17 +19,20 @@ function readFile(): HistoryFile {
 }
 
 export function loadHistory(cwd: string): string[] {
-  const entries = readFile()[cwd];
+  const file = readFile();
+  const entries = file[projectStorageKey(cwd)] ?? file[cwd];
   return Array.isArray(entries) ? entries.filter((e) => typeof e === "string") : [];
 }
 
 /** Appends unless it repeats the previous entry, and returns the new list. */
 export function appendHistory(cwd: string, prompt: string): string[] {
   const file = readFile();
-  const list = Array.isArray(file[cwd]) ? file[cwd]! : [];
+  const key = projectStorageKey(cwd);
+  const list = Array.isArray(file[key]) ? file[key]! : loadHistory(cwd);
   if (list[list.length - 1] !== prompt) list.push(prompt);
   const trimmed = list.slice(-MAX_ENTRIES);
-  file[cwd] = trimmed;
+  file[key] = trimmed;
+  if (key !== cwd) delete file[cwd];
   try {
     writeFileSync(HISTORY_PATH, JSON.stringify(file, null, 2));
   } catch {
@@ -40,8 +44,10 @@ export function appendHistory(cwd: string, prompt: string): string[] {
 /** Remove every exact occurrence of a prompt from this directory's history. */
 export function removeHistory(cwd: string, prompt: string): string[] {
   const file = readFile();
+  const key = projectStorageKey(cwd);
   const next = loadHistory(cwd).filter((entry) => entry !== prompt);
-  file[cwd] = next;
+  file[key] = next;
+  if (key !== cwd) delete file[cwd];
   try {
     writeFileSync(HISTORY_PATH, JSON.stringify(file, null, 2));
   } catch {
