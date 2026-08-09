@@ -19,6 +19,7 @@ import {
   setExplanationStrength,
 } from "./explanation-strength";
 import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
+import { CheckApprovalCoordinator, CheckApprovalStore } from "./check-approvals";
 import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
 import { shutdownSignals } from "./platform";
@@ -36,8 +37,13 @@ const loginRequired = process.argv[2] === "login" || (await modelRuntime.getAvai
 const settings = loadSettings();
 setWritingStyle(settings.writingStyle);
 setExplanationStrength(settings.explanationStrength);
-setCheckModeConfig({ enabled: settings.checkMode, model: settings.checkModel });
-const checkModeExtension = createCheckModeExtension(modelRuntime);
+setCheckModeConfig({ profile: settings.checkMode, model: settings.checkModel });
+const checkApprovalCoordinator = new CheckApprovalCoordinator();
+const checkApprovalStore = new CheckApprovalStore();
+const checkModeExtension = createCheckModeExtension(modelRuntime, undefined, {
+  coordinator: checkApprovalCoordinator,
+  approvals: checkApprovalStore,
+});
 const subagentManager = new SubagentManager({
   modelRuntime,
   agentDir: AGENT_DIR,
@@ -128,6 +134,8 @@ root.render(
     searchProviders={searchProviders}
     subagentManager={subagentManager}
     loginRequired={loginRequired}
+    checkApprovalCoordinator={checkApprovalCoordinator}
+    checkApprovalStore={checkApprovalStore}
     onExit={() => shutdown(0)}
   />,
 );

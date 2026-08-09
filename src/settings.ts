@@ -10,6 +10,12 @@ import {
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
+export const CHECK_MODE_PROFILES = ["off", "strict", "balanced", "ask"] as const;
+export type CheckModeProfile = (typeof CHECK_MODE_PROFILES)[number];
+
+export function isCheckModeProfile(value: unknown): value is CheckModeProfile {
+  return CHECK_MODE_PROFILES.includes(value as CheckModeProfile);
+}
 
 export function isWorkingRuleAnimationMode(value: unknown): value is WorkingRuleAnimationMode {
   return WORKING_RULE_ANIMATION_MODES.includes(value as WorkingRuleAnimationMode);
@@ -29,7 +35,7 @@ export type PumSettings = {
   webSearch: boolean;
   writingStyle: WritingStyle;
   explanationStrength: ExplanationStrength;
-  checkMode: boolean;
+  checkMode: CheckModeProfile;
   checkModel: string;
 };
 
@@ -43,7 +49,7 @@ const DEFAULTS: PumSettings = {
   webSearch: true,
   writingStyle: "none",
   explanationStrength: "simple",
-  checkMode: false,
+  checkMode: "off",
   checkModel: DEFAULT_CHECK_MODEL,
 };
 
@@ -60,7 +66,13 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     explanationStrength: isExplanationStrength(merged.explanationStrength)
       ? merged.explanationStrength
       : DEFAULTS.explanationStrength,
-    checkMode: typeof merged.checkMode === "boolean" ? merged.checkMode : DEFAULTS.checkMode,
+    checkMode: isCheckModeProfile(merged.checkMode)
+      ? merged.checkMode
+      : merged.checkMode === true
+        ? "strict"
+        : merged.checkMode === false
+          ? "off"
+          : DEFAULTS.checkMode,
     checkModel:
       typeof merged.checkModel === "string" && merged.checkModel.includes("/")
         ? merged.checkModel

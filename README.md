@@ -45,7 +45,7 @@ The following screens are real OpenTUI renders captured through `tmux`. A local 
 - **Parallel subagents:** Persistent agents work in isolated Git worktrees and report to the main agent.
 - **Prompt control:** Steer active work, stash prompt batches, attach clipboard images, cancel turns, and resume sessions.
 - **Provider choice:** Use the login methods exposed by pi, or add an OpenAI-compatible custom endpoint.
-- **Optional safeguards:** Enable fail-closed Check mode for `bash`, `edit`, and `apply_patch` calls.
+- **Optional safeguards:** Use strict, balanced, or ask Check mode for `bash`, `edit`, and `apply_patch` calls.
 - **Terminal-first appearance:** Nine themes, semantic color overrides, Unicode glyphs, and optional animation.
 
 PUM uses [pi](https://github.com/earendil-works/pi) for the agent loop and [OpenTUI](https://github.com/anomalyco/opentui) for rendering.
@@ -131,9 +131,19 @@ Use `Ctrl+L` to select an agent transcript. Input then goes to that agent. Finis
 
 ### Check mode
 
-Enable Check mode in `Ctrl+P`. PUM sends each proposed `bash`, `edit`, or `apply_patch` call to a separate verifier model. The verifier must return a clear `SAFE` decision. Errors, timeouts, unclear replies, and explicit rejections block the tool.
+Select a Check mode profile in `Ctrl+P`:
 
-PUM caches only a narrow set of accepted read-only Git inspection commands. It never caches mutation checks. Check mode is off by default and does not replace isolation, backups, or code review.
+- **Strict:** Run deterministic hard rules, then require a clear verifier approval.
+- **Balanced:** Permit only narrow, recognized project-local operations after hard rules. Send all other calls to the verifier.
+- **Ask:** Send ambiguous calls to the verifier. If the result stays unclear or the verifier fails, ask the user.
+
+Every active profile hard-blocks project escape, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden. An explicit verifier `UNSAFE` verdict also cannot be overridden.
+
+For `edit` and `apply_patch`, PUM validates the proposed change and sends a unified diff, changed paths, line counts, sensitivity flags, and project containment. PUM does not mutate files before the decision. Invalid or stale edit context blocks the call.
+
+Ask mode can allow an exact call once, for the current session, or for the current project. Project approvals match the tool, verifier model, project, and canonical complete input. Use **Clear approvals** in Settings to remove project approvals.
+
+The verifier uses a structured decision schema. One unclear response can receive one adjudication under the shared 15-second watchdog. Strict and balanced block malformed replies, errors, aborts, and timeouts. Ask can present unresolved results to the user. Check mode is off by default and is not a sandbox.
 
 ### Hosted web search
 
@@ -176,6 +186,7 @@ Set `PUM_DIR` to override the complete PUM data directory.
 | `sessions/` | Main conversation sessions |
 | `subagents/` | Persistent subagent sessions |
 | `check-mode-cache.json` | Accepted checks for eligible read-only Git commands |
+| `check-mode-approvals.json` | Exact project approvals created in Ask mode |
 
 PUM keeps this directory separate from pi's default configuration directory.
 

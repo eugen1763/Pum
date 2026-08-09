@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeSettings, WORKING_RULE_ANIMATION_MODES } from "./settings";
+import { CHECK_MODE_PROFILES, normalizeSettings, WORKING_RULE_ANIMATION_MODES } from "./settings";
 
 describe("PUM settings migration", () => {
   test("preserves migration defaults for old files", () => {
@@ -29,5 +29,15 @@ describe("PUM settings migration", () => {
     for (const explanationStrength of ["none", "simple", "detailed"] as const) {
       expect(normalizeSettings({ explanationStrength }).explanationStrength).toBe(explanationStrength);
     }
+  });
+
+  test("migrates the legacy Check mode boolean and accepts profiles", () => {
+    expect(normalizeSettings({ checkMode: true } as any).checkMode).toBe("strict");
+    expect(normalizeSettings({ checkMode: false } as any).checkMode).toBe("off");
+    expect(CHECK_MODE_PROFILES).toEqual(["off", "strict", "balanced", "ask"]);
+    for (const checkMode of CHECK_MODE_PROFILES) {
+      expect(normalizeSettings({ checkMode }).checkMode).toBe(checkMode);
+    }
+    expect(normalizeSettings({ checkMode: "permissive" } as any).checkMode).toBe("off");
   });
 });

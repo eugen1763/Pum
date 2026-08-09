@@ -16,6 +16,7 @@ export type SettingRowId =
   | "explanationStrength"
   | "checkMode"
   | "checkModel"
+  | "clearCheckApprovals"
   | "thinkingLevel"
   | "showThinking"
   | "providers"
@@ -40,8 +41,9 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose ste simplified technical english", description: "Add per-turn response guidance. STE requests concise Simplified Technical English." },
   { id: "explanationStrength", label: "Explanations", category: "Agent", keywords: "progress updates output none simple detailed rationale", description: "Choose how much regular output explains the agent plan, actions, decisions, and results." },
   { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },
-  { id: "checkMode", label: "Check mode", category: "Safety", keywords: "verify tools safe fail closed bash edit", description: "Fail-closed safety check for every bash and edit call before execution." },
-  { id: "checkModel", label: "Check model", category: "Safety", keywords: "verifier tools safety model", description: "Select the separate verifier model used by Check mode." },
+  { id: "checkMode", label: "Check mode", category: "Safety", keywords: "profile strict balanced ask verify tools hard block approval bash edit patch", description: "Choose off, strict, balanced, or ask. Hard security rules apply to every active profile." },
+  { id: "checkModel", label: "Check model", category: "Safety", keywords: "verifier tools safety structured verdict model", description: "Select the separate verifier model used for ambiguous Check mode calls." },
+  { id: "clearCheckApprovals", label: "Clear approvals", category: "Safety", keywords: "remove reset exact project approvals ask", description: "Remove exact Check mode approvals stored for this project." },
 ];
 
 export function filterSettingsRows(query: string): SettingRow[] {

@@ -154,7 +154,7 @@ async function renderCacheApp(options: {
         webSearch: false,
         writingStyle: "none",
         explanationStrength: "simple",
-        checkMode: false,
+        checkMode: "off",
         checkModel: "mock/check",
       }}
       searchProviders={[]}
@@ -224,7 +224,7 @@ describe("subagent transcript UI", () => {
           webSearch: false,
           writingStyle: "none",
           explanationStrength: "simple",
-          checkMode: false,
+          checkMode: "off",
           checkModel: "mock/check",
         }}
         searchProviders={[]}
@@ -307,7 +307,7 @@ describe("subagent transcript UI", () => {
           webSearch: false,
           writingStyle: "none",
           explanationStrength: "simple",
-          checkMode: false,
+          checkMode: "off",
           checkModel: "mock/check",
         }}
         searchProviders={[]}
@@ -378,7 +378,7 @@ describe("subagent transcript UI", () => {
           webSearch: false,
           writingStyle: "none",
           explanationStrength: "simple",
-          checkMode: false,
+          checkMode: "off",
           checkModel: "mock/check",
         }}
         searchProviders={[]}
@@ -508,7 +508,7 @@ describe("subagent transcript UI", () => {
           webSearch: false,
           writingStyle: "none",
           explanationStrength: "simple",
-          checkMode: false,
+          checkMode: "off",
           checkModel: "mock/check",
         }}
         searchProviders={[]}

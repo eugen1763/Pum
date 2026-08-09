@@ -201,28 +201,39 @@ These were chosen deliberately. Change them only on purpose.
   `createAgentSession` reads them back at startup. Do not duplicate that here.
   `pum.json` holds only what pi does not know about, including UI preferences,
   web search, check mode, and writing style.
-- **Check mode is fail-closed.** Its inline extension intercepts `bash`, `edit`,
-  and `apply_patch` in `tool_call`. It sends bounded, complete structured input
-  to the configured verifier model and requires a clear `SAFE` response. Bash
-  requests annotate shell operators, stages, redirections, substitutions, cwd,
-  and possible mutation intent. The annotations never approve a command. An
-  oversized or incompletely annotated request blocks instead of truncating.
-  One unclear reply can receive one bounded adjudication request. Both requests
-  share the same 15-second watchdog. Explicit `UNSAFE`, missing models, request
-  failures, aborts, and timeouts do not retry and block the tool.
+- **Check mode has explicit profiles and deterministic hard blocks.** `strict`
+  keeps fail-closed verifier behavior. `balanced` permits only narrow recognized
+  project-local operations after hard rules, then verifies ambiguous calls.
+  `ask` presents unresolved calls to the user. Every active profile blocks
+  project escape, escaping links or junctions, credential access, privilege
+  escalation, persistence, remote-script execution, dangerous destructive Git,
+  and broad deletion. Hard blocks and explicit verifier `UNSAFE` results cannot
+  be overridden.
+- **Check mode verifies complete structured proposals.** Bash requests include
+  all stages, operators, pipelines, redirections, substitutions, environment
+  assignments, mutation intent, and boundaries. `edit` and `apply_patch`
+  requests include the proposed unified diff, changed paths, line counts,
+  sensitivity flags, and project containment. Invalid, stale, oversized, or
+  incompletely analyzed requests block without mutation or truncation. The
+  verifier returns decision, category, confidence, and reason. Clear legacy
+  `SAFE` and `UNSAFE` replies remain compatible. One unclear reply can receive
+  one bounded adjudication under the shared 15-second watchdog.
+- **Ask approvals stay exact.** Ask mode can allow one exact call, one exact
+  call for the session, or one canonical exact call for the project. Project
+  approvals stay outside LLM context and bind to tool, verifier model, cwd, and
+  canonical complete input. The store is capped. Settings can clear approvals
+  for the current project. PUM never stores hard-blocked or explicit `UNSAFE`
+  operations as approvals.
 - **Checked tools stay out of parallel mixed batches.** pi prepares every tool
   in a parallel assistant batch before it executes any tool. A waiting `bash`,
   `edit`, or `apply_patch` check would make unrelated `read` calls look stuck.
   Run reads first, then issue each checked tool in a later assistant step.
 - **The check cache is narrow and exact.** `check-mode-cache.json` stores at
   most 256 explicit `SAFE` decisions for simple, read-only Git inspection
-  commands. A hit matches the verifier model, cwd, and canonical complete
-  `bash` input. `edit` and `apply_patch` always reach the verifier. The policy
-  treats recognized built-in Git inspection operations as stable across
-  repository content changes. Project scripts, shell composition,
-  output-writing options, and explicit helper options never enter the cache because mutable project
-  state can change their safety. Cache errors degrade to misses and never
-  replace a verifier decision.
+  commands in strict mode. A hit matches the verifier model, cwd, and canonical
+  complete `bash` input. Mutation calls never enter this cache. Project scripts,
+  shell composition, output-writing options, and helper options never enter the
+  cache. Cache errors degrade to misses and never replace a decision.
 
 ## Things that bite
 
