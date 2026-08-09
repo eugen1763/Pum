@@ -21,7 +21,12 @@ import {
   withSearchRoute,
 } from "../web-search";
 import { editCounts, toolArg, type ToolCall } from "../tool-line";
-import type { Line, PendingLine } from "../transcript";
+import {
+  resolvePendingDelivery,
+  settleTranscriptMessage,
+  type Line,
+  type PendingLine,
+} from "../transcript";
 import {
   createWorktree,
   listWorktrees,
@@ -303,16 +308,7 @@ export class SubagentManager {
   }
 
   private resolvePending(record: RuntimeRecord, id: string): void {
-    this.updateTranscript(record, (value) => {
-      const pending = value.pending.find((item) => item.id === id);
-      if (!pending) return value;
-      const flushed = flushTranscript(value);
-      return {
-        ...flushed,
-        lines: [...flushed.lines, pending.line],
-        pending: flushed.pending.filter((item) => item.id !== id),
-      };
-    });
+    this.updateTranscript(record, (value) => resolvePendingDelivery(value, id));
   }
 
   private resolvePendingText(record: RuntimeRecord, text: string): void {
@@ -359,6 +355,11 @@ export class SubagentManager {
         }
         break;
       }
+      case "message_end":
+        if (event.message?.role === "assistant") {
+          this.updateTranscript(record, (value) => settleTranscriptMessage(value));
+        }
+        break;
       case "message_update": {
         const update = event.assistantMessageEvent;
         const kind = update.type === "text_delta" ? "assistant" : update.type === "thinking_delta" ? "thinking" : null;

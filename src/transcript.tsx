@@ -20,7 +20,47 @@ export type PendingLine = {
   line: Extract<Line, { kind: "text" | "agent-message" }>;
   /** Text used to match pi's message_start event. */
   deliveryText?: string;
+  /** Pi inserted the message, but the active streamed message must finish first. */
+  delivered?: boolean;
 };
+
+export type PendingTranscriptState = {
+  lines: Line[];
+  stream: { kind: "assistant" | "thinking"; text: string } | null;
+  pending: PendingLine[];
+};
+
+/** Resolve a delivered message without splitting the active streamed output. */
+export function resolvePendingDelivery<T extends PendingTranscriptState>(value: T, id: string): T {
+  const pending = value.pending.find((item) => item.id === id);
+  if (!pending) return value;
+  if (value.stream) {
+    return {
+      ...value,
+      pending: value.pending.map((item) => item.id === id ? { ...item, delivered: true } : item),
+    };
+  }
+  return {
+    ...value,
+    lines: [...value.lines, pending.line],
+    pending: value.pending.filter((item) => item.id !== id),
+  };
+}
+
+/** Finish the stream, then insert messages that arrived while it was active. */
+export function settleTranscriptMessage<T extends PendingTranscriptState>(value: T): T {
+  const lines = [...value.lines];
+  if (value.stream?.text.trim()) {
+    lines.push({ kind: "text", role: value.stream.kind, text: value.stream.text.trim() });
+  }
+  const delivered = value.pending.filter((item) => item.delivered);
+  return {
+    ...value,
+    lines: [...lines, ...delivered.map((item) => item.line)],
+    stream: null,
+    pending: value.pending.filter((item) => !item.delivered),
+  };
+}
 
 type LineGroup = "tool" | "thinking" | "other";
 

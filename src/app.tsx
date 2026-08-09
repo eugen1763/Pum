@@ -26,6 +26,8 @@ import {
   AgentMessageLine,
   needsTranscriptGap,
   PendingMessageLine,
+  resolvePendingDelivery,
+  settleTranscriptMessage,
   StreamLine,
   TextLine,
   ToolLine,
@@ -560,16 +562,7 @@ export function App({
     setTx((value) => ({ ...value, pending: [...value.pending, pending] }));
 
   const resolvePending = (id: string) =>
-    setTx((value) => {
-      const pending = value.pending.find((item) => item.id === id);
-      if (!pending) return value;
-      const f = flushed(value);
-      return {
-        ...f,
-        lines: [...f.lines, pending.line],
-        pending: f.pending.filter((item) => item.id !== id),
-      };
-    });
+    setTx((value) => resolvePendingDelivery(value, id));
 
   const dropPending = (id: string) =>
     setTx((value) => ({
@@ -580,13 +573,7 @@ export function App({
   const resolvePendingText = (text: string) =>
     setTx((value) => {
       const pending = value.pending.find((item) => item.deliveryText === text);
-      if (!pending) return value;
-      const f = flushed(value);
-      return {
-        ...f,
-        lines: [...f.lines, pending.line],
-        pending: f.pending.filter((item) => item.id !== pending.id),
-      };
+      return pending ? resolvePendingDelivery(value, pending.id) : value;
     });
 
   useEffect(
@@ -646,6 +633,11 @@ export function App({
           }
           break;
         }
+        case "message_end":
+          if (event.message.role === "assistant") {
+            setTx((value) => settleTranscriptMessage(value));
+          }
+          break;
         case "message_update": {
           const update = event.assistantMessageEvent;
           if (update.type === "text_delta") delta("assistant", update.delta);
@@ -1618,10 +1610,10 @@ export function App({
               />
             </>
           ) : null}
-          {visibleTx.pending.length > 0 ? (
+          {visibleTx.pending.some((pending) => !pending.delivered) ? (
             <>
               {(visibleTx.lines.length > 0 || visibleTx.stream) ? <Gap /> : null}
-              {visibleTx.pending.map((pending) => (
+              {visibleTx.pending.filter((pending) => !pending.delivered).map((pending) => (
                 <PendingMessageLine key={pending.id} theme={theme} pending={pending} />
               ))}
             </>
