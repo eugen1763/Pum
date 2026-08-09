@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   formatLatestUserTime,
@@ -92,9 +92,12 @@ describe("session history metadata", () => {
     expect(byPath.get(missing)).toEqual({ latestUserMessageAt: null, fileBytes: null, tokens: {} });
   });
 
-  test("treats Windows-looking path characters as opaque file names", async () => {
+  test("handles Windows paths and treats Windows-looking characters opaquely", async () => {
     const root = await tempRoot();
-    const path = join(root, "C:\\work\\session.jsonl");
+    const path = process.platform === "win32"
+      ? join(root, "work", "session.jsonl")
+      : join(root, "C:\\work\\session.jsonl");
+    await mkdir(dirname(path), { recursive: true });
     await writeFile(path, [
       line({ type: "session", id: "windows" }),
       line({ type: "message", timestamp: "2026-08-09T12:00:00.000Z", message: { role: "user" } }),
