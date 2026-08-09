@@ -1,4 +1,4 @@
-import { createCliRenderer } from "@opentui/core";
+import { createCliRenderer, destroyTreeSitterClient } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import {
   createAgentSessionFromServices,
@@ -28,6 +28,7 @@ import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
 import { shutdownSignals } from "./platform";
 import { createShutdown } from "./shutdown";
+import { settleSyntaxHighlighting } from "./syntax";
 import { applyPatchExtension } from "./apply-patch";
 import { QuestionnaireManager } from "./questionnaire";
 import { SpawnPreviewManager } from "./subagents/spawn-preview";
@@ -187,14 +188,20 @@ export async function start(options: StartupOptions): Promise<void> {
   const selectionClipboard = installSelectionClipboard(renderer);
   const root = createRoot(renderer);
   const shutdown = createShutdown({
-    unmount: () => root.unmount(),
+    unmount: async () => {
+      await settleSyntaxHighlighting(renderer.root);
+      root.unmount();
+    },
     cleanup: () => {
       selectionClipboard.dispose();
       cleanupPendingImages();
     },
     shutdownTriggers: () => triggerManager.shutdown(),
     dispose: () => sessionRuntime.dispose(),
-    destroy: () => renderer.destroy(),
+    destroy: async () => {
+      renderer.destroy();
+      await destroyTreeSitterClient();
+    },
     exit: (code) => process.exit(code),
   });
   for (const signal of shutdownSignals()) {

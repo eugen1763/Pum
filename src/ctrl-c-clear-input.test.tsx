@@ -1,17 +1,19 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { destroyTreeSitterClient } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "./app";
+import { settleSyntaxHighlighting } from "./syntax";
 
 type SessionEvent = { type: string; [key: string]: unknown };
 
-let destroy: (() => void) | undefined;
+let destroy: (() => void | Promise<void>) | undefined;
 let testDir: string | undefined;
-afterEach(() => {
-  destroy?.();
+afterEach(async () => {
+  await destroy?.();
   destroy = undefined;
   if (testDir) rmSync(testDir, { recursive: true, force: true });
   testDir = undefined;
@@ -67,7 +69,15 @@ async function renderApp(options: {
     otherModifiersMode: true,
     exitOnCtrlC: false,
   });
-  destroy = () => setup.renderer.destroy();
+  const root = createRoot(setup.renderer);
+  destroy = async () => {
+    await settleSyntaxHighlighting(setup.renderer.root);
+    root.unmount();
+    await setup.flush();
+    await setup.renderer.idle();
+    setup.renderer.destroy();
+    await destroyTreeSitterClient();
+  };
   let sessionListener: ((event: SessionEvent) => void) | undefined;
   const calls = {
     abort: 0,
@@ -104,7 +114,7 @@ async function renderApp(options: {
     sendUserMessage: async (id: string, text: string) => { calls.childMessages.push({ id, text }); },
     abortAgent: async () => {},
   } as any;
-  createRoot(setup.renderer).render(
+  root.render(
     <App
       session={session}
       modelRuntime={{ getAvailableSnapshot: () => [], getProviders: () => [] } as any}
@@ -145,6 +155,19 @@ function promptLine(frame: string) {
 }
 
 describe("Ctrl+C prompt clearing", () => {
+  test("finishes highlighting before renderer teardown", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await renderApp();
+      await destroy?.();
+      destroy = undefined;
+
+      expect(warn.mock.calls.filter(([message]) => String(message).includes("Code highlighting failed"))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   test("clears single-line text with one press", async () => {
     const { setup, calls } = await renderApp();
     await setup.mockInput.typeText("single-line draft");
