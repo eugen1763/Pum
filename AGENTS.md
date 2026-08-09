@@ -12,7 +12,9 @@ bun run start    # open the TUI in the current directory
 
 | File | Job |
 |---|---|
-| `src/index.tsx` | Boot: config dir, login hand-off, credential check, session, render |
+| `src/index.tsx` | Side-effect-free CLI dispatch for help, version, errors, and dynamic startup |
+| `src/cli.ts` | CLI parsing, package metadata, help text, and error formatting |
+| `src/main.tsx` | Boot: config dir, login hand-off, credential check, session, render |
 | `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
 | `src/theme.ts` | Semantic colour tokens, three presets, `theme.json` merge |
 | `src/animation.tsx` | One frame clock; shimmer, spinner, caret |
@@ -77,6 +79,7 @@ bun run start    # open the TUI in the current directory
 These were chosen deliberately. Change them only on purpose.
 
 - **Bun** as the runtime. OpenTUI's renderer needs it.
+- **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for TUI startup. Unknown options and commands exit with code 2. The supported startup arguments are `login`, `-r`, and `--resume`.
 - **`@earendil-works/pi-coding-agent`**, not `pi-ai` on its own. It brings the
   agent loop, session files, and the `read`/`write`/`edit`/`bash` tools. Using
   `pi-ai` alone would mean writing all of that here.

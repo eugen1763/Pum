@@ -91,6 +91,24 @@ pum
 
 The package is named `pum-agent` because the bare `pum` name is already owned. The installed command is still `pum`.
 
+## Command-line options
+
+```text
+pum [options]
+pum login [options]
+```
+
+| Option or command | Action |
+|---|---|
+| `-h`, `--help` | Print the command-line manual and exit |
+| `-v`, `--version` | Print the exact `pum-agent` package version and exit |
+| `-r`, `--resume` | Resume the latest session for the current directory |
+| `login` | Start PUM with the provider login panel open |
+
+Help and version handling do not initialize the TUI, configuration, credentials, or sessions. Unknown options and commands return an error and a help hint.
+
+Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `pum --help` for a concise directory summary. Enter `?` on an empty in-app prompt to see all controls.
+
 ## Essential controls
 
 | Key | Action |
