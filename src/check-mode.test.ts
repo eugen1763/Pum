@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   BashSafetyCache,
   createCheckModeExtension,
+  createExternalTriggerSafetyChecker,
   evaluateToolCall,
   isBashCacheEligible,
   isRejectedToolResult,
@@ -13,6 +14,7 @@ import {
   setCheckModeConfig,
   verifyToolCall,
   type CheckModeConfig,
+  type ProcessCheckProposal,
 } from "./check-mode";
 import { CheckApprovalCoordinator, CheckApprovalStore } from "./check-approvals";
 
@@ -333,6 +335,80 @@ describe("bash safety cache", () => {
       expect(block).toMatchObject({ block: true });
       expect(isRejectedToolResult({ details: patch.details })).toBe(true);
     }
+  });
+});
+
+describe("external trigger safety checker", () => {
+  function proposal(cwd: string): ProcessCheckProposal {
+    return {
+      kind: "process",
+      source: "external-trigger",
+      executable: "bun",
+      args: ["test"],
+      cwd,
+      operation: "create",
+      triggerName: "tests",
+    };
+  }
+
+  test("routes ask approval to the exact child and reuses only that session approval", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pum-trigger-check-"));
+    temporaryDirectories.push(directory);
+    const coordinator = new CheckApprovalCoordinator();
+    let pending: any;
+    const unsubscribe = coordinator.subscribe((request) => { pending = request; });
+    const verifier = runtime([
+      result("unclear"), result("still unclear"),
+      result("unclear"), result("still unclear"),
+    ]);
+    setCheckModeConfig({ profile: "ask", model: config.model });
+    const checker = createExternalTriggerSafetyChecker(verifier, {
+      coordinator,
+      cache: temporaryCache().cache,
+      approvals: new CheckApprovalStore(join(directory, "approvals.json")),
+    });
+    const requester = {
+      kind: "subagent" as const,
+      sessionId: "child-session",
+      agentId: "child-1",
+      cwd: directory,
+    };
+
+    const first = checker(proposal(directory), requester);
+    await Bun.sleep(0);
+    expect(pending.target).toEqual({ sessionId: "child-session", agentId: "child-1" });
+    coordinator.resolve(pending.id, "allow-session");
+    await first;
+    await checker(proposal(directory), requester);
+    expect(verifier.calls).toBe(2);
+
+    const other = checker(proposal(directory), { ...requester, agentId: "child-2" });
+    await Bun.sleep(0);
+    coordinator.resolve(pending.id, "deny");
+    await expect(other).rejects.toThrow("denied or cancelled");
+    expect(verifier.calls).toBe(4);
+    unsubscribe();
+  });
+
+  test("does not send explicit unsafe process decisions to the approval queue", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pum-trigger-check-"));
+    temporaryDirectories.push(directory);
+    const coordinator = new CheckApprovalCoordinator();
+    let requests = 0;
+    const unsubscribe = coordinator.subscribe((request) => { if (request) requests += 1; });
+    const verifier = runtime([result('{"decision":"unsafe","category":"execution","confidence":1,"reason":"unsafe process"}')]);
+    setCheckModeConfig({ profile: "ask", model: config.model });
+    const checker = createExternalTriggerSafetyChecker(verifier, {
+      coordinator,
+      cache: temporaryCache().cache,
+    });
+    await expect(checker(proposal(directory), {
+      kind: "main",
+      sessionId: "main-session",
+      cwd: directory,
+    })).rejects.toThrow("Verifier UNSAFE");
+    expect(requests).toBe(0);
+    unsubscribe();
   });
 });
 

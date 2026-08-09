@@ -70,6 +70,18 @@ describe("apply_patch tool metadata", () => {
     }, "/repo")).toBe("2 questions · Scope");
   });
 
+  test("summarizes trigger tools without exposing templates or argument vectors", () => {
+    expect(toolArg("create_trigger", {
+      name: "tests",
+      executable: "bun",
+      args: ["test", "--watch"],
+      template: "large output template",
+    }, "/repo")).toBe("tests · bun");
+    expect(toolArg("pause_trigger", { id: "trigger-1" }, "/repo")).toBe("trigger-1");
+    expect(toolArg("invoke_trigger", { id: "trigger-1", mode: "fire" }, "/repo"))
+      .toBe("trigger-1 · fire");
+  });
+
   test("counts unified patch additions and removals", () => {
     expect(editCounts({
       details: {

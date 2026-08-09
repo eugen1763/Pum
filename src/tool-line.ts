@@ -70,6 +70,14 @@ export function toolArg(name: string, args: any, cwd: string): string {
   if (name === "message_agent" && typeof args.target === "string") {
     return typeof args.message === "string" ? `${args.target} · ${args.message}` : args.target;
   }
+  if (name === "create_trigger" && typeof args.name === "string") {
+    return typeof args.executable === "string" ? `${args.name} · ${args.executable}` : args.name;
+  }
+  if (["inspect_trigger", "pause_trigger", "resume_trigger", "cancel_trigger"].includes(name)
+    && typeof args.id === "string") return args.id;
+  if (name === "invoke_trigger" && typeof args.id === "string") {
+    return typeof args.mode === "string" ? `${args.id} · ${args.mode}` : args.id;
+  }
   if (name === "stop_subagent" && typeof args.target === "string") return args.target;
   if (name === "finish_subagent" && typeof args.summary === "string") return args.summary;
   if (name === "worktree" && typeof args.action === "string") {
