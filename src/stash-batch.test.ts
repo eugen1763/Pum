@@ -11,6 +11,8 @@ describe("stash batch selection", () => {
     expect(prompt).toContain("You may group related tasks into one subagent");
     expect(prompt).toContain("Run independent task groups in parallel");
     expect(prompt).toContain("Merge each successful subagent");
+    expect(prompt).toContain("as soon as it settles");
+    expect(prompt).toContain("concrete dependency");
     expect(prompt).toContain("<task 1>\nFix parser\n</task 1>");
     expect(prompt).toContain("<task 2>\nAdd parser tests\n</task 2>");
   });

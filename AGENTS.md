@@ -86,8 +86,9 @@ These were chosen deliberately. Change them only on purpose.
   A second press within two seconds cancels the same selected agent.
 - **Cache range execution is main-agent orchestration.** Shift+Up and Shift+Down
   select a contiguous stash range. Enter sends a generated coordination prompt
-  to the main agent. The main agent can group related tasks, spawns independent
-  worktree agents in parallel, and merges successful agents after all groups finish.
+  to the main agent. The main agent can group related tasks and spawns independent
+  worktree agents in parallel. Merge each successful agent when it settles unless
+  a concrete dependency, conflict risk, or integration order requires waiting.
 - **Subagents are persistent background AgentSessions.** Each subagent gets a
   managed Git worktree and an independent session file. Spawn tools return after
   setup, not after the task. Completion becomes a custom message to the main

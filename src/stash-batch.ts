@@ -13,8 +13,9 @@ Rules:
 - You may group related tasks into one subagent when grouping reduces conflicts or duplicated work.
 - Run independent task groups in parallel.
 - Keep each subagent task complete and self-contained.
-- Wait for every task group to finish.
-- Merge each successful subagent with the worktree tool after all task groups finish.
+- Track every unfinished task group through completion notifications.
+- Merge each successful subagent with the worktree tool as soon as it settles.
+- Wait to merge only for a concrete dependency, known conflict risk, or required integration order. State that reason explicitly.
 - A successful managed merge closes that subagent and removes its worktree and branch.
 - Do not force-remove an unmerged or failed subagent. Report failures and merge conflicts.
 

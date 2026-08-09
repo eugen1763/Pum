@@ -80,8 +80,9 @@ between the main agent and subagents, or directly between peers.
 
 In the cache, hold Shift and use Up or Down to select a range. Enter sends the
 selected prompts to the main agent as a worktree batch. The main agent can group
-related prompts into one subagent, runs independent groups in parallel, waits
-for completion, and merges successful worktrees at the end.
+related prompts into one subagent and runs independent groups in parallel. Each
+successful worktree merges when it settles. The main agent waits only for a
+concrete dependency, conflict risk, or required integration order.
 
 Shift+Tab and Ctrl+Shift+Tab switch the visible transcript. Input then goes to
 the selected agent. The header shows the retained agent count and active agent.

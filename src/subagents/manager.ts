@@ -50,7 +50,9 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - A subagent completion notification will automatically start or steer a later main-agent turn.
 - Treat "wait for every subagent" as yielding until completion notifications arrive, not as active polling.
 - Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
-- For a coordinated batch, track unfinished agents from completion notifications. Merge only after every required agent has settled.
+- For a coordinated batch, track unfinished agents from completion notifications.
+- Merge each successful agent as soon as it settles.
+- Wait to merge only when another unfinished task has a concrete dependency, a known conflict risk, or a required integration order. State that reason explicitly.
 - If a notification does not arrive, report the notification fault instead of creating a sleep loop.`;
 
 type RuntimeRecord = {
@@ -397,6 +399,7 @@ export class SubagentManager {
             "Use spawn_subagent for independent tasks that can run in parallel.",
             "Give each spawn_subagent call a complete, self-contained task.",
             "After spawning background agents, end the current turn. Never poll with bash sleep or status loops.",
+            "Merge each successful agent when it settles unless a concrete dependency or conflict requires waiting.",
           ],
           parameters: Type.Object({
             task: Type.String({ description: "Complete task for the subagent" }),
