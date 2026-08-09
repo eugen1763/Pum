@@ -1748,7 +1748,7 @@ export function App({
               line.kind === "tool" ? (
                 <ToolLine theme={theme} call={line.call} workingCaret={workingCaret} />
               ) : line.kind === "agent-message" ? (
-                <AgentMessageLine theme={theme} line={line} />
+                <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
               ) : (
                 <TextLine
                   theme={theme}
@@ -1789,7 +1789,12 @@ export function App({
             <>
               {(visibleTx.lines.length > 0 || visibleTx.stream) ? <Gap /> : null}
               {visibleTx.pending.filter((pending) => !pending.delivered).map((pending) => (
-                <PendingMessageLine key={pending.id} theme={theme} pending={pending} />
+                <PendingMessageLine
+                  key={pending.id}
+                  theme={theme}
+                  syntaxStyle={syntaxStyle}
+                  pending={pending}
+                />
               ))}
             </>
           ) : null}
