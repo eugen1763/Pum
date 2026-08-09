@@ -35,7 +35,7 @@ function ensureImageDir(): string {
 type CommandRunner = (command: string, args: string[]) => Promise<Buffer>;
 type NativeClipboard = {
   hasImage(): boolean;
-  getImageBinary(): Promise<Array<number>>;
+  getImageBinary(): Promise<ArrayLike<number>>;
 };
 
 export type ClipboardBackend = "windows" | "wayland" | "x11";
@@ -107,10 +107,17 @@ async function readWindowsClipboard(
   nativeClipboard: NativeClipboard | null | undefined,
 ): Promise<{ data: Buffer; mimeType: string; ext: string }> {
   const clipboard = nativeClipboard === undefined ? await loadNativeClipboard() : nativeClipboard;
-  if (clipboard?.hasImage()) {
-    const bytes = await clipboard.getImageBinary();
-    if (bytes.length > 0) {
-      return { data: Buffer.from(bytes), mimeType: "image/png", ext: "png" };
+  if (clipboard) {
+    try {
+      if (clipboard.hasImage()) {
+        const bytes = await clipboard.getImageBinary();
+        if (bytes.length > 0) {
+          return { data: Buffer.from(bytes), mimeType: "image/png", ext: "png" };
+        }
+      }
+    } catch {
+      // Native access can fail while another Windows process owns the clipboard.
+      // PowerShell gives Windows a second clipboard path before the paste fails.
     }
   }
 
@@ -172,6 +179,9 @@ export async function captureClipboardImage(options: {
   else if (backend === "x11") image = await readX11Clipboard(runner);
   else throw new Error("No supported graphical clipboard is available");
 
+  if (image.data.length > MAX_IMAGE_BYTES) {
+    throw new Error("Clipboard image is larger than 25 MB");
+  }
   const path = join(ensureImageDir(), `image-${++fileSequence}.${image.ext}`);
   writeFileSync(path, image.data);
   return { path, mimeType: image.mimeType };

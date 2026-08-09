@@ -54,4 +54,35 @@ describe("clipboard platform selection", () => {
     expect(powerShellCalled).toBe(false);
     expect(readFileSync(image.path)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
   });
+
+  test("falls back to PowerShell when the native Windows adapter fails", async () => {
+    const calls: string[] = [];
+    const image = await captureClipboardImage({
+      platform: "win32",
+      env: {},
+      nativeClipboard: {
+        hasImage: () => { throw new Error("clipboard is busy"); },
+        getImageBinary: async () => [],
+      },
+      runner: async (command) => {
+        calls.push(command);
+        return Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      },
+    });
+
+    expect(calls).toEqual(["powershell.exe"]);
+    expect(readFileSync(image.path)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  });
+
+  test("rejects oversized native clipboard images before writing a file", async () => {
+    await expect(captureClipboardImage({
+      platform: "win32",
+      env: {},
+      nativeClipboard: {
+        hasImage: () => true,
+        getImageBinary: async () => new Uint8Array(25 * 1024 * 1024 + 1),
+      },
+      runner: async () => Buffer.alloc(0),
+    })).rejects.toThrow("Clipboard image is larger than 25 MB");
+  });
 });
