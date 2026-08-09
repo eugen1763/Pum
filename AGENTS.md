@@ -202,11 +202,14 @@ These were chosen deliberately. Change them only on purpose.
   `pum.json` holds only what pi does not know about, including UI preferences,
   web search, check mode, and writing style.
 - **Check mode is fail-closed.** Its inline extension intercepts `bash`, `edit`,
-  and `apply_patch` in `tool_call`. It sends only the cwd and proposed input to
-  the configured verifier model and requires a clear `SAFE` response. Missing
-  models, request failures, unclear replies, verifier watchdog timeouts, and `UNSAFE` replies
-  block the tool. The watchdog aborts after 15 seconds even if the provider
-  ignores its own request timeout.
+  and `apply_patch` in `tool_call`. It sends bounded, complete structured input
+  to the configured verifier model and requires a clear `SAFE` response. Bash
+  requests annotate shell operators, stages, redirections, substitutions, cwd,
+  and possible mutation intent. The annotations never approve a command. An
+  oversized or incompletely annotated request blocks instead of truncating.
+  One unclear reply can receive one bounded adjudication request. Both requests
+  share the same 15-second watchdog. Explicit `UNSAFE`, missing models, request
+  failures, aborts, and timeouts do not retry and block the tool.
 - **Checked tools stay out of parallel mixed batches.** pi prepares every tool
   in a parallel assistant batch before it executes any tool. A waiting `bash`,
   `edit`, or `apply_patch` check would make unrelated `read` calls look stuck.
