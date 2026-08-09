@@ -1,8 +1,8 @@
-import { StyledText, fg, type TextChunk } from "@opentui/core";
+import { StyledText, fg } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
+import { Fragment } from "react";
 import { useShimmerText, useSpinner } from "./animation";
 import {
-  fitStatusMetadata,
   statusMetadataChunks,
   statusMetadataItems,
   statusMetadataWidth,
@@ -43,12 +43,22 @@ const REMOVAL_ORDER: readonly (StatusMetadataItem["key"] | "title")[] = [
   "title",
 ];
 
+type WorkingMode = "full" | "compact" | "pulse" | null;
+type LeftPart = "model" | "thinking" | "agents" | "activeAgent";
+
 export type StatusBarLayout = {
-  stacked: boolean;
   showTitle: boolean;
+  modelText: string | null;
+  thinkingText: string | null;
+  showIdleAgents: boolean;
+  showRunningAgents: boolean;
+  activeAgentText: string | null;
+  workingMode: WorkingMode;
   metadata: StatusMetadataItem[];
+  trailingSpace: boolean;
   leftWidth: number;
   rightWidth: number;
+  totalWidth: number;
 };
 
 type StatusBarLayoutInput = Pick<
@@ -69,52 +79,157 @@ type StatusBarLayoutInput = Pick<
   | "activeAgentName"
 > & { width: number };
 
-function statusLeftWidth(input: StatusBarLayoutInput, showTitle: boolean): number {
-  const idleAgentCount = Math.max(0, input.agentCount - input.runningAgentCount);
-  const agentPrefix = input.agentCount > 0 ? " · " : "";
-  const idleAgentText = idleAgentCount > 0 ? `◇ ${idleAgentCount}` : "";
-  const workingAgentText = input.runningAgentCount > 0
-    ? `${idleAgentCount > 0 ? " " : ""}• ${input.runningAgentCount}/${input.maxActiveAgentCount}`
-    : "";
-  const activeAgentText = input.activeAgentName ? ` · ${input.activeAgentName}` : "";
-  const titleWidth = showTitle ? statusTextWidth(" pum ") + statusTextWidth("  ") : 0;
-  return titleWidth + statusTextWidth(input.modelId) + statusTextWidth(" · ") +
-    statusTextWidth(input.thinkingLevel) + statusTextWidth(agentPrefix) + statusTextWidth(idleAgentText) +
-    statusTextWidth(workingAgentText) + statusTextWidth(activeAgentText);
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Truncate by rendered terminal columns without splitting a Unicode grapheme. */
+export function truncateStatusText(text: string, maxWidth: number): string | null {
+  if (maxWidth <= 0) return null;
+  if (statusTextWidth(text) <= maxWidth) return text;
+  if (maxWidth === 1) {
+    const first = graphemeSegmenter.segment(text)[Symbol.iterator]().next().value?.segment ?? "";
+    return statusTextWidth(first) <= 1 ? first : "…";
+  }
+
+  let result = "";
+  for (const { segment } of graphemeSegmenter.segment(text)) {
+    if (statusTextWidth(result + segment) > maxWidth - 1) break;
+    result += segment;
+  }
+  return `${result}…`;
 }
 
-function statusRightWidth(
+function agentTextWidth(input: StatusBarLayoutInput, layout: StatusBarLayout): number {
+  const idle = Math.max(0, input.agentCount - input.runningAgentCount);
+  let width = 0;
+  if (layout.showIdleAgents && idle > 0) width += statusTextWidth(`◇ ${idle}`);
+  if (layout.showRunningAgents && input.runningAgentCount > 0) {
+    if (width) width += 1;
+    width += 1 + statusTextWidth(` ${input.runningAgentCount}/${input.maxActiveAgentCount}`);
+  }
+  return width;
+}
+
+function leftParts(input: StatusBarLayoutInput, layout: StatusBarLayout): LeftPart[] {
+  const parts: LeftPart[] = [];
+  if (layout.modelText) parts.push("model");
+  if (layout.thinkingText) parts.push("thinking");
+  if (agentTextWidth(input, layout) > 0) parts.push("agents");
+  if (layout.activeAgentText) parts.push("activeAgent");
+  return parts;
+}
+
+function workingWidth(input: StatusBarLayoutInput, mode: WorkingMode): number {
+  if (!mode) return 0;
+  if (mode === "pulse") return 1;
+  const elapsedWidth = statusTextWidth(fmtElapsed(input.elapsedSec));
+  return mode === "full" ? 12 + elapsedWidth : 4 + elapsedWidth;
+}
+
+function measureLayout(input: StatusBarLayoutInput, layout: StatusBarLayout): void {
+  const parts = leftParts(input, layout);
+  const contentWidth = (layout.modelText ? statusTextWidth(layout.modelText) : 0) +
+    (layout.thinkingText ? statusTextWidth(layout.thinkingText) : 0) +
+    agentTextWidth(input, layout) +
+    (layout.activeAgentText ? statusTextWidth(layout.activeAgentText) : 0) +
+    Math.max(0, parts.length - 1) * statusTextWidth(" · ");
+  layout.leftWidth = (layout.showTitle ? statusTextWidth(" pum  ") : 0) + contentWidth;
+
+  layout.rightWidth = workingWidth(input, layout.workingMode) +
+    statusMetadataWidth(layout.metadata) + (layout.trailingSpace ? 1 : 0);
+  layout.totalWidth = layout.leftWidth + layout.rightWidth +
+    (layout.leftWidth > 0 && layout.rightWidth > 0 ? 1 : 0);
+}
+
+function truncateLayoutField(
   input: StatusBarLayoutInput,
-  metadata: readonly StatusMetadataItem[],
-): number {
-  const workingWidth = input.busy ? 12 + statusTextWidth(fmtElapsed(input.elapsedSec)) : 0;
-  return workingWidth + statusMetadataWidth(metadata) + 1;
+  layout: StatusBarLayout,
+  field: "modelText" | "activeAgentText",
+): void {
+  const text = layout[field];
+  if (!text || layout.totalWidth <= input.width) return;
+  const currentWidth = statusTextWidth(text);
+  const available = Math.max(0, currentWidth - (layout.totalWidth - input.width));
+  layout[field] = truncateStatusText(text, available);
+  measureLayout(input, layout);
 }
 
 export function statusBarLayout(input: StatusBarLayoutInput): StatusBarLayout {
-  let showTitle = true;
-  let metadata = statusMetadataItems(input);
-  let leftWidth = statusLeftWidth(input, showTitle);
-  let rightWidth = statusRightWidth(input, metadata);
-  const stacked = leftWidth + rightWidth + 1 > input.width;
+  const layout: StatusBarLayout = {
+    showTitle: true,
+    modelText: input.modelId || null,
+    thinkingText: input.thinkingLevel || null,
+    showIdleAgents: true,
+    showRunningAgents: true,
+    activeAgentText: input.activeAgentName || null,
+    workingMode: input.busy ? "full" : null,
+    metadata: statusMetadataItems(input),
+    trailingSpace: true,
+    leftWidth: 0,
+    rightWidth: 0,
+    totalWidth: 0,
+  };
+  measureLayout(input, layout);
 
-  if (stacked) {
-    for (const key of REMOVAL_ORDER) {
-      if (leftWidth <= input.width && rightWidth <= input.width) break;
-      if (key === "title") showTitle = false;
-      else metadata = metadata.filter((item) => item.key !== key);
-      leftWidth = statusLeftWidth(input, showTitle);
-      rightWidth = statusRightWidth(input, metadata);
-    }
-
-    if (rightWidth > input.width) {
-      const workingWidth = input.busy ? 12 + statusTextWidth(fmtElapsed(input.elapsedSec)) : 0;
-      metadata = fitStatusMetadata(metadata, input.width - workingWidth - 1);
-      rightWidth = statusRightWidth(input, metadata);
-    }
+  // These user-specified optional fields always leave in this exact order.
+  for (const key of REMOVAL_ORDER) {
+    if (layout.totalWidth <= input.width) break;
+    if (key === "title") layout.showTitle = false;
+    else layout.metadata = layout.metadata.filter((item) => item.key !== key);
+    measureLayout(input, layout);
   }
 
-  return { stacked, showTitle, metadata, leftWidth, rightWidth };
+  // Preserve operational context before decorative padding and secondary data.
+  if (layout.totalWidth > input.width) {
+    layout.trailingSpace = false;
+    measureLayout(input, layout);
+  }
+  if (layout.totalWidth > input.width) {
+    layout.showIdleAgents = false;
+    measureLayout(input, layout);
+  }
+  if (layout.totalWidth > input.width) {
+    layout.metadata = layout.metadata.filter((item) => item.key !== "branch");
+    measureLayout(input, layout);
+  }
+  if (layout.totalWidth > input.width) {
+    layout.thinkingText = null;
+    measureLayout(input, layout);
+  }
+  if (layout.totalWidth > input.width && layout.workingMode === "full") {
+    layout.workingMode = "compact";
+    measureLayout(input, layout);
+  }
+  if (layout.totalWidth > input.width) {
+    layout.metadata = layout.metadata.filter((item) => item.key !== "context");
+    measureLayout(input, layout);
+  }
+
+  // Keep the selected agent name before the model identifier when space is scarce.
+  truncateLayoutField(input, layout, "modelText");
+  if (layout.totalWidth > input.width) {
+    layout.modelText = null;
+    measureLayout(input, layout);
+  }
+  truncateLayoutField(input, layout, "activeAgentText");
+  if (layout.totalWidth > input.width) {
+    layout.showRunningAgents = false;
+    measureLayout(input, layout);
+  }
+  if (layout.totalWidth > input.width && layout.workingMode === "compact") {
+    layout.workingMode = "pulse";
+    measureLayout(input, layout);
+  }
+  truncateLayoutField(input, layout, "activeAgentText");
+  if (layout.totalWidth > input.width) {
+    layout.activeAgentText = null;
+    measureLayout(input, layout);
+  }
+  if (layout.totalWidth > input.width) {
+    layout.workingMode = null;
+    measureLayout(input, layout);
+  }
+
+  return layout;
 }
 
 function WorkingPulse({ theme }: { theme: Theme }) {
@@ -122,91 +237,74 @@ function WorkingPulse({ theme }: { theme: Theme }) {
   return <text ref={spinner} fg={theme.accent} />;
 }
 
-function Working({ theme, elapsedSec }: { theme: Theme; elapsedSec: number }) {
+function Working({ theme, elapsedSec, mode }: {
+  theme: Theme;
+  elapsedSec: number;
+  mode: Exclude<WorkingMode, null>;
+}) {
   const label = useShimmerText({
     text: "working",
     color: theme.accent,
     highlight: theme.highlight,
-    active: true,
+    active: mode === "full",
   });
+  if (mode === "pulse") return <WorkingPulse theme={theme} />;
   return (
-    <box style={{ flexDirection: "row" }}>
+    <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
       <WorkingPulse theme={theme} />
-      <text content=" " />
-      <text ref={label} />
+      {mode === "full" ? <><text content=" " /><text ref={label} /></> : null}
       <text content={` ${fmtElapsed(elapsedSec)}  `} fg={theme.dim} />
     </box>
   );
 }
 
 export function StatusBar(props: StatusProps) {
-  const {
-    theme,
-    modelId,
-    thinkingLevel,
-    busy,
-    agentCount,
-    runningAgentCount,
-    maxActiveAgentCount,
-    activeAgentName,
-  } = props;
+  const { theme, agentCount, runningAgentCount, maxActiveAgentCount } = props;
   const { width } = useTerminalDimensions();
-  const layout = statusBarLayout({ ...props, width });
-
-  const left = [
-    ...(layout.showTitle ? [fg(theme.accent)(" pum "), fg(theme.dim)("  ")] : []),
-    fg(theme.fg)(modelId),
-    fg(theme.dim)(" · "),
-    fg(theme.dim)(thinkingLevel),
-  ];
+  const input = { ...props, width: Math.max(0, width) };
+  const layout = statusBarLayout(input);
   const idleAgentCount = Math.max(0, agentCount - runningAgentCount);
-  const agentPrefix = agentCount > 0 ? " · " : "";
-  const idleAgentText = idleAgentCount > 0 ? `◇ ${idleAgentCount}` : "";
-  const workingAgentText = runningAgentCount > 0 ? `${idleAgentCount > 0 ? " " : ""}• ${runningAgentCount}/${maxActiveAgentCount}` : "";
-  const activeAgentText = activeAgentName ? ` · ${activeAgentName}` : "";
-
-  const right: TextChunk[] = statusMetadataChunks(layout.metadata, theme);
-
-  const leftRow = (
-    <box style={{ flexDirection: "row", flexGrow: 1, minWidth: 0, overflow: "hidden" }}>
-      <text content={new StyledText(left)} wrapMode="none" />
-      {agentCount > 0 ? <text content={agentPrefix} fg={theme.dim} /> : null}
-      {idleAgentCount > 0 ? <text content={idleAgentText} fg={theme.success} /> : null}
-      {runningAgentCount > 0 ? (
-        <box style={{ flexDirection: "row" }}>
-          {idleAgentCount > 0 ? <text content=" " /> : null}
-          <WorkingPulse theme={theme} />
-          <text content={` ${runningAgentCount}/${maxActiveAgentCount}`} fg={theme.accent} />
-        </box>
-      ) : null}
-      {activeAgentName ? <text content={activeAgentText} fg={theme.dim} wrapMode="none" /> : null}
-    </box>
-  );
-  const rightRow = (
-    <box style={{ flexDirection: "row", height: 1, maxWidth: "100%", overflow: "hidden" }}>
-      {busy ? <Working theme={theme} elapsedSec={props.elapsedSec} /> : null}
-      <text content={new StyledText(right)} wrapMode="none" />
-      <text content=" " />
-    </box>
-  );
+  const parts = leftParts(input, layout);
+  const right = statusMetadataChunks(layout.metadata, theme);
 
   return (
-    // flexShrink 0: an auto-sized box shrinks by default, and when stacked its
-    // two rows must remain between the explicit header rules in App.
-    <box style={{ flexDirection: "column", flexShrink: 0 }}>
-      {layout.stacked ? (
-        <>
-          <box style={{ flexDirection: "row", height: 1 }}>{leftRow}</box>
-          <box style={{ flexDirection: "row", height: 1, justifyContent: "flex-end" }}>
-            {rightRow}
-          </box>
-        </>
-      ) : (
-        <box style={{ flexDirection: "row", height: 1, justifyContent: "space-between" }}>
-          {leftRow}
-          {rightRow}
+    <box style={{ flexDirection: "row", height: 1, flexShrink: 0, overflow: "hidden", justifyContent: "space-between" }}>
+      {layout.leftWidth > 0 ? (
+        <box style={{ flexDirection: "row", height: 1, flexShrink: 0, overflow: "hidden" }}>
+          {layout.showTitle ? <text content=" pum  " fg={theme.accent} wrapMode="none" /> : null}
+          {parts.map((part, index) => (
+            <Fragment key={part}>
+              {index > 0 ? <text content=" · " fg={theme.dim} wrapMode="none" /> : null}
+              {part === "model" ? <text content={layout.modelText!} fg={theme.fg} wrapMode="none" /> : null}
+              {part === "thinking" ? <text content={layout.thinkingText!} fg={theme.dim} wrapMode="none" /> : null}
+              {part === "activeAgent" ? <text content={layout.activeAgentText!} fg={theme.dim} wrapMode="none" /> : null}
+              {part === "agents" ? (
+                <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
+                  {layout.showIdleAgents && idleAgentCount > 0
+                    ? <text content={`◇ ${idleAgentCount}`} fg={theme.success} />
+                    : null}
+                  {layout.showRunningAgents && runningAgentCount > 0 ? (
+                    <>
+                      {layout.showIdleAgents && idleAgentCount > 0 ? <text content=" " /> : null}
+                      <WorkingPulse theme={theme} />
+                      <text content={` ${runningAgentCount}/${maxActiveAgentCount}`} fg={theme.accent} />
+                    </>
+                  ) : null}
+                </box>
+              ) : null}
+            </Fragment>
+          ))}
         </box>
-      )}
+      ) : null}
+      {layout.rightWidth > 0 ? (
+        <box style={{ flexDirection: "row", height: 1, flexShrink: 0, overflow: "hidden" }}>
+          {layout.workingMode
+            ? <Working theme={theme} elapsedSec={props.elapsedSec} mode={layout.workingMode} />
+            : null}
+          <text content={new StyledText(right)} wrapMode="none" />
+          {layout.trailingSpace ? <text content=" " /> : null}
+        </box>
+      ) : null}
     </box>
   );
 }

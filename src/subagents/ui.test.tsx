@@ -259,7 +259,9 @@ describe("subagent transcript UI", () => {
     setup.mockInput.pressEnter();
     await settle(setup);
     expect(resolveNewSession).toBeDefined();
-    expect(setup.captureCharFrame()).toContain("↑ 1.3k · ↓ 345 · ↺ 2.4k · $0.250 · 12%");
+    expect(setup.captureCharFrame()).toContain("↑ 1.3k · ↓ 345 · 12%");
+    expect(setup.captureCharFrame()).not.toContain("↺ 2.4k");
+    expect(setup.captureCharFrame()).not.toContain("$0.250");
 
     resolveNewSession!(fresh);
     await settleUntil(setup, () => !setup.captureCharFrame().includes("↑ 1.3k"));
