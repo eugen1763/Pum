@@ -1,297 +1,204 @@
+<div align="center">
+
 # PUM
 
-A small coding agent that runs in your terminal.
+**A compact coding agent for the terminal.**
 
-PUM reads, writes, and edits files and runs shell commands in whatever directory
-you start it from. It is built on [pi](https://github.com/earendil-works/pi) for
-the agent loop and [OpenTUI](https://github.com/anomalyco/opentui) for the
-interface. The whole thing is about 400 lines.
+Plan, edit, run commands, review Markdown, and coordinate parallel Git worktrees without leaving the TUI.
+
+[![CI](https://github.com/eugen1763/Pum/actions/workflows/ci.yml/badge.svg)](https://github.com/eugen1763/Pum/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/eugen1763/Pum)](LICENSE)
+[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=14151a)](https://bun.sh)
+
+</div>
+
+> [!WARNING]
+> PUM can read, write, and delete files. PUM can also run shell commands without approval. Start PUM only inside a workspace where these actions are acceptable. Check mode adds a verifier, but it is not a sandbox.
+
+## See PUM in action
+
+The following screens are real OpenTUI renders captured through `tmux`. A local mock provider supplied the model output.
+
+![PUM transcript showing Markdown and a read tool call](docs/images/pum-transcript.svg)
+
+<details>
+<summary><strong>Settings panel</strong></summary>
+
+![PUM settings panel](docs/images/pum-settings.svg)
+
+</details>
+
+## Why PUM
+
+- **Compact terminal UI:** Streaming Markdown, syntax highlighting, thinking traces, tool rows, usage, cost, and Git status.
+- **Full coding loop:** Built-in `read`, `write`, `edit`, `bash`, and atomic `apply_patch` tools.
+- **Parallel subagents:** Persistent agents work in isolated Git worktrees and report to the main agent.
+- **Prompt control:** Steer active work, stash prompt batches, attach clipboard images, cancel turns, and resume sessions.
+- **Provider choice:** Use the login methods exposed by pi, or add an OpenAI-compatible custom endpoint.
+- **Optional safeguards:** Enable fail-closed Check mode for `bash`, `edit`, and `apply_patch` calls.
+- **Terminal-first appearance:** Nine themes, semantic color overrides, Unicode glyphs, and optional animation.
+
+PUM uses [pi](https://github.com/earendil-works/pi) for the agent loop and [OpenTUI](https://github.com/anomalyco/opentui) for rendering.
 
 ## Requirements
 
-PUM requires [Bun](https://bun.sh) and an interactive terminal. OpenTUI's
-renderer needs Bun.
+- [Bun](https://bun.sh)
+- Git
+- An interactive terminal with ANSI/VT and Unicode support
+- Credentials for a supported provider, or an OpenAI-compatible endpoint
 
-On Windows, install Git for Windows. pi uses its Git Bash executable for the
-`bash` coding tool, even when PowerShell launches PUM. Keep Git Bash in its
-standard install location or add `bash.exe` to `PATH`.
+Linux and macOS are the primary environments. Windows CI checks the code and Windows path behavior. Native Windows TUI operation remains provisional because it has not been fully validated in a Windows terminal.
 
-Use Windows Terminal with PowerShell 7 or Windows PowerShell. Do not use
-PowerShell ISE. Do not redirect PUM's standard input or output. The terminal
-must support ANSI/VT escape sequences and Unicode.
+On Windows, install Git for Windows. Ensure that `bash.exe` is in `PATH` or remains in its standard location. Use Windows Terminal with PowerShell. Do not use PowerShell ISE.
 
-## Install
+## Install and start
 
-### Linux and macOS
+### Install from source
 
 ```bash
-git clone https://github.com/eugen1763/Pum
+git clone https://github.com/eugen1763/Pum.git
 cd Pum
-bun install
+bun install --frozen-lockfile
+bun run login
+bun run start
 ```
 
-### Windows PowerShell
+PUM opens the login panel automatically when no provider is available. Use `/login` later to add or update a provider.
 
-```powershell
-git clone https://github.com/eugen1763/Pum
-Set-Location .\Pum
-bun install
-```
-
-This release includes tested Windows path and command-selection logic. Native
-Windows TUI execution was not validated as part of this change. Treat Windows
-execution as provisional until the Windows CI job and native terminal testing
-pass for the target environment.
-
-## Log in
-
-PUM keeps its own credentials, separate from pi's. Start PUM with no configured
-provider and PUM opens the in-app login popup automatically.
-
-Linux and macOS:
+Resume the latest session for the current directory:
 
 ```bash
-bun run login
+bun run start -r
 ```
 
-Windows PowerShell:
+### npm package name
 
-```powershell
-bun run login
-```
+The bare npm name `pum` is already owned. Release packaging can use either `@eugen1763/pum` or `pum-agent`.
 
-Use `/login` at any time to open the same popup. The popup lists every login
-method from pi's provider registry, including OAuth, device-code, browser, and
-API-key flows.
-
-The Custom Provider option accepts an endpoint and API key. PUM probes the
-OpenAI-compatible `/models` endpoint, writes `models.json` atomically, and stores
-the key only in PUM's `auth.json`. PUM keeps entered values after a failed probe.
-
-## Use it
-
-Linux and macOS:
+After publication, install the package name selected for the release:
 
 ```bash
-bun run start        # new session in the current directory
-bun run start -r     # pick up the most recent session here
+# Scoped option
+bun add --global @eugen1763/pum
+
+# Unscoped option
+bun add --global pum-agent
+
+pum
 ```
 
-Windows PowerShell:
+Do not install both options. Confirm the final package name in the release notes.
 
-```powershell
-bun run start        # new session in the current directory
-bun run start -r     # pick up the most recent session here
-```
+## Essential controls
 
-| Key | Effect |
+| Key | Action |
 |---|---|
-| `?` | On an empty prompt, show the controls |
-| Tab | Open the cache, or move its selected item into the input |
-| Shift+↑ / Shift+↓ | Extend the cache selection across multiple prompts |
-| Enter, with a cache selection | Ask the main agent to coordinate worktree subagents and merge them |
-| Shift+Tab | Cycle forward through main and subagent transcripts |
-| Ctrl+Shift+Tab | Cycle backward through main and subagent transcripts |
-| Delete | Remove the selected cache item and matching prompt history |
-| Alt+Enter | Stash the current prompt without sending |
-| Ctrl+Alt+Enter | Stash when the terminal reserves Alt+Enter |
-| Alt+V | Attach an image from the graphical clipboard |
-| Ctrl+Enter / Shift+Enter | Insert a new line |
-| `\` then Enter | Insert a new line when modified Enter is unavailable |
-| Enter | Send — or steer, if the agent is already working |
-| ↑ / ↓ | Walk back through earlier prompts, and forward to what you were typing |
-| Esc | Press twice within 2s to cancel the selected turn and restore the prompt |
-| Ctrl+P | Settings — providers, models, checks, writing style, and appearance |
-| Ctrl+C | Once warns, twice quits |
+| `Enter` | Send a prompt, or steer the selected working agent |
+| `Ctrl+Enter` / `Shift+Enter` | Insert a new line |
+| `Alt+Enter` | Stash the prompt without sending |
+| `Tab` | Open the prompt stash on an empty input |
+| `Shift+↑` / `Shift+↓` | Select a range of stashed tasks |
+| `Alt+V` | Attach an image from the graphical clipboard |
+| `Ctrl+L` | Open the agent transcript selector |
+| `Shift+Tab` / `Ctrl+Shift+Tab` | Cycle through agent transcripts |
+| `Ctrl+H` | Open session history when the terminal reports the key distinctly |
+| `Ctrl+P` | Open settings |
+| `Esc` twice | Cancel the selected working agent |
+| `Ctrl+C` twice | Quit |
+| `?` | Show all controls when the prompt is empty |
 
-Model and check-model lists include a case-insensitive search field. Search
-matches provider IDs, provider names, model IDs, and model names. Press `/` from
-a model row to focus the search field.
+Useful commands include `/login`, `/history`, `/clear`, `/compress`, and `/worktree`.
 
-A top bar carries the model, thinking level, git branch, token count, cost, and
-how much of the context window is gone. While the agent works it grows a
-spinner, a timer, and a colour sweep through the label.
+## Parallel subagents
 
-The prompt editor wraps long lines and grows to eight visible rows. Additional
-rows scroll inside the editor. Wrapping reserves two columns at the right edge.
-The `❯` marker follows the cursor's visible row. Use Ctrl+Enter or Shift+Enter
-to insert an explicit line break. If the terminal cannot report modified Enter,
-type `\` and press Enter; PUM removes the `\` and inserts a line break.
+PUM can run up to five active subagents. Each subagent has these resources:
 
-While it is working the prompt reads `Steer…`. Anything you send then is
-delivered once the current step's tool calls finish, so you can redirect the
-agent without stopping it. Queued steering stays in a dim pending section at
-the transcript bottom until pi inserts it into the next turn. Inter-agent
-messages use the same pending behavior on the recipient transcript. Press Esc
-twice within two seconds to cancel the selected agent. The first press shows a
-temporary confirmation hint.
+- A persistent pi session
+- An isolated branch and worktree under `.pum/worktrees`
+- Its own transcript, draft, usage data, and cancellation state
+- Tools for progress messages and a single final completion report
 
-The main agent can start parallel subagents with `spawn_subagent`. Each subagent
-gets a persistent pi session and a branch under `.pum/worktrees`. Completion
-notices return to the main agent automatically. `finish_subagent` sends the sole
-final completion notice after the agent status changes. `message_agent` routes
-questions, blockers, and actionable intermediate messages between agents. It
-does not send final completion reports.
+Select a range of stashed prompts and press `Enter`. The main agent can group related work and run independent groups in parallel. Successful managed merges remove the completed worktree and branch.
 
-PUM allows five active subagents. Only `starting` and `running` agents consume
-an active slot. For follow-up implementation work, the main agent prefers a new
-worktree subagent while a slot is available. At capacity, the main agent queues
-related work to an appropriate running subagent through `message_agent`. This
-uses the durable recipient-side message and steering queue. If no appropriate
-recipient is clear, the main agent reports the capacity issue and keeps the task
-pending for deliberate routing.
+Use `Ctrl+L` to select an agent transcript. Input then goes to that agent. Finished or interrupted agents remain available until PUM merges or removes them.
 
-In the cache, hold Shift and use Up or Down to select a range. Enter sends the
-selected prompts to the main agent as a worktree batch. The main agent can group
-related prompts into one subagent and runs independent groups in parallel. Each
-successful worktree merges when it settles. The main agent waits only for a
-concrete dependency, conflict risk, or required integration order.
+## Tools and safeguards
 
-Shift+Tab and Ctrl+Shift+Tab switch the visible transcript. Input then goes to
-the selected agent. The header shows the retained agent count and active agent.
-The `worktree` tool supports create, list, status, merge, and remove actions.
-`/worktree [name]` creates one directly and persists a synthetic tool row.
-A successful merge of a managed subagent automatically closes that agent,
-removes its worktree, deletes its branch, and removes it from the transcript list.
-An unmerged finished agent remains available for review or more prompts.
+### Atomic `apply_patch`
 
-When PUM exits, worktrees and subagent session files remain on disk. A running
-subagent becomes `interrupted` when the parent session resumes with `-r`.
-Finished and interrupted subagents can receive more prompts after resume. A new
-parent session does not adopt subagents from another parent session.
+`apply_patch` supports add, update, delete, move, multiple files, and multiple hunks. PUM validates the full patch before changing files. It rejects traversal, absolute paths, escaping symlinks, path conflicts, and ambiguous context. A failed commit restores all touched files.
 
-Alt+V reads an image from the Windows, Wayland, or X11 clipboard and stores it
-in a temporary PUM directory. Windows capture uses a native clipboard adapter.
-PUM falls back to `powershell.exe` in STA mode and converts the image to PNG.
-The input shows `[Image #1]`, `[Image #2]`, and so on.
-Editing any character inside a marker removes the complete marker and deletes
-its temporary file. Sent images are converted to pi image attachments and the
-temporary files are removed.
+### Check mode
 
-Every glyph is plain Unicode from common blocks — no Nerd Font, no patched
-font. Emoji in a model's *answer* are a different matter: those come from the
-model, and rendering them is up to your terminal font.
+Enable Check mode in `Ctrl+P`. PUM sends each proposed `bash`, `edit`, or `apply_patch` call to a separate verifier model. The verifier must return a clear `SAFE` decision. Errors, timeouts, unclear replies, and explicit rejections block the tool.
 
-Answers render as markdown while they stream — headings, bold, lists,
-blockquotes, tables, and fenced code with syntax highlighting. A blinking caret
-stays at the end without changing the transcript layout.
+PUM caches only a narrow set of accepted read-only Git inspection commands. It never caches mutation checks. Check mode is off by default and does not replace isolation, backups, or code review.
 
-Highlighting is tree-sitter, and PUM ships the parsers OpenTUI bundles:
-JavaScript, TypeScript, Zig and Markdown. A fence in any other language still
-renders as a tidy code block, just without colour.
+### Hosted web search
 
-## Web search
+Web search is on by default for supported OpenAI Codex providers. Searches appear as transcript tool rows and persist in resumed sessions. Other providers continue without the hosted search tool. Disable web search in `Ctrl+P`.
 
-With a Codex subscription, PUM adds OpenAI's hosted `web_search` tool to
-requests, so the model can look things up. It is on by default and can be
-switched off in Ctrl+P.
+### Themes and Markdown
 
-Searches appear in the transcript like any other tool, with the query the model
-actually issued, and are restored when you resume a session with `-r`:
+PUM includes `tokyonight`, `gruvbox`, `catppuccin`, `nord`, `dracula`, `rosepine`, `solarized`, `kanagawa`, and `github-light`. Select a preset in `Ctrl+P`.
 
-```
-web_search · site:github.com/oven-sh/bun/releases latest Bun release    ✓
-```
-
-It only applies to Codex models: pick an Anthropic model and it quietly does
-nothing, which the settings row tells you.
-
-## Writing style
-
-Ctrl+P has a `Writing style` setting with two options:
-
-- `none` — do not add writing-style instructions.
-- `STE` — inject practical ASD-STE100 Simplified Technical English guidance
-  into the system prompt before each agent run.
-
-The STE option applies to explanatory text. It preserves code, commands, paths,
-identifiers, quoted text, and required project terminology. It is writing
-guidance, not a formal STE compliance checker or ASD certification.
-
-## Apply patch
-
-PUM adds a model-callable `apply_patch` tool to main agents and subagents. The
-tool accepts the OpenAI Codex patch envelope and supports add, update, delete,
-move, multiple files, and multiple hunks.
-
-PUM parses and validates the complete patch before it changes a file. It rejects
-absolute paths, traversal, escaping symlinks, conflicting paths, missing context,
-and ambiguous context. PUM preserves existing CRLF endings where practical.
-PUM stages every output and backs up every touched file. A commit failure
-restores the complete file set without a partial patch.
-
-## Check mode
-
-Ctrl+P can enable `Check mode` and select a `Check model`. The default verifier
-is `deepseek/deepseek-v4-flash`. Before each `bash`, `edit`, or `apply_patch`
-call, PUM sends the verifier only the working directory, tool name, and proposed
-input.
-
-The verifier must return a clear `SAFE` decision. PUM blocks the tool call when
-it returns `UNSAFE`, gives an unclear response, is unavailable, times out, or
-fails.
-
-PUM caches explicit `SAFE` decisions for a small set of simple, read-only Git
-inspection commands. A cache hit requires the same working directory, verifier
-model, and complete `bash` input, including fields such as `timeout`. PUM never
-caches `edit` or `apply_patch` checks. PUM also never caches rejected, failed,
-malformed, timed-out, or aborted checks. The cache holds at most 256 entries.
-
-The cache policy treats recognized built-in Git inspection operations as
-safety-stable across repository-content changes. PUM does not cache project
-scripts, shell composition, output-writing options, or explicit helper options.
-Those operations can change safety when mutable project files or configuration
-change. A missing, corrupt, or unwritable cache becomes a cache miss, so PUM
-uses the verifier and stays fail-closed.
-
-Check mode is off by default. It is a lightweight extra gate, not a replacement
-for process isolation or a sandbox.
-
-## Theming
-
-Nine presets ship — `tokyonight`, `gruvbox`, `catppuccin`, `nord`, `dracula`,
-`rosepine`, `solarized`, `kanagawa`, and `github-light` — switchable from
-Ctrl+P. To change individual colours, drop a `theme.json` in the config
-directory; it overrides whichever preset is active, and you only need the
-tokens you care about:
+Create `theme.json` in the PUM config directory to override semantic tokens:
 
 ```json
-{ "accent": "#ff7a93", "userBg": "#2a2f45" }
+{
+  "accent": "#ff7a93",
+  "userBg": "#2a2f45"
+}
 ```
 
-The agent has four pi coding tools: `read`, `write`, `edit`, and `bash`. PUM adds
-`apply_patch`, subagent communication, and worktree tools. **Coding tools run
-without asking.** Start PUM somewhere you are happy for it to make changes.
+Markdown renders while streaming. OpenTUI provides syntax parsers for JavaScript, TypeScript, Zig, and Markdown. Other fenced languages still render as code blocks without syntax colors.
 
-## Where things live
+## Configuration and data
 
-PUM uses these default config directories:
+Set `PUM_DIR` to override the complete PUM data directory.
 
-- Linux: `~/.config/pum`, or `$XDG_CONFIG_HOME/pum`.
-- macOS: `~/Library/Application Support/pum`.
-- Windows: `$env:LOCALAPPDATA\pum`, with `$env:APPDATA\pum` as a fallback.
-
-Set `PUM_DIR` to move the config directory. In PowerShell, use
-`$env:PUM_DIR = 'D:\path\to\pum-data'` before starting PUM.
-
-| | |
+| Platform | Default directory |
 |---|---|
-| `auth.json` | Provider credentials, including custom-provider keys |
-| `models.json` | Custom provider endpoints and discovered models; no submitted keys |
-| `settings.json` | Model and thinking level, saved as you change them |
-| `pum.json` | Theme, animations, web search, writing style, thinking traces |
-| `check-mode-cache.json` | Up to 256 accepted read-only Git `bash` checks |
-| `theme.json` | Optional colour overrides |
-| `history.json` | Prompt history, one list per working directory |
-| `prompt-stash.json` | Saved prompt stash, one list per working directory |
-| `sessions/` | Main conversation history, one file per session |
-| `subagents/` | Persistent subagent sessions grouped by parent session |
+| Linux | `$XDG_CONFIG_HOME/pum` or `~/.config/pum` |
+| macOS | `~/Library/Application Support/pum` |
+| Windows | `%LOCALAPPDATA%\pum`, with `%APPDATA%\pum` as fallback |
 
-## Hacking on it
+| Path | Purpose |
+|---|---|
+| `auth.json` | Provider credentials and custom-provider keys |
+| `models.json` | Custom endpoints and model metadata; submitted keys are not stored here |
+| `settings.json` | Model and thinking level managed by pi |
+| `pum.json` | Theme, animation, search, writing, explanation, and check settings |
+| `theme.json` | Optional semantic color overrides |
+| `history.json` | Prompt history by working directory |
+| `prompt-stash.json` | Stashed prompts by working directory |
+| `sessions/` | Main conversation sessions |
+| `subagents/` | Persistent subagent sessions |
+| `check-mode-cache.json` | Accepted checks for eligible read-only Git commands |
 
-See [AGENTS.md](AGENTS.md) for the layout, the decisions behind it, and the
-handful of OpenTUI and pi behaviours worth knowing before you change anything.
+PUM keeps this directory separate from pi's default configuration directory.
+
+## Development
+
+```bash
+bun install --frozen-lockfile
+bun test
+bun run typecheck
+git diff --check
+```
+
+Run the TUI from the repository root:
+
+```bash
+bun run start
+```
+
+Use a throwaway `PUM_DIR` for local integration tests. Capture TUI output through `tmux`; do not pipe standard output. See [AGENTS.md](AGENTS.md) for architecture, locked decisions, and TUI test guidance.
+
+## Release status
+
+PUM is preparing its first public release. The project version is pre-1.0, and interfaces can change. Review the release notes before upgrading persisted sessions or custom configuration.
 
 ## License
 
-[MIT](LICENSE).
+PUM is available under the [MIT License](LICENSE).
