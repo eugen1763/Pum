@@ -1,5 +1,5 @@
 import type { Line } from "./transcript";
-import { isRejectedToolResult } from "./check-mode";
+import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
 import { questionnaireDetail } from "./questionnaire";
 import {
@@ -177,7 +177,8 @@ export function replayEntries(
           : message.isError
             ? "error"
             : "ok";
-        if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
+        if (call.state === "rejected") call.detail = rejectedToolReason(message);
+        else if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
         else if (call.name === "questionnaire") call.detail = questionnaireDetail(message);
       }
     }

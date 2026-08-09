@@ -38,6 +38,12 @@ export type ApplyPatchDetails = {
   operations: Array<{ type: PatchOperation["type"]; path: string; moveTo?: string }>;
 };
 
+export type ApplyPatchPreview = ApplyPatchDetails & {
+  additions: number;
+  removals: number;
+  projectContained: true;
+};
+
 type FileSnapshot = {
   exists: boolean;
   buffer?: Buffer;
@@ -517,6 +523,44 @@ function detailsPatch(changes: PreparedChange[]): string {
     const newText = change.newText.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     return generateUnifiedPatch(displayPath, oldText, newText);
   }).join("");
+}
+
+function patchCounts(patch: string): { additions: number; removals: number } {
+  let additions = 0;
+  let removals = 0;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) additions++;
+    else if (line.startsWith("-")) removals++;
+  }
+  return { additions, removals };
+}
+
+/** Prepare and validate the complete patch without changing the filesystem. */
+export async function previewApplyPatch(
+  cwd: string,
+  patch: string,
+  options: { fs?: ApplyPatchFileSystem } = {},
+): Promise<ApplyPatchPreview> {
+  const operations = parseApplyPatch(patch);
+  const fs = options.fs ?? defaultFileSystem;
+  const root = await fs.realpath(cwd);
+  const prepared = await prepareChanges(root, operations, fs);
+  const unified = detailsPatch(prepared.changes);
+  const files = operations.map((operation) => operation.type === "update" && operation.moveTo
+    ? operation.moveTo
+    : operation.path);
+  return {
+    patch: unified,
+    files,
+    operations: operations.map((operation) => ({
+      type: operation.type,
+      path: operation.path,
+      ...(operation.type === "update" && operation.moveTo ? { moveTo: operation.moveTo } : {}),
+    })),
+    ...patchCounts(unified),
+    projectContained: true,
+  };
 }
 
 export async function applyPatch(

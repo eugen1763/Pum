@@ -19,7 +19,7 @@ import {
   usageFromEntries,
 } from "../agent-usage";
 import { replayEntries } from "../replay";
-import { isRejectedToolResult } from "../check-mode";
+import { isRejectedToolResult, rejectedToolReason } from "../check-mode";
 import {
   observeSearchCalls,
   persistSearchCall,
@@ -461,10 +461,12 @@ export class SubagentManager {
             : event.isError
               ? "error"
               : "ok",
-          detail: event.toolName === "edit" || event.toolName === "apply_patch"
-            ? editCounts(event.result)
-            : event.toolName === "questionnaire"
-              ? questionnaireDetail(event.result)
+          detail: isRejectedToolResult(event.result)
+            ? rejectedToolReason(event.result)
+            : event.toolName === "edit" || event.toolName === "apply_patch"
+              ? editCounts(event.result)
+              : event.toolName === "questionnaire"
+                ? questionnaireDetail(event.result)
               : undefined,
         });
         break;

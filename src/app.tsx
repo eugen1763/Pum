@@ -18,6 +18,7 @@ import {
   type ThinkingLevel,
 } from "./settings-popup";
 import {
+  CHECK_MODE_PROFILES,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
   type PumSettings,
@@ -60,7 +61,7 @@ import {
   withSearchRoute,
 } from "./web-search";
 import { matchingCommands, moveCommandSelection } from "./commands";
-import { isRejectedToolResult } from "./check-mode";
+import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
 import { setWritingStyle, WRITING_STYLES } from "./writing-style";
 import {
@@ -86,6 +87,16 @@ import { LoginController } from "./login-controller";
 import { providerLoginMethods, refreshAndSelectModel } from "./login-flow";
 import { questionnaireDetail, QuestionnaireManager } from "./questionnaire";
 import { QuestionnairePopup } from "./questionnaire-popup";
+import {
+  CheckApprovalPopup,
+  invokeCheckApprovalDecision,
+  type CheckApprovalDecision,
+} from "./check-approval-popup";
+import type {
+  CheckApprovalCoordinator,
+  CheckApprovalRequest,
+  CheckApprovalStore,
+} from "./check-approvals";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -294,6 +305,8 @@ export function App({
   promptHistoryStore = DEFAULT_PROMPT_HISTORY_STORE,
   promptStashStore = DEFAULT_PROMPT_STASH_STORE,
   onExit = () => process.exit(0),
+  checkApprovalCoordinator,
+  checkApprovalStore,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -309,6 +322,8 @@ export function App({
   promptHistoryStore?: PromptHistoryStore;
   promptStashStore?: PromptStashStore;
   onExit?: () => void | Promise<void>;
+  checkApprovalCoordinator?: CheckApprovalCoordinator;
+  checkApprovalStore?: CheckApprovalStore;
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -364,6 +379,8 @@ export function App({
   }));
   const [modelQuery, setModelQuery] = useState("");
   const [modelSearchFocused, setModelSearchFocused] = useState(false);
+  const [checkApproval, setCheckApproval] = useState<CheckApprovalRequest | null>(null);
+  const [checkApprovalDecision, setCheckApprovalDecision] = useState<CheckApprovalDecision>("allowOnce");
   const [, setAgentRevision] = useState(0);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
@@ -679,6 +696,11 @@ export function App({
       return pending ? resolvePendingDelivery(value, pending.id) : value;
     });
 
+  useEffect(() => checkApprovalCoordinator?.subscribe((request) => {
+    setCheckApproval(request);
+    setCheckApprovalDecision("allowOnce");
+  }), [checkApprovalCoordinator]);
+
   useEffect(
     () => subagentManager.subscribe((event) => {
       if (event.type === "main-line") append(event.line);
@@ -781,10 +803,12 @@ export function App({
               : event.isError
                 ? "error"
                 : "ok",
-            detail: event.toolName === "edit" || event.toolName === "apply_patch"
-              ? editCounts(event.result)
-              : event.toolName === "questionnaire"
-                ? questionnaireDetail(event.result)
+            detail: isRejectedToolResult(event.result)
+              ? rejectedToolReason(event.result)
+              : event.toolName === "edit" || event.toolName === "apply_patch"
+                ? editCounts(event.result)
+                : event.toolName === "questionnaire"
+                  ? questionnaireDetail(event.result)
                 : undefined,
           });
           break;
@@ -891,7 +915,7 @@ export function App({
       setExplanationStrength(patch.explanationStrength);
     }
     if (patch.checkMode !== undefined || patch.checkModel !== undefined) {
-      setCheckModeConfig({ enabled: next.checkMode, model: next.checkModel });
+      setCheckModeConfig({ profile: next.checkMode, model: next.checkModel });
     }
     if (patch.showThinking !== undefined) showThinkingRef.current = patch.showThinking;
     saveSettings(next);
@@ -1249,6 +1273,23 @@ export function App({
     });
   };
 
+  const resolveCheckApproval = (decision: CheckApprovalDecision) => {
+    if (!checkApproval || !checkApprovalCoordinator) return;
+    const choice = decision === "allowOnce"
+      ? "allow-once"
+      : decision === "allowSession"
+        ? "allow-session"
+        : decision === "allowProject"
+          ? "allow-project"
+          : "deny";
+    checkApprovalCoordinator.resolve(checkApproval.id, choice);
+  };
+
+  const stepCheckMode = (step: number) => {
+    const index = CHECK_MODE_PROFILES.indexOf(settings.checkMode);
+    update({ checkMode: CHECK_MODE_PROFILES[(index + step + CHECK_MODE_PROFILES.length) % CHECK_MODE_PROFILES.length]! });
+  };
+
   const rowActions: Record<SettingRowId, { step?: (n: number) => void; enter?: () => void }> = {
     theme: { step: stepTheme },
     providers: { enter: openLogin },
@@ -1257,8 +1298,14 @@ export function App({
     webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
-    checkMode: { step: () => update({ checkMode: !settings.checkMode }) },
+    checkMode: { step: stepCheckMode },
     checkModel: { enter: () => { setModelQuery(""); setModelSearchFocused(false); setPage("checkModels"); } },
+    clearCheckApprovals: { enter: () => {
+      const removed = checkApprovalStore?.clearProject(cwd) ?? 0;
+      append({ kind: "text", role: "system", text: removed > 0
+        ? `cleared ${removed} Check mode project approval${removed === 1 ? "" : "s"}`
+        : "no Check mode project approvals were stored" });
+    } },
     thinkingLevel: { step: stepThinking },
     showThinking: { step: () => update({ showThinking: !settings.showThinking }) },
     model: { enter: () => { setModelQuery(""); setModelSearchFocused(false); setPage("models"); } },
@@ -1277,8 +1324,9 @@ export function App({
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
-    checkMode: `‹ ${settings.checkMode ? "on" : "off"} ›`,
+    checkMode: `‹ ${settings.checkMode} ›`,
     checkModel: `${settings.checkModel} ›`,
+    clearCheckApprovals: "clear ›",
     thinkingLevel: `‹ ${thinkingLevel} ›`,
     showThinking: `‹ ${settings.showThinking ? "on" : "off"} ›`,
     model: `${modelId} ›`,
@@ -1323,6 +1371,29 @@ export function App({
   };
 
   useKeyboard((key) => {
+    if (checkApproval) {
+      key.stopPropagation();
+      if (key.name === "escape" || (key.ctrl && key.name === "c")) {
+        resolveCheckApproval("deny");
+        return;
+      }
+      const decisions: CheckApprovalDecision[] = ["allowOnce", "allowSession", "allowProject", "deny"];
+      const index = decisions.indexOf(checkApprovalDecision);
+      if (["left", "up"].includes(key.name)) {
+        setCheckApprovalDecision(decisions[(index - 1 + decisions.length) % decisions.length]!);
+      } else if (["right", "down", "tab"].includes(key.name)) {
+        setCheckApprovalDecision(decisions[(index + 1) % decisions.length]!);
+      } else if (["return", "enter", "kpenter", "linefeed"].includes(key.name)) {
+        invokeCheckApprovalDecision(checkApprovalDecision, {
+          onAllowOnce: () => resolveCheckApproval("allowOnce"),
+          onAllowSession: () => resolveCheckApproval("allowSession"),
+          onAllowProject: () => resolveCheckApproval("allowProject"),
+          onDeny: () => resolveCheckApproval("deny"),
+        });
+      }
+      return;
+    }
+
     if (key.ctrl && key.name === "c") {
       key.stopPropagation();
       resetCancelArm();
@@ -1960,7 +2031,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="char"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !loginOpen && !questionnaire}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !loginOpen && !questionnaire && !checkApproval}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -2011,6 +2082,28 @@ export function App({
             theme={theme}
             sessions={historySessions}
             onSelect={selectHistorySession}
+          />
+        ) : null}
+        {checkApproval ? (
+          <CheckApprovalPopup
+            theme={theme}
+            request={{
+              tool: checkApproval.toolName,
+              summary: checkApproval.summary,
+              reason: checkApproval.reason,
+              paths: checkApproval.paths,
+              preview: { kind: checkApproval.toolName === "bash" ? "command" : "diff", text: checkApproval.preview },
+              agentLabel: checkApproval.cwd === cwd
+                ? "main"
+                : agents.find((agent) => agent.worktree.path === checkApproval.cwd)?.name ?? "subagent",
+            }}
+            selectedDecision={checkApprovalDecision}
+            terminalWidth={width}
+            terminalHeight={height}
+            onAllowOnce={() => resolveCheckApproval("allowOnce")}
+            onAllowSession={() => resolveCheckApproval("allowSession")}
+            onAllowProject={() => resolveCheckApproval("allowProject")}
+            onDeny={() => resolveCheckApproval("deny")}
           />
         ) : null}
         {settingsOpen ? (

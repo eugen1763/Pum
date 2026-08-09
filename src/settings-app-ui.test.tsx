@@ -65,7 +65,7 @@ describe("Settings keyboard flow", () => {
           webSearch: false,
           writingStyle: "none",
           explanationStrength: "simple",
-          checkMode: false,
+          checkMode: "off",
           checkModel: "mock/check",
         }}
         searchProviders={[]}

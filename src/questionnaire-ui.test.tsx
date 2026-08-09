@@ -38,7 +38,7 @@ const settings = {
   webSearch: false,
   writingStyle: "none" as const,
   explanationStrength: "simple" as const,
-  checkMode: false,
+  checkMode: "off" as const,
   checkModel: "mock/check",
 };
 

@@ -1,19 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   BashSafetyCache,
   createCheckModeExtension,
+  evaluateToolCall,
   isBashCacheEligible,
   isRejectedToolResult,
+  redactApprovalPreview,
+  safetyDecision,
   setCheckModeConfig,
   verifyToolCall,
   type CheckModeConfig,
 } from "./check-mode";
+import { CheckApprovalCoordinator, CheckApprovalStore } from "./check-approvals";
 
 const temporaryDirectories: string[] = [];
-const config: CheckModeConfig = { enabled: true, model: "test/verifier" };
+const config: CheckModeConfig = { profile: "strict", model: "test/verifier" };
 const model = { provider: "test", id: "verifier" } as any;
 
 function temporaryCache(limit?: number): { cache: BashSafetyCache; path: string } {
@@ -123,11 +127,11 @@ describe("bash safety cache", () => {
 
     expect(await verifyToolCall(verifier, cache, { toolName: "bash", input: { command }, cwd: "/repo", config })).toBeUndefined();
     const prompt = verifier.contexts[0].messages[0].content as string;
-    expect(prompt).toContain('"kind": "dollar-paren"');
+    expect(prompt).toContain('"kind": "command"');
     expect(prompt).toContain('"kind": "backtick"');
     expect(prompt).toContain('"operator": "2>>"');
-    expect(prompt).toContain("output redirection can write files");
-    expect(prompt).toContain("filesystem write command");
+    expect(prompt).toContain("output redirection");
+    expect(prompt).toContain("file output");
   });
 
   test("preserves dangerous segments hidden late in a long command", async () => {
@@ -137,9 +141,9 @@ describe("bash safety cache", () => {
     const verifier = runtime([result("UNSAFE: destructive late stage")]);
 
     const block = await verifyToolCall(verifier, cache, { toolName: "bash", input: { command }, cwd: "/repo", config });
-    expect(block?.reason).toContain("UNSAFE");
-    expect(verifier.calls).toBe(1);
-    expect(verifier.contexts[0].messages[0].content).toContain(lateSegment);
+    expect(block?.reason).toContain("hard block");
+    expect(block?.reason).toContain("outside the project");
+    expect(verifier.calls).toBe(0);
   });
 
   test("blocks oversized input instead of sending a truncated verifier request", async () => {
@@ -148,8 +152,7 @@ describe("bash safety cache", () => {
     const command = `${"echo safe && ".repeat(12_000)}rm -rf /late-danger`;
 
     const block = await verifyToolCall(verifier, cache, { toolName: "bash", input: { command }, cwd: "/repo", config });
-    expect(block?.reason).toMatch(/too (?:large|complex)/);
-    expect(block?.reason).toMatch(/complete|truncated/);
+    expect(block?.reason).toMatch(/incomplete|exceeds/);
     expect(verifier.calls).toBe(0);
   });
 
@@ -267,16 +270,17 @@ describe("bash safety cache", () => {
     expect(Date.now() - started).toBeLessThan(500);
   });
 
-  test("never bypasses verification for file mutation calls", async () => {
+  test("never bypasses verification for valid file mutation calls in strict mode", async () => {
     const { cache } = temporaryCache();
-    cache.add(config.model, "/repo", { path: "a", edits: [] });
-    cache.add(config.model, "/repo", { patch: "*** Begin Patch\n*** End Patch" });
+    const cwd = mkdtempSync(join(tmpdir(), "pum-check-mutation-"));
+    temporaryDirectories.push(cwd);
+    await Bun.write(join(cwd, "a.txt"), "old\n");
     const verifier = runtime([result("SAFE"), result("SAFE"), result("SAFE"), result("SAFE")]);
-    const editCall = { toolName: "edit" as const, input: { path: "a", edits: [] }, cwd: "/repo", config };
+    const editCall = { toolName: "edit" as const, input: { path: "a.txt", edits: [{ oldText: "old", newText: "new" }] }, cwd, config };
     const patchCall = {
       toolName: "apply_patch" as const,
-      input: { patch: "*** Begin Patch\n*** End Patch" },
-      cwd: "/repo",
+      input: { patch: "*** Begin Patch\n*** Update File: a.txt\n@@\n-old\n+new\n*** End Patch" },
+      cwd,
       config,
     };
 
@@ -308,8 +312,8 @@ describe("bash safety cache", () => {
     setCheckModeConfig({ enabled: true, model: "missing/model" });
 
     const prompt = await handlers.get("before_agent_start")?.({ systemPrompt: "base" });
-    expect(prompt.systemPrompt).toContain("Do not put bash, edit, or apply_patch in the same parallel tool batch");
-    expect(prompt.systemPrompt).toContain("Do not retry it in a loop");
+    expect(prompt.systemPrompt).toContain("Do not put a checked tool in the same parallel tool batch");
+    expect(prompt.systemPrompt).toContain("Do not retry a blocked or timed-out tool in a loop");
 
     for (const [toolName, input] of [
       ["bash", { command: "echo test" }],
@@ -329,5 +333,178 @@ describe("bash safety cache", () => {
       expect(block).toMatchObject({ block: true });
       expect(isRejectedToolResult({ details: patch.details })).toBe(true);
     }
+  });
+});
+
+describe("profile evaluation and structured verdicts", () => {
+  test("parses the structured schema and legacy verdicts", () => {
+    expect(safetyDecision('{"decision":"safe","category":"build","confidence":0.92,"reason":"local test"}')).toMatchObject({
+      decision: "safe", category: "build", confidence: 0.92,
+    });
+    expect(safetyDecision("UNSAFE: destructive")).toMatchObject({ decision: "unsafe", legacy: true });
+    expect(safetyDecision('{"decision":"safe","reason":"missing fields"}').decision).toBe("unclear");
+  });
+
+  test("balanced permits narrow deterministic operations and verifies ordinary builds", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([result('{"decision":"safe","category":"test","confidence":0.9,"reason":"local test command"}')]);
+    const balanced = { profile: "balanced" as const, model: config.model };
+    expect((await evaluateToolCall(verifier, cache, {
+      toolName: "bash", input: { command: "git status --short" }, cwd: process.cwd(), config: balanced,
+    })).decision).toBe("allow");
+    expect(verifier.calls).toBe(0);
+    expect((await evaluateToolCall(verifier, cache, {
+      toolName: "bash", input: { command: "bun test src/check-mode.test.ts" }, cwd: process.cwd(), config: balanced,
+    })).decision).toBe("allow");
+    expect(verifier.calls).toBe(1);
+  });
+
+  test("balanced permits an ordinary source edit but verifies config-sensitive changes", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-edit-"));
+    temporaryDirectories.push(cwd);
+    await Bun.write(join(cwd, "source.ts"), "const value = 1;\n");
+    await Bun.write(join(cwd, "package.json"), "{\"name\":\"old\"}\n");
+    const verifier = runtime([result('{"decision":"safe","category":"config","confidence":0.8,"reason":"bounded config edit"}')]);
+    const balanced = { profile: "balanced" as const, model: config.model };
+    expect((await evaluateToolCall(verifier, cache, {
+      toolName: "edit", input: { path: "source.ts", edits: [{ oldText: "1", newText: "2" }] }, cwd, config: balanced,
+    })).decision).toBe("allow");
+    expect(verifier.calls).toBe(0);
+    expect((await evaluateToolCall(verifier, cache, {
+      toolName: "edit", input: { path: "package.json", edits: [{ oldText: "old", newText: "new" }] }, cwd, config: balanced,
+    })).decision).toBe("allow");
+    expect(verifier.calls).toBe(1);
+    const prompt = verifier.contexts[0].messages[0].content as string;
+    expect(prompt).toContain('"unifiedDiff"');
+    expect(prompt).toContain('"configSensitive": true');
+    expect(prompt).toContain('"projectContained": true');
+  });
+
+  test("explicit structured UNSAFE is blocked and never reaches ask UI", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([result('{"decision":"unsafe","category":"destructive","confidence":1,"reason":"deletes state"}')]);
+    const evaluation = await evaluateToolCall(verifier, cache, {
+      toolName: "bash", input: { command: "bun run unknown-script" }, cwd: process.cwd(),
+      config: { profile: "ask", model: config.model },
+    });
+    expect(evaluation).toMatchObject({ decision: "block", explicitUnsafe: true, category: "destructive" });
+    expect(verifier.calls).toBe(1);
+  });
+
+  test("includes bounded task context and inspected paths as untrusted data", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([result("SAFE")]);
+    await evaluateToolCall(verifier, cache, {
+      toolName: "bash", input: { command: "bun test" }, cwd: process.cwd(), config,
+      context: {
+        currentUserRequest: "Run the focused tests",
+        agentRationale: "Validate the change",
+        inspectedPaths: ["src/check-mode.ts"],
+      },
+    });
+    const prompt = verifier.contexts[0].messages[0].content as string;
+    expect(prompt).toContain("UNTRUSTED TASK CONTEXT");
+    expect(prompt).toContain("Run the focused tests");
+    expect(prompt).toContain("src/check-mode.ts");
+  });
+
+  test("hard-blocks mutation persistence paths and broad patch deletion", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-hard-mutation-"));
+    temporaryDirectories.push(cwd);
+    mkdirSync(join(cwd, ".git", "hooks"), { recursive: true });
+    await Bun.write(join(cwd, ".git", "hooks", "pre-commit"), "old\n");
+    const verifier = runtime([]);
+    const persistence = await evaluateToolCall(verifier, cache, {
+      toolName: "edit",
+      input: { path: ".git/hooks/pre-commit", edits: [{ oldText: "old", newText: "new" }] },
+      cwd,
+      config,
+    });
+    expect(persistence).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(persistence.reason).toContain("persistence");
+
+    for (const name of ["a", "b", "c", "d"]) await Bun.write(join(cwd, name), `${name}\n`);
+    const patch = `*** Begin Patch\n${["a", "b", "c", "d"].map((name) => `*** Delete File: ${name}`).join("\n")}\n*** End Patch`;
+    const broad = await evaluateToolCall(verifier, cache, {
+      toolName: "apply_patch", input: { patch }, cwd, config,
+    });
+    expect(broad).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(broad.reason).toContain("broad deletion");
+    expect(verifier.calls).toBe(0);
+  });
+
+  test("redacts secrets from approval previews", () => {
+    const redacted = redactApprovalPreview("API_TOKEN=hunter2 const password = 'quoted-secret'; curl --password secret https://user:pass@example.test Authorization: Bearer abc");
+    expect(redacted).not.toContain("hunter2");
+    expect(redacted).not.toContain("quoted-secret");
+    expect(redacted).not.toContain("user:pass");
+    expect(redacted).not.toContain("Bearer abc");
+    expect(redacted).toContain("[REDACTED]");
+  });
+});
+
+describe("ask profile approvals", () => {
+  test("allows an exact call for the session without broad matching", async () => {
+    const { cache } = temporaryCache();
+    const directory = mkdtempSync(join(tmpdir(), "pum-ask-"));
+    temporaryDirectories.push(directory);
+    const coordinator = new CheckApprovalCoordinator();
+    const approvalPath = join(directory, "approvals.json");
+    const approvals = new CheckApprovalStore(approvalPath);
+    let pendingId: string | undefined;
+    const unsubscribe = coordinator.subscribe((request) => { pendingId = request?.id; });
+    const handlers = new Map<string, Function>();
+    const verifier = runtime([result("malformed"), result("still malformed"), result("malformed"), result("still malformed")]);
+    const extension = createCheckModeExtension(verifier, cache, { coordinator, approvals });
+    (extension as any).factory({ on: (name: string, handler: Function) => handlers.set(name, handler) });
+    setCheckModeConfig({ profile: "ask", model: config.model });
+    const event = { toolName: "bash", toolCallId: "one", input: { command: "bun test" } };
+    const ctx = { cwd: directory, sessionManager: { buildContextEntries: () => [] } };
+    const first = handlers.get("tool_call")!(event, ctx);
+    await Bun.sleep(0);
+    expect(pendingId).toBeDefined();
+    coordinator.resolve(pendingId!, "allow-session");
+    expect(await first).toBeUndefined();
+    expect(verifier.calls).toBe(2);
+
+    expect(await handlers.get("tool_call")!({ ...event, toolCallId: "two" }, ctx)).toBeUndefined();
+    expect(verifier.calls).toBe(2);
+    const changedPending = handlers.get("tool_call")!({ ...event, toolCallId: "three", input: { command: "bun test --watch" } }, ctx);
+    await Bun.sleep(0);
+    coordinator.resolve(pendingId!, "deny");
+    const changed = await changedPending;
+    expect(changed).toMatchObject({ block: true });
+    expect(verifier.calls).toBe(4);
+    unsubscribe();
+  });
+
+  test("persists only the exact approved call for later project sessions", async () => {
+    const { cache } = temporaryCache();
+    const directory = mkdtempSync(join(tmpdir(), "pum-project-approval-"));
+    temporaryDirectories.push(directory);
+    const coordinator = new CheckApprovalCoordinator();
+    const approvals = new CheckApprovalStore(join(directory, "approvals.json"));
+    let pendingId: string | undefined;
+    const unsubscribe = coordinator.subscribe((request) => { pendingId = request?.id; });
+    const verifier = runtime([result("malformed"), result("still malformed")]);
+    const extension = createCheckModeExtension(verifier, cache, { coordinator, approvals });
+    const handlers = new Map<string, Function>();
+    (extension as any).factory({ on: (name: string, handler: Function) => handlers.set(name, handler) });
+    setCheckModeConfig({ profile: "ask", model: config.model });
+    const ctx = { cwd: directory, sessionManager: { buildContextEntries: () => [] } };
+    const event = { toolName: "bash", toolCallId: "first", input: { command: "bun test" } };
+    const first = handlers.get("tool_call")!(event, ctx);
+    await Bun.sleep(0);
+    coordinator.resolve(pendingId!, "allow-project");
+    expect(await first).toBeUndefined();
+    expect(verifier.calls).toBe(2);
+
+    const restoredHandlers = new Map<string, Function>();
+    (extension as any).factory({ on: (name: string, handler: Function) => restoredHandlers.set(name, handler) });
+    expect(await restoredHandlers.get("tool_call")!({ ...event, toolCallId: "restored" }, ctx)).toBeUndefined();
+    expect(verifier.calls).toBe(2);
+    unsubscribe();
   });
 });

@@ -23,7 +23,7 @@ test("startup without an available provider renders the TUI and opens login", as
       onNewSession={async () => activeSession}
       loadSessions={async () => []}
       onSwitchSession={async () => activeSession}
-      settings={{ showThinking: false, theme: "tokyonight", animations: false, workingRuleAnimation: "off", webSearch: false, writingStyle: "none", explanationStrength: "simple", checkMode: false, checkModel: "mock/check" }}
+      settings={{ showThinking: false, theme: "tokyonight", animations: false, workingRuleAnimation: "off", webSearch: false, writingStyle: "none", explanationStrength: "simple", checkMode: "off", checkModel: "mock/check" }}
       searchProviders={[]}
       subagentManager={{ getAgents: () => [], subscribe: () => () => {}, bindMainSession: async () => {} } as any}
       loginRequired

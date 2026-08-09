@@ -177,7 +177,7 @@ describe("subagent transcript replay", () => {
           toolCallId: "blocked-1",
           toolName: "bash",
           content: [{ type: "text", text: "blocked" }],
-          details: rejectedToolDetails({}),
+          details: rejectedToolDetails({}, "Verifier UNSAFE: destructive operation"),
           isError: true,
         },
       },
@@ -185,7 +185,7 @@ describe("subagent transcript replay", () => {
 
     expect(lines[0]).toMatchObject({
       kind: "tool",
-      call: { id: "blocked-1", state: "rejected" },
+      call: { id: "blocked-1", state: "rejected", detail: "Verifier UNSAFE: destructive operation" },
     });
   });
 });
