@@ -1,70 +1,22 @@
+import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
   InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import { Type, type TSchema } from "typebox";
+import { Type } from "typebox";
+import {
+  MAX_TRIGGER_LIFETIME_MS,
+  MIN_TRIGGER_REPEAT_MS,
+  type PublicTriggerManager,
+  type TriggerRequester,
+  type TriggerSnapshot,
+  type TriggerTarget,
+} from "./types";
 
-export type TriggerState =
-  | "idle"
-  | "running"
-  | "paused"
-  | "waiting"
-  | "expired"
-  | "cancelled"
-  | "unavailable";
+export type { TriggerRequester, TriggerSnapshot, TriggerTarget } from "./types";
 
-export type TriggerTarget = {
-  sessionId: string;
-  agentId: string | null;
-  label: string;
-};
-
-export type TriggerOutputMetadata = {
-  path: string;
-  bytes: number;
-  truncated: boolean;
-  exists: boolean;
-};
-
-export type TriggerLastResult = {
-  startedAt: number;
-  finishedAt: number;
-  durationMs: number;
-  exitCode: number | null;
-  signal: string | null;
-  synthetic: boolean;
-  manual: boolean;
-  output?: TriggerOutputMetadata;
-};
-
-export type TriggerSnapshot = {
-  id: string;
-  name: string;
-  state: TriggerState;
-  target: TriggerTarget;
-  executable: string;
-  args: string[];
-  cwd: string;
-  mode: "once" | "repeat";
-  restartDelayMs: number | null;
-  createdAt: number;
-  expiresAt: number;
-  nextRestartAt: number | null;
-  fireCount: number;
-  maxFires: number;
-  pendingCount: number;
-  coalescedCount: number;
-  output?: TriggerOutputMetadata;
-  lastResult?: TriggerLastResult;
-  paused: boolean;
-};
-
-export type TriggerRequester =
-  | { kind: "main"; sessionId: string; cwd: string }
-  | { kind: "subagent"; sessionId: string; agentId: string; cwd: string };
-
-export type CreateTriggerInput = {
+export type CreateTriggerToolManagerInput = {
   name: string;
   executable: string;
   args: string[];
@@ -82,31 +34,14 @@ export type TriggerTargetSelector =
   | { kind: "subagent"; agent: string }
   | { kind: "self" };
 
-export type CreateTriggerToolInput = Omit<CreateTriggerInput, "target" | "cwd"> & {
+export type CreateTriggerToolInput = Omit<CreateTriggerToolManagerInput, "target" | "cwd"> & {
   target?: TriggerTargetSelector;
 };
 
-export interface TriggerToolManager {
-  create(input: CreateTriggerInput, requester: TriggerRequester): Promise<TriggerSnapshot>;
-  getTriggers(requester?: TriggerRequester): TriggerSnapshot[];
-  inspect(id: string, requester?: TriggerRequester): TriggerSnapshot | Promise<TriggerSnapshot>;
-  pause(id: string, requester?: TriggerRequester): Promise<TriggerSnapshot>;
-  resume(id: string, requester?: TriggerRequester): Promise<TriggerSnapshot>;
-  cancel(id: string, requester?: TriggerRequester): Promise<void>;
-  invoke(
-    id: string,
-    mode: "run" | "fire",
-    requester?: TriggerRequester,
-  ): Promise<TriggerSnapshot | void>;
-}
+export type TriggerToolManager = Pick<PublicTriggerManager,
+  "create" | "getTriggers" | "inspect" | "pause" | "resume" | "cancel" | "invoke">;
 
-export interface TriggerRuntimeManager extends TriggerToolManager {
-  subscribe(listener: () => void): () => void;
-  invalidateSession(sessionId: string, reason?: string): Promise<void>;
-  invalidateAgent(agentId: string, reason?: string): Promise<void>;
-  markTargetSettled(sessionId: string, agentId?: string): Promise<void>;
-  shutdown(): Promise<void>;
-}
+export type TriggerRuntimeManager = PublicTriggerManager;
 
 export type TriggerRequesterResolver = (
   context: ExtensionContext,
@@ -125,10 +60,6 @@ export type TriggerToolRegistrationOptions = {
     target: TriggerTarget,
   ) => boolean | Promise<boolean>;
 };
-
-export function StringEnum<const Values extends readonly string[]>(values: Values): TSchema {
-  return Type.Union(values.map((value) => Type.Literal(value)));
-}
 
 const TriggerIdSchema = Type.String({
   minLength: 1,
@@ -166,8 +97,8 @@ function createTriggerSchema(audience: "main" | "subagent") {
       description: "Prompt template delivered to the bound target when the trigger fires",
     }),
     mode: StringEnum(["once", "repeat"] as const),
-    restartDelayMs: Type.Optional(Type.Integer({ minimum: 0, maximum: 86_400_000 })),
-    lifetimeMs: Type.Optional(Type.Integer({ minimum: 1, maximum: 31_536_000_000 })),
+    restartDelayMs: Type.Optional(Type.Integer({ minimum: MIN_TRIGGER_REPEAT_MS, maximum: 86_400_000 })),
+    lifetimeMs: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TRIGGER_LIFETIME_MS })),
     startBehavior: StringEnum(["start", "paused"] as const),
   }, { additionalProperties: false });
 }
@@ -227,7 +158,13 @@ export function registerTriggerTools(
   const inspectAuthorized = async (
     owner: TriggerRequester,
     id: string,
-  ): Promise<TriggerSnapshot> => authorizeSnapshot(owner, await manager.inspect(id, owner));
+  ): Promise<TriggerSnapshot> => authorizeSnapshot(
+    owner,
+    await manager.inspect(id, owner.kind === "subagent" ? owner : undefined),
+  );
+
+  const mutationRequester = (owner: TriggerRequester): TriggerRequester | undefined =>
+    owner.kind === "subagent" ? owner : undefined;
 
   const resolveCreateTarget = async (
     owner: TriggerRequester,
@@ -279,7 +216,7 @@ export function registerTriggerTools(
     execute: async (_id, _input, _signal, _update, ctx) => {
       const owner = await requester(ctx);
       const triggers: TriggerSnapshot[] = [];
-      for (const trigger of manager.getTriggers(owner)) {
+      for (const trigger of manager.getTriggers(owner.kind === "subagent" ? owner : undefined)) {
         try {
           triggers.push(await authorizeSnapshot(owner, trigger));
         } catch {
@@ -309,7 +246,7 @@ export function registerTriggerTools(
     execute: async (_id, input, _signal, _update, ctx) => {
       const owner = await requester(ctx);
       await inspectAuthorized(owner, input.id);
-      return resultText(await authorizeSnapshot(owner, await manager.pause(input.id, owner)));
+      return resultText(await authorizeSnapshot(owner, await manager.pause(input.id, mutationRequester(owner))));
     },
   });
 
@@ -324,7 +261,7 @@ export function registerTriggerTools(
     execute: async (_id, input, _signal, _update, ctx) => {
       const owner = await requester(ctx);
       await inspectAuthorized(owner, input.id);
-      return resultText(await authorizeSnapshot(owner, await manager.resume(input.id, owner)));
+      return resultText(await authorizeSnapshot(owner, await manager.resume(input.id, mutationRequester(owner))));
     },
   });
 
@@ -336,7 +273,7 @@ export function registerTriggerTools(
     execute: async (_id, input, _signal, _update, ctx) => {
       const owner = await requester(ctx);
       await inspectAuthorized(owner, input.id);
-      await manager.cancel(input.id, owner);
+      await manager.cancel(input.id, mutationRequester(owner));
       return resultText({ id: input.id, action: "cancelled" });
     },
   });
@@ -352,7 +289,7 @@ export function registerTriggerTools(
     execute: async (_id, input, _signal, _update, ctx) => {
       const owner = await requester(ctx);
       await inspectAuthorized(owner, input.id);
-      const result = await manager.invoke(input.id, input.mode as "run" | "fire", owner);
+      const result = await manager.invoke(input.id, input.mode as "run" | "fire", mutationRequester(owner));
       return resultText(result ?? { id: input.id, action: input.mode });
     },
   });

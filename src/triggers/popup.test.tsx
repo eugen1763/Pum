@@ -3,6 +3,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { loadTheme } from "../theme";
 import {
+  displayTriggerCommand,
   moveTriggerSelection,
   sortTriggers,
   triggerActionForKey,
@@ -32,7 +33,7 @@ function trigger(
     args: ["--", id],
     cwd: "/tmp/project",
     mode: "repeat",
-    restartDelayMs: 500,
+    restartDelayMs: 60_000,
     createdAt,
     expiresAt: createdAt + 60_000,
     nextRestartAt: null,
@@ -91,15 +92,28 @@ describe("external trigger popup helpers", () => {
     expect(triggerActionForKey({ name: "x" })).toBeNull();
   });
 
+  test("redacts credential-shaped command arguments from display labels", () => {
+    const value = trigger("secret", 1);
+    value.args = ["--token", "hunter2", "--api-key=abc", "visible"];
+    const displayed = displayTriggerCommand(value);
+    expect(displayed).toContain("--token [redacted]");
+    expect(displayed).toContain("--api-key=[redacted]");
+    expect(displayed).not.toContain("hunter2");
+    expect(displayed).not.toContain("abc");
+  });
+
   test("lists the locked trigger contract fields", () => {
     expect(Object.fromEntries(triggerFields(trigger("fields", 1_700_000_000_000)))).toMatchObject({
       State: "idle",
       Target: "main session",
       Command: "/usr/bin/printf -- fields",
       Directory: "/tmp/project",
-      Mode: "repeat",
+      Mode: "repeat · 60s",
+      Runtime: "—",
       Fires: "2/8",
-      Pending: "3 (1 coalesced)",
+      Pending: "3 · 1 coalesced",
+      Next: "—",
+      Output: "—",
     });
   });
 });

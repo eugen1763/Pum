@@ -15,8 +15,11 @@ export function createShutdown(actions: ShutdownActions): (code: number) => Prom
     try {
       actions.unmount();
       actions.cleanup();
-      await actions.shutdownTriggers?.();
-      await actions.dispose();
+      try {
+        await actions.shutdownTriggers?.();
+      } finally {
+        await actions.dispose();
+      }
     } finally {
       actions.destroy();
       actions.exit(code);

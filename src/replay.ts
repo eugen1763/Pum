@@ -48,14 +48,16 @@ function agentMessageOf(entry: any): AgentMessageData | undefined {
 }
 
 function triggerEventOf(entry: any): TriggerEventData | undefined {
-  if (entry?.type !== "custom" || entry.customType !== TRIGGER_EVENT_CUSTOM_TYPE) return undefined;
-  const data = entry.data;
+  const isEntry = entry?.type === "custom" && entry.customType === TRIGGER_EVENT_CUSTOM_TYPE;
+  const isMessage = entry?.type === "custom_message" && entry.customType === TRIGGER_EVENT_CUSTOM_TYPE;
+  if (!isEntry && !isMessage) return undefined;
+  const data = isEntry ? entry.data : entry.details;
   if (!data || typeof data !== "object") return undefined;
   if (typeof data.id !== "string"
     || typeof data.triggerId !== "string"
-    || typeof data.triggerName !== "string"
-    || typeof data.sessionId !== "string"
-    || (data.agentId !== null && typeof data.agentId !== "string")
+    || typeof data.name !== "string"
+    || typeof data.target?.sessionId !== "string"
+    || (data.target.agentId !== null && typeof data.target.agentId !== "string")
     || typeof data.text !== "string"
     || typeof data.at !== "number") return undefined;
   return data as TriggerEventData;
@@ -128,8 +130,8 @@ export function replayEntries(
         agentMessages.add(triggerEvent.id);
         lines.push({
           kind: "agent-message",
-          sender: `trigger:${triggerEvent.triggerName}`,
-          recipient: triggerEvent.agentId ?? "main",
+          sender: `trigger:${triggerEvent.name}`,
+          recipient: triggerEvent.target.agentId ?? "main",
           text: triggerEvent.text,
         });
       }

@@ -7,7 +7,33 @@ import {
   countActiveSubagents,
   isCompletionOnlyMessage,
 } from "./manager";
-import { TRIGGER_EVENT_CUSTOM_TYPE, type SubagentStatus } from "./types";
+import { TRIGGER_EVENT_CUSTOM_TYPE, type SubagentStatus, type TriggerEventData } from "./types";
+
+function triggerEvent(overrides: Partial<TriggerEventData> = {}): TriggerEventData {
+  return {
+    id: "event",
+    version: 1,
+    triggerId: "trigger",
+    name: "tests",
+    state: "waiting",
+    target: { sessionId: "main-session", agentId: null, label: "main" },
+    executable: "bun",
+    args: ["test"],
+    at: 1,
+    fireCount: 1,
+    pendingCount: 1,
+    coalescedCount: 0,
+    startedAt: 1,
+    finishedAt: 2,
+    durationMs: 1,
+    exitCode: 0,
+    signal: null,
+    synthetic: false,
+    manual: false,
+    text: "Tests completed.",
+    ...overrides,
+  };
+}
 
 function addTestAgent(
   manager: SubagentManager,
@@ -110,15 +136,11 @@ describe("SubagentManager extension", () => {
       appendEntry(customType: string, data: any) { mainEntries.push({ customType, data }); },
       sendMessage(message: any, options: any) { mainDeliveries.push({ message, options }); },
     };
-    await manager.deliverTriggerEvent({
+    await manager.deliverTriggerEvent(triggerEvent({
       id: "event-main",
       triggerId: "trigger-main",
-      triggerName: "tests",
-      sessionId: "main-session",
-      agentId: null,
       text: "Main tests completed.",
-      at: 1,
-    });
+    }));
     expect(mainEntries[0].customType).toBe(TRIGGER_EVENT_CUSTOM_TYPE);
     expect(mainDeliveries[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
 
@@ -135,26 +157,42 @@ describe("SubagentManager extension", () => {
     record.api = {
       sendMessage(message: any, options: any) { childDeliveries.push({ message, options }); },
     };
-    await manager.deliverTriggerEvent({
+    await manager.deliverTriggerEvent(triggerEvent({
       id: "event-child",
       triggerId: "trigger-child",
-      triggerName: "build",
-      sessionId: "child-session",
-      agentId: "child",
+      name: "build",
+      target: { sessionId: "child-session", agentId: "child", label: "child" },
       text: "Child build completed.",
       at: 2,
-    });
+    }));
     expect(childEntries[0].customType).toBe(TRIGGER_EVENT_CUSTOM_TYPE);
     expect(childDeliveries[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
-    await expect(manager.deliverTriggerEvent({
+    await expect(manager.deliverTriggerEvent(triggerEvent({
       id: "wrong-session",
       triggerId: "trigger-child",
-      triggerName: "build",
-      sessionId: "other-session",
-      agentId: "child",
+      name: "build",
+      target: { sessionId: "other-session", agentId: "child", label: "child" },
       text: "Wrong target.",
       at: 3,
-    })).rejects.toThrow("unavailable");
+    }))).rejects.toThrow("unavailable");
+  });
+
+  test("invalidates exact child triggers when a retained agent stops", async () => {
+    const invalidated: Array<[string, string]> = [];
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      triggerManager: {
+        invalidateAgent: async (sessionId: string, agentId: string) => { invalidated.push([sessionId, agentId]); },
+      } as any,
+    });
+    addTestAgent(manager, "stopping", "idle");
+    const record = (manager as any).records.get("stopping");
+    record.session = { sessionId: "stopping-session" };
+    record.dispose = async () => { record.session = undefined; };
+
+    await manager.stop("stopping");
+    expect(invalidated).toEqual([["stopping-session", "stopping"]]);
   });
 
   test("recognizes completion-only messages without blocking actionable communication", () => {

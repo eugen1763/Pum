@@ -2,12 +2,16 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Line, PendingLine } from "../transcript";
 import type { WorktreeRecord } from "../worktree";
 import type { AgentUsage } from "../agent-usage";
+import {
+  EXTERNAL_TRIGGER_CUSTOM_TYPE,
+  type ExternalTriggerEventData,
+} from "../triggers/types";
 
 export const SUBAGENT_CUSTOM_TYPE = "pum.subagent";
 export const AGENT_MESSAGE_CUSTOM_TYPE = "pum.agent_message";
 export const AGENT_MESSAGE_DISPLAY_TYPE = "pum.agent_message_display";
 export const TOOL_EVENT_CUSTOM_TYPE = "pum.tool_event";
-export const TRIGGER_EVENT_CUSTOM_TYPE = "pum.trigger_event";
+export const TRIGGER_EVENT_CUSTOM_TYPE = EXTERNAL_TRIGGER_CUSTOM_TYPE;
 /** Hidden user-message prefix used only to guarantee that the main loop wakes. */
 export const SUBAGENT_WAKE_PREFIX = "[PUM internal subagent wake]";
 
@@ -65,16 +69,9 @@ export type AgentMessageData = {
   at: number;
 };
 
-export type TriggerEventData = {
+export type TriggerEventData = ExternalTriggerEventData & {
   id: string;
-  triggerId: string;
-  triggerName: string;
-  sessionId: string;
-  agentId: string | null;
   text: string;
-  at: number;
-  fireCount?: number;
-  outputPath?: string;
 };
 
 export type SubagentManagerEvent =

@@ -1,10 +1,13 @@
 export const EXTERNAL_TRIGGER_CUSTOM_TYPE = "pum.external_trigger" as const;
 export const MIN_TRIGGER_REPEAT_MS = 60_000;
-export const DEFAULT_TRIGGER_LIMIT = 100;
+export const DEFAULT_TRIGGER_LIMIT = 10;
 export const DEFAULT_RUNNING_LIMIT = 3;
 export const DEFAULT_PENDING_LIMIT = 5;
 export const DEFAULT_DELIVERED_LIMIT = 10;
 export const DEFAULT_OUTPUT_LIMIT_BYTES = 10 * 1024 * 1024;
+export const DEFAULT_TRIGGER_LIFETIME_MS = 24 * 60 * 60 * 1_000;
+export const MAX_TRIGGER_LIFETIME_MS = 30 * 24 * 60 * 60 * 1_000;
+export const MAX_TRIGGER_FIRES = 10;
 
 export type TriggerId = string;
 export type TriggerState =
@@ -53,11 +56,11 @@ export type TriggerSnapshot = {
   target: TriggerTarget;
   executable: string;
   args: string[];
-  cwd?: string;
+  cwd: string;
   mode: "once" | "repeat";
   restartDelayMs: number | null;
   createdAt: number;
-  expiresAt?: number;
+  expiresAt: number;
   nextRestartAt: number | null;
   fireCount: number;
   maxFires: number;
@@ -74,13 +77,16 @@ export type CreateTriggerInput = {
   target: TriggerTarget;
   executable: string;
   args?: readonly string[];
-  cwd?: string;
+  cwd: string;
   env?: Readonly<Record<string, string>>;
   mode?: "once" | "repeat";
   restartDelayMs?: number | null;
+  lifetimeMs?: number;
   expiresAt?: number;
   maxFires?: number;
+  template?: string;
   messageTemplate?: string;
+  startBehavior?: "start" | "paused";
 };
 
 export type TriggerAuthContext = TriggerRequester;
@@ -106,10 +112,21 @@ export type ExternalTriggerEventData = {
   name: string;
   state: ExternalTriggerEventState;
   target: TriggerTarget;
+  executable: string;
+  args: string[];
   at: number;
   fireCount: number;
   pendingCount: number;
   coalescedCount: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  durationMs: number | null;
+  exitCode: number | null;
+  signal: string | null;
+  synthetic: boolean;
+  manual: boolean;
+  renderedMessage?: string;
+  output?: TriggerOutputMetadata;
   result?: TriggerLastResult;
   deliveryId?: string;
   turnId?: string;
@@ -128,7 +145,7 @@ export type TriggerProcessProposal = {
   source: "external-trigger";
   executable: string;
   args: readonly string[];
-  cwd?: string;
+  cwd: string;
   operation: TriggerSafetyOperation;
   triggerName?: string;
 };

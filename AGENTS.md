@@ -248,10 +248,25 @@ These were chosen deliberately. Change them only on purpose.
   `read` calls look stuck. Run reads first, then issue each checked tool in a
   later assistant step. Run `create_trigger`, `resume_trigger`, and
   `invoke_trigger` separately because each tool can start a checked process.
+- **External triggers are process-local supervised definitions.** There is no
+  daemon, HTTP endpoint, socket, pipe, or file inbox. Definitions disappear on
+  restart. The manager retains at most 10 definitions, 5 pending deliveries,
+  and 10 fires per definition. Repeats wait at least 60 seconds; definitions
+  expire after 24 hours by default and no later than 30 days. Shutdown, session
+  replacement, and exact subagent unavailability terminate processes and clean
+  output files.
 - **Trigger model tools bind exact targets.** Child schemas accept only an
   omitted target or `{kind: "self"}`. Main schemas accept `main` or a retained
   subagent selector that `SubagentManager` resolves to an exact session, agent,
   and worktree. Never accept model-supplied raw `TriggerTarget` fields.
+  `create_trigger`, `resume_trigger`, and `invoke_trigger` can start checked
+  processes and stay out of mixed parallel batches.
+- **Trigger output and templates stay inert.** Commands use executable plus
+  argv with no shell by default. The inherited environment is a small sanitized
+  allowlist. Combined stdout/stderr goes to a private temporary file, drains
+  after the 10 MB cap, and is removed after the triggered turn settles. Prompt
+  templates accept only the documented simple `{{field}}` placeholders;
+  unknown or malformed placeholders fail before process start.
 - **External-trigger checks preserve argv boundaries.** Check mode evaluates
   `{executable, args, cwd}` as structured process data. It never flattens the
   proposal into shell text. Shell and interpreter entrypoints require embedded
