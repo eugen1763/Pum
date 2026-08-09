@@ -47,7 +47,7 @@ describe("Help popup layout", () => {
   });
 
   test("uses readable grouped columns with exact outer content gaps", async () => {
-    const frame = await renderHelp(100, 28, 0);
+    const frame = await renderHelp(140, 28, 0);
     const lines = frame.split("\n");
     expect(frame).toContain("Prompt");
     expect(frame).toContain("History and sessions");
@@ -63,6 +63,21 @@ describe("Help popup layout", () => {
     expect(contentStart - summaryEnd).toBe(2);
     expect(footerIndex - contentEnd).toBe(2);
     expect(lines[footerIndex]).not.toContain("Send, or steer while working");
+  });
+
+  test("stacks category groups vertically when the full columns would clip", async () => {
+    expect(helpLayout(100, 28).twoColumns).toBe(false);
+    const firstPage = await renderHelp(100, 28, 0);
+    const lastPage = await renderHelp(100, 28, maxHelpScrollOffset(28));
+
+    expect(firstPage).toContain("Prompt");
+    expect(firstPage).toContain("Cache and agents");
+    expect(lastPage).toContain("Commands");
+    expect(lastPage).toContain("Application");
+    expect(lastPage).toContain("↑↓ scroll");
+    for (const line of `${firstPage}\n${lastPage}`.split("\n")) {
+      expect(Array.from(line).length).toBeLessThanOrEqual(100);
+    }
   });
 
   test("supports scrolling with footer separation in a short narrow terminal", async () => {
@@ -92,13 +107,13 @@ describe("Help popup layout", () => {
   });
 
   test("keeps both gaps and the footer fixed in the minimum wide layout", async () => {
-    const frame = await renderHelp(100, 10, 0);
+    const frame = await renderHelp(140, 10, 0);
     const lines = frame.split("\n");
     const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));
     const contentStart = lines.findIndex((line) => line.includes("Prompt"));
     const footerIndex = lines.findIndex((line) => line.includes("esc or ? close"));
 
-    expect(helpLayout(100, 10)).toMatchObject({ topGap: 1, bottomGap: 1, contentHeight: 1 });
+    expect(helpLayout(140, 10)).toMatchObject({ topGap: 1, bottomGap: 1, contentHeight: 1 });
     expect(contentStart - summaryEnd).toBe(2);
     expect(footerIndex - contentStart).toBe(2);
     expect(lines[footerIndex]).not.toContain("Send, or steer while working");

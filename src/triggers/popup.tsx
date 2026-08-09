@@ -1,4 +1,5 @@
 import type { Theme } from "../theme";
+import { PopupFrame } from "../popup-frame";
 import type { TriggerSnapshot } from "./types";
 
 export type { TriggerOutputMetadata, TriggerSnapshot, TriggerState } from "./types";
@@ -171,21 +172,15 @@ export function TriggersPopup({
   const detailVisible = !geometry.compact;
 
   return (
-    <box
+    <PopupFrame
+      theme={theme}
+      terminalWidth={terminalWidth}
+      terminalHeight={terminalHeight}
+      geometry={geometry}
+      zIndex={110}
       title={geometry.compact ? undefined : " External triggers "}
-      style={{
-        position: "absolute",
-        top: geometry.top,
-        left: geometry.left,
-        width: geometry.width,
-        height: geometry.height,
-        zIndex: 110,
-        border: !geometry.compact,
-        borderColor: theme.border,
-        backgroundColor: theme.popupBg,
-        flexDirection: "column",
-        padding: geometry.compact ? 0 : 1,
-      }}
+      border={!geometry.compact}
+      padding={geometry.compact ? 0 : 1}
     >
       {geometry.compact ? (
         <text content="External triggers" fg={theme.accent} bg={theme.popupBg} style={{ height: 1, flexShrink: 0 }} />
@@ -233,6 +228,6 @@ export function TriggersPopup({
         wrapMode="none"
         style={{ width: "100%", height: 1, flexShrink: 0 }}
       />
-    </box>
+    </PopupFrame>
   );
 }

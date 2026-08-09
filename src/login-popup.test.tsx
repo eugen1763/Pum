@@ -57,7 +57,14 @@ async function providerHarness(width = 60, height = 12) {
     );
     await settle(setup);
   };
-  const providerPage = (cursor: number): LoginPage => ({ kind: "providers", methods, cursor });
+  const providerPage = (cursor: number, query = "", searchFocused = false): LoginPage => ({
+    kind: "providers",
+    methods,
+    cursor,
+    query,
+    searchFocused,
+    customVisible: true,
+  });
   const selectedText = () => setup.captureSpans().lines
     .flatMap((line) => line.spans)
     .filter((span) => span.bg.equals(parseColor(theme.selectionBg)))
@@ -68,9 +75,31 @@ async function providerHarness(width = 60, height = 12) {
 
 describe("login popup", () => {
   test("keeps provider setup usable in a narrow terminal", async () => {
-    const frame = await frameFor({ kind: "providers", methods: [], cursor: 0 }, 42);
+    const frame = await frameFor({
+      kind: "providers",
+      methods: [],
+      cursor: 0,
+      query: "",
+      searchFocused: true,
+      customVisible: true,
+    }, 42);
     expect(frame).toContain("Custom OpenAI-compatible provider");
-    expect(frame).toContain("esc close");
+    expect(frame).toContain("esc");
+  });
+
+  test("renders search, empty results, and footer in a short narrow terminal", async () => {
+    const frame = await frameFor({
+      kind: "providers",
+      methods: [],
+      cursor: 0,
+      query: "missing",
+      searchFocused: true,
+      customVisible: false,
+    }, 34, 10);
+    expect(frame).toContain("Search");
+    expect(frame).toContain("No matching providers");
+    expect(frame).toContain("/ search");
+    expect(frame.split("\n").every((line) => Array.from(line).length <= 34)).toBe(true);
   });
 
   test("renders only a mask for submitted secret input", async () => {

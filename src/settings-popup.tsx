@@ -2,6 +2,7 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import type { Model } from "@earendil-works/pi-ai";
 import { useEffect, useRef } from "react";
 import type { Theme } from "./theme";
+import { PopupFrame } from "./popup-frame";
 
 /** The seven levels pi accepts. setThinkingLevel() clamps to model capability. */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -140,9 +141,9 @@ export function SettingsPopup({
 }: PopupProps) {
   const listRef = useRef<ScrollBoxRenderable>(null);
   const narrow = terminalWidth < 64;
-  const margin = narrow ? 1 : Math.max(2, Math.floor(terminalWidth * 0.1));
-  const popupWidth = Math.max(24, terminalWidth - margin * 2);
-  const popupHeight = Math.max(8, Math.min(terminalHeight - 2, page === "main" ? 20 : 18));
+  const margin = terminalWidth < 4 ? 0 : narrow ? 1 : Math.max(2, Math.floor(terminalWidth * 0.1));
+  const popupWidth = Math.max(1, terminalWidth - margin * 2);
+  const popupHeight = Math.max(1, Math.min(terminalHeight, Math.max(8, terminalHeight - 2), page === "main" ? 20 : 18));
 
   useEffect(() => {
     if (selectedId) listRef.current?.scrollChildIntoView(`setting-${selectedId}`);
@@ -152,21 +153,18 @@ export function SettingsPopup({
   const selectedRow = rows.find((row) => row.id === selectedId);
 
   return (
-    <box
-      title={page === "main" ? " Settings " : page === "models" ? " Model " : " Check model "}
-      style={{
-        position: "absolute",
-        top: Math.max(1, Math.floor((terminalHeight - popupHeight) / 2)),
+    <PopupFrame
+      theme={theme}
+      terminalWidth={terminalWidth}
+      terminalHeight={terminalHeight}
+      geometry={{
+        top: Math.max(0, Math.floor((terminalHeight - popupHeight) / 2)),
         left: margin,
         width: popupWidth,
         height: popupHeight,
-        zIndex: 100,
-        border: true,
-        borderColor: theme.border,
-        backgroundColor: theme.popupBg,
-        flexDirection: "column",
-        padding: 1,
       }}
+      zIndex={100}
+      title={page === "main" ? " Settings " : page === "models" ? " Model " : " Check model "}
     >
       {page === "main" ? (
         <>
@@ -282,6 +280,6 @@ export function SettingsPopup({
           <text content="/ search   ↑↓ move   enter select   esc back" fg={theme.dim} bg={theme.popupBg} />
         </>
       )}
-    </box>
+    </PopupFrame>
   );
 }

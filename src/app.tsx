@@ -410,6 +410,9 @@ export function App({
     kind: "providers",
     methods: providerLoginMethods((modelRuntime as any).getProviders?.() ?? []),
     cursor: 0,
+    query: "",
+    searchFocused: true,
+    customVisible: true,
   }));
   const [modelQuery, setModelQuery] = useState("");
   const [modelSearchFocused, setModelSearchFocused] = useState(false);
@@ -1658,8 +1661,7 @@ export function App({
     }
 
     if (loginOpen) {
-      key.stopPropagation();
-      loginControllerRef.current?.handleKey(key);
+      if (loginControllerRef.current?.handleKey(key)) key.stopPropagation();
       return;
     }
 
@@ -2287,7 +2289,13 @@ export function App({
           role="inputBottom"
         />
         {loginOpen ? (
-          <LoginPopup theme={theme} page={loginPage} terminalWidth={width} terminalHeight={height} />
+          <LoginPopup
+            theme={theme}
+            page={loginPage}
+            terminalWidth={width}
+            terminalHeight={height}
+            onProviderSearchChange={(value) => loginControllerRef.current?.setProviderQuery(value)}
+          />
         ) : null}
         {questionnaire ? (
           <QuestionnairePopup

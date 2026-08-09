@@ -10,6 +10,7 @@ import {
   type StatusMetadataValues,
 } from "./status-metadata";
 import type { Theme } from "./theme";
+import { PopupFrame } from "./popup-frame";
 import type { SubagentSnapshot } from "./subagents/types";
 
 export type AgentTreeRow = {
@@ -125,12 +126,19 @@ export function AgentSelectorPopup({
   const { width, height } = useTerminalDimensions();
   const scrollRef = useRef<ScrollBoxRenderable>(null);
   const narrow = width < 50;
-  const popupWidth = narrow ? Math.max(12, width - 2) : Math.floor(width * 0.7);
+  const popupWidth = narrow ? Math.max(1, width - 2) : Math.max(1, Math.floor(width * 0.7));
   const popupColumns = Math.max(8, popupWidth - 5);
-  const popupHeight = Math.min(
+  const popupHeight = Math.max(1, Math.min(
+    height,
     rows.length + (narrow ? 10 : 7),
     Math.max(7, Math.floor(height * (narrow ? 0.85 : 0.7))),
-  );
+  ));
+  const geometry = {
+    top: narrow ? Math.min(1, Math.max(0, height - popupHeight)) : Math.max(0, Math.floor(height * 0.15)),
+    left: narrow ? Math.min(1, Math.max(0, width - popupWidth)) : Math.max(0, Math.floor(width * 0.15)),
+    width: popupWidth,
+    height: popupHeight,
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -140,21 +148,13 @@ export function AgentSelectorPopup({
   }, [cursor]);
 
   return (
-    <box
+    <PopupFrame
+      theme={theme}
+      terminalWidth={width}
+      terminalHeight={height}
+      geometry={geometry}
+      zIndex={100}
       title=" Agents "
-      style={{
-        position: "absolute",
-        top: narrow ? 1 : "15%",
-        left: narrow ? 1 : "15%",
-        width: popupWidth,
-        height: popupHeight,
-        zIndex: 100,
-        border: true,
-        borderColor: theme.border,
-        backgroundColor: theme.popupBg,
-        flexDirection: "column",
-        padding: 1,
-      }}
     >
       <scrollbox
         ref={scrollRef}
@@ -212,6 +212,6 @@ export function AgentSelectorPopup({
         wrapMode="word"
         style={{ flexShrink: 0, width: "100%" }}
       />
-    </box>
+    </PopupFrame>
   );
 }

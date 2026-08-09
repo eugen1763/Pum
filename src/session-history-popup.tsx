@@ -5,6 +5,7 @@ import {
   type SessionHistoryItem,
 } from "./session-history-metadata";
 import type { Theme } from "./theme";
+import { PopupFrame } from "./popup-frame";
 
 function tokenSummary(session: SessionHistoryItem): string {
   const tokens = session.historyMetadata.tokens;
@@ -55,7 +56,7 @@ export function SessionHistoryPopup({
   terminalHeight: number;
   onSelect: (path: string) => void;
 }) {
-  const marginX = terminalWidth >= 70 ? Math.max(2, Math.floor(terminalWidth * 0.08)) : 1;
+  const marginX = terminalWidth < 3 ? 0 : terminalWidth >= 70 ? Math.max(2, Math.floor(terminalWidth * 0.08)) : 1;
   const marginY = terminalHeight >= 12 ? Math.max(1, Math.floor(terminalHeight * 0.08)) : 0;
   const compact = terminalWidth < 64 || terminalHeight < 12;
   const padding = terminalWidth >= 42 && terminalHeight >= 8 ? 1 : 0;
@@ -64,23 +65,22 @@ export function SessionHistoryPopup({
   const footer = terminalWidth >= 52
     ? "↑↓ select   enter open   esc close   ·   size = JSONL file bytes"
     : "↑↓ enter esc · size=JSONL bytes";
+  const geometry = {
+    top: marginY,
+    left: marginX,
+    width: Math.max(1, terminalWidth - marginX * 2),
+    height: Math.max(1, terminalHeight - marginY * 2),
+  };
 
   return (
-    <box
+    <PopupFrame
+      theme={theme}
+      terminalWidth={terminalWidth}
+      terminalHeight={terminalHeight}
+      geometry={geometry}
+      zIndex={100}
       title={terminalWidth >= 24 ? " Session history " : undefined}
-      style={{
-        position: "absolute",
-        top: marginY,
-        left: marginX,
-        width: Math.max(1, terminalWidth - marginX * 2),
-        height: Math.max(3, terminalHeight - marginY * 2),
-        zIndex: 100,
-        border: true,
-        borderColor: theme.border,
-        backgroundColor: theme.popupBg,
-        flexDirection: "column",
-        padding,
-      }}
+      padding={padding}
     >
       {sessions.length > 0 ? (
         <select
@@ -114,6 +114,6 @@ export function SessionHistoryPopup({
           style={{ flexShrink: 0 }}
         />
       ) : null}
-    </box>
+    </PopupFrame>
   );
 }
