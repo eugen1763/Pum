@@ -13,6 +13,15 @@ Plan, edit, run commands, review Markdown, and coordinate parallel Git worktrees
 
 </div>
 
+## Quick Start
+
+```bash
+bun i -g pum-agent@beta
+pum
+```
+
+PUM opens the login panel automatically on the first start.
+
 > [!WARNING]
 > PUM can read, write, and delete files. PUM can also run shell commands without approval. Start PUM only inside a workspace where these actions are acceptable. Check mode adds a verifier, but it is not a sandbox.
 
