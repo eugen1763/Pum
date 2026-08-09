@@ -9,6 +9,13 @@ export const CHECK_APPROVALS_LIMIT = 256;
 
 export type CheckedToolName = "bash" | "edit" | "apply_patch";
 export type CheckApprovalChoice = "allow-once" | "allow-session" | "allow-project" | "deny";
+export type CheckApprovalIdentity =
+  | { kind: "main" }
+  | { kind: "subagent"; agentId: string };
+
+export function checkApprovalIdentityKey(identity: CheckApprovalIdentity): string {
+  return identity.kind === "main" ? "main" : `subagent:${identity.agentId}`;
+}
 
 export type CheckApprovalTarget = {
   sessionId: string;
@@ -61,18 +68,20 @@ export function canonicalJson(value: unknown, seen = new Set<object>()): string 
 }
 
 type ApprovalEntry = {
+  identity: string;
   tool: CheckedToolName;
   model: string;
   cwd: string;
   input: string;
 };
 
-type ApprovalFile = { version: 1; entries: ApprovalEntry[] };
+type ApprovalFile = { version: 2; entries: ApprovalEntry[] };
 
 function isApprovalEntry(value: unknown): value is ApprovalEntry {
   if (!value || typeof value !== "object") return false;
   const entry = value as Partial<ApprovalEntry>;
-  return ["bash", "edit", "apply_patch"].includes(entry.tool ?? "")
+  return typeof entry.identity === "string" && entry.identity.length > 0
+    && ["bash", "edit", "apply_patch"].includes(entry.tool ?? "")
     && typeof entry.model === "string"
     && typeof entry.cwd === "string"
     && typeof entry.input === "string";
@@ -87,19 +96,21 @@ export class CheckApprovalStore {
     private readonly limit = CHECK_APPROVALS_LIMIT,
   ) {}
 
-  has(tool: CheckedToolName, model: string, cwd: string, canonicalInput: string): boolean {
+  has(identity: CheckApprovalIdentity, tool: CheckedToolName, model: string, cwd: string, canonicalInput: string): boolean {
     this.load();
     const key = projectStorageKey(cwd);
     return this.entries.some((entry) =>
-      entry.tool === tool && entry.model === model && entry.cwd === key && entry.input === canonicalInput,
+      entry.identity === checkApprovalIdentityKey(identity)
+      && entry.tool === tool && entry.model === model && entry.cwd === key && entry.input === canonicalInput,
     );
   }
 
-  add(tool: CheckedToolName, model: string, cwd: string, canonicalInput: string): boolean {
+  add(identity: CheckApprovalIdentity, tool: CheckedToolName, model: string, cwd: string, canonicalInput: string): boolean {
     this.load();
-    const entry = { tool, model, cwd: projectStorageKey(cwd), input: canonicalInput };
+    const entry = { identity: checkApprovalIdentityKey(identity), tool, model, cwd: projectStorageKey(cwd), input: canonicalInput };
     if (this.entries.some((candidate) =>
-      candidate.tool === entry.tool
+      candidate.identity === entry.identity
+      && candidate.tool === entry.tool
       && candidate.model === entry.model
       && candidate.cwd === entry.cwd
       && candidate.input === entry.input,
@@ -129,7 +140,7 @@ export class CheckApprovalStore {
     this.loaded = true;
     try {
       const parsed = JSON.parse(readFileSync(this.path, "utf8")) as Partial<ApprovalFile>;
-      if (parsed.version !== 1 || !Array.isArray(parsed.entries)) return;
+      if (parsed.version !== 2 || !Array.isArray(parsed.entries)) return;
       const valid = parsed.entries.filter(isApprovalEntry);
       this.entries = this.limit > 0 ? valid.slice(-this.limit) : [];
     } catch {
@@ -141,7 +152,7 @@ export class CheckApprovalStore {
     try {
       mkdirSync(dirname(this.path), { recursive: true });
       const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
-      writeFileSync(temporary, `${JSON.stringify({ version: 1, entries: this.entries } satisfies ApprovalFile, null, 2)}\n`, { mode: 0o600 });
+      writeFileSync(temporary, `${JSON.stringify({ version: 2, entries: this.entries } satisfies ApprovalFile, null, 2)}\n`, { mode: 0o600 });
       renameSync(temporary, this.path);
       return true;
     } catch {
@@ -151,12 +162,13 @@ export class CheckApprovalStore {
 }
 
 export function exactApprovalKey(
+  identity: CheckApprovalIdentity,
   tool: string,
   model: string,
   cwd: string,
   canonicalInput: string,
 ): string {
-  return `${tool}\n${model}\n${projectStorageKey(cwd)}\n${canonicalInput}`;
+  return `${checkApprovalIdentityKey(identity)}\n${tool}\n${model}\n${projectStorageKey(cwd)}\n${canonicalInput}`;
 }
 
 type PendingApproval = {

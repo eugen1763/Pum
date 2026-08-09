@@ -6,6 +6,7 @@ import { AGENT_DIR } from "./config";
 import { projectStorageKey } from "./platform";
 import {
   canonicalJson,
+  type CheckApprovalIdentity,
   CheckApprovalCoordinator,
   exactApprovalKey,
   CheckApprovalStore,
@@ -412,6 +413,8 @@ export type ToolCheck = {
   config: CheckModeConfig | { enabled: boolean; model: string };
   timeoutMs?: number;
   context?: UntrustedContext;
+  /** Authority identity supplied by the owning session integration. */
+  requester?: CheckApprovalIdentity;
   isApproved?: (prepared: PreparedCheck) => boolean;
 };
 export type ProcessCheckCall = Omit<ToolCheck, "toolName" | "input" | "cwd"> & {
@@ -515,17 +518,31 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
       return (await request(clarification)).verdict;
     }, call.signal, timeoutMs);
 
-    if (verdict.decision === "unsafe") return {
-      decision: "block", reason: `Verifier UNSAFE [${verdict.category}]: ${verdict.reason}`,
-      category: verdict.category, prepared, explicitUnsafe: true,
-    };
+    if (verdict.decision === "unsafe") {
+      const mainPublishMutationException = profile === "ask"
+        && verdict.category === "publish-mutation"
+        && call.requester?.kind === "main";
+      return {
+        decision: mainPublishMutationException ? "ask" : "block",
+        reason: `Verifier UNSAFE [${verdict.category}]: ${verdict.reason}`,
+        category: verdict.category,
+        prepared,
+        explicitUnsafe: true,
+      };
+    }
     if (verdict.decision === "unclear") return {
       decision: profile === "ask" ? "ask" : "block",
       reason: `Verifier remained unclear [${verdict.category}]: ${verdict.reason}`,
       category: verdict.category, prepared,
     };
     if (cacheEligible) cache.add(config.model, call.cwd, call.input);
-    return { decision: "allow", reason: `Verifier SAFE [${verdict.category}]: ${verdict.reason}`, category: verdict.category, prepared };
+    const reason = `Verifier SAFE [${verdict.category}]: ${verdict.reason}`;
+    return {
+      decision: profile === "ask" ? "ask" : "allow",
+      reason: profile === "ask" ? `${reason}. Ask mode requires explicit user approval` : reason,
+      category: verdict.category,
+      prepared,
+    };
   } catch (error) {
     if (error instanceof SafetyCheckAbortError || call.signal?.aborted) {
       return { decision: "block", reason: `Safety check aborted: ${error instanceof Error ? error.message : String(error)}`, category: "abort", prepared };
@@ -572,8 +589,11 @@ function externalTriggerSessionApprovalKey(
   model: string,
   prepared: PreparedCheck,
 ): string {
-  const target = requester.kind === "subagent" ? requester.agentId : "main";
-  return `${requester.sessionId}\n${target}\n${exactApprovalKey(
+  const identity: CheckApprovalIdentity = requester.kind === "subagent"
+    ? { kind: "subagent", agentId: requester.agentId }
+    : { kind: "main" };
+  return `${requester.sessionId}\n${exactApprovalKey(
+    identity,
     "bash",
     model,
     requester.cwd,
@@ -592,21 +612,24 @@ export function createExternalTriggerSafetyChecker(
 
   return async (proposal, requester, signal) => {
     const config = getCheckModeConfig();
+    const identity: CheckApprovalIdentity = requester.kind === "subagent"
+      ? { kind: "subagent", agentId: requester.agentId }
+      : { kind: "main" };
     const evaluation = await evaluateProcessCheck(runtime, cache, {
       proposal,
       projectCwd: requester.cwd,
       config,
       signal,
+      requester: identity,
       isApproved: (prepared) => sessionApprovals.has(
         externalTriggerSessionApprovalKey(requester, config.model, prepared),
-      ) || approvals.has("bash", config.model, requester.cwd, prepared.canonicalInput),
+      ) || approvals.has(identity, "bash", config.model, requester.cwd, prepared.canonicalInput),
     });
     if (evaluation.decision === "allow") return;
 
     if (evaluation.decision === "ask"
       && config.profile === "ask"
-      && evaluation.prepared
-      && !evaluation.explicitUnsafe) {
+      && evaluation.prepared) {
       const prepared = evaluation.prepared;
       const choice = await options.coordinator?.request({
         target: {
@@ -629,7 +652,7 @@ export function createExternalTriggerSafetyChecker(
         return;
       }
       if (choice === "allow-project"
-        && approvals.add("bash", config.model, requester.cwd, prepared.canonicalInput)) return;
+        && approvals.add(identity, "bash", config.model, requester.cwd, prepared.canonicalInput)) return;
       evaluation.reason = choice === "allow-project"
         ? "Check mode could not persist the exact project approval"
         : "Check mode approval was denied or cancelled";
@@ -672,6 +695,7 @@ export function redactApprovalPreview(text: string): string {
 type CheckExtensionOptions = {
   coordinator?: CheckApprovalCoordinator;
   approvals?: CheckApprovalStore;
+  identity?: CheckApprovalIdentity;
 };
 
 export function createCheckModeExtension(
@@ -680,6 +704,7 @@ export function createCheckModeExtension(
   options: CheckExtensionOptions = {},
 ): InlineExtension {
   const approvals = options.approvals ?? new CheckApprovalStore();
+  const identity = options.identity ?? { kind: "main" };
   return {
     name: "pum-check-mode",
     factory(pi) {
@@ -707,6 +732,7 @@ export function createCheckModeExtension(
           cwd: ctx.cwd,
           signal: ctx.signal,
           config: current,
+          requester: identity,
           context: {
             currentUserRequest,
             agentRationale: event.input && typeof event.input === "object" && typeof (event.input as any).rationale === "string"
@@ -715,15 +741,15 @@ export function createCheckModeExtension(
             inspectedPaths: inspectedPaths(ctx.sessionManager?.buildContextEntries?.() ?? []),
           },
           isApproved: (prepared) => {
-            const exactKey = exactApprovalKey(toolName, current.model, ctx.cwd, prepared.canonicalInput);
+            const exactKey = exactApprovalKey(identity, toolName, current.model, ctx.cwd, prepared.canonicalInput);
             return sessionApprovals.has(exactKey)
-              || approvals.has(toolName, current.model, ctx.cwd, prepared.canonicalInput);
+              || approvals.has(identity, toolName, current.model, ctx.cwd, prepared.canonicalInput);
           },
         });
         if (evaluation.decision === "allow") return;
 
         if (evaluation.decision === "ask" && current.profile === "ask" && evaluation.prepared) {
-          const exactKey = exactApprovalKey(toolName, current.model, ctx.cwd, evaluation.prepared.canonicalInput);
+          const exactKey = exactApprovalKey(identity, toolName, current.model, ctx.cwd, evaluation.prepared.canonicalInput);
           const sessionId = ctx.sessionManager?.getSessionId?.();
           const choice = await options.coordinator?.request({
             target: typeof sessionId === "string" ? { sessionId } : undefined,
@@ -743,7 +769,7 @@ export function createCheckModeExtension(
             return;
           }
           if (choice === "allow-project"
-            && approvals.add(toolName, current.model, ctx.cwd, evaluation.prepared.canonicalInput)) return;
+            && approvals.add(identity, toolName, current.model, ctx.cwd, evaluation.prepared.canonicalInput)) return;
           evaluation.reason = choice === "allow-project"
             ? "Check mode could not persist the exact project approval"
             : "Check mode approval was denied or cancelled";

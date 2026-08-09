@@ -445,6 +445,31 @@ describe("external trigger safety checker", () => {
     unsubscribe();
   });
 
+  test("sends verifier SAFE process decisions to the approval queue in Ask mode", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pum-trigger-check-"));
+    temporaryDirectories.push(directory);
+    const coordinator = new CheckApprovalCoordinator();
+    let pending: any;
+    const unsubscribe = coordinator.subscribe((request) => { pending = request; });
+    const verifier = runtime([result('{"decision":"safe","category":"test","confidence":1,"reason":"local test"}')]);
+    setCheckModeConfig({ profile: "ask", model: config.model });
+    const checker = createExternalTriggerSafetyChecker(verifier, {
+      coordinator,
+      cache: temporaryCache().cache,
+    });
+    const checked = checker(proposal(directory), {
+      kind: "main",
+      sessionId: "main-session",
+      cwd: directory,
+    });
+    await Bun.sleep(0);
+    expect(pending.reason).toContain("Verifier SAFE");
+    coordinator.resolve(pending.id, "allow-once");
+    await checked;
+    expect(verifier.calls).toBe(1);
+    unsubscribe();
+  });
+
   test("does not send explicit unsafe process decisions to the approval queue", async () => {
     const directory = mkdtempSync(join(tmpdir(), "pum-trigger-check-"));
     temporaryDirectories.push(directory);
@@ -463,6 +488,44 @@ describe("external trigger safety checker", () => {
       cwd: directory,
     })).rejects.toThrow("Verifier UNSAFE");
     expect(requests).toBe(0);
+    unsubscribe();
+  });
+
+  test("allows only the main publish-mutation exception to reach process approval", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pum-trigger-check-"));
+    temporaryDirectories.push(directory);
+    const coordinator = new CheckApprovalCoordinator();
+    let pending: any;
+    let requests = 0;
+    const unsubscribe = coordinator.subscribe((request) => {
+      pending = request;
+      if (request) requests += 1;
+    });
+    const verdict = result('{"decision":"unsafe","category":"publish-mutation","confidence":1,"reason":"publishes a package"}');
+    const verifier = runtime([verdict, verdict]);
+    setCheckModeConfig({ profile: "ask", model: config.model });
+    const checker = createExternalTriggerSafetyChecker(verifier, {
+      coordinator,
+      cache: temporaryCache().cache,
+    });
+
+    const mainCheck = checker(proposal(directory), {
+      kind: "main",
+      sessionId: "main-session",
+      cwd: directory,
+    });
+    await Bun.sleep(0);
+    expect(pending.reason).toContain("publish-mutation");
+    coordinator.resolve(pending.id, "allow-once");
+    await mainCheck;
+
+    await expect(checker(proposal(directory), {
+      kind: "subagent",
+      sessionId: "child-session",
+      agentId: "child-1",
+      cwd: directory,
+    })).rejects.toThrow("publish-mutation");
+    expect(requests).toBe(1);
     unsubscribe();
   });
 });
@@ -510,6 +573,44 @@ describe("profile evaluation and structured verdicts", () => {
     expect(prompt).toContain('"unifiedDiff"');
     expect(prompt).toContain('"configSensitive": true');
     expect(prompt).toContain('"projectContained": true');
+  });
+
+  test("verifier SAFE still requires Ask approval while Strict remains allowed", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([result("SAFE"), result("SAFE")]);
+    const input = { command: "bun test src/check-mode.test.ts" };
+    expect((await evaluateToolCall(verifier, cache, {
+      toolName: "bash", input, cwd: process.cwd(), config,
+    })).decision).toBe("allow");
+    expect((await evaluateToolCall(verifier, cache, {
+      toolName: "bash", input, cwd: process.cwd(),
+      config: { profile: "ask", model: config.model }, requester: { kind: "main" },
+    })).decision).toBe("ask");
+  });
+
+  test("verifier SAFE edit and apply_patch calls also require Ask approval", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-ask-mutations-"));
+    temporaryDirectories.push(cwd);
+    await Bun.write(join(cwd, "a.txt"), "old\n");
+    const verifier = runtime([result("SAFE"), result("SAFE")]);
+    const ask = { profile: "ask" as const, model: config.model };
+
+    expect((await evaluateToolCall(verifier, cache, {
+      toolName: "edit",
+      input: { path: "a.txt", edits: [{ oldText: "old", newText: "new" }] },
+      cwd,
+      config: ask,
+      requester: { kind: "main" },
+    })).decision).toBe("ask");
+    expect((await evaluateToolCall(verifier, cache, {
+      toolName: "apply_patch",
+      input: { patch: "*** Begin Patch\n*** Update File: a.txt\n@@\n-old\n+new\n*** End Patch" },
+      cwd,
+      config: ask,
+      requester: { kind: "main" },
+    })).decision).toBe("ask");
+    expect(verifier.calls).toBe(2);
   });
 
   test("explicit structured UNSAFE is blocked and never reaches ask UI", async () => {
@@ -577,6 +678,82 @@ describe("profile evaluation and structured verdicts", () => {
 });
 
 describe("ask profile approvals", () => {
+  test("prompts for SAFE, blocks hard rules without prompting, and accepts main publish-mutation", async () => {
+    const { cache } = temporaryCache();
+    const directory = mkdtempSync(join(tmpdir(), "pum-ask-main-"));
+    temporaryDirectories.push(directory);
+    const coordinator = new CheckApprovalCoordinator();
+    let pending: any;
+    let requests = 0;
+    const unsubscribe = coordinator.subscribe((request) => {
+      pending = request;
+      if (request) requests += 1;
+    });
+    const verifier = runtime([
+      result('{"decision":"safe","category":"test","confidence":1,"reason":"local test"}'),
+      result('{"decision":"unsafe","category":"publish-mutation","confidence":1,"reason":"publishes package"}'),
+    ]);
+    const handlers = new Map<string, Function>();
+    const extension = createCheckModeExtension(verifier, cache, {
+      coordinator,
+      identity: { kind: "main" },
+    });
+    (extension as any).factory({ on: (name: string, handler: Function) => handlers.set(name, handler) });
+    setCheckModeConfig({ profile: "ask", model: config.model });
+    const ctx = { cwd: directory, sessionManager: { buildContextEntries: () => [], getSessionId: () => "main-session" } };
+
+    const safe = handlers.get("tool_call")!({ toolName: "bash", toolCallId: "safe", input: { command: "bun test" } }, ctx);
+    await Bun.sleep(0);
+    expect(pending.reason).toContain("Verifier SAFE");
+    coordinator.resolve(pending.id, "allow-once");
+    expect(await safe).toBeUndefined();
+
+    expect(await handlers.get("tool_call")!({
+      toolName: "bash", toolCallId: "hard", input: { command: "sudo true" },
+    }, ctx)).toMatchObject({ block: true });
+    expect(requests).toBe(1);
+
+    const publish = handlers.get("tool_call")!({
+      toolName: "bash", toolCallId: "publish", input: { command: "bun run publish" },
+    }, ctx);
+    await Bun.sleep(0);
+    expect(pending.reason).toContain("publish-mutation");
+    coordinator.resolve(pending.id, "allow-once");
+    expect(await publish).toBeUndefined();
+    expect(requests).toBe(2);
+    unsubscribe();
+  });
+
+  test("blocks child publish-mutation and ordinary UNSAFE without approval prompts", async () => {
+    const { cache } = temporaryCache();
+    const directory = mkdtempSync(join(tmpdir(), "pum-ask-child-"));
+    temporaryDirectories.push(directory);
+    const coordinator = new CheckApprovalCoordinator();
+    let requests = 0;
+    const unsubscribe = coordinator.subscribe((request) => { if (request) requests += 1; });
+    const verifier = runtime([
+      result('{"decision":"unsafe","category":"publish-mutation","confidence":1,"reason":"publishes package"}'),
+      result('{"decision":"unsafe","category":"execution","confidence":1,"reason":"unsafe operation"}'),
+    ]);
+    const handlers = new Map<string, Function>();
+    const extension = createCheckModeExtension(verifier, cache, {
+      coordinator,
+      identity: { kind: "subagent", agentId: "child-1" },
+    });
+    (extension as any).factory({ on: (name: string, handler: Function) => handlers.set(name, handler) });
+    setCheckModeConfig({ profile: "ask", model: config.model });
+    const ctx = { cwd: directory, sessionManager: { buildContextEntries: () => [], getSessionId: () => "child-session" } };
+
+    expect(await handlers.get("tool_call")!({
+      toolName: "bash", toolCallId: "publish", input: { command: "bun run publish" },
+    }, ctx)).toMatchObject({ block: true });
+    expect(await handlers.get("tool_call")!({
+      toolName: "bash", toolCallId: "unsafe", input: { command: "bun run custom" },
+    }, ctx)).toMatchObject({ block: true });
+    expect(requests).toBe(0);
+    unsubscribe();
+  });
+
   test("allows an exact call for the session without broad matching", async () => {
     const { cache } = temporaryCache();
     const directory = mkdtempSync(join(tmpdir(), "pum-ask-"));

@@ -167,6 +167,7 @@ type ManagerOptions = {
   agentDir: string;
   maxActiveSubagents?: number;
   childExtensionFactories?: InlineExtension[];
+  childExtensionFactoriesForAgent?: Array<(agentId: string) => InlineExtension>;
   questionnaireManager?: QuestionnaireManager;
   triggerManager?: TriggerRuntimeManager;
   messageCacheController?: MessageCacheController;
@@ -219,6 +220,7 @@ export class SubagentManager {
   private readonly modelRuntime: ModelRuntime;
   private readonly agentDir: string;
   private readonly childExtensionFactories: InlineExtension[];
+  private readonly childExtensionFactoriesForAgent: Array<(agentId: string) => InlineExtension>;
   private readonly questionnaireManager?: QuestionnaireManager;
   private readonly triggerManager?: TriggerRuntimeManager;
   private readonly messageCacheController?: MessageCacheController;
@@ -240,6 +242,7 @@ export class SubagentManager {
     this.agentDir = options.agentDir;
     this.maxActiveSubagents = normalizeMaxActiveSubagents(options.maxActiveSubagents);
     this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
+    this.childExtensionFactoriesForAgent = options.childExtensionFactoriesForAgent ?? [];
     this.questionnaireManager = options.questionnaireManager;
     this.triggerManager = options.triggerManager;
     this.messageCacheController = options.messageCacheController;
@@ -1105,7 +1108,11 @@ export class SubagentManager {
       agentDir: this.agentDir,
       modelRuntime: this.modelRuntime,
       resourceLoaderOptions: {
-        extensionFactories: [...this.childExtensionFactories, this.childExtension(record.snapshot.id)],
+        extensionFactories: [
+          ...this.childExtensionFactories,
+          ...this.childExtensionFactoriesForAgent.map((factory) => factory(record.snapshot.id)),
+          this.childExtension(record.snapshot.id),
+        ],
       },
     });
     const result = await createAgentSessionFromServices({

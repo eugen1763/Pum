@@ -57,9 +57,10 @@ const messageCacheController = new MessageCacheController(process.cwd());
 setCheckModeConfig({ profile: settings.checkMode, model: settings.checkModel });
 const checkApprovalCoordinator = new CheckApprovalCoordinator();
 const checkApprovalStore = new CheckApprovalStore();
-const checkModeExtension = createCheckModeExtension(modelRuntime, undefined, {
+const mainCheckModeExtension = createCheckModeExtension(modelRuntime, undefined, {
   coordinator: checkApprovalCoordinator,
   approvals: checkApprovalStore,
+  identity: { kind: "main" },
 });
 const externalTriggerSafety = createExternalTriggerSafetyChecker(modelRuntime, {
   coordinator: checkApprovalCoordinator,
@@ -118,8 +119,12 @@ subagentManager = new SubagentManager({
   childExtensionFactories: [
     writingStyleExtension,
     explanationStrengthExtension,
-    checkModeExtension,
   ],
+  childExtensionFactoriesForAgent: [(agentId) => createCheckModeExtension(modelRuntime, undefined, {
+    coordinator: checkApprovalCoordinator,
+    approvals: checkApprovalStore,
+    identity: { kind: "subagent", agentId },
+  })],
 });
 const subagentExtension = subagentManager.mainExtension();
 // Hosted web search rides on the provider, so it must be wrapped before the
@@ -141,7 +146,7 @@ const sessionRuntime = await createAgentSessionRuntime(
         extensionFactories: [
           writingStyleExtension,
           explanationStrengthExtension,
-          checkModeExtension,
+          mainCheckModeExtension,
           applyPatchExtension,
           questionnaireManager.extension({ id: "main", name: "main" }),
           subagentExtension,
