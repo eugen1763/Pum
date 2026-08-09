@@ -32,6 +32,7 @@ export class LoginController {
   private secret = "";
   private endpoint = "";
   private customKey = "";
+  private providerCursor = 0;
   private retry?: () => void;
 
   constructor(
@@ -49,14 +50,17 @@ export class LoginController {
     this.show(page);
   }
 
-  private providerPage(cursor = 0): LoginPage {
+  private providerPage(): LoginPage {
     const providers = (this.runtime as any).getProviders?.() ?? [];
-    return { kind: "providers", methods: providerLoginMethods(providers), cursor };
+    const methods = providerLoginMethods(providers);
+    this.providerCursor = Math.min(this.providerCursor, methods.length);
+    return { kind: "providers", methods, cursor: this.providerCursor };
   }
 
   open() {
     this.cancelOperation();
     this.retry = undefined;
+    this.providerCursor = 0;
     this.setPage(this.providerPage());
   }
 
@@ -190,7 +194,8 @@ export class LoginController {
       const count = this.page.methods.length + 1;
       if (key.name === "up" || key.name === "down") {
         const step = key.name === "up" ? -1 : 1;
-        this.setPage({ ...this.page, cursor: (this.page.cursor + step + count) % count });
+        this.providerCursor = (this.page.cursor + step + count) % count;
+        this.setPage({ ...this.page, cursor: this.providerCursor });
       } else if (enter) {
         const method = this.page.methods[this.page.cursor];
         if (method) this.startProvider(method);
