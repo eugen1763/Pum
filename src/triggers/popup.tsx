@@ -1,5 +1,3 @@
-import type { ScrollBoxRenderable } from "@opentui/core";
-import { useEffect, useRef } from "react";
 import type { Theme } from "../theme";
 
 export type TriggerState =
@@ -87,7 +85,7 @@ export function triggerActionForKey(
 }
 
 export function triggerPopupGeometry(width: number, height: number) {
-  const compact = width < 48 || height < 12;
+  const compact = width < 48 || height < 18;
   const marginX = width < 4 ? 0 : compact ? 1 : Math.max(2, Math.floor(width * 0.08));
   const marginY = height < 4 ? 0 : compact ? 1 : Math.max(1, Math.floor(height * 0.08));
   return {
@@ -183,16 +181,8 @@ export function TriggersPopup({
   terminalHeight: number;
 }) {
   const geometry = triggerPopupGeometry(terminalWidth, terminalHeight);
-  const scrollRef = useRef<ScrollBoxRenderable>(null);
   const trigger = triggers[cursor];
-  const detailVisible = !geometry.compact || triggers.length <= 2;
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      scrollRef.current?.scrollChildIntoView(`trigger-row-${cursor}`);
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [cursor, triggers.length]);
+  const detailVisible = !geometry.compact;
 
   return (
     <box
@@ -215,9 +205,11 @@ export function TriggersPopup({
         <text content="External triggers" fg={theme.accent} bg={theme.popupBg} style={{ height: 1, flexShrink: 0 }} />
       ) : null}
       <scrollbox
-        ref={scrollRef}
         style={{ flexGrow: 1, minHeight: 1 }}
         verticalScrollbarOptions={{ visible: true }}
+        renderBefore={function () {
+          if (triggers.length > 0) this.scrollChildIntoView(`trigger-row-${cursor}`);
+        }}
       >
         <box style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}>
           {triggers.length ? triggers.map((item, index) => (
