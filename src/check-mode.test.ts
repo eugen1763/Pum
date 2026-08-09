@@ -120,6 +120,31 @@ describe("bash safety cache", () => {
     expect(new BashSafetyCache(path, 2).has(config.model, "/three", { command: "git status" })).toBe(true);
   });
 
+  test("hard-aborts a verifier that ignores its request timeout", async () => {
+    const { cache } = temporaryCache();
+    let verifierSignal: AbortSignal | undefined;
+    const verifier = {
+      getAvailableSnapshot: () => [model],
+      completeSimple: async (_model: unknown, _context: unknown, options: { signal: AbortSignal }) => {
+        verifierSignal = options.signal;
+        return await new Promise<never>(() => {});
+      },
+    } as any;
+
+    const started = Date.now();
+    const block = await verifyToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command: "find src -type f" },
+      cwd: "/repo",
+      config,
+      timeoutMs: 20,
+    });
+
+    expect(block?.reason).toContain("Safety check timed out after 20ms");
+    expect(verifierSignal?.aborted).toBe(true);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
   test("never bypasses verification for edit calls", async () => {
     const { cache } = temporaryCache();
     cache.add(config.model, "/repo", { path: "a", edits: [] });
@@ -150,6 +175,10 @@ describe("bash safety cache", () => {
       },
     });
     setCheckModeConfig({ enabled: true, model: "missing/model" });
+
+    const prompt = await handlers.get("before_agent_start")?.({ systemPrompt: "base" });
+    expect(prompt.systemPrompt).toContain("Do not put bash or edit in the same parallel tool batch");
+    expect(prompt.systemPrompt).toContain("Do not retry it in a loop");
 
     const block = await handlers.get("tool_call")?.(
       { toolName: "bash", toolCallId: "call-1", input: { command: "echo test" } },

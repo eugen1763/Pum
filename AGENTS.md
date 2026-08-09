@@ -195,7 +195,13 @@ These were chosen deliberately. Change them only on purpose.
 - **Check mode is fail-closed.** Its inline extension intercepts `bash` and
   `edit` in `tool_call`, sends only the cwd and proposed input to the configured
   verifier model, and requires a clear `SAFE` response. Missing models, request
-  failures, unclear replies, and `UNSAFE` replies block the tool.
+  failures, unclear replies, verifier watchdog timeouts, and `UNSAFE` replies
+  block the tool. The watchdog aborts after 15 seconds even if the provider
+  ignores its own request timeout.
+- **Checked tools stay out of parallel mixed batches.** pi prepares every tool
+  in a parallel assistant batch before it executes any tool. A waiting `bash`
+  or `edit` safety check would otherwise make unrelated `read` calls look stuck.
+  Run reads first, then issue each checked tool in a later assistant step.
 - **The check cache is narrow and exact.** `check-mode-cache.json` stores at
   most 256 explicit `SAFE` decisions for simple, read-only Git inspection
   commands. A hit matches the verifier model, cwd, and canonical complete

@@ -238,8 +238,37 @@ type ToolCheck = {
   cwd: string;
   signal?: AbortSignal;
   config: CheckModeConfig;
+  /** Test override. Production checks use the fail-closed 15-second watchdog. */
+  timeoutMs?: number;
 };
 type ToolBlock = { block: true; reason: string };
+const CHECK_TIMEOUT_MS = 15_000;
+
+async function withHardTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  parentSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) abortFromParent();
+  else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort(new Error(`Safety check timed out after ${timeoutMs}ms`));
+      reject(new Error(`Safety check timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operation(controller.signal), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
 
 export async function verifyToolCall(
   runtime: CheckerRuntime,
@@ -257,23 +286,28 @@ export async function verifyToolCall(
   if (!model) return { block: true, reason: `Check model is unavailable: ${call.config.model}` };
 
   try {
-    const result = await runtime.completeSimple(
-      model,
-      {
-        systemPrompt: SYSTEM_PROMPT,
-        messages: [{
-          role: "user",
-          content: checkInput(call.toolName, call.input, call.cwd),
-          timestamp: Date.now(),
-        }],
-      },
-      {
-        signal: call.signal,
-        temperature: 0,
-        maxTokens: 80,
-        timeoutMs: 15_000,
-        maxRetries: 0,
-      },
+    const timeoutMs = call.timeoutMs ?? CHECK_TIMEOUT_MS;
+    const result = await withHardTimeout(
+      (signal) => runtime.completeSimple(
+        model,
+        {
+          systemPrompt: SYSTEM_PROMPT,
+          messages: [{
+            role: "user",
+            content: checkInput(call.toolName, call.input, call.cwd),
+            timestamp: Date.now(),
+          }],
+        },
+        {
+          signal,
+          temperature: 0,
+          maxTokens: 80,
+          timeoutMs,
+          maxRetries: 0,
+        },
+      ),
+      call.signal,
+      timeoutMs,
     );
     if (result.stopReason === "error" || result.stopReason === "aborted" || call.signal?.aborted) {
       return { block: true, reason: result.errorMessage ?? "Safety check failed" };
@@ -297,6 +331,17 @@ export function createCheckModeExtension(
     name: "pum-check-mode",
     factory(pi) {
       const rejected = new Set<string>();
+
+      pi.on("before_agent_start", (event) => {
+        if (!current.enabled) return;
+        return {
+          systemPrompt: `${event.systemPrompt}\n\n## Check mode tool batching\n\n` +
+            "- Check mode verifies every bash and edit call before execution.\n" +
+            "- Do not put bash or edit in the same parallel tool batch as read, write, or another checked call.\n" +
+            "- Run inspection reads first. Run each checked bash or edit call in a later assistant step.\n" +
+            "- A verifier timeout blocks the checked tool. Do not retry it in a loop.",
+        };
+      });
 
       pi.on("tool_call", async (event, ctx) => {
         if (!current.enabled || (event.toolName !== "bash" && event.toolName !== "edit")) return;
