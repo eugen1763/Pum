@@ -1,0 +1,702 @@
+import { existsSync, lstatSync, realpathSync } from "node:fs";
+import { posix, win32 } from "node:path";
+
+export type CheckPolicyProfile = "strict" | "balanced" | "ask";
+export type CheckPolicyDecision = "allow" | "ask" | "block";
+export type CheckPolicySeverity = "hard-block" | "review";
+
+export type CheckPolicyFindingCode =
+  | "analysis-limit"
+  | "unbalanced-shell"
+  | "outside-project"
+  | "escaping-symlink"
+  | "credential-access"
+  | "privilege-escalation"
+  | "persistence"
+  | "remote-script-execution"
+  | "destructive-git"
+  | "broad-deletion"
+  | "shell-complexity"
+  | "mutation"
+  | "unrecognized-command";
+
+export type CheckPolicyFinding = {
+  code: CheckPolicyFindingCode;
+  severity: CheckPolicySeverity;
+  message: string;
+  stage?: number;
+  path?: string;
+};
+
+export type BashOperator = {
+  operator: ";;&" | ";;" | ";&" | ";" | "newline" | "&&" | "||" | "&" | "|" | "|&";
+  start: number;
+  end: number;
+  nesting: number;
+};
+
+export type BashRedirection = {
+  operator: string;
+  start: number;
+  end: number;
+  target?: string;
+  targetStart?: number;
+  targetEnd?: number;
+};
+
+export type BashSubstitution = {
+  kind: "command" | "backtick" | "process-input" | "process-output";
+  start: number;
+  end: number;
+  text: string;
+};
+
+export type BashStage = {
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+  operatorBefore?: BashOperator["operator"];
+  operatorAfter?: BashOperator["operator"];
+  pipeline: number;
+  argv: string[];
+  envAssignments: Record<string, string>;
+  redirections: BashRedirection[];
+  substitutions: BashSubstitution[];
+  mutationIntent: string[];
+};
+
+export type BashAnalysis = {
+  complete: boolean;
+  syntaxBalanced: boolean;
+  truncated: boolean;
+  operators: BashOperator[];
+  stages: BashStage[];
+  redirections: BashRedirection[];
+  substitutions: BashSubstitution[];
+  mutationIntent: { possible: boolean; indicators: string[] };
+  errors: string[];
+};
+
+export type CheckPolicyResult = {
+  profile: CheckPolicyProfile;
+  decision: CheckPolicyDecision;
+  reason: string;
+  findings: CheckPolicyFinding[];
+  analysis: BashAnalysis;
+};
+
+export type CheckPolicyLimits = {
+  maxCommandChars: number;
+  maxStages: number;
+  maxAnnotations: number;
+  maxTokensPerStage: number;
+  maxTokenChars: number;
+};
+
+export type CheckPolicyFileSystem = {
+  exists(path: string): boolean;
+  isSymbolicLink(path: string): boolean;
+  realpath(path: string): string;
+};
+
+export type AnalyzeCheckPolicyOptions = {
+  command: string;
+  cwd: string;
+  profile?: CheckPolicyProfile;
+  limits?: Partial<CheckPolicyLimits>;
+  fileSystem?: CheckPolicyFileSystem;
+};
+
+export const DEFAULT_CHECK_POLICY_LIMITS: Readonly<CheckPolicyLimits> = Object.freeze({
+  maxCommandChars: 64_000,
+  maxStages: 256,
+  maxAnnotations: 1_024,
+  maxTokensPerStage: 256,
+  maxTokenChars: 8_192,
+});
+
+const nodeFileSystem: CheckPolicyFileSystem = {
+  exists: existsSync,
+  isSymbolicLink: (path) => lstatSync(path).isSymbolicLink(),
+  realpath: realpathSync,
+};
+
+const MUTATION_COMMANDS = new Map<string, string>([
+  ["rm", "deletion command"], ["rmdir", "deletion command"], ["unlink", "deletion command"],
+  ["shred", "destructive deletion command"], ["mv", "filesystem move"], ["cp", "filesystem copy"],
+  ["install", "filesystem install"], ["mkdir", "directory creation"], ["touch", "file timestamp or creation"],
+  ["truncate", "file truncation"], ["dd", "raw copy or overwrite"], ["tee", "file output"],
+  ["chmod", "permission change"], ["chown", "ownership change"], ["chgrp", "group change"],
+  ["setfacl", "access-control change"], ["sed", "possible in-place edit"], ["perl", "possible in-place edit"],
+]);
+
+const SHELL_INTERPRETERS = new Set(["sh", "bash", "dash", "zsh", "ksh", "fish", "pwsh", "powershell", "cmd"]);
+const REMOTE_COMMANDS = new Set(["curl", "wget", "fetch", "Invoke-WebRequest", "iwr"]);
+const PATH_OPERAND_COMMANDS = new Set([
+  "cat", "head", "tail", "less", "more", "stat", "file", "ls", "tree", "du", "wc", "realpath",
+  "readlink", "rm", "rmdir", "unlink", "shred", "mv", "cp", "install", "mkdir", "touch", "truncate",
+  "chmod", "chown", "chgrp", "setfacl", "tee", "sed", "perl",
+]);
+const PRIVILEGE_COMMANDS = new Set(["sudo", "doas", "su", "pkexec", "runas"]);
+const PERSISTENCE_COMMANDS = new Set(["crontab", "at", "schtasks", "launchctl"]);
+const CREDENTIAL_COMMANDS = new Set(["pass", "secret-tool", "security", "cmdkey", "keychain"]);
+const CREDENTIAL_SEGMENTS = new Set([
+  ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".npmrc", ".pypirc", ".netrc",
+  "credentials", "credentials.json", "auth.json", "id_rsa", "id_ed25519", "known_hosts",
+]);
+const SAFE_READ_COMMANDS = new Set([
+  "pwd", "printf", "echo", "true", "false", "test", "[", "ls", "tree", "cat", "head", "tail",
+  "wc", "stat", "file", "du", "realpath", "readlink", "grep", "rg", "git",
+]);
+
+function commandName(argv0: string | undefined): string {
+  if (!argv0) return "";
+  return argv0.replaceAll("\\", "/").split("/").at(-1) ?? argv0;
+}
+
+function effectiveArgv(argv: string[]): string[] {
+  let current = argv;
+  for (let depth = 0; depth < 4; depth++) {
+    const name = commandName(current[0]);
+    if (name === "env") {
+      let index = 1;
+      while (index < current.length && (current[index]!.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(current[index]!))) index++;
+      current = current.slice(index);
+      continue;
+    }
+    if (name === "command" || name === "builtin" || name === "nohup") {
+      let index = 1;
+      while (index < current.length && current[index]!.startsWith("-")) index++;
+      current = current.slice(index);
+      continue;
+    }
+    if (name === "nice") {
+      let index = 1;
+      if (current[index] === "-n" || current[index] === "--adjustment") index += 2;
+      else while (index < current.length && /^-\d+$/.test(current[index]!)) index++;
+      current = current.slice(index);
+      continue;
+    }
+    break;
+  }
+  return current;
+}
+
+function mergeLimits(input?: Partial<CheckPolicyLimits>): CheckPolicyLimits {
+  const limits = { ...DEFAULT_CHECK_POLICY_LIMITS, ...input };
+  for (const key of Object.keys(limits) as Array<keyof CheckPolicyLimits>) {
+    if (!Number.isSafeInteger(limits[key]) || limits[key] < 1) limits[key] = DEFAULT_CHECK_POLICY_LIMITS[key];
+  }
+  return limits;
+}
+
+function trimRange(command: string, start: number, end: number): [number, number] {
+  while (start < end && /\s/.test(command[start]!)) start++;
+  while (end > start && /\s/.test(command[end - 1]!)) end--;
+  return [start, end];
+}
+
+type Token = { value: string; start: number; end: number; redirection?: string };
+
+function tokenizeStage(text: string, absoluteStart: number, limits: CheckPolicyLimits): { tokens: Token[]; balanced: boolean; truncated: boolean } {
+  const tokens: Token[] = [];
+  let value = "";
+  let tokenStart = -1;
+  let quote: "'" | "\"" | null = null;
+  let escaped = false;
+  let substitutionDepth = 0;
+  let truncated = false;
+
+  const append = (part: string, index: number) => {
+    if (tokenStart < 0) tokenStart = index;
+    if (value.length + part.length <= limits.maxTokenChars) value += part;
+    else truncated = true;
+  };
+  const finish = (end: number) => {
+    if (tokenStart < 0) return;
+    if (tokens.length < limits.maxTokensPerStage) tokens.push({ value, start: absoluteStart + tokenStart, end: absoluteStart + end });
+    else truncated = true;
+    value = "";
+    tokenStart = -1;
+  };
+
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (escaped) {
+      append(char, index);
+      escaped = false;
+      continue;
+    }
+    if (char === "\\" && quote !== "'") {
+      if (tokenStart < 0) tokenStart = index;
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      else append(char, index);
+      continue;
+    }
+    if (char === "'" || char === "\"") {
+      if (tokenStart < 0) tokenStart = index;
+      quote = char;
+      continue;
+    }
+    if ((char === "$" && text[index + 1] === "(") || ((char === "<" || char === ">") && text[index + 1] === "(")) {
+      append(`${char}(`, index);
+      substitutionDepth++;
+      index++;
+      continue;
+    }
+    if (char === ")" && substitutionDepth > 0) {
+      append(char, index);
+      substitutionDepth--;
+      continue;
+    }
+    if (/\s/.test(char) && substitutionDepth === 0) {
+      finish(index);
+      continue;
+    }
+    const redirect = substitutionDepth === 0
+      ? text.slice(index).match(/^(?:(?:\d+)?(?:<<<|<<-?|>>|<>|>\||>&|<&|>|<)|&>>?)/)?.[0]
+      : undefined;
+    if (redirect) {
+      finish(index);
+      if (tokens.length < limits.maxTokensPerStage) {
+        tokens.push({ value: redirect, start: absoluteStart + index, end: absoluteStart + index + redirect.length, redirection: redirect });
+      } else truncated = true;
+      index += redirect.length - 1;
+      continue;
+    }
+    append(char, index);
+  }
+  finish(text.length);
+  return { tokens, balanced: !quote && !escaped && substitutionDepth === 0, truncated };
+}
+
+function mutationIndicators(argv: string[], redirections: BashRedirection[]): string[] {
+  const name = commandName(argv[0]);
+  const indicators: string[] = [];
+  const generic = MUTATION_COMMANDS.get(name);
+  if (generic) {
+    if ((name !== "sed" && name !== "perl") || argv.slice(1).some((arg) => /^-[^-]*i/.test(arg) || arg === "--in-place")) indicators.push(generic);
+  }
+  if (redirections.some((item) => item.operator.includes(">"))) indicators.push("output redirection");
+  if (name === "git" && argv[1] && !new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "branch"]).has(argv[1])) {
+    indicators.push("Git state change");
+  }
+  return [...new Set(indicators)];
+}
+
+/** Parse a complete command string. The result uses bounded arrays and bounded token text. */
+export function analyzeBashCommand(command: string, requestedLimits?: Partial<CheckPolicyLimits>): BashAnalysis {
+  const limits = mergeLimits(requestedLimits);
+  if (command.length > limits.maxCommandChars) {
+    return {
+      complete: false, syntaxBalanced: false, truncated: true, operators: [], stages: [], redirections: [],
+      substitutions: [], mutationIntent: { possible: false, indicators: [] },
+      errors: [`command exceeds ${limits.maxCommandChars} characters`],
+    };
+  }
+
+  const operators: BashOperator[] = [];
+  const redirections: BashRedirection[] = [];
+  const substitutions: BashSubstitution[] = [];
+  const stageRanges: Array<{ start: number; end: number; before?: BashOperator["operator"]; after?: BashOperator["operator"]; pipeline: number }> = [];
+  const errors: string[] = [];
+  let quote: "'" | "\"" | null = null;
+  let escaped = false;
+  let parenDepth = 0;
+  let braceDepth = 0;
+  let backtickStart: number | undefined;
+  let stageStart = 0;
+  let operatorBefore: BashOperator["operator"] | undefined;
+  let pipeline = 0;
+  let annotations = 0;
+  let truncated = false;
+
+  const addAnnotation = <T>(list: T[], value: T) => {
+    annotations++;
+    if (annotations <= limits.maxAnnotations) list.push(value);
+    else truncated = true;
+  };
+  const addStage = (end: number, after?: BashOperator["operator"]) => {
+    const [start, trimmedEnd] = trimRange(command, stageStart, end);
+    if (trimmedEnd > start) {
+      if (stageRanges.length < limits.maxStages) stageRanges.push({ start, end: trimmedEnd, before: operatorBefore, after, pipeline });
+      else truncated = true;
+    }
+    if (after === "|" || after === "|&") pipeline++;
+    else pipeline = 0;
+  };
+
+  for (let index = 0; index < command.length;) {
+    const char = command[index]!;
+    if (escaped) { escaped = false; index++; continue; }
+    if (char === "\\" && quote !== "'") { escaped = true; index++; continue; }
+    if (char === "`" && quote !== "'") {
+      if (backtickStart === undefined) backtickStart = index;
+      else {
+        addAnnotation(substitutions, { kind: "backtick", start: backtickStart, end: index + 1, text: command.slice(backtickStart + 1, index) });
+        backtickStart = undefined;
+      }
+      index++;
+      continue;
+    }
+    if (backtickStart !== undefined) { index++; continue; }
+    const substitution = quote !== "'" && command.startsWith("$(", index) ? "command"
+      : !quote && command.startsWith("<(" , index) ? "process-input"
+      : !quote && command.startsWith(">(", index) ? "process-output" : undefined;
+    if (substitution) {
+      const start = index;
+      let depth = 1;
+      let innerQuote: "'" | "\"" | null = null;
+      let innerEscaped = false;
+      index += 2;
+      while (index < command.length && depth > 0) {
+        const inner = command[index]!;
+        if (innerEscaped) { innerEscaped = false; index++; continue; }
+        if (inner === "\\" && innerQuote !== "'") { innerEscaped = true; index++; continue; }
+        if (innerQuote) { if (inner === innerQuote) innerQuote = null; index++; continue; }
+        if (inner === "'" || inner === "\"") { innerQuote = inner; index++; continue; }
+        if (inner === "(") depth++;
+        else if (inner === ")") depth--;
+        index++;
+      }
+      if (depth === 0) addAnnotation(substitutions, { kind: substitution, start, end: index, text: command.slice(start + 2, index - 1) });
+      else errors.push(`unterminated ${substitution} substitution at ${start}`);
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      index++;
+      continue;
+    }
+    if (char === "'" || char === "\"") { quote = char; index++; continue; }
+    if (char === "(") { parenDepth++; index++; continue; }
+    if (char === ")") { if (parenDepth === 0) errors.push(`unexpected ) at ${index}`); else parenDepth--; index++; continue; }
+    if (char === "{") { braceDepth++; index++; continue; }
+    if (char === "}") { if (braceDepth === 0) errors.push(`unexpected } at ${index}`); else braceDepth--; index++; continue; }
+
+    const redirect = command.slice(index).match(/^(?:(?:\d+)?(?:<<<|<<-?|>>|<>|>\||>&|<&|>|<)|&>>?)/)?.[0];
+    if (redirect) {
+      addAnnotation(redirections, { operator: redirect, start: index, end: index + redirect.length });
+      index += redirect.length;
+      continue;
+    }
+    if (char === "#" && (index === 0 || /\s/.test(command[index - 1]!))) {
+      const newline = command.indexOf("\n", index);
+      if (newline < 0) { addStage(index); stageStart = command.length; index = command.length; continue; }
+      const operator = { operator: "newline" as const, start: newline, end: newline + 1, nesting: parenDepth + braceDepth };
+      addAnnotation(operators, operator);
+      if (operator.nesting === 0) {
+        addStage(index, "newline");
+        stageStart = newline + 1;
+        operatorBefore = "newline";
+      }
+      index = newline + 1;
+      continue;
+    }
+    const rawOperator = [";;&", "&&", "||", "|&", ";;", ";&", ";", "|", "&", "\n"].find((item) => command.startsWith(item, index));
+    if (rawOperator) {
+      const normalized = rawOperator === "\n" ? "newline" : rawOperator as BashOperator["operator"];
+      const nesting = parenDepth + braceDepth;
+      const operator = { operator: normalized, start: index, end: index + rawOperator.length, nesting };
+      addAnnotation(operators, operator);
+      if (nesting === 0) {
+        addStage(index, normalized);
+        stageStart = index + rawOperator.length;
+        operatorBefore = normalized;
+      }
+      index += rawOperator.length;
+      continue;
+    }
+    index++;
+  }
+  addStage(command.length);
+
+  if (quote) errors.push("unterminated quote");
+  if (escaped) errors.push("trailing escape");
+  if (backtickStart !== undefined) errors.push(`unterminated backtick substitution at ${backtickStart}`);
+  if (parenDepth) errors.push("unbalanced parentheses");
+  if (braceDepth) errors.push("unbalanced braces");
+  if (truncated) errors.push("analysis annotation limit exceeded");
+
+  const stages: BashStage[] = stageRanges.map((range, index) => {
+    const text = command.slice(range.start, range.end);
+    const tokenized = tokenizeStage(text, range.start, limits);
+    if (!tokenized.balanced) errors.push(`stage ${index} tokenization is unbalanced`);
+    if (tokenized.truncated) { truncated = true; errors.push(`stage ${index} token limit exceeded`); }
+    const stageRedirections: BashRedirection[] = [];
+    const argv: string[] = [];
+    const envAssignments: Record<string, string> = {};
+    for (let tokenIndex = 0; tokenIndex < tokenized.tokens.length; tokenIndex++) {
+      const token = tokenized.tokens[tokenIndex]!;
+      if (token.redirection) {
+        const target = tokenized.tokens[tokenIndex + 1];
+        const redirection: BashRedirection = { operator: token.redirection, start: token.start, end: token.end };
+        if (target && !target.redirection) {
+          redirection.target = target.value;
+          redirection.targetStart = target.start;
+          redirection.targetEnd = target.end;
+          tokenIndex++;
+        }
+        stageRedirections.push(redirection);
+        continue;
+      }
+      const assignment = argv.length === 0 ? token.value.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s) : null;
+      if (assignment) envAssignments[assignment[1]!] = assignment[2]!;
+      else argv.push(token.value);
+    }
+    const stageSubstitutions = substitutions.filter((item) => item.start >= range.start && item.end <= range.end);
+    const indicators = mutationIndicators(argv, stageRedirections);
+    return {
+      index, start: range.start, end: range.end, text, operatorBefore: range.before, operatorAfter: range.after,
+      pipeline: range.pipeline, argv, envAssignments, redirections: stageRedirections, substitutions: stageSubstitutions,
+      mutationIntent: indicators,
+    };
+  });
+  const indicators = [...new Set(stages.flatMap((stage) => stage.mutationIntent))];
+  const syntaxBalanced = errors.every((error) => error.includes("limit"));
+  return {
+    complete: !truncated && syntaxBalanced,
+    syntaxBalanced,
+    truncated,
+    operators,
+    stages,
+    redirections: stages.flatMap((stage) => stage.redirections),
+    substitutions,
+    mutationIntent: { possible: indicators.length > 0, indicators },
+    errors,
+  };
+}
+
+function pathFlavor(value: string, cwd: string): typeof posix | typeof win32 {
+  const windowsSyntax = (path: string) => /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+  return windowsSyntax(value) || windowsSyntax(cwd) ? win32 : posix;
+}
+
+function isUrl(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
+}
+
+function looksLikePath(value: string): boolean {
+  return value === "." || value === ".." || value.startsWith("~") || value.startsWith("/")
+    || value.startsWith("\\\\") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("./")
+    || value.startsWith("../") || value.startsWith(".\\") || value.startsWith("..\\")
+    || value.includes("/") || value.includes("\\");
+}
+
+function normalizedAbsolute(value: string, cwd: string): { absolute: string; root: string; inside: boolean } {
+  const flavor = pathFlavor(value, cwd);
+  const root = flavor.resolve(cwd);
+  const expanded = value === "~" || value.startsWith("~/") || value.startsWith("~\\") ? value : value;
+  const absolute = flavor.resolve(root, expanded);
+  const relative = flavor.relative(root, absolute);
+  const inside = relative === "" || (!relative.startsWith("..") && !flavor.isAbsolute(relative));
+  return { absolute, root, inside };
+}
+
+function credentialPath(value: string): boolean {
+  const lower = value.toLowerCase().replaceAll("\\", "/");
+  const segments = lower.split("/").filter(Boolean);
+  if (segments.some((segment) => CREDENTIAL_SEGMENTS.has(segment))) return true;
+  return segments.some((segment) => /^\.env(?:\..+)?$/.test(segment))
+    || lower.includes("secrets/") || lower.endsWith("/shadow") || lower.endsWith("/passwd");
+}
+
+function pathOperands(stage: BashStage): string[] {
+  const name = commandName(stage.argv[0]);
+  const values = stage.redirections.flatMap((item) => item.target ? [item.target] : []);
+  for (let index = 1; index < stage.argv.length; index++) {
+    const value = stage.argv[index]!;
+    if (value === "--") {
+      values.push(...stage.argv.slice(index + 1));
+      break;
+    }
+    if (value.startsWith("-") || isUrl(value)) continue;
+    if (PATH_OPERAND_COMMANDS.has(name) || looksLikePath(value)) values.push(value);
+  }
+  return [...new Set(values)];
+}
+
+function symlinkEscapes(path: string, root: string, fs: CheckPolicyFileSystem): boolean {
+  const flavor = pathFlavor(path, root);
+  let current = path;
+  try {
+    if (!fs.exists(root)) return false;
+    while (!fs.exists(current)) {
+      const parent = flavor.dirname(current);
+      if (parent === current) return false;
+      current = parent;
+    }
+    if (!fs.isSymbolicLink(current) && current === root) return false;
+    const real = fs.realpath(current);
+    const relative = flavor.relative(fs.realpath(root), real);
+    return relative.startsWith("..") || flavor.isAbsolute(relative);
+  } catch {
+    return true;
+  }
+}
+
+function addFinding(findings: CheckPolicyFinding[], finding: CheckPolicyFinding): void {
+  if (!findings.some((item) => item.code === finding.code && item.stage === finding.stage && item.path === finding.path)) findings.push(finding);
+}
+
+function inspectHardBlocks(analysis: BashAnalysis, cwd: string, fs: CheckPolicyFileSystem, depth = 0): CheckPolicyFinding[] {
+  const findings: CheckPolicyFinding[] = [];
+  if (!analysis.complete) {
+    addFinding(findings, { code: analysis.truncated ? "analysis-limit" : "unbalanced-shell", severity: "hard-block", message: analysis.errors.join("; ") || "shell analysis is incomplete" });
+    return findings;
+  }
+
+  for (const stage of analysis.stages) {
+    const argv = effectiveArgv(stage.argv);
+    const name = commandName(argv[0]);
+    const lowerArgs = argv.map((arg) => arg.toLowerCase());
+    if (PRIVILEGE_COMMANDS.has(name) || (name.toLowerCase() === "powershell" && lowerArgs.includes("runas"))) {
+      addFinding(findings, { code: "privilege-escalation", severity: "hard-block", message: `${name} can escalate privileges`, stage: stage.index });
+    }
+    const credentialVariable = /\$(?:\{)?(?:[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)(?:\})?/i.test(stage.text);
+    const credentialRead = CREDENTIAL_COMMANDS.has(name)
+      || (name === "printenv" && argv.slice(1).some((arg) => /(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)/i.test(arg)));
+    if (credentialVariable || credentialRead) {
+      addFinding(findings, { code: "credential-access", severity: "hard-block", message: `${name || "command"} accesses credential material`, stage: stage.index });
+    }
+    const persistencePattern = /(?:^|[\\/])(?:\.bashrc|\.zshrc|\.profile|\.config[\\/]autostart|cron\.d)(?:$|[\\/])/i;
+    const persistenceTarget = pathOperands(stage).some((target) => persistencePattern.test(target));
+    if (PERSISTENCE_COMMANDS.has(name)
+      || persistenceTarget
+      || (name === "systemctl" && lowerArgs.some((arg) => ["enable", "reenable", "preset"].includes(arg)))
+      || (name === "reg" && lowerArgs.includes("add") && /[\\/]CurrentVersion[\\/](?:Run|RunOnce)(?:[\\/\s]|$)/i.test(stage.text))) {
+      addFinding(findings, { code: "persistence", severity: "hard-block", message: `${name || "redirection"} can install persistent execution`, stage: stage.index });
+    }
+    if (name === "git") {
+      const args = lowerArgs.slice(1);
+      const destructive = (args[0] === "clean" && args.some((arg) => /^-[a-z]*f/.test(arg)))
+        || (args[0] === "reset" && args.includes("--hard"))
+        || (args[0] === "checkout" && args.includes("--") && args.some((arg) => arg === "." || arg === "*"))
+        || (args[0] === "restore" && args.some((arg) => arg === "." || arg === "*"))
+        || (args[0] === "branch" && args.includes("-d"))
+        || (args[0] === "push" && args.some((arg) => arg === "--force" || arg === "-f" || arg === "--mirror"));
+      if (destructive) addFinding(findings, { code: "destructive-git", severity: "hard-block", message: "Git command can broadly destroy or overwrite work", stage: stage.index });
+    }
+    if (["rm", "rmdir", "unlink", "shred"].includes(name)) {
+      const operands = argv.slice(1).filter((arg) => !arg.startsWith("-"));
+      const recursive = argv.slice(1).some((arg) => arg === "--recursive" || /^-[^-]*r/i.test(arg));
+      const force = argv.slice(1).some((arg) => arg === "--force" || /^-[^-]*f/i.test(arg));
+      const broad = operands.some((arg) => [".", "..", "*", "./*", ".\\*", "/", "\\"].includes(arg)
+        || /[*?\[]/.test(arg) || normalizedAbsolute(arg, cwd).absolute === normalizedAbsolute(cwd, cwd).root)
+        || (recursive && force && operands.length !== 1);
+      if (broad) addFinding(findings, { code: "broad-deletion", severity: "hard-block", message: "deletion target is broad or recursive across multiple paths", stage: stage.index });
+    }
+
+    const effectiveStage = argv === stage.argv ? stage : { ...stage, argv };
+    for (const value of pathOperands(effectiveStage)) {
+      if (credentialPath(value)) addFinding(findings, { code: "credential-access", severity: "hard-block", message: "command accesses a credential or secret path", stage: stage.index, path: value });
+      if (value.startsWith("~")) {
+        addFinding(findings, { code: "outside-project", severity: "hard-block", message: "home-relative path is outside the project boundary", stage: stage.index, path: value });
+        continue;
+      }
+      const resolved = normalizedAbsolute(value, cwd);
+      if (!resolved.inside) {
+        addFinding(findings, { code: "outside-project", severity: "hard-block", message: "path resolves outside the project boundary", stage: stage.index, path: value });
+      } else if (symlinkEscapes(resolved.absolute, resolved.root, fs)) {
+        addFinding(findings, { code: "escaping-symlink", severity: "hard-block", message: "path follows a symlink outside the project boundary or cannot be verified", stage: stage.index, path: value });
+      }
+    }
+
+    if (depth < 2) {
+      const nestedCommands = stage.substitutions.map((item) => item.text);
+      const lowerName = name.toLowerCase();
+      const commandFlag = lowerName === "cmd" ? argv.findIndex((arg) => arg.toLowerCase() === "/c")
+        : lowerName === "powershell" || lowerName === "pwsh" ? argv.findIndex((arg) => ["-c", "-command"].includes(arg.toLowerCase()))
+        : SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
+      if (commandFlag >= 0 && argv[commandFlag + 1]) nestedCommands.push(argv[commandFlag + 1]!);
+      for (const nestedCommand of nestedCommands) {
+        const nestedFindings = inspectHardBlocks(analyzeBashCommand(nestedCommand), cwd, fs, depth + 1);
+        for (const finding of nestedFindings) {
+          addFinding(findings, { ...finding, stage: stage.index, message: `nested command: ${finding.message}` });
+        }
+      }
+    }
+  }
+
+  for (let index = 0; index < analysis.stages.length; index++) {
+    const stage = analysis.stages[index]!;
+    const argv = effectiveArgv(stage.argv);
+    const name = commandName(argv[0]);
+    const next = analysis.stages[index + 1];
+    const nextName = commandName(effectiveArgv(next?.argv ?? [])[0]);
+    const substitutionRemote = stage.substitutions.some((item) => /\b(?:curl|wget|fetch|Invoke-WebRequest|iwr)\b/i.test(item.text));
+    if ((REMOTE_COMMANDS.has(name) && (stage.operatorAfter === "|" || stage.operatorAfter === "|&") && SHELL_INTERPRETERS.has(nextName))
+      || (SHELL_INTERPRETERS.has(name) && argv.some((arg) => /^<(?:curl|wget|fetch)\b/i.test(arg)))
+      || ((name === "eval" || SHELL_INTERPRETERS.has(name)) && substitutionRemote)) {
+      addFinding(findings, { code: "remote-script-execution", severity: "hard-block", message: "command executes code received from a remote source", stage: stage.index });
+    }
+  }
+  return findings;
+}
+
+function safeGitInspection(argv: string[]): boolean {
+  const subcommand = argv[1];
+  const args = argv.slice(2);
+  if (subcommand === "status") return args.every((arg) => new Set(["--short", "--porcelain", "--porcelain=v1", "--porcelain=v2", "--branch", "-s", "-b"]).has(arg));
+  if (subcommand === "diff") return args.every((arg) => new Set(["--check", "--stat", "--cached", "--staged", "--name-only", "--name-status", "--color=never", "HEAD"]).has(arg));
+  if (subcommand === "log") return args.every((arg) => new Set(["--oneline", "--decorate", "--graph", "--all", "--color=never"]).has(arg) || /^--max-count=[1-9]\d*$/.test(arg));
+  if (subcommand === "show") return args.every((arg) => new Set(["--stat", "--oneline", "--name-only", "--name-status", "--color=never", "HEAD"]).has(arg) || /^[0-9a-f]{4,64}$/i.test(arg));
+  if (subcommand === "rev-parse") return args.length > 0 && args.every((arg) => new Set(["HEAD", "--show-toplevel", "--show-prefix", "--is-inside-work-tree", "--is-bare-repository", "--abbrev-ref"]).has(arg));
+  if (subcommand === "ls-files") return args.every((arg) => new Set(["--cached", "--deleted", "--modified", "--others", "--ignored", "--stage"]).has(arg));
+  if (subcommand === "branch") return args.length === 0 || args.every((arg) => arg === "--show-current" || arg === "--list");
+  return false;
+}
+
+function isNarrowRead(stage: BashStage): boolean {
+  const name = commandName(stage.argv[0]);
+  if (!SAFE_READ_COMMANDS.has(name) || stage.mutationIntent.length > 0 || stage.redirections.some((item) => item.operator.includes(">"))) return false;
+  if (name === "git") return safeGitInspection(stage.argv);
+  if (name === "grep" || name === "rg") return !stage.argv.some((arg) => ["--files-without-match", "--pre", "--pre-glob"].includes(arg));
+  return true;
+}
+
+function isNarrowBalancedMutation(stage: BashStage): boolean {
+  const name = commandName(stage.argv[0]);
+  const args = stage.argv.slice(1);
+  if (stage.substitutions.length > 0 || stage.redirections.length > 0) return false;
+  if (name === "mkdir") return args.length > 0 && args.every((arg) => arg === "-p" || (!arg.startsWith("-") && !/[*?\[]/.test(arg)));
+  if (name === "touch") return args.length > 0 && args.every((arg) => !arg.startsWith("-") && !/[*?\[]/.test(arg));
+  if (name === "rm" || name === "unlink") {
+    const operands = args.filter((arg) => !arg.startsWith("-"));
+    return operands.length === 1 && args.every((arg) => !arg.startsWith("-") || arg === "-f" || arg === "--force") && !/[*?\[]/.test(operands[0]!);
+  }
+  return false;
+}
+
+/** Analyze a bash tool call and return a deterministic profile decision. */
+export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPolicyResult {
+  const profile = options.profile ?? "balanced";
+  const analysis = analyzeBashCommand(options.command, options.limits);
+  const findings = inspectHardBlocks(analysis, options.cwd, options.fileSystem ?? nodeFileSystem);
+  if (findings.some((item) => item.severity === "hard-block")) {
+    return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
+  }
+
+  if (profile === "ask") {
+    addFinding(findings, { code: "unrecognized-command", severity: "review", message: "ask profile requires review for every command" });
+    return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+  }
+
+  const hasComplexShell = analysis.stages.length !== 1 || analysis.substitutions.length > 0 || analysis.operators.some((item) => item.operator === "&");
+  if (hasComplexShell) addFinding(findings, { code: "shell-complexity", severity: "review", message: "compound commands, substitutions, and background execution require review" });
+  if (analysis.mutationIntent.possible) addFinding(findings, { code: "mutation", severity: "review", message: "command can mutate project state" });
+
+  const allNarrowReads = !hasComplexShell && analysis.stages.length === 1 && analysis.stages.every(isNarrowRead);
+  const balancedMutation = !hasComplexShell && analysis.stages.length === 1 && analysis.stages.every(isNarrowBalancedMutation);
+  if (allNarrowReads || (profile === "balanced" && balancedMutation)) {
+    return { profile, decision: "allow", reason: allNarrowReads ? "narrow project-local inspection" : "narrow project-local mutation", findings: [], analysis };
+  }
+
+  if (!findings.length) addFinding(findings, { code: "unrecognized-command", severity: "review", message: "command is not a rigorously narrow built-in policy case" });
+  return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+}
