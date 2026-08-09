@@ -1,60 +1,16 @@
 import type { Theme } from "../theme";
+import type { TriggerSnapshot } from "./types";
 
-export type TriggerState =
-  | "idle"
-  | "running"
-  | "paused"
-  | "waiting"
-  | "expired"
-  | "cancelled"
-  | "unavailable";
+export type { TriggerOutputMetadata, TriggerSnapshot, TriggerState } from "./types";
 
-export type TriggerOutputMetadata = {
-  path: string;
-  bytes: number;
-  truncated: boolean;
-  exists: boolean;
-};
-
-export type TriggerSnapshot = {
-  id: string;
-  name: string;
-  state: TriggerState;
-  target: { sessionId: string; agentId: string | null; label: string };
-  executable: string;
-  args: string[];
-  cwd: string;
-  mode: "once" | "repeat";
-  restartDelayMs: number | null;
-  createdAt: number;
-  expiresAt: number;
-  nextRestartAt: number | null;
-  fireCount: number;
-  maxFires: number;
-  pendingCount: number;
-  coalescedCount: number;
-  output?: TriggerOutputMetadata;
-  lastResult?: {
-    startedAt: number;
-    finishedAt: number;
-    durationMs: number;
-    exitCode: number | null;
-    signal: string | null;
-    synthetic: boolean;
-    manual: boolean;
-    output?: TriggerOutputMetadata;
-  };
-  paused: boolean;
-};
-
-/** Kept structural so the trigger runtime can integrate without a shared class. */
+/** Process-local UI access intentionally omits requester arguments. */
 export type TriggerManagerLike = {
-  subscribe: (listener: () => void) => () => void;
-  getTriggers: () => TriggerSnapshot[];
-  pause: (id: string) => Promise<unknown> | unknown;
-  resume: (id: string) => Promise<unknown> | unknown;
-  invoke: (id: string, mode: "run" | "fire") => Promise<unknown> | unknown;
-  cancel: (id: string) => Promise<unknown> | unknown;
+  subscribe(listener: () => void): () => void;
+  getTriggers(): TriggerSnapshot[];
+  pause(id: string): Promise<unknown> | unknown;
+  resume(id: string): Promise<unknown> | unknown;
+  invoke(id: string, mode: "run" | "fire"): Promise<unknown> | unknown;
+  cancel(id: string): Promise<unknown> | unknown;
 };
 
 export type TriggerAction = "pause" | "resume" | "run" | "fire" | "cancel";
@@ -101,18 +57,49 @@ function timeText(value: number | null): string {
   return value === null ? "—" : new Date(value).toLocaleString();
 }
 
+function durationText(value?: number): string {
+  if (value === undefined) return "—";
+  if (value < 1_000) return `${value}ms`;
+  return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}s`;
+}
+
+export function displayTriggerCommand(trigger: TriggerSnapshot): string {
+  let redactNext = false;
+  const args = trigger.args.map((argument) => {
+    if (redactNext) {
+      redactNext = false;
+      return "[redacted]";
+    }
+    if (/^--?(?:password|passwd|token|api[-_]?key|secret)$/i.test(argument)) {
+      redactNext = true;
+      return argument;
+    }
+    return argument.replace(
+      /^(--?(?:password|passwd|token|api[-_]?key|secret)=).+$/i,
+      "$1[redacted]",
+    );
+  });
+  return [trigger.executable, ...args].join(" ");
+}
+
 export function triggerFields(trigger: TriggerSnapshot): Array<[string, string]> {
-  const command = [trigger.executable, ...trigger.args].join(" ");
+  const command = displayTriggerCommand(trigger);
+  const output = trigger.output
+    ? `${trigger.output.bytes} bytes${trigger.output.truncated ? " · truncated" : ""}${trigger.output.exists ? "" : " · cleaned"}`
+    : "—";
   return [
-    ["State", trigger.state],
+    ["State", trigger.paused ? "paused" : trigger.state],
     ["Target", trigger.target.label],
     ["Command", command],
     ["Directory", trigger.cwd],
-    ["Mode", trigger.mode],
+    ["Mode", trigger.mode === "repeat" ? `repeat · ${durationText(trigger.restartDelayMs ?? undefined)}` : "once"],
+    ["Runtime", durationText(trigger.lastResult?.durationMs)],
     ["Fires", `${trigger.fireCount}/${trigger.maxFires}`],
-    ["Pending", `${trigger.pendingCount} (${trigger.coalescedCount} coalesced)`],
-    ["Created", timeText(trigger.createdAt)],
+    ["Pending", `${trigger.pendingCount} · ${trigger.coalescedCount} coalesced`],
+    ["Next", timeText(trigger.nextRestartAt)],
+    ["Last", timeText(trigger.lastResult?.finishedAt ?? null)],
     ["Expires", timeText(trigger.expiresAt)],
+    ["Output", output],
   ];
 }
 

@@ -18,6 +18,21 @@ describe("graceful shutdown", () => {
     expect(calls).toEqual(["unmount", "cleanup", "triggers", "dispose", "destroy", "exit:0"]);
   });
 
+  test("still disposes the session when trigger cleanup fails", async () => {
+    const calls: string[] = [];
+    const shutdown = createShutdown({
+      unmount: () => calls.push("unmount"),
+      cleanup: () => calls.push("cleanup"),
+      shutdownTriggers: async () => { calls.push("triggers"); throw new Error("trigger cleanup failed"); },
+      dispose: async () => { calls.push("dispose"); },
+      destroy: () => calls.push("destroy"),
+      exit: () => calls.push("exit"),
+    });
+
+    await expect(shutdown(1)).rejects.toThrow("trigger cleanup failed");
+    expect(calls).toEqual(["unmount", "cleanup", "triggers", "dispose", "destroy", "exit"]);
+  });
+
   test("restores the terminal and exits when session disposal fails", async () => {
     const calls: string[] = [];
     const shutdown = createShutdown({

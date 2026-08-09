@@ -85,9 +85,8 @@ describe("subagent transcript replay", () => {
       data: {
         id: "event-1",
         triggerId: "trigger-1",
-        triggerName: "tests",
-        sessionId: "session-1",
-        agentId: "child-1",
+        name: "tests",
+        target: { sessionId: "session-1", agentId: "child-1", label: "child" },
         text: "Tests completed.",
         at: 1,
       },

@@ -2341,9 +2341,13 @@ export function App({
               reason: checkApproval.reason,
               paths: checkApproval.paths,
               preview: { kind: checkApproval.toolName === "bash" ? "command" : "diff", text: checkApproval.preview },
-              agentLabel: checkApproval.cwd === cwd
-                ? "main"
-                : agents.find((agent) => agent.worktree.path === checkApproval.cwd)?.name ?? "subagent",
+              agentLabel: checkApproval.target?.agentId
+                ? agents.find((agent) => agent.id === checkApproval.target?.agentId)?.name ?? "subagent"
+                : checkApproval.target?.sessionId
+                  ? "main"
+                  : checkApproval.cwd === cwd
+                    ? "main"
+                    : agents.find((agent) => agent.worktree.path === checkApproval.cwd)?.name ?? "subagent",
             }}
             selectedDecision={checkApprovalDecision}
             terminalWidth={width}

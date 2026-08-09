@@ -75,6 +75,7 @@ import {
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
 const ACTIVE_SUBAGENT_STATUSES = new Set<SubagentStatus>(["starting", "running"]);
+const AVAILABLE_TRIGGER_TARGET_STATUSES = new Set<SubagentStatus>(["starting", "running", "idle"]);
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
@@ -563,6 +564,16 @@ export class SubagentManager {
             : "idle";
         const summary = record.finishRequested || error || record.snapshot.summary;
         this.updateStatus(record, status, summary);
+        if (record.session && !AVAILABLE_TRIGGER_TARGET_STATUSES.has(status)) {
+          void this.triggerManager?.invalidateAgent(record.session.sessionId, record.snapshot.id);
+          this.emit({
+            type: "trigger-target",
+            sessionId: record.session.sessionId,
+            agentId: record.snapshot.id,
+            available: false,
+            settled: true,
+          });
+        }
         void this.notifySpawner(record, status, summary);
         record.finishRequested = undefined;
         break;
@@ -731,7 +742,7 @@ export class SubagentManager {
         pi.on("agent_settled", () => {
           this.mainRunning = false;
           this.messageCacheController?.releaseRequester({ kind: "main", id: this.parentSessionId });
-          void this.triggerManager?.markTargetSettled(this.parentSessionId);
+          void this.triggerManager?.markTargetSettled(this.parentSessionId, null);
           this.emit({
             type: "trigger-target",
             sessionId: this.parentSessionId,
@@ -753,7 +764,7 @@ export class SubagentManager {
         pi.on("session_shutdown", async () => {
           const sessionId = this.parentSessionId;
           await this.detachMain();
-          await this.triggerManager?.invalidateSession(sessionId, "session shutdown");
+          await this.triggerManager?.invalidateSession(sessionId);
         });
 
         this.messageCacheController?.registerTools(pi, (ctx) => ({
@@ -1063,6 +1074,9 @@ export class SubagentManager {
     if (selector.kind !== "subagent") throw new Error("Invalid main-session trigger target");
     const record = this.findRecord(selector.agent);
     if (!record) throw new Error(`Unknown subagent: ${selector.agent}`);
+    if (!AVAILABLE_TRIGGER_TARGET_STATUSES.has(record.snapshot.status)) {
+      throw new Error(`Subagent target is unavailable: ${record.snapshot.name}`);
+    }
     await this.ensureRuntime(record);
     if (!record.session) throw new Error(`Subagent session is unavailable: ${record.snapshot.name}`);
     return {
@@ -1093,6 +1107,15 @@ export class SubagentManager {
     }
     const record = this.findRecord(agent);
     if (!record) throw new Error(`Unknown subagent: ${agent}`);
+    if (!AVAILABLE_TRIGGER_TARGET_STATUSES.has(record.snapshot.status)) {
+      return {
+        sessionId: record.session?.sessionId ?? "unavailable",
+        agentId: record.snapshot.id,
+        label: record.snapshot.name,
+        cwd: record.snapshot.worktree.path,
+        available: false,
+      };
+    }
     await this.ensureRuntime(record);
     return {
       sessionId: record.session!.sessionId,
@@ -1211,13 +1234,14 @@ export class SubagentManager {
   }
 
   async deliverTriggerEvent(data: TriggerEventData): Promise<void> {
-    if (!data.id || !data.triggerId || !data.triggerName || !data.text.trim()) {
+    if (!data.id || !data.triggerId || !data.name || !data.text.trim()) {
       throw new Error("Trigger event is incomplete");
     }
+    const { sessionId, agentId } = data.target;
     const line: Extract<Line, { kind: "agent-message" }> = {
       kind: "agent-message",
-      sender: `trigger:${data.triggerName}`,
-      recipient: data.agentId ?? "main",
+      sender: `trigger:${data.name}`,
+      recipient: agentId ?? "main",
       text: data.text,
     };
     const pending: PendingLine = { id: data.id, line };
@@ -1228,24 +1252,24 @@ export class SubagentManager {
       details: data,
     };
 
-    if (data.agentId === null) {
-      if (data.sessionId !== this.parentSessionId || !this.mainApi) {
+    if (agentId === null) {
+      if (sessionId !== this.parentSessionId || !this.mainApi) {
         throw new Error("The main trigger target is unavailable");
       }
       this.mainApi.appendEntry(TRIGGER_EVENT_CUSTOM_TYPE, data);
       this.emit({ type: "main-line", line });
       this.emit({ type: "main-pending-add", pending });
-      if (!this.wakeMain(message, data.text, this.mainRunning ? "steer" : "followUp")) {
+      if (!this.wakeMain(message, data.text, "steer")) {
         this.emit({ type: "main-pending-drop", id: data.id });
         throw new Error("The main trigger target is unavailable");
       }
       return;
     }
 
-    const record = this.records.get(data.agentId);
-    if (!record) throw new Error(`Unknown trigger target agent: ${data.agentId}`);
+    const record = this.records.get(agentId);
+    if (!record) throw new Error(`Unknown trigger target agent: ${agentId}`);
     await this.ensureRuntime(record);
-    if (!record.session || !record.api || record.session.sessionId !== data.sessionId) {
+    if (!record.session || !record.api || record.session.sessionId !== sessionId) {
       throw new Error("The child trigger target is unavailable");
     }
     record.session.sessionManager.appendCustomEntry(TRIGGER_EVENT_CUSTOM_TYPE, data);
@@ -1454,7 +1478,18 @@ export class SubagentManager {
   async stop(id: string, status: SubagentStatus = "stopped", persist = true): Promise<void> {
     const record = this.findRecord(id);
     if (!record) return;
+    const sessionId = record.session?.sessionId;
     if (record.dispose) await record.dispose();
+    if (sessionId) {
+      await this.triggerManager?.invalidateAgent(sessionId, record.snapshot.id);
+      this.emit({
+        type: "trigger-target",
+        sessionId,
+        agentId: record.snapshot.id,
+        available: false,
+        settled: true,
+      });
+    }
     record.snapshot.transcript.pending = [];
     if (persist) this.updateStatus(record, status);
     else {
@@ -1465,7 +1500,9 @@ export class SubagentManager {
 
   private async stopAll(status: SubagentStatus, persist: boolean): Promise<void> {
     for (const record of this.records.values()) {
+      const sessionId = record.session?.sessionId;
       if (record.dispose) await record.dispose();
+      if (sessionId) await this.triggerManager?.invalidateAgent(sessionId, record.snapshot.id);
       if (!["starting", "running"].includes(record.snapshot.status)) continue;
       if (persist) this.updateStatus(record, status);
       else {
@@ -1476,16 +1513,6 @@ export class SubagentManager {
   }
 
   private forgetManagedAgent(record: RuntimeRecord): void {
-    void this.triggerManager?.invalidateAgent(record.snapshot.id, "managed subagent closed");
-    if (record.session) {
-      this.emit({
-        type: "trigger-target",
-        sessionId: record.session.sessionId,
-        agentId: record.snapshot.id,
-        available: false,
-        settled: true,
-      });
-    }
     this.records.delete(record.snapshot.id);
     this.persist({ event: "removed", id: record.snapshot.id, at: Date.now() });
     this.emit();

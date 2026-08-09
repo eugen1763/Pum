@@ -1,12 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_TRIGGER_MESSAGE_TEMPLATE, renderTriggerTemplate, triggerTemplateValues } from "./template";
+import {
+  DEFAULT_TRIGGER_MESSAGE_TEMPLATE,
+  renderTriggerTemplate,
+  triggerTemplateValues,
+  validateTriggerTemplate,
+} from "./template";
 import { sanitizeTriggerEnvironment } from "./process";
 import {
   DEFAULT_DELIVERED_LIMIT,
   DEFAULT_OUTPUT_LIMIT_BYTES,
   DEFAULT_PENDING_LIMIT,
   DEFAULT_RUNNING_LIMIT,
+  DEFAULT_TRIGGER_LIFETIME_MS,
   DEFAULT_TRIGGER_LIMIT,
+  MAX_TRIGGER_FIRES,
+  MAX_TRIGGER_LIFETIME_MS,
   EXTERNAL_TRIGGER_CUSTOM_TYPE,
   MIN_TRIGGER_REPEAT_MS,
   type CreateTriggerInput,
@@ -30,9 +38,12 @@ type DeliveryRecord = {
   token: string;
   triggerId: string;
   target: TriggerTarget;
+  event: ExternalTriggerEventData;
+  message: string;
   writer?: TriggerOutputWriter;
   deliveryId?: string;
   turnId?: string;
+  delivering?: boolean;
 };
 
 type TriggerRecord = {
@@ -133,7 +144,11 @@ export class TriggerManager implements PublicTriggerManager {
   async create(input: CreateTriggerInput, requester: TriggerRequester): Promise<TriggerSnapshot> {
     this.assertOpen();
     this.validateInput(input);
-    if (!canAccess(requester, input.target)) throw new Error("Requester cannot access the exact trigger target");
+    const messageTemplate = input.template ?? input.messageTemplate ?? DEFAULT_TRIGGER_MESSAGE_TEMPLATE;
+    validateTriggerTemplate(messageTemplate);
+    if (requester.kind === "subagent" && !canAccess(requester, input.target)) {
+      throw new Error("Requester cannot access the exact trigger target");
+    }
     if (this.records.size + this.creatingIds.size >= this.triggerLimit) throw new Error(`Trigger limit reached (${this.triggerLimit})`);
     const id = input.id?.trim() || this.createId();
     if (this.records.has(id) || this.creatingIds.has(id)) throw new Error(`Trigger already exists: ${id}`);
@@ -141,6 +156,12 @@ export class TriggerManager implements PublicTriggerManager {
     const restartDelayMs = mode === "repeat" ? (input.restartDelayMs ?? MIN_TRIGGER_REPEAT_MS) : null;
     if (mode === "repeat" && restartDelayMs! < MIN_TRIGGER_REPEAT_MS) {
       throw new Error(`Repeat delay must be at least ${MIN_TRIGGER_REPEAT_MS}ms`);
+    }
+    const createdAt = this.options.clock.now();
+    const lifetimeMs = input.lifetimeMs ?? DEFAULT_TRIGGER_LIFETIME_MS;
+    const expiresAt = input.expiresAt ?? createdAt + lifetimeMs;
+    if (expiresAt - createdAt > MAX_TRIGGER_LIFETIME_MS) {
+      throw new Error(`Trigger lifetime cannot exceed ${MAX_TRIGGER_LIFETIME_MS}ms`);
     }
     const env = sanitizeTriggerEnvironment(this.options.environment ?? process.env, input.env);
     this.creatingIds.add(id);
@@ -152,30 +173,31 @@ export class TriggerManager implements PublicTriggerManager {
       throw error;
     }
     const now = this.options.clock.now();
+    const paused = input.startBehavior === "paused";
     const snapshot: TriggerSnapshot = {
       id,
       name: input.name.trim(),
-      state: input.expiresAt !== undefined && input.expiresAt <= now ? "expired" : "idle",
+      state: expiresAt <= now ? "expired" : paused ? "paused" : "idle",
       target: { ...input.target },
       executable: input.executable,
       args: [...(input.args ?? [])],
       cwd: input.cwd,
       mode,
       restartDelayMs,
-      createdAt: now,
-      expiresAt: input.expiresAt,
+      createdAt,
+      expiresAt,
       nextRestartAt: null,
       fireCount: 0,
-      maxFires: input.maxFires ?? (mode === "once" ? 1 : Number.MAX_SAFE_INTEGER),
+      maxFires: Math.min(input.maxFires ?? MAX_TRIGGER_FIRES, MAX_TRIGGER_FIRES),
       pendingCount: 0,
       coalescedCount: 0,
-      paused: false,
+      paused,
     };
     const record: TriggerRecord = {
       snapshot,
       env,
       requester: { ...requester },
-      messageTemplate: input.messageTemplate ?? DEFAULT_TRIGGER_MESSAGE_TEMPLATE,
+      messageTemplate,
       generation: 0,
       rerunRequested: false,
     };
@@ -184,7 +206,7 @@ export class TriggerManager implements PublicTriggerManager {
     this.emitExternal(record, "created");
     if (snapshot.state !== "expired") {
       this.armExpiry(record);
-      this.schedule(record, now, "start");
+      if (!snapshot.paused) this.schedule(record, now, "start");
     } else {
       this.emitExternal(record, "expired", "Trigger expired before creation completed");
     }
@@ -212,10 +234,11 @@ export class TriggerManager implements PublicTriggerManager {
     record.snapshot.paused = false;
     if (record.snapshot.state !== "running" && record.snapshot.state !== "waiting") record.snapshot.state = "idle";
     this.emitExternal(record, "resumed");
-    if (record.snapshot.state === "idle") {
+    if (record.snapshot.state === "waiting") {
+      const held = [...this.pending.values()].filter((delivery) => delivery.triggerId === id);
+      await Promise.all(held.map((delivery) => this.deliverPending(record, delivery)));
+    } else if (record.snapshot.state === "idle") {
       await this.start(record, false, false, "resume");
-    } else {
-      record.rerunRequested = true;
     }
     return cloneSnapshot(record.snapshot);
   }
@@ -306,7 +329,11 @@ export class TriggerManager implements PublicTriggerManager {
     for (const arg of input.args ?? []) if (arg.includes("\0")) throw new Error("Trigger argument contains NUL");
     if (!input.target?.sessionId || !input.target.label) throw new Error("Trigger target is invalid");
     if (input.target.agentId === "") throw new Error("Trigger target agentId is invalid");
-    if (input.cwd?.includes("\0")) throw new Error("Trigger cwd contains NUL");
+    if (!input.cwd?.trim() || input.cwd.includes("\0")) throw new Error("Trigger cwd is invalid");
+    if (input.lifetimeMs !== undefined
+      && (!Number.isFinite(input.lifetimeMs) || input.lifetimeMs < 1 || input.lifetimeMs > MAX_TRIGGER_LIFETIME_MS)) {
+      throw new Error(`lifetimeMs must be between 1 and ${MAX_TRIGGER_LIFETIME_MS}`);
+    }
     if (input.expiresAt !== undefined && !Number.isFinite(input.expiresAt)) throw new Error("expiresAt must be finite");
     if (input.maxFires !== undefined) positiveInteger(input.maxFires, "maxFires");
   }
@@ -372,15 +399,33 @@ export class TriggerManager implements PublicTriggerManager {
   }
 
   private refreshExpiry(record: TriggerRecord): void {
-    const expiresAt = record.snapshot.expiresAt;
-    if (expiresAt === undefined || this.options.clock.now() < expiresAt || this.isTerminal(record)) return;
+    if (this.options.clock.now() < record.snapshot.expiresAt || this.isTerminal(record)) return;
+    record.snapshot.state = "expired";
+    record.snapshot.paused = false;
+    record.snapshot.nextRestartAt = null;
+    record.generation += 1;
     if (record.timer !== undefined) this.options.clock.clearTimeout(record.timer);
     record.timer = undefined;
-    record.snapshot.nextRestartAt = null;
-    if (record.snapshot.state !== "running" && record.snapshot.state !== "waiting") {
-      record.snapshot.state = "expired";
-      this.emitExternal(record, "expired", "Trigger expiry reached");
+    if (record.handle) {
+      record.handle.kill();
+      record.handle = undefined;
+      this.runningCount = Math.max(0, this.runningCount - 1);
     }
+    if (record.writer) {
+      void record.writer.remove().catch(() => {});
+      record.writer = undefined;
+    }
+    for (const delivery of [...this.delivered].filter((item) => item.triggerId === record.snapshot.id)) {
+      this.delivered.splice(this.delivered.indexOf(delivery), 1);
+      void this.cleanupDelivery(delivery);
+    }
+    for (const delivery of [...this.pending.values()].filter((item) => item.triggerId === record.snapshot.id)) {
+      this.pending.delete(delivery.token);
+      void this.cleanupDelivery(delivery);
+    }
+    record.snapshot.pendingCount = 0;
+    this.emitExternal(record, "expired", "Trigger expiry reached");
+    this.drainCoalesced();
   }
 
   private async start(
@@ -511,10 +556,10 @@ export class TriggerManager implements PublicTriggerManager {
   }
 
   private async fireRecord(record: TriggerRecord, manual: boolean): Promise<void> {
-    if (record.snapshot.state === "running" || record.snapshot.state === "waiting") {
+    if (record.snapshot.state === "running") {
       record.rerunRequested = true;
       record.snapshot.coalescedCount += 1;
-      this.emitExternal(record, "coalesced", "A fire was coalesced");
+      this.emitExternal(record, "coalesced", "A fire was coalesced behind the active process");
       return;
     }
     if (record.snapshot.fireCount >= record.snapshot.maxFires) {
@@ -526,7 +571,7 @@ export class TriggerManager implements PublicTriggerManager {
       startedAt: now,
       finishedAt: now,
       durationMs: 0,
-      exitCode: 0,
+      exitCode: null,
       signal: null,
       synthetic: true,
       manual,
@@ -534,6 +579,20 @@ export class TriggerManager implements PublicTriggerManager {
     record.snapshot.lastResult = result;
     record.snapshot.output = undefined;
     record.snapshot.fireCount += 1;
+    if (record.snapshot.state === "waiting") {
+      record.snapshot.coalescedCount += 1;
+      const pending = [...this.pending.values()].find((delivery) => delivery.triggerId === record.snapshot.id);
+      if (pending) {
+        pending.event = this.eventData(record, "coalesced", "Equivalent pending fire coalesced", result);
+        pending.message = renderTriggerTemplate(
+          record.messageTemplate,
+          triggerTemplateValues(record.snapshot, pending.event),
+        );
+        pending.event.renderedMessage = pending.message;
+      }
+      this.emitExternal(record, "coalesced", "Equivalent pending fire coalesced");
+      return;
+    }
     await this.queueDelivery(record, result);
     this.afterRun(record);
   }
@@ -541,59 +600,86 @@ export class TriggerManager implements PublicTriggerManager {
   private async queueDelivery(record: TriggerRecord, result: TriggerLastResult, writer?: TriggerOutputWriter): Promise<void> {
     if (this.pending.size >= this.pendingLimit) {
       record.snapshot.coalescedCount += 1;
-      record.rerunRequested = true;
       await writer?.remove().catch(() => {});
       if (result.output) result.output.exists = false;
       this.emitExternal(record, "coalesced", `Global pending delivery limit reached (${this.pendingLimit})`);
       return;
     }
     const token = `${record.snapshot.id}:${record.snapshot.fireCount}:${this.createId()}`;
-    const pending: DeliveryRecord = { token, triggerId: record.snapshot.id, target: { ...record.snapshot.target }, writer };
+    const event = this.eventData(record, "waiting", undefined, result);
+    const message = renderTriggerTemplate(
+      record.messageTemplate,
+      triggerTemplateValues(record.snapshot, event),
+    );
+    event.renderedMessage = message;
+    const pending: DeliveryRecord = {
+      token,
+      triggerId: record.snapshot.id,
+      target: { ...record.snapshot.target },
+      event,
+      message,
+      writer,
+    };
     this.pending.set(token, pending);
     record.snapshot.pendingCount += 1;
     record.snapshot.state = "waiting";
-    const event = this.eventData(record, "waiting", undefined, result);
     this.emitExternalData(record, event);
+    if (!record.snapshot.paused) await this.deliverPending(record, pending);
+  }
+
+  private async deliverPending(record: TriggerRecord, pending: DeliveryRecord): Promise<void> {
+    if (pending.delivering || this.pending.get(pending.token) !== pending
+      || record.snapshot.paused || this.isTerminal(record)) return;
+    pending.delivering = true;
     try {
       const target = await this.options.targets.resolve(record.snapshot.target);
-      if (this.pending.get(token) !== pending || this.isTerminal(record)) return;
+      if (this.pending.get(pending.token) !== pending || this.isTerminal(record)) return;
+      if (record.snapshot.paused) return;
       if (!target || !exactTarget(target.target, record.snapshot.target)) {
-        this.pending.delete(token);
+        this.pending.delete(pending.token);
         record.snapshot.pendingCount = Math.max(0, record.snapshot.pendingCount - 1);
         await this.cleanupDelivery(pending);
         record.snapshot.state = "unavailable";
         this.emitExternal(record, "target-invalidated", "Exact target is unavailable");
         return;
       }
-      const message = renderTriggerTemplate(record.messageTemplate, triggerTemplateValues(record.snapshot, event));
       const delivery = await this.options.delivery.deliver({
-        event,
+        event: pending.event,
         target,
-        message,
-        outputPath: result.output?.path,
+        message: pending.message,
+        outputPath: pending.event.output?.path,
       });
-      if (this.pending.get(token) !== pending || this.isTerminal(record)) {
+      if (this.pending.get(pending.token) !== pending || this.isTerminal(record)) {
         await this.cleanupDelivery(pending);
         return;
       }
-      this.pending.delete(token);
+      this.pending.delete(pending.token);
       pending.deliveryId = delivery.deliveryId;
       pending.turnId = delivery.turnId;
       this.delivered.push(pending);
-      this.emitExternalData(record, { ...this.eventData(record, "delivered", undefined, result), deliveryId: delivery.deliveryId, turnId: delivery.turnId });
+      this.emitExternalData(record, {
+        ...this.eventData(record, "delivered", undefined, pending.event.result),
+        renderedMessage: pending.message,
+        deliveryId: delivery.deliveryId,
+        turnId: delivery.turnId,
+      });
       while (this.delivered.length > this.deliveredLimit) {
         const oldest = this.delivered[0];
         if (oldest) await this.settleDeliveryRecord(oldest);
       }
     } catch (error) {
-      this.pending.delete(token);
+      if (this.pending.get(pending.token) !== pending || record.snapshot.paused) return;
+      this.pending.delete(pending.token);
       record.snapshot.pendingCount = Math.max(0, record.snapshot.pendingCount - 1);
       await this.cleanupDelivery(pending);
       this.fail(record, error);
+    } finally {
+      pending.delivering = false;
     }
   }
 
   private afterRun(record: TriggerRecord): void {
+    if (record.snapshot.state !== "waiting") this.refreshExpiry(record);
     if (this.isTerminal(record) || record.snapshot.state === "waiting") return;
     if (record.snapshot.fireCount >= record.snapshot.maxFires) {
       this.expire(record, "Maximum fire count reached");
@@ -725,17 +811,30 @@ export class TriggerManager implements PublicTriggerManager {
     reason?: string,
     result = record.snapshot.lastResult,
   ): ExternalTriggerEventData {
+    const clonedResult = result
+      ? { ...result, output: result.output ? { ...result.output } : undefined }
+      : undefined;
     return {
       version: 1,
       triggerId: record.snapshot.id,
       name: record.snapshot.name,
       state,
       target: { ...record.snapshot.target },
+      executable: record.snapshot.executable,
+      args: [...record.snapshot.args],
       at: this.options.clock.now(),
       fireCount: record.snapshot.fireCount,
       pendingCount: record.snapshot.pendingCount,
       coalescedCount: record.snapshot.coalescedCount,
-      result: result ? { ...result, output: result.output ? { ...result.output } : undefined } : undefined,
+      startedAt: clonedResult?.startedAt ?? null,
+      finishedAt: clonedResult?.finishedAt ?? null,
+      durationMs: clonedResult?.durationMs ?? null,
+      exitCode: clonedResult?.exitCode ?? null,
+      signal: clonedResult?.signal ?? null,
+      synthetic: clonedResult?.synthetic ?? false,
+      manual: clonedResult?.manual ?? false,
+      output: clonedResult?.output,
+      result: clonedResult,
       reason,
     };
   }

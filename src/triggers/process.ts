@@ -84,7 +84,9 @@ export class NodeTriggerFileOperations implements TriggerFileOperations {
   async createPrivateOutput(triggerId: string): Promise<TriggerOutputWriter> {
     await mkdir(this.root, { recursive: true });
     const directory = await mkdtemp(join(this.root, "pum-trigger-"));
-    await chmod(directory, 0o700);
+    await chmod(directory, 0o700).catch(() => {
+      // Windows and some temporary filesystems do not expose POSIX modes.
+    });
     const path = join(directory, `${triggerId.replace(/[^A-Za-z0-9_.-]/g, "_")}.log`);
     const file = await open(path, "wx", 0o600);
     let closed = false;

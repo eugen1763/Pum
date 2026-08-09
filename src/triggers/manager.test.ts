@@ -70,6 +70,7 @@ function input(overrides: Partial<CreateTriggerInput> = {}): CreateTriggerInput 
     target,
     executable: "tool",
     args: ["--check"],
+    cwd: "/project",
     mode: "once",
     ...overrides,
   };
@@ -151,7 +152,7 @@ describe("TriggerManager lifecycle", () => {
     expect(h.deliveries[0]?.message).toContain("External trigger watch build (one) finished.");
 
     await h.manager.markTargetSettled("session-1", null);
-    expect(h.manager.inspect("one").state).toBe("expired");
+    expect(h.manager.inspect("one").state).toBe("idle");
     expect(h.manager.inspect("one").output?.exists).toBe(false);
     expect(h.writers[0]?.removed).toBe(true);
   });
@@ -190,6 +191,57 @@ describe("TriggerManager lifecycle", () => {
     await expect(h.manager.create(input({ id: "extra" }), requester)).rejects.toThrow("Trigger limit reached");
   });
 
+  test("uses safe default limits, lifetime, and paused start behavior", async () => {
+    const h = harness();
+    const paused = await h.manager.create(input({ id: "paused-default", startBehavior: "paused" }), requester);
+    expect(paused).toMatchObject({ state: "paused", paused: true, maxFires: 10 });
+    expect(paused.expiresAt - paused.createdAt).toBe(24 * 60 * 60 * 1_000);
+    h.clock.runDue();
+    await flushAsync();
+    expect(h.spawnCalls).toHaveLength(0);
+
+    for (let index = 0; index < 9; index += 1) {
+      await h.manager.create(input({ id: `limit-${index}`, startBehavior: "paused" }), requester);
+    }
+    await expect(h.manager.create(input({ id: "limit-over", startBehavior: "paused" }), requester))
+      .rejects.toThrow("Trigger limit reached (10)");
+  });
+
+  test("holds a process result while paused and delivers it on resume", async () => {
+    const exit = deferred<ProcessExit>();
+    const h = harness({ spawn: () => ({ completed: exit.promise, kill() {} }) });
+    await h.manager.create(input({ id: "pause-hold" }), requester);
+    h.clock.runDue();
+    await flushAsync(4);
+    await h.manager.pause("pause-hold");
+    exit.resolve({ exitCode: 2, signal: null });
+    await flushAsync(30);
+    expect(h.deliveries).toHaveLength(0);
+    expect(h.manager.inspect("pause-hold")).toMatchObject({ state: "waiting", paused: true, pendingCount: 1 });
+    await h.manager.resume("pause-hold");
+    expect(h.deliveries).toHaveLength(1);
+    expect(h.deliveries[0]?.event).toMatchObject({
+      triggerId: "pause-hold",
+      executable: "tool",
+      args: ["--check"],
+      exitCode: 2,
+      synthetic: false,
+      renderedMessage: expect.stringContaining("pause-hold"),
+    });
+  });
+
+  test("rejects invalid templates and overlong lifetimes before process start", async () => {
+    const h = harness();
+    await expect(h.manager.create(input({ id: "unknown-template", template: "{{unknown}}" }), requester))
+      .rejects.toThrow("Unknown trigger template field");
+    await expect(h.manager.create(input({ id: "bad-template", template: "{{triggerName" }), requester))
+      .rejects.toThrow("Malformed trigger template");
+    await expect(h.manager.create(input({ id: "too-long", lifetimeMs: 31 * 24 * 60 * 60 * 1_000 }), requester))
+      .rejects.toThrow("lifetimeMs must be between");
+    expect(h.safetyCalls).toHaveLength(0);
+    expect(h.spawnCalls).toHaveLength(0);
+  });
+
   test("cancels timers and active processes and performs idempotent shutdown", async () => {
     const exit = deferred<ProcessExit>();
     let killed = 0;
@@ -214,7 +266,12 @@ describe("TriggerManager security and exact targeting", () => {
   test("authorizes the exact requester target and filters untrusted inspection", async () => {
     const h = harness();
     await h.manager.create(input({ id: "owned" }), requester);
-    const other: TriggerRequester = { kind: "main", sessionId: "other", cwd: "/project" };
+    const other: TriggerRequester = {
+      kind: "subagent",
+      sessionId: "other",
+      agentId: "other-agent",
+      cwd: "/project",
+    };
     await expect(h.manager.create(input({ id: "bad" }), other)).rejects.toThrow("exact trigger target");
     expect(h.manager.getTriggers(other)).toEqual([]);
     expect(() => h.manager.inspect("owned", other)).toThrow("Trigger not found");
@@ -304,12 +361,12 @@ describe("TriggerManager limits, coalescing, and races", () => {
     await flushAsync();
   });
 
-  test("retains at most ten delivered results and removes the oldest output", async () => {
-    const h = harness({ deliveredLimit: 10, pendingLimit: 20, runningLimit: 20 });
-    for (let index = 0; index < 11; index += 1) await h.manager.create(input({ id: `delivery-${index}` }), requester);
+  test("bounds retained delivered output and removes the oldest file", async () => {
+    const h = harness({ deliveredLimit: 3, pendingLimit: 5, runningLimit: 5 });
+    for (let index = 0; index < 4; index += 1) await h.manager.create(input({ id: `delivery-${index}` }), requester);
     h.clock.runDue();
     await flushAsync(30);
-    expect(h.deliveries).toHaveLength(11);
+    expect(h.deliveries).toHaveLength(4);
     expect(h.writers[0]?.removed).toBe(true);
     expect(h.manager.inspect("delivery-0").output?.exists).toBe(false);
     expect(h.writers.slice(1).every((writer) => !writer.removed)).toBe(true);

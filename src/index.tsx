@@ -9,6 +9,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { mkdirSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { loadSettings } from "./settings";
@@ -18,7 +19,11 @@ import {
   explanationStrengthExtension,
   setExplanationStrength,
 } from "./explanation-strength";
-import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
+import {
+  createCheckModeExtension,
+  createExternalTriggerSafetyChecker,
+  setCheckModeConfig,
+} from "./check-mode";
 import { CheckApprovalCoordinator, CheckApprovalStore } from "./check-approvals";
 import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
@@ -28,6 +33,12 @@ import { applyPatchExtension } from "./apply-patch";
 import { QuestionnaireManager } from "./questionnaire";
 import { SessionHistoryIndex } from "./session-history-metadata";
 import { MESSAGE_CACHE_TOOLS, MessageCacheController } from "./message-cache";
+import { TriggerManager } from "./triggers/manager";
+import {
+  NodeTriggerFileOperations,
+  NodeTriggerProcessAdapter,
+  systemTriggerClock,
+} from "./triggers/process";
 
 mkdirSync(AGENT_DIR, { recursive: true });
 
@@ -50,12 +61,60 @@ const checkModeExtension = createCheckModeExtension(modelRuntime, undefined, {
   coordinator: checkApprovalCoordinator,
   approvals: checkApprovalStore,
 });
-const subagentManager = new SubagentManager({
+const externalTriggerSafety = createExternalTriggerSafetyChecker(modelRuntime, {
+  coordinator: checkApprovalCoordinator,
+  approvals: checkApprovalStore,
+});
+let subagentManager!: SubagentManager;
+const triggerManager = new TriggerManager({
+  process: new NodeTriggerProcessAdapter(),
+  clock: systemTriggerClock,
+  files: new NodeTriggerFileOperations(),
+  safety: {
+    async check(request) {
+      try {
+        await externalTriggerSafety(request.proposal, request.requester);
+        return { safe: true };
+      } catch (error) {
+        return { safe: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+    },
+  },
+  targets: {
+    async resolve(target) {
+      const resolved = await subagentManager.resolveRetainedTriggerTarget(target.agentId ?? "main");
+      if (!resolved.available
+        || resolved.sessionId !== target.sessionId
+        || resolved.agentId !== target.agentId) return undefined;
+      return {
+        target: {
+          sessionId: resolved.sessionId,
+          agentId: resolved.agentId,
+          label: resolved.label,
+        },
+        value: resolved,
+      };
+    },
+  },
+  delivery: {
+    async deliver(request) {
+      const deliveryId = randomUUID();
+      await subagentManager.deliverTriggerEvent({
+        ...request.event,
+        id: deliveryId,
+        text: request.message,
+      });
+      return { deliveryId };
+    },
+  },
+});
+subagentManager = new SubagentManager({
   modelRuntime,
   agentDir: AGENT_DIR,
   maxActiveSubagents: settings.maxActiveSubagents,
   questionnaireManager,
   messageCacheController,
+  triggerManager,
   childExtensionFactories: [
     writingStyleExtension,
     explanationStrengthExtension,
@@ -98,6 +157,8 @@ const sessionRuntime = await createAgentSessionRuntime(
           "read", "write", "edit", "apply_patch", "bash", "questionnaire",
           "spawn_subagent", "message_agent", "list_subagents", "stop_subagent", "worktree",
           ...MESSAGE_CACHE_TOOLS,
+          "create_trigger", "list_triggers", "inspect_trigger", "pause_trigger",
+          "resume_trigger", "cancel_trigger", "invoke_trigger",
         ],
       })),
       services,
@@ -120,6 +181,7 @@ const root = createRoot(renderer);
 const shutdown = createShutdown({
   unmount: () => root.unmount(),
   cleanup: cleanupPendingImages,
+  shutdownTriggers: () => triggerManager.shutdown(),
   dispose: () => sessionRuntime.dispose(),
   destroy: () => renderer.destroy(),
   exit: (code) => process.exit(code),
@@ -151,6 +213,7 @@ root.render(
     loginRequired={loginRequired}
     checkApprovalCoordinator={checkApprovalCoordinator}
     checkApprovalStore={checkApprovalStore}
+    triggerManager={triggerManager}
     onExit={() => shutdown(0)}
   />,
 );
