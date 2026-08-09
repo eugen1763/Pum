@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { CliRenderEvents, MarkdownRenderable, type BaseRenderable } from "@opentui/core";
+import {
+  CliRenderEvents,
+  MarkdownRenderable,
+  TextRenderable,
+  type BaseRenderable,
+  type Renderable,
+} from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { copySelectionText, installSelectionClipboard } from "./clipboard";
 import { buildSyntaxStyle } from "./syntax";
 import { loadTheme } from "./theme";
-import { TextLine } from "./transcript";
+import {
+  AgentMessageLine,
+  PendingMessageLine,
+  StreamLine,
+  TextLine,
+  ToolLine,
+} from "./transcript";
 
 let destroy: (() => void) | undefined;
 afterEach(() => {
@@ -24,6 +36,26 @@ function descendants<T extends BaseRenderable>(
   };
   visit(root);
   return found;
+}
+
+async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await setup.renderOnce();
+  await setup.flush();
+}
+
+function completeSelection(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  renderable: Renderable,
+) {
+  setup.renderer.startSelection(renderable, renderable.x, renderable.y);
+  setup.renderer.updateSelection(
+    renderable,
+    renderable.x + renderable.width - 1,
+    renderable.y + renderable.height - 1,
+    { finishDragging: true },
+  );
+  setup.renderer.emit(CliRenderEvents.SELECTION, setup.renderer.getSelection()!);
 }
 
 describe("selection clipboard routes", () => {
@@ -98,20 +130,112 @@ describe("transcript selection", () => {
         text="select this transcript text"
       />,
     );
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    await setup.renderOnce();
-    await setup.flush();
+    await settle(setup);
 
     const markdown = descendants(setup.renderer.root, MarkdownRenderable)[0]!;
-    setup.renderer.startSelection(markdown, markdown.x, markdown.y);
-    setup.renderer.updateSelection(markdown, markdown.x + markdown.width - 1, markdown.y, {
-      finishDragging: true,
-    });
-    setup.renderer.emit(CliRenderEvents.SELECTION, setup.renderer.getSelection()!);
+    completeSelection(setup, markdown);
     await binding.flush();
 
     expect(copied).toHaveLength(1);
     expect(copied[0]).toContain("select this transcript text");
     binding.dispose();
+  });
+
+  test("copies selectable thinking, system, and error plain text", async () => {
+    const setup = await createTestRenderer({ width: 48, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const copied: string[] = [];
+    const binding = installSelectionClipboard(setup.renderer, {
+      platform: "win32",
+      env: {},
+      nativeClipboard: { setText: async (text) => { copied.push(text); } },
+    });
+    const theme = loadTheme("tokyonight");
+    const syntaxStyle = buildSyntaxStyle(theme);
+    createRoot(setup.renderer).render(
+      <box style={{ flexDirection: "column", width: "100%" }}>
+        <TextLine theme={theme} syntaxStyle={syntaxStyle} role="thinking" text="plain thinking text" />
+        <TextLine theme={theme} syntaxStyle={syntaxStyle} role="system" text="plain system text" />
+        <TextLine theme={theme} syntaxStyle={syntaxStyle} role="error" text="plain error text" />
+      </box>,
+    );
+    await settle(setup);
+
+    const textRows = descendants(setup.renderer.root, TextRenderable);
+    expect(textRows).toHaveLength(3);
+    expect(textRows.every((renderable) => renderable.selectable)).toBe(true);
+    for (const text of textRows) completeSelection(setup, text);
+    await binding.flush();
+
+    expect(copied).toHaveLength(3);
+    expect(copied[0]).toContain("plain thinking text");
+    expect(copied[1]).toContain("plain system text");
+    expect(copied[2]).toContain("plain error text");
+    binding.dispose();
+  });
+
+  test("copies selectable tool name, argument, and detail renderables", async () => {
+    const setup = await createTestRenderer({ width: 52, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const copied: string[] = [];
+    const binding = installSelectionClipboard(setup.renderer, {
+      platform: "win32",
+      env: {},
+      nativeClipboard: { setText: async (text) => { copied.push(text); } },
+    });
+    const theme = loadTheme("tokyonight");
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{ id: "patch", name: "apply_patch", arg: "src/file.ts", detail: "+2 −1", state: "running" }}
+        workingCaret
+      />,
+    );
+    await settle(setup);
+
+    const textRows = descendants(setup.renderer.root, TextRenderable);
+    const [prefix, body] = textRows;
+    expect(prefix?.selectable).toBe(true);
+    expect(body?.selectable).toBe(true);
+
+    completeSelection(setup, prefix!);
+    completeSelection(setup, body!);
+    await binding.flush();
+
+    expect(copied).toHaveLength(2);
+    expect(copied[0]).toContain("apply_patch ·");
+    expect(copied[1]).toContain("src/file.ts  +2 −1");
+    binding.dispose();
+  });
+
+  test("marks streaming thinking and agent headers as selectable", async () => {
+    const setup = await createTestRenderer({ width: 52, height: 12 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const syntaxStyle = buildSyntaxStyle(theme);
+    createRoot(setup.renderer).render(
+      <box style={{ flexDirection: "column", width: "100%" }}>
+        <StreamLine theme={theme} syntaxStyle={syntaxStyle} role="thinking" text="streaming trace" />
+        <AgentMessageLine
+          theme={theme}
+          syntaxStyle={syntaxStyle}
+          line={{ kind: "agent-message", sender: "main", recipient: "worker", text: "message" }}
+        />
+        <PendingMessageLine
+          theme={theme}
+          syntaxStyle={syntaxStyle}
+          pending={{
+            id: "pending",
+            line: { kind: "agent-message", sender: "worker", recipient: "main", text: "reply" },
+          }}
+        />
+      </box>,
+    );
+    await settle(setup);
+
+    const textRows = descendants(setup.renderer.root, TextRenderable);
+    const contentRows = textRows.filter((renderable) => renderable.x > 0);
+    expect(contentRows).toHaveLength(3);
+    expect(contentRows.every((renderable) => renderable.selectable)).toBe(true);
   });
 });

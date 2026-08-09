@@ -216,6 +216,7 @@ export function TextLine({
         ref={workingCaret ? textCaret : undefined}
         content={workingCaret ? undefined : displayText}
         fg={color}
+        selectable
         wrapMode="word"
         style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
       />
@@ -260,6 +261,7 @@ export function StreamLine({
       ) : (
         <text
           ref={shimmer}
+          selectable
           wrapMode="word"
           style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
         />
@@ -285,6 +287,7 @@ export function PendingMessageLine({
           <text
             content={`${line.sender} → ${line.recipient} · queued`}
             fg={theme.dim}
+            selectable
             wrapMode="word"
             style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
           />
@@ -328,6 +331,7 @@ export function AgentMessageLine({
         <text
           content={`${line.sender} → ${line.recipient}`}
           fg={theme.agentMessage}
+          selectable
           wrapMode="word"
           style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
         />
@@ -387,10 +391,11 @@ export function ToolLine({
       background={rejected ? theme.rejectionBg : undefined}
     >
       <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-        {prefix ? <text content={prefix} style={{ flexShrink: 0 }} /> : null}
+        {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
         <text
           ref={workingCaret ? caret : undefined}
           content={workingCaret ? undefined : new StyledText(bodyChunks)}
+          selectable
           wrapMode="word"
           style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
         />
