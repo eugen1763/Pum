@@ -1689,14 +1689,18 @@ export function App({
     : false;
 
   return (
-    <AnimationProvider enabled={animations}>
+    <AnimationProvider
+      enabled={animations}
+      working={visibleBusy}
+      workingRuleWidth={width}
+    >
       <box style={{ flexDirection: "column", height: "100%", backgroundColor: theme.bg }}>
         <WorkingRule
           theme={theme}
           width={Math.max(0, width)}
           busy={visibleBusy}
           mode={settings.workingRuleAnimation}
-          role="header"
+          role="headerTop"
         />
         <StatusBar
           theme={theme}
@@ -1711,6 +1715,13 @@ export function App({
           agentCount={agents.length}
           runningAgentCount={agents.filter((agent) => agent.status === "running" || agent.status === "starting").length}
           activeAgentName={activeAgent?.name}
+        />
+        <WorkingRule
+          theme={theme}
+          width={Math.max(0, width)}
+          busy={visibleBusy}
+          mode={settings.workingRuleAnimation}
+          role="headerBottom"
         />
         <scrollbox
           key={activeAgentId ?? "main"}
