@@ -12,6 +12,7 @@ import { Type } from "typebox";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { addTurnUsage, emptyAgentUsage, usageFromEntries } from "../agent-usage";
 import { replayEntries } from "../replay";
 import { isRejectedToolResult } from "../check-mode";
 import {
@@ -107,6 +108,7 @@ function cloneSnapshot(record: RuntimeRecord): SubagentSnapshot {
   return {
     ...record.snapshot,
     worktree: { ...record.snapshot.worktree },
+    usage: { ...record.snapshot.usage },
     transcript: {
       lines: [...record.snapshot.transcript.lines],
       stream: record.snapshot.transcript.stream
@@ -206,10 +208,18 @@ export class SubagentManager {
           current.summary = data.summary ?? current.summary;
           current.updatedAt = data.at;
         }
+      } else if (data.event === "usage") {
+        const current = restored.get(data.id);
+        if (current && data.usage) current.usage = data.usage;
       }
     }
 
-    for (const snapshot of restored.values()) {
+    for (const restoredSnapshot of restored.values()) {
+      const snapshot = {
+        ...restoredSnapshot,
+        parentAgentId: restoredSnapshot.parentAgentId ?? null,
+        usage: restoredSnapshot.usage ?? emptyAgentUsage(),
+      } as SubagentSnapshot;
       let transcript = emptyTranscript();
       if (snapshot.sessionFile && existsSync(snapshot.sessionFile)) {
         try {
@@ -221,6 +231,12 @@ export class SubagentManager {
             stream: null,
             pending: [],
           };
+          if (!restoredSnapshot.usage) {
+            snapshot.usage = usageFromEntries(
+              childManager.getEntries(),
+              this.resolveModel(snapshot.modelId).contextWindow,
+            );
+          }
         } catch {
           // Keep metadata even if an old subagent session cannot be opened.
         }
@@ -380,6 +396,24 @@ export class SubagentManager {
       case "agent_start":
         this.updateStatus(record, "running");
         break;
+      case "turn_end": {
+        const usage = event.message?.usage;
+        if (!usage) break;
+        record.snapshot.usage = addTurnUsage(
+          record.snapshot.usage,
+          usage,
+          record.session?.agent.state.model.contextWindow,
+        );
+        record.snapshot.updatedAt = Date.now();
+        this.persist({
+          event: "usage",
+          id: record.snapshot.id,
+          at: record.snapshot.updatedAt,
+          usage: record.snapshot.usage,
+        });
+        this.emit();
+        break;
+      }
       case "agent_settled": {
         this.updateTranscript(record, flushTranscript);
         const error = record.session?.agent.state.errorMessage;
@@ -420,6 +454,29 @@ export class SubagentManager {
               "Commit completed changes before finishing. Call finish_subagent with a concise summary when the task is complete.\n\n" +
               SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
           };
+        });
+
+        pi.registerTool({
+          name: "spawn_subagent",
+          label: "Spawn Subagent",
+          description: "Start a nonblocking child subagent in a new Git worktree.",
+          promptSnippet: "Start a child subagent in an isolated Git worktree",
+          parameters: Type.Object({
+            task: Type.String({ description: "Complete task for the child subagent" }),
+            name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
+          }),
+          execute: async (_id, params) => {
+            const parent = this.records.get(agentId);
+            if (!parent) throw new Error("Spawner subagent no longer exists");
+            const snapshot = await this.spawn({
+              task: params.task,
+              name: params.name,
+              modelId: parent.snapshot.modelId,
+              thinkingLevel: parent.snapshot.thinkingLevel,
+              parentAgentId: agentId,
+            });
+            return textResult(`Spawned ${snapshot.name}\nid: ${snapshot.id}`, snapshot);
+          },
         });
 
         pi.registerTool({
@@ -623,11 +680,13 @@ export class SubagentManager {
       task: options.task,
       status: "starting",
       worktree,
+      parentAgentId: options.parentAgentId ?? null,
       modelId: options.modelId,
       thinkingLevel: options.thinkingLevel,
       transcript: emptyTranscript(),
       startedAt: now,
       updatedAt: now,
+      usage: emptyAgentUsage(),
     };
     const record: RuntimeRecord = { snapshot };
     this.records.set(id, record);
@@ -674,7 +733,7 @@ export class SubagentManager {
       thinkingLevel: record.snapshot.thinkingLevel as any,
       tools: [
         "read", "write", "edit", "bash",
-        "message_agent", "list_subagents", "finish_subagent",
+        "spawn_subagent", "message_agent", "list_subagents", "finish_subagent",
       ],
     });
     record.session = result.session;

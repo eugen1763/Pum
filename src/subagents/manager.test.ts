@@ -53,6 +53,73 @@ describe("SubagentManager extension", () => {
     expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
   });
 
+  test("restores parent metadata and migrates legacy records to main", async () => {
+    const base = {
+      name: "worker",
+      task: "task",
+      status: "idle",
+      worktree: {
+        name: "worker",
+        path: "/tmp/worker",
+        branch: "pum/worker",
+        baseBranch: "main",
+        baseCommit: "abc",
+      },
+      modelId: "mock/model",
+      thinkingLevel: "off",
+      startedAt: 1,
+      updatedAt: 1,
+    };
+    const entries = [
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: {
+          event: "spawned",
+          id: "parent",
+          snapshot: { ...base, id: "parent", parentAgentId: null },
+        },
+      },
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: {
+          event: "spawned",
+          id: "child",
+          snapshot: { ...base, id: "child", parentAgentId: "parent" },
+        },
+      },
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: {
+          event: "usage",
+          id: "child",
+          usage: { tokens: 700, cost: 0.2, contextPct: 35 },
+        },
+      },
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: {
+          event: "spawned",
+          id: "legacy",
+          snapshot: { ...base, id: "legacy" },
+        },
+      },
+    ];
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    await manager.attachMain({ appendEntry() {} } as any, {
+      getSessionId: () => "main-session",
+      getEntries: () => entries,
+    } as any, "/repo");
+
+    expect(manager.getAgent("child")?.parentAgentId).toBe("parent");
+    expect(manager.getAgent("child")?.usage).toEqual({ tokens: 700, cost: 0.2, contextPct: 35 });
+    expect(manager.getAgent("legacy")?.parentAgentId).toBeNull();
+    expect(manager.getAgent("legacy")?.usage).toEqual({ tokens: 0, cost: 0, contextPct: null });
+  });
+
   test("binds the main session even when session_start was missed", async () => {
     const pi = {
       on() {},

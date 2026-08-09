@@ -101,7 +101,11 @@ function Row({
       <box style={{ width: 2, flexShrink: 0 }}>
         {glyph.trim() ? <text content={glyph} fg={glyphColor} /> : null}
       </box>
-      {children}
+      {/* The nested flex item gives every transcript type the same measured
+          remaining-width column as the tool-row body. */}
+      <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+        {children}
+      </box>
     </box>
   );
 }
@@ -141,7 +145,7 @@ export function TextLine({
           content={workingCaret ? undefined : text}
           syntaxStyle={syntaxStyle}
           fg={color}
-          style={{ flexGrow: 1, minWidth: 0 }}
+          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
         />
       </Row>
     );
@@ -158,7 +162,7 @@ export function TextLine({
         content={workingCaret ? undefined : displayText}
         fg={color}
         wrapMode="word"
-        style={{ flexGrow: 1, minWidth: 0 }}
+        style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
       />
     </Row>
   );
@@ -195,10 +199,14 @@ export function StreamLine({
           streaming
           syntaxStyle={syntaxStyle}
           fg={color}
-          style={{ flexGrow: 1, minWidth: 0 }}
+          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
         />
       ) : (
-        <text ref={shimmer} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
+        <text
+          ref={shimmer}
+          wrapMode="word"
+          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+        />
       )}
     </Row>
   );
@@ -209,9 +217,19 @@ export function PendingMessageLine({ theme, pending }: { theme: Theme; pending: 
   if (line.kind === "agent-message") {
     return (
       <Row glyph="◇ " glyphColor={theme.dim} background={theme.agentMessageBg}>
-        <box style={{ flexDirection: "column", flexGrow: 1, minWidth: 0 }}>
-          <text content={`${line.sender} → ${line.recipient} · queued`} fg={theme.dim} />
-          <text content={line.text} fg={theme.dim} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
+        <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+          <text
+            content={`${line.sender} → ${line.recipient} · queued`}
+            fg={theme.dim}
+            wrapMode="word"
+            style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+          />
+          <text
+            content={line.text}
+            fg={theme.dim}
+            wrapMode="word"
+            style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+          />
         </box>
       </Row>
     );
@@ -219,7 +237,12 @@ export function PendingMessageLine({ theme, pending }: { theme: Theme; pending: 
 
   return (
     <Row glyph="○ " glyphColor={theme.dim} background={theme.userBg}>
-      <text content={line.text} fg={theme.dim} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
+      <text
+        content={line.text}
+        fg={theme.dim}
+        wrapMode="word"
+        style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+      />
     </Row>
   );
 }
@@ -227,13 +250,18 @@ export function PendingMessageLine({ theme, pending }: { theme: Theme; pending: 
 export function AgentMessageLine({ theme, line }: { theme: Theme; line: Extract<Line, { kind: "agent-message" }> }) {
   return (
     <Row glyph="◇ " glyphColor={theme.agentMessage} background={theme.agentMessageBg}>
-      <box style={{ flexDirection: "column", flexGrow: 1, minWidth: 0 }}>
-        <text content={`${line.sender} → ${line.recipient}`} fg={theme.agentMessage} />
+      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+        <text
+          content={`${line.sender} → ${line.recipient}`}
+          fg={theme.agentMessage}
+          wrapMode="word"
+          style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+        />
         <text
           content={line.text}
           fg={theme.agentMessage}
           wrapMode="word"
-          style={{ flexGrow: 1, minWidth: 0 }}
+          style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
         />
       </box>
     </Row>
@@ -279,13 +307,13 @@ export function ToolLine({
 
   return (
     <Row glyph={GUTTER} glyphColor={toolColor}>
-      <box style={{ flexDirection: "row", flexGrow: 1, minWidth: 0 }}>
+      <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
         {prefix ? <text content={prefix} style={{ flexShrink: 0 }} /> : null}
         <text
           ref={workingCaret ? caret : undefined}
           content={workingCaret ? undefined : new StyledText(bodyChunks)}
           wrapMode="word"
-          style={{ flexGrow: 1, minWidth: 0 }}
+          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
         />
       </box>
       <box style={{ width: 1, flexShrink: 0 }} />

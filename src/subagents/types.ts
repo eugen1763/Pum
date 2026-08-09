@@ -1,6 +1,7 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Line, PendingLine } from "../transcript";
 import type { WorktreeRecord } from "../worktree";
+import type { AgentUsage } from "../agent-usage";
 
 export const SUBAGENT_CUSTOM_TYPE = "pum.subagent";
 export const AGENT_MESSAGE_CUSTOM_TYPE = "pum.agent_message";
@@ -33,6 +34,8 @@ export type SubagentSnapshot = {
   status: SubagentStatus;
   worktree: WorktreeRecord;
   sessionFile?: string;
+  /** The retained agent that spawned this agent. Missing legacy values mean main. */
+  parentAgentId: string | null;
   modelId: string;
   thinkingLevel: string;
   transcript: AgentTranscript;
@@ -40,15 +43,17 @@ export type SubagentSnapshot = {
   startedAt: number;
   updatedAt: number;
   runStartedAt?: number;
+  usage: AgentUsage;
 };
 
 export type SubagentRegistryEvent = {
-  event: "spawned" | "status" | "removed";
+  event: "spawned" | "status" | "usage" | "removed";
   id: string;
   at: number;
   snapshot?: Omit<SubagentSnapshot, "transcript">;
   status?: SubagentStatus;
   summary?: string;
+  usage?: AgentUsage;
 };
 
 export type AgentMessageData = {
@@ -71,6 +76,7 @@ export type SpawnSubagentOptions = {
   modelId: string;
   thinkingLevel: string;
   createWorktree?: boolean;
+  parentAgentId?: string | null;
 };
 
 export type RoutedPrompt = {

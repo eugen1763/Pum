@@ -71,6 +71,8 @@ import type { SubagentManager } from "./subagents/manager";
 import { runWorktreeCommand } from "./worktree-command";
 import { CANCEL_WINDOW_MS, confirmsCancellation } from "./cancel-confirmation";
 import { buildStashBatchPrompt, selectedRange } from "./stash-batch";
+import { addTurnUsage, emptyAgentUsage } from "./agent-usage";
+import { AgentSelectorPopup, buildAgentTree, moveAgentSelection } from "./agent-selector";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -265,7 +267,7 @@ export function App({
   );
   const [modelId, setModelId] = useState(session.agent.state.model.id);
   const [branch, setBranch] = useState<string | null>(null);
-  const [usage, setUsage] = useState({ tokens: 0, cost: 0, contextPct: null as number | null });
+  const [usage, setUsage] = useState(emptyAgentUsage);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [stash, setStash] = useState<StashedPrompt[]>(() => loadPromptStash(cwd));
   /** -1 means the input is selected; non-negative values select stash rows. */
@@ -277,6 +279,8 @@ export function App({
   const [inputRows, setInputRows] = useState(1);
   const [inputCursorRow, setInputCursorRow] = useState(0);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+  const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
+  const [agentSelectorCursor, setAgentSelectorCursor] = useState(0);
   const [agentElapsedSec, setAgentElapsedSec] = useState(0);
   const [, setAgentRevision] = useState(0);
 
@@ -296,11 +300,25 @@ export function App({
   const visibleThinkingLevel = activeAgent?.thinkingLevel ?? thinkingLevel;
   const visibleBranch = activeAgent?.worktree.branch ?? branch;
   const visibleElapsedSec = activeAgent ? agentElapsedSec : elapsedSec;
+  const visibleUsage = activeAgent?.usage ?? usage;
+  const agentTreeRows = buildAgentTree(agents);
+  const inputHint = cancelArmed
+    ? " esc again to cancel "
+    : quitArmed
+      ? " ctrl+c again to quit "
+      : "";
+  const promptRightColumns = width >= 12 ? 6 : Math.max(2, width - 3);
+  const promptInputColumns = Math.max(
+    1,
+    width - 2 - promptRightColumns - inputHint.length,
+  );
   const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
   const visibleSettingRows = filterSettingsRows(settingsQuery);
 
   const inputRef = useRef<TextareaRenderable>(null);
   const focusInputAfterSwitch = useRef(false);
+  const activeAgentIdRef = useRef<string | null>(null);
+  const agentSelectorCursorRef = useRef(0);
   const commandCursorRef = useRef(0);
   const stashRef = useRef(stash);
   const stashOpenRef = useRef(false);
@@ -415,7 +433,9 @@ export function App({
       MAX_INPUT_ROWS,
       Math.max(1, input.editorView.getTotalVirtualLineCount()),
     );
-    const cursorRow = Math.max(0, Math.min(rows - 1, input.visualCursor.visualRow));
+    const cursorRow = input.cursorOffset >= input.plainText.length
+      ? rows - 1
+      : Math.max(0, Math.min(rows - 1, input.visualCursor.visualRow));
     setInputRows(rows);
     setInputCursorRow(cursorRow);
   };
@@ -581,6 +601,7 @@ export function App({
 
   useEffect(() => {
     if (activeAgentId && !agents.some((agent) => agent.id === activeAgentId)) {
+      activeAgentIdRef.current = null;
       setActiveAgentId(null);
     }
   }, [activeAgentId, agents.map((agent) => agent.id).join(":")]);
@@ -610,7 +631,7 @@ export function App({
       stream: null,
       pending: [],
     });
-    setUsage({ tokens: 0, cost: 0, contextPct: null });
+    setUsage(emptyAgentUsage());
     if (focusInputAfterSwitch.current) {
       focusInputAfterSwitch.current = false;
       inputRef.current?.focus();
@@ -659,14 +680,11 @@ export function App({
         case "turn_end": {
           const u = (event.message as any)?.usage;
           if (u) {
-            const window = session.agent.state.model.contextWindow;
-            setUsage((prev) => ({
-              tokens: prev.tokens + (u.totalTokens ?? 0),
-              cost: prev.cost + (u.cost?.total ?? 0),
-              contextPct: window
-                ? Math.min(100, Math.round(((u.input + u.cacheRead) / window) * 100))
-                : null,
-            }));
+            setUsage((prev) => addTurnUsage(
+              prev,
+              u,
+              session.agent.state.model.contextWindow,
+            ));
           }
           break;
         }
@@ -1105,21 +1123,30 @@ export function App({
     );
   };
 
-  const cycleAgentView = (direction: -1 | 1) => {
+  const selectAgentView = (target: string | null): boolean => {
     if (pendingImages.current.length > 0) {
       append({ kind: "text", role: "error", text: "send or remove attached images before switching agents" });
-      return;
+      return false;
     }
-    const ids: Array<string | null> = [null, ...agents.map((agent) => agent.id)];
-    if (ids.length === 1) return;
-    const current = ids.findIndex((id) => id === activeAgentId);
-    const next = (current + direction + ids.length) % ids.length;
-    viewDrafts.current.set(activeAgentId ?? "main", inputRef.current?.plainText ?? "");
-    const target = ids[next] ?? null;
+    const current = activeAgentIdRef.current;
+    if (target === current) return true;
+    viewDrafts.current.set(current ?? "main", inputRef.current?.plainText ?? "");
+    activeAgentIdRef.current = target;
     setActiveAgentId(target);
     setEditorText(viewDrafts.current.get(target ?? "main") ?? "");
     setStashMode(false);
     histCursor.current = null;
+    resetCancelArm();
+    queueMicrotask(() => inputRef.current?.focus());
+    return true;
+  };
+
+  const cycleAgentView = (direction: -1 | 1) => {
+    const ids: Array<string | null> = [null, ...agents.map((agent) => agent.id)];
+    if (ids.length === 1) return;
+    const current = ids.findIndex((id) => id === activeAgentIdRef.current);
+    const next = (current + direction + ids.length) % ids.length;
+    selectAgentView(ids[next] ?? null);
   };
 
   useKeyboard((key) => {
@@ -1143,6 +1170,51 @@ export function App({
       setQuitArmed(false);
     }
     if (key.name !== "escape" && lastCancelPress.current !== null) resetCancelArm();
+
+    if (key.ctrl && key.name === "l") {
+      key.stopPropagation();
+      if (agentSelectorOpen) {
+        setAgentSelectorOpen(false);
+        queueMicrotask(() => inputRef.current?.focus());
+      } else {
+        setSettingsOpen(false);
+        setHelpOpen(false);
+        setHistoryOpen(false);
+        const selected = Math.max(
+          0,
+          agentTreeRows.findIndex((row) => row.id === activeAgentIdRef.current),
+        );
+        agentSelectorCursorRef.current = selected;
+        setAgentSelectorCursor(selected);
+        setAgentSelectorOpen(true);
+      }
+      return;
+    }
+
+    if (agentSelectorOpen) {
+      key.stopPropagation();
+      if (key.name === "escape") {
+        setAgentSelectorOpen(false);
+        queueMicrotask(() => inputRef.current?.focus());
+      } else if (key.name === "up" || key.name === "down") {
+        const next = moveAgentSelection(
+          agentSelectorCursorRef.current,
+          agentTreeRows.length,
+          key.name === "up" ? -1 : 1,
+        );
+        agentSelectorCursorRef.current = next;
+        setAgentSelectorCursor(next);
+      } else if (
+        key.name === "right" ||
+        key.name === "return" ||
+        key.name === "enter" ||
+        key.name === "kpenter"
+      ) {
+        const target = agentTreeRows[agentSelectorCursorRef.current]?.id ?? null;
+        if (selectAgentView(target)) setAgentSelectorOpen(false);
+      }
+      return;
+    }
 
     if (helpOpen) {
       key.stopPropagation();
@@ -1487,9 +1559,9 @@ export function App({
           modelId={visibleModelId}
           thinkingLevel={visibleThinkingLevel}
           branch={visibleBranch}
-          tokens={usage.tokens}
-          cost={usage.cost}
-          contextPct={usage.contextPct}
+          tokens={visibleUsage.tokens}
+          cost={visibleUsage.cost}
+          contextPct={visibleUsage.contextPct}
           busy={visibleBusy}
           elapsedSec={visibleElapsedSec}
           agentCount={agents.length}
@@ -1637,15 +1709,16 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="char"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
-            style={{ flexGrow: 1, minWidth: 0, height: inputRows }}
+            style={{ width: promptInputColumns, flexShrink: 0, minWidth: 0, height: inputRows }}
           />
-          <box style={{ width: 2, height: inputRows, flexShrink: 0 }} />
-          {cancelArmed ? <text content=" esc again to cancel " fg={theme.warn} /> : null}
-          {quitArmed ? <text content=" ctrl+c again to quit " fg={theme.warn} /> : null}
+          {/* Reserve six columns on normal terminals. This forces wrapping
+              before cursor movement can briefly overdraw the terminal edge. */}
+          <box style={{ width: promptRightColumns, height: inputRows, flexShrink: 0 }} />
+          {inputHint ? <text content={inputHint} fg={theme.warn} /> : null}
         </box>
         <WorkingRule
           theme={theme}
@@ -1661,6 +1734,13 @@ export function App({
             terminalWidth={width}
             terminalHeight={height}
             scrollOffset={helpScrollOffset}
+          />
+        ) : null}
+        {agentSelectorOpen ? (
+          <AgentSelectorPopup
+            theme={theme}
+            rows={agentTreeRows}
+            cursor={agentSelectorCursor}
           />
         ) : null}
         {historyOpen ? (

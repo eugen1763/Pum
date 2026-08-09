@@ -24,6 +24,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["Delete", "Remove selected cached task"],
       ["Shift+Tab", "Next agent transcript"],
       ["Ctrl+Shift+Tab", "Previous agent transcript"],
+      ["Ctrl+L", "Open agent transcript selector"],
     ],
   },
   {

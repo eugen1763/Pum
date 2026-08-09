@@ -46,6 +46,7 @@ bun run start    # open the TUI in the current directory
 | Shift+Up / Shift+Down | Extend a prompt-stash selection |
 | Enter on a stash selection | Ask the main agent to coordinate and merge worktree subagents |
 | Shift+Tab / Ctrl+Shift+Tab | Cycle agent transcripts forward/backward |
+| Ctrl+L | Open the agent transcript tree; use Up/Down and Right/Enter to select |
 | Esc | Once warns, twice within 2s cancels the selected agent's running turn |
 | Ctrl+P | Open settings; Esc closes, or steps back from the model list |
 | Ctrl+C | Once arms and shows a hint, twice within 2s quits |
@@ -73,7 +74,7 @@ These were chosen deliberately. Change them only on purpose.
   background bar; everything after it indents two columns.
 - **The prompt is a wrapping multiline textarea.** Enter sends. Ctrl+Enter and
   Shift+Enter add a line. A trailing `\` plus Enter is the fallback and removes
-  the `\`. It grows to eight rows, then scrolls. Wrapping reserves two right
+  the `\`. It grows to eight rows, then scrolls. Wrapping reserves six right
   columns. The `❯` gutter follows the cursor's visible row.
 - **Animation is on by default** and turns itself off without true colour.
 - **Image markers are atomic input attachments.** Alt+V stores clipboard image
@@ -95,9 +96,12 @@ These were chosen deliberately. Change them only on purpose.
 - **Subagents are persistent background AgentSessions.** Each subagent gets a
   managed Git worktree and an independent session file. Spawn tools return after
   setup, not after the task. Completion becomes a custom message to the main
-  agent. Shift+Tab changes only the visible transcript and input target.
-  Finished agents remain reusable until merge or removal. A successful managed
-  merge closes the agent, removes the worktree and branch, and removes its view.
+  agent. Shift+Tab changes only the visible transcript and input target. Ctrl+L
+  opens a tree that groups each retained subagent under its spawner. The selected
+  transcript owns its draft, input target, cancellation state, timer, usage
+  totals, and status-bar context. Finished agents remain reusable until merge or
+  removal. A successful managed merge closes the agent, removes the worktree and
+  branch, and removes its view.
   Resume restores retained agents. Previously running agents become interrupted.
 - **The main agent never polls background agents.** After spawning all available
   work, the main turn ends. Completion notifications restart or steer the main
