@@ -1,13 +1,43 @@
 import { describe, expect, test } from "bun:test";
 import {
+  MAX_ACTIVE_SUBAGENTS,
   SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
   SUBAGENT_COORDINATION_SYSTEM_PROMPT,
   SubagentManager,
+  buildSubagentCapacityPrompt,
+  countActiveSubagents,
 } from "./manager";
+import type { SubagentStatus } from "./types";
+
+function addTestAgent(manager: SubagentManager, id: string, status: SubagentStatus): void {
+  (manager as any).records.set(id, {
+    snapshot: {
+      id,
+      name: id,
+      task: "test task",
+      status,
+      worktree: {
+        name: id,
+        path: `/tmp/${id}`,
+        branch: `pum/${id}`,
+        baseBranch: "main",
+        baseCommit: "abc",
+      },
+      parentAgentId: null,
+      modelId: "mock/model",
+      thinkingLevel: "off",
+      transcript: { lines: [], stream: null, pending: [] },
+      startedAt: 1,
+      updatedAt: 1,
+      usage: { tokens: 0, cost: 0, contextPct: null },
+    },
+  });
+}
 
 describe("SubagentManager extension", () => {
   test("registers main coordination tools", () => {
     const tools: string[] = [];
+    const definitions = new Map<string, any>();
     const handlers = new Map<string, Function[]>();
     const pi = {
       on(name: string, handler: Function) {
@@ -15,6 +45,7 @@ describe("SubagentManager extension", () => {
       },
       registerTool(tool: { name: string }) {
         tools.push(tool.name);
+        definitions.set(tool.name, tool);
       },
     };
     const manager = new SubagentManager({
@@ -40,6 +71,15 @@ describe("SubagentManager extension", () => {
     const result = beforeStart?.({ systemPrompt: "base prompt" });
     expect(result.systemPrompt).toContain(SUBAGENT_COORDINATION_SYSTEM_PROMPT);
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
+    expect(result.systemPrompt).toContain("0/5 active; 5 slots available");
+    expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
+    expect(definitions.get("spawn_subagent").promptGuidelines).toContain(
+      "For follow-up implementation work, prefer spawn_subagent while fewer than five subagents are starting or running.",
+    );
+    expect(definitions.get("spawn_subagent").promptGuidelines).toContain(
+      "At five active subagents, queue related follow-up work through message_agent instead of spawning a sixth.",
+    );
+    expect(definitions.get("message_agent").description).toContain("durable queued message");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Do not automatically reply to an acknowledgement");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("stop the exchange immediately");
 
@@ -51,6 +91,65 @@ describe("SubagentManager extension", () => {
       },
     });
     expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
+  });
+
+  test("counts only starting and running subagents as active", () => {
+    const statuses: SubagentStatus[] = [
+      "starting",
+      "running",
+      "idle",
+      "completed",
+      "failed",
+      "stopped",
+      "interrupted",
+    ];
+    expect(countActiveSubagents(statuses.map((status) => ({ status })))).toBe(2);
+  });
+
+  test("changes follow-up guidance when all five active slots are used", () => {
+    expect(buildSubagentCapacityPrompt(4)).toContain("4/5 active; 1 slot available");
+    expect(buildSubagentCapacityPrompt(4)).toContain("Prefer spawn_subagent");
+    expect(buildSubagentCapacityPrompt(5)).toContain("no slots available");
+    expect(buildSubagentCapacityPrompt(5)).toContain("appropriate related running subagent");
+    expect(buildSubagentCapacityPrompt(5)).toContain("keep the work pending");
+  });
+
+  test("rejects a sixth active subagent with durable queue guidance", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    for (let index = 0; index < MAX_ACTIVE_SUBAGENTS; index += 1) {
+      addTestAgent(manager, `active-${index}`, index === 0 ? "starting" : "running");
+    }
+    addTestAgent(manager, "idle-retained", "idle");
+    addTestAgent(manager, "completed-retained", "completed");
+
+    expect(manager.activeCount()).toBe(5);
+    await expect(manager.spawn({
+      task: "Follow-up implementation",
+      modelId: "mock/model",
+      thinkingLevel: "off",
+    })).rejects.toThrow(
+      "All 5 subagent slots are active (starting or running). Queue follow-up work to an appropriate related running subagent with message_agent.",
+    );
+  });
+
+  test("injects at-capacity guidance into the main system prompt", () => {
+    const handlers = new Map<string, Function[]>();
+    const pi = {
+      on(name: string, handler: Function) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      registerTool() {},
+    };
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    for (let index = 0; index < MAX_ACTIVE_SUBAGENTS; index += 1) {
+      addTestAgent(manager, `active-${index}`, "running");
+    }
+    (manager.mainExtension() as { factory: (api: any) => void }).factory(pi);
+
+    const result = handlers.get("before_agent_start")?.[0]?.({ systemPrompt: "base prompt" });
+    expect(result.systemPrompt).toContain("5/5 active; no slots available");
+    expect(result.systemPrompt).toContain("Queue follow-up work with message_agent");
+    expect(result.systemPrompt).toContain("keep the work pending for deliberate routing");
   });
 
   test("restores parent metadata and migrates legacy records to main", async () => {
