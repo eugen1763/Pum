@@ -7,6 +7,7 @@
 Plan, edit, run commands, review Markdown, and coordinate parallel Git worktrees without leaving the TUI.
 
 [![CI](https://github.com/eugen1763/Pum/actions/workflows/ci.yml/badge.svg)](https://github.com/eugen1763/Pum/actions/workflows/ci.yml)
+[![npm beta](https://img.shields.io/npm/v/%40eugen1763%2Fpum/beta?label=npm%20beta)](https://www.npmjs.com/package/@eugen1763/pum)
 [![License: MIT](https://img.shields.io/github/license/eugen1763/Pum)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=14151a)](https://bun.sh)
 
@@ -71,23 +72,14 @@ Resume the latest session for the current directory:
 bun run start -r
 ```
 
-### npm package name
-
-The bare npm name `pum` is already owned. Release packaging can use either `@eugen1763/pum` or `pum-agent`.
-
-After publication, install the package name selected for the release:
+### Install the beta package
 
 ```bash
-# Scoped option
-bun add --global @eugen1763/pum
-
-# Unscoped option
-bun add --global pum-agent
-
+bun i -g @eugen1763/pum@beta
 pum
 ```
 
-Do not install both options. Confirm the final package name in the release notes.
+The npm package is scoped because the bare `pum` name is already owned. The installed command is still `pum`.
 
 ## Essential controls
 
@@ -197,7 +189,7 @@ Use a throwaway `PUM_DIR` for local integration tests. Capture TUI output throug
 
 ## Release status
 
-PUM is preparing its first public release. The project version is pre-1.0, and interfaces can change. Review the release notes before upgrading persisted sessions or custom configuration.
+PUM `0.1` is in beta. Interfaces and persisted formats can still change before the stable release. Review the release notes before upgrading sessions or custom configuration.
 
 ## License
 
