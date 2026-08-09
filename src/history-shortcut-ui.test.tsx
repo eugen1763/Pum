@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { App } from "./app";
+import { App, historyOpenBlockReason } from "./app";
+import type { SessionHistoryItem } from "./session-history-metadata";
 import type { SubagentSnapshot } from "./subagents/types";
 
 let destroy: (() => void) | undefined;
@@ -23,7 +24,16 @@ const settings = {
   maxActiveSubagents: 10,
 };
 
-function fakeSession() {
+function fakeSession(options: {
+  id?: string;
+  path?: string;
+  transcript?: string;
+  onPrompt?: (text: string) => void;
+} = {}) {
+  const entries = options.transcript ? [{
+    type: "message",
+    message: { role: "user", content: options.transcript },
+  }] : [];
   return {
     agent: {
       state: {
@@ -37,18 +47,18 @@ function fakeSession() {
       },
     },
     sessionManager: {
-      buildContextEntries: () => [],
-      getEntries: () => [],
+      buildContextEntries: () => entries,
+      getEntries: () => entries,
     },
-    sessionFile: "/tmp/current-session.jsonl",
-    sessionId: "current-session",
+    sessionFile: options.path ?? "/tmp/current-session.jsonl",
+    sessionId: options.id ?? "current-session",
     subscribe: () => () => {},
     setThinkingLevel() {},
     setModel: async () => {},
     clearQueue: () => ({ steering: [], followUp: [] }),
     abort: async () => {},
     compact: async () => ({ tokensBefore: 0 }),
-    prompt: async () => {},
+    prompt: async (text: string) => options.onPrompt?.(text),
     steer: async () => {},
   } as any;
 }
@@ -75,20 +85,45 @@ const agent: SubagentSnapshot = {
 };
 
 type RenderOptions = {
+  width?: number;
+  height?: number;
   kittyKeyboard?: boolean;
   loginRequired?: boolean;
   agents?: SubagentSnapshot[];
   initialStash?: Array<{ text: string; executed: boolean }>;
+  session?: ReturnType<typeof fakeSession>;
+  historySessions?: SessionHistoryItem[];
+  switchSession?: (path: string) => Promise<ReturnType<typeof fakeSession> | null>;
+  newSession?: () => Promise<ReturnType<typeof fakeSession> | null>;
+  sendUserMessage?: (agentId: string, text: string) => Promise<void>;
 };
+
+function historyItem(path: string, title: string): SessionHistoryItem {
+  return {
+    path,
+    id: path,
+    cwd: "/tmp/project",
+    created: new Date("2026-08-08T10:00:00.000Z"),
+    modified: new Date("2026-08-08T12:00:00.000Z"),
+    messageCount: 4,
+    firstMessage: title,
+    allMessagesText: title,
+    historyMetadata: {
+      latestUserMessageAt: new Date("2026-08-08T12:00:00.000Z"),
+      fileBytes: 2048,
+      tokens: { outgoing: 120, incoming: 30, cacheRead: 50 },
+    },
+  };
+}
 
 async function renderApp(options: RenderOptions = {}) {
   const setup = await createTestRenderer({
-    width: 90,
-    height: 28,
+    width: options.width ?? 90,
+    height: options.height ?? 28,
     kittyKeyboard: options.kittyKeyboard ?? true,
   });
   destroy = () => setup.renderer.destroy();
-  const session = fakeSession();
+  const session = options.session ?? fakeSession();
   let historyLoads = 0;
   let stash = options.initialStash ?? [];
   const manager = {
@@ -96,6 +131,7 @@ async function renderApp(options: RenderOptions = {}) {
     subscribe: () => () => {},
     bindMainSession: async () => {},
     abortAgent: async () => {},
+    sendUserMessage: options.sendUserMessage ?? (async () => {}),
     persistToolEvent() {},
     createStandaloneWorktree: async () => agent.worktree,
   } as any;
@@ -106,18 +142,15 @@ async function renderApp(options: RenderOptions = {}) {
         getAvailableSnapshot: () => [],
         getProviders: () => [],
       } as any}
-      onNewSession={async () => session}
+      onNewSession={options.newSession ?? (async () => session)}
       loadSessions={async () => {
         historyLoads++;
-        return [{
-          path: "/tmp/older-session.jsonl",
-          name: "Older session",
-          firstMessage: "Earlier work",
-          modified: new Date("2026-08-08T12:00:00Z"),
-          messageCount: 4,
-        }] as any;
+        return options.historySessions ?? [historyItem(
+          "/tmp/older-session.jsonl",
+          "Older session",
+        )];
       }}
-      onSwitchSession={async () => session}
+      onSwitchSession={options.switchSession ?? (async () => session)}
       settings={settings}
       searchProviders={[]}
       subagentManager={manager}
@@ -163,6 +196,14 @@ function expectInput(frame: string, text: string) {
 }
 
 describe("session history keyboard shortcuts", () => {
+  test("blocks history before attachments or active work can be lost", () => {
+    expect(historyOpenBlockReason({ hasPendingImages: true, busy: false }))
+      .toBe("send or remove attached images before switching sessions");
+    expect(historyOpenBlockReason({ hasPendingImages: false, busy: true }))
+      .toBe("wait for the current turn to finish before opening history");
+    expect(historyOpenBlockReason({ hasPendingImages: false, busy: false })).toBeNull();
+  });
+
   test("opens with a distinguishable Ctrl+H and restores input focus after Escape", async () => {
     const { setup, historyLoads } = await renderApp();
 
@@ -192,6 +233,31 @@ describe("session history keyboard shortcuts", () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Session history");
     expect(frame).not.toContain("❯ /history");
+  });
+
+  test("keeps the current session visible, selected, and marked", async () => {
+    let switches = 0;
+    const current = historyItem("/tmp/current-session.jsonl", "Current session");
+    const older = historyItem("/tmp/older-session.jsonl", "Older session");
+    const { setup } = await renderApp({
+      historySessions: [older, current],
+      switchSession: async () => {
+        switches++;
+        return fakeSession();
+      },
+    });
+
+    setup.mockInput.pressKey("h", { ctrl: true });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("● Current session");
+
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(switches).toBe(0);
+    expect(setup.captureCharFrame()).not.toContain("Session history");
+    await setup.mockInput.typeText("after current selection");
+    await settle(setup);
+    expectInput(setup.captureCharFrame(), "after current selection");
   });
 
   test("plain Backspace edits non-empty input and does nothing on empty input", async () => {
@@ -299,5 +365,132 @@ describe("session history keyboard shortcuts", () => {
     expect(setup.captureCharFrame()).toContain("Login");
     expect(setup.captureCharFrame()).not.toContain("Session history");
     expect(historyLoads()).toBe(0);
+  });
+
+  test("restores prompt focus when a narrow-layout switch is cancelled", async () => {
+    let switches = 0;
+    const currentPrompts: string[] = [];
+    const { setup } = await renderApp({
+      width: 44,
+      height: 18,
+      session: fakeSession({
+        transcript: "current transcript",
+        onPrompt: (text) => currentPrompts.push(text),
+      }),
+      switchSession: async () => {
+        switches++;
+        return null;
+      },
+    });
+
+    setup.mockInput.pressKey("h", { ctrl: true });
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(switches).toBe(1);
+    expect(setup.captureCharFrame()).not.toContain("Session history");
+    await setup.mockInput.typeText("after cancelled switch");
+    await settle(setup);
+    expectInput(setup.captureCharFrame(), "after cancelled switch");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(currentPrompts).toEqual(["after cancelled switch"]);
+  });
+
+  test("restores prompt focus and reports an error when a switch fails", async () => {
+    const { setup } = await renderApp({
+      switchSession: async () => {
+        throw new Error("fixture switch failure");
+      },
+    });
+
+    setup.mockInput.pressKey("h", { ctrl: true });
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("fixture switch failure");
+    await setup.mockInput.typeText("after failed switch");
+    await settle(setup);
+    expectInput(setup.captureCharFrame(), "after failed switch");
+  });
+
+  test("keeps the current session and prompt focus when /new is cancelled", async () => {
+    let replacements = 0;
+    const currentPrompts: string[] = [];
+    const { setup } = await renderApp({
+      session: fakeSession({
+        transcript: "current transcript",
+        onPrompt: (text) => currentPrompts.push(text),
+      }),
+      newSession: async () => {
+        replacements++;
+        return null;
+      },
+    });
+
+    await setup.mockInput.typeText("/new");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(replacements).toBe(1);
+    await setup.mockInput.typeText("after cancelled new");
+    await settle(setup);
+    expectInput(setup.captureCharFrame(), "after cancelled new");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(currentPrompts).toEqual(["after cancelled new"]);
+  });
+
+  test("returns from a child transcript to main and routes the restored draft to the switched session", async () => {
+    const switchedPrompts: string[] = [];
+    const childPrompts: string[] = [];
+    const switched = fakeSession({
+      id: "older-session",
+      path: "/tmp/older-session.jsonl",
+      transcript: "switched main transcript",
+      onPrompt: (text) => switchedPrompts.push(text),
+    });
+    const child = {
+      ...agent,
+      transcript: {
+        lines: [{ kind: "text", role: "assistant", text: "child transcript" }],
+        stream: null,
+        pending: [],
+      },
+    } as SubagentSnapshot;
+    const { setup } = await renderApp({
+      session: fakeSession({ transcript: "old main transcript" }),
+      agents: [child],
+      switchSession: async () => switched,
+      sendUserMessage: async (_agentId, text) => {
+        childPrompts.push(text);
+      },
+    });
+
+    await setup.mockInput.typeText("main draft");
+    setup.mockInput.pressKey("l", { ctrl: true });
+    await settle(setup);
+    setup.mockInput.pressArrow("down");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("child transcript");
+
+    await setup.mockInput.typeText("child draft");
+    setup.mockInput.pressKey("h", { ctrl: true });
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("switched main transcript");
+    expect(frame).not.toContain("child transcript");
+    expectInput(frame, "main draft");
+
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(switchedPrompts).toEqual(["main draft"]);
+    expect(childPrompts).toEqual([]);
   });
 });

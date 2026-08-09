@@ -32,7 +32,7 @@ describe("per-agent usage", () => {
     });
   });
 
-  test("restores usage from persisted assistant and summary entries", () => {
+  test("restores usage from persisted assistant, tool, and summary entries", () => {
     expect(usageFromEntries([
       { type: "message", message: { role: "assistant", usage: {
         input: 400,
@@ -48,13 +48,20 @@ describe("per-agent usage", () => {
         cacheWrite: 0,
         cost: { total: 0.01 },
       } },
+      { type: "message", message: { role: "toolResult", usage: {
+        input: 10,
+        output: 4,
+        cacheRead: 3,
+        cacheWrite: 2,
+        cost: { total: 0.005 },
+      } } },
       { type: "message", message: { role: "user" } },
     ], 1_000)).toEqual({
-      outgoing: 445,
-      incoming: 60,
-      cacheRead: 105,
-      cost: 0.21000000000000002,
-      contextPct: 3,
+      outgoing: 457,
+      incoming: 64,
+      cacheRead: 108,
+      cost: 0.21500000000000002,
+      contextPct: 2,
     });
   });
 

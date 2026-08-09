@@ -26,6 +26,7 @@ import { shutdownSignals } from "./platform";
 import { createShutdown } from "./shutdown";
 import { applyPatchExtension } from "./apply-patch";
 import { QuestionnaireManager } from "./questionnaire";
+import { SessionHistoryIndex } from "./session-history-metadata";
 
 mkdirSync(AGENT_DIR, { recursive: true });
 
@@ -39,6 +40,7 @@ const settings = loadSettings();
 setWritingStyle(settings.writingStyle);
 setExplanationStrength(settings.explanationStrength);
 const questionnaireManager = new QuestionnaireManager();
+const sessionHistoryIndex = new SessionHistoryIndex();
 setCheckModeConfig({ profile: settings.checkMode, model: settings.checkModel });
 const checkApprovalCoordinator = new CheckApprovalCoordinator();
 const checkApprovalStore = new CheckApprovalStore();
@@ -126,13 +128,15 @@ root.render(
   <App
     session={sessionRuntime.session}
     onNewSession={async () => {
-      await sessionRuntime.newSession();
-      return sessionRuntime.session;
+      const result = await sessionRuntime.newSession();
+      return result.cancelled ? null : sessionRuntime.session;
     }}
-    loadSessions={() => SessionManager.list(cwd, sessionDir(cwd))}
+    loadSessions={async () => sessionHistoryIndex.load(
+      await SessionManager.list(cwd, sessionDir(cwd)),
+    )}
     onSwitchSession={async (path) => {
-      await sessionRuntime.switchSession(path);
-      return sessionRuntime.session;
+      const result = await sessionRuntime.switchSession(path);
+      return result.cancelled ? null : sessionRuntime.session;
     }}
     modelRuntime={modelRuntime}
     settings={settings}
