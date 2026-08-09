@@ -26,6 +26,8 @@ export const formatTokens = (value: number): string => {
 export const formatCost = (value: number): string =>
   `$${value < 1 ? value.toFixed(3) : value.toFixed(2)}`;
 
+export const statusTextWidth = (text: string): number => Bun.stringWidth(text);
+
 export function statusMetadataItems(values: StatusMetadataValues): StatusMetadataItem[] {
   const items: StatusMetadataItem[] = [];
   if (values.branch) {
@@ -70,7 +72,7 @@ export function statusMetadataItems(values: StatusMetadataValues): StatusMetadat
 }
 
 export function statusMetadataWidth(items: readonly StatusMetadataItem[]): number {
-  return items.reduce((width, item, index) => width + item.text.length + (index ? 3 : 0), 0);
+  return items.reduce((width, item, index) => width + statusTextWidth(item.text) + (index ? 3 : 0), 0);
 }
 
 /** Keep the highest-priority values that fit, then restore StatusBar display order. */
@@ -84,7 +86,7 @@ export function fitStatusMetadata(
   const selected = new Set<StatusMetadataItem>();
   let used = 0;
   for (const item of [...items].sort((a, b) => b.priority - a.priority)) {
-    const added = item.text.length + (selected.size ? 3 : 0);
+    const added = statusTextWidth(item.text) + (selected.size ? 3 : 0);
     if (used + added > maxWidth) continue;
     selected.add(item);
     used += added;
