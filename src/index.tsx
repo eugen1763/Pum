@@ -126,13 +126,13 @@ root.render(
   <App
     session={sessionRuntime.session}
     onNewSession={async () => {
-      await sessionRuntime.newSession();
-      return sessionRuntime.session;
+      const result = await sessionRuntime.newSession();
+      return result.cancelled ? null : sessionRuntime.session;
     }}
     loadSessions={() => SessionManager.list(cwd, sessionDir(cwd))}
     onSwitchSession={async (path) => {
-      await sessionRuntime.switchSession(path);
-      return sessionRuntime.session;
+      const result = await sessionRuntime.switchSession(path);
+      return result.cancelled ? null : sessionRuntime.session;
     }}
     modelRuntime={modelRuntime}
     settings={settings}

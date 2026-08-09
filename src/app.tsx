@@ -321,9 +321,9 @@ export function App({
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
-  onNewSession: () => Promise<AgentSession>;
+  onNewSession: () => Promise<AgentSession | null>;
   loadSessions: () => Promise<SessionInfo[]>;
-  onSwitchSession: (path: string) => Promise<AgentSession>;
+  onSwitchSession: (path: string) => Promise<AgentSession | null>;
   settings: PumSettings;
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
@@ -1059,6 +1059,10 @@ export function App({
   };
 
   const openHistory = () => {
+    if (pendingImages.current.length > 0) {
+      append({ kind: "text", role: "error", text: "send or remove attached images before switching sessions" });
+      return;
+    }
     if (busyRef.current) {
       append({ kind: "text", role: "error", text: "wait for the current turn to finish before opening history" });
       return;
@@ -1081,10 +1085,21 @@ export function App({
     setWorking(true);
     onSwitchSession(path)
       .then((next) => {
+        if (!next) {
+          queueMicrotask(() => inputRef.current?.focus());
+          return;
+        }
+        if (activeAgentIdRef.current !== null) selectAgentView(null);
         focusInputAfterSwitch.current = true;
         setSession(next);
+        // A host can return the current session when the selected path already
+        // points at it. In that case the session effect does not run.
+        queueMicrotask(() => inputRef.current?.focus());
       })
-      .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
+      .catch((err) => {
+        append({ kind: "text", role: "error", text: String(err) });
+        queueMicrotask(() => inputRef.current?.focus());
+      })
       .finally(() => setWorking(false));
   };
 
@@ -1196,7 +1211,9 @@ export function App({
       });
     } else if (clear) {
       onNewSession()
-        .then((next) => setSession(next))
+        .then((next) => {
+          if (next) setSession(next);
+        })
         .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
         .finally(() => setWorking(false));
     } else {
