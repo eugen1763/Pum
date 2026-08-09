@@ -5,6 +5,7 @@ All notable changes to PUM are documented in this file.
 ## Unreleased
 
 ### Fixed
+- Open provider OAuth and device-code verification URLs automatically with the platform browser, while keeping selectable URL fallback and rejecting unsafe URLs.
 - Copy completed transcript selections to the local clipboard on Windows and macOS, use Linux clipboard commands when available, and use bounded OSC 52 output for remote sessions.
 - Enable selection on transcript Markdown renderables despite the missing OpenTUI 0.5.1 React prop type.
 

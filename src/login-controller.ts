@@ -1,5 +1,6 @@
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { credentialFreeHttpUrl, launchBrowserUrl } from "./browser-launch";
 import type { LoginPage } from "./login-popup";
 import {
   customProviderId,
@@ -52,6 +53,8 @@ export class LoginController {
   private providerQuery = "";
   private providerSearchFocused = true;
   private retry?: () => void;
+  private latestBrowserAuthEvent?: Extract<AuthEvent, { type: "auth_url" | "device_code" }>;
+  private launchedAuthUrls = new Set<string>();
 
   constructor(
     private runtime: ModelRuntime,
@@ -59,6 +62,7 @@ export class LoginController {
     private show: (page: LoginPage) => void,
     private complete: (modelId?: string) => void,
     private closePopup: () => void,
+    private launchUrl: (url: string) => Promise<boolean> = launchBrowserUrl,
   ) {
     this.page = this.providerPage();
   }
@@ -86,6 +90,8 @@ export class LoginController {
 
   open() {
     this.cancelOperation();
+    this.latestBrowserAuthEvent = undefined;
+    this.launchedAuthUrls.clear();
     this.retry = undefined;
     this.providerCursor = 0;
     this.providerQuery = "";
@@ -153,11 +159,26 @@ export class LoginController {
     }
     const controller = new AbortController();
     this.cancelOperation();
+    this.latestBrowserAuthEvent = undefined;
+    this.launchedAuthUrls.clear();
     this.controller = controller;
     this.setPage({ kind: "working", providerName: method.providerName });
     void this.runtime.login(method.providerId, method.authType, {
       signal: controller.signal,
       notify: (event: AuthEvent) => {
+        if (event.type === "auth_url" || event.type === "device_code") {
+          this.latestBrowserAuthEvent = event;
+        }
+        const eventUrl = event.type === "auth_url"
+          ? event.url
+          : event.type === "device_code"
+            ? event.verificationUri
+            : undefined;
+        const safeUrl = eventUrl ? credentialFreeHttpUrl(eventUrl) : null;
+        if (safeUrl && !this.launchedAuthUrls.has(safeUrl)) {
+          this.launchedAuthUrls.add(safeUrl);
+          void this.launchUrl(safeUrl).catch(() => {});
+        }
         if (!this.promptWaiter) this.setPage({ kind: "working", providerName: method.providerName, event });
       },
       prompt: (prompt: AuthPrompt) => new Promise<string>((resolve, reject) => {
@@ -173,7 +194,15 @@ export class LoginController {
         const onAbort = () => rejectPrompt(new Error("Login cancelled"));
         prompt.signal?.addEventListener("abort", onAbort, { once: true });
         this.promptWaiter = { prompt, resolve: resolvePrompt, reject: rejectPrompt };
-        this.setPage({ kind: "prompt", providerName: method.providerName, prompt, cursor: 0, value: "", secretLength: 0 });
+        this.setPage({
+          kind: "prompt",
+          providerName: method.providerName,
+          prompt,
+          event: this.latestBrowserAuthEvent,
+          cursor: 0,
+          value: "",
+          secretLength: 0,
+        });
       }),
     }).then(() => {
       this.promptWaiter = undefined;

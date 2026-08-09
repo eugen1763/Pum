@@ -7,7 +7,7 @@ import { PopupFrame } from "./popup-frame";
 
 export type LoginPage =
   | { kind: "providers"; methods: readonly LoginMethod[]; cursor: number; query: string; searchFocused: boolean; customVisible: boolean }
-  | { kind: "prompt"; providerName: string; prompt: AuthPrompt; cursor: number; value: string; secretLength: number }
+  | { kind: "prompt"; providerName: string; prompt: AuthPrompt; event?: AuthEvent; cursor: number; value: string; secretLength: number }
   | { kind: "working"; providerName: string; event?: AuthEvent }
   | { kind: "custom-endpoint"; endpoint: string }
   | { kind: "custom-key"; endpoint: string; secretLength: number }
@@ -151,6 +151,9 @@ export function LoginPopup({ theme, page, terminalWidth, terminalHeight, onProvi
         <text content={terminalWidth < 48 ? "/ search  ↑↓ move  enter  esc" : "/ search   ↑↓ move   enter select   esc close"} fg={theme.dim} bg={theme.popupBg} wrapMode="none" style={{ height: 1, flexShrink: 0 }} />
       </> : page.kind === "prompt" ? <>
         <text content={page.providerName} fg={theme.accent} bg={theme.popupBg} />
+        {page.event?.type === "auth_url" || page.event?.type === "device_code"
+          ? <EventDetails theme={theme} event={page.event} />
+          : null}
         <text content={page.prompt.message} fg={theme.fg} bg={theme.popupBg} wrapMode="word" />
         <box style={{ height: 1, flexShrink: 0 }} />
         {page.prompt.type === "select" ? page.prompt.options.map((option, index) => {
@@ -165,7 +168,7 @@ export function LoginPopup({ theme, page, terminalWidth, terminalHeight, onProvi
         <text content={page.providerName} fg={theme.accent} bg={theme.popupBg} />
         <box style={{ height: 1, flexShrink: 0 }} />
         <EventDetails theme={theme} event={page.event} />
-        <text content="URLs and codes are selectable for copying. Esc cancels." fg={theme.dim} bg={theme.popupBg} style={{ marginTop: 1 }} />
+        <text content="PUM opens safe URLs automatically. URLs and codes remain selectable. Esc cancels." fg={theme.dim} bg={theme.popupBg} style={{ marginTop: 1 }} />
       </> : page.kind === "custom-endpoint" ? <>
         <text content="Enter the server endpoint. PUM probes /models and configures OpenAI Chat Completions only after that probe succeeds." fg={theme.fg} bg={theme.popupBg} wrapMode="word" />
         <box style={{ height: 1, flexShrink: 0 }} />
