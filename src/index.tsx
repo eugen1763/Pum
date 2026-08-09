@@ -49,6 +49,7 @@ const checkModeExtension = createCheckModeExtension(modelRuntime, undefined, {
 const subagentManager = new SubagentManager({
   modelRuntime,
   agentDir: AGENT_DIR,
+  maxActiveSubagents: settings.maxActiveSubagents,
   questionnaireManager,
   childExtensionFactories: [
     writingStyleExtension,

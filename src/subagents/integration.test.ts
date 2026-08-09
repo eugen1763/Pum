@@ -12,6 +12,8 @@ import {
 import { applyPatchExtension } from "../apply-patch";
 import { QuestionnaireManager } from "../questionnaire";
 import { SubagentManager } from "./manager";
+import { createWorktree } from "../worktree";
+import type { SubagentStatus } from "./types";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -90,6 +92,31 @@ async function finishAgent(manager: SubagentManager, id: string, summary: string
     registerTool(tool: any) { tools.set(tool.name, tool); },
   });
   await tools.get("finish_subagent").execute("finish-test", { summary });
+}
+
+function retainAgent(
+  manager: SubagentManager,
+  id: string,
+  worktree: Awaited<ReturnType<typeof createWorktree>>,
+  status: SubagentStatus,
+  parentAgentId: string | null = null,
+): void {
+  (manager as any).records.set(id, {
+    snapshot: {
+      id,
+      name: worktree.name,
+      task: "integration fixture",
+      status,
+      worktree,
+      parentAgentId,
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+      transcript: { lines: [], stream: null, pending: [] },
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
+    },
+  });
 }
 
 async function waitUntil(predicate: () => boolean, timeout = 5_000): Promise<void> {
@@ -406,5 +433,103 @@ describe("background subagents", () => {
     await restoredManager.attachMain(mainApi as any, parent, repo);
     expect(restoredManager.getAgent(peer.id)?.usage).toEqual(peerUsage);
     await restoredManager.detachMain();
+  });
+
+  test("closes a retained hierarchy deepest first without unrelated blockers", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const parentWorktree = await createWorktree(repo, "recursive-parent");
+    const childWorktree = await createWorktree(repo, "recursive-child");
+    const grandchildWorktree = await createWorktree(repo, "recursive-grandchild");
+    const unrelatedWorktree = await createWorktree(repo, "recursive-unrelated");
+    retainAgent(manager, "recursive-parent-id", parentWorktree, "idle");
+    retainAgent(manager, "recursive-child-id", childWorktree, "completed", "recursive-parent-id");
+    retainAgent(manager, "recursive-grandchild-id", grandchildWorktree, "failed", "recursive-child-id");
+    retainAgent(manager, "recursive-unrelated-id", unrelatedWorktree, "interrupted");
+
+    await expect((manager as any).worktreeAction(repo, "merge", "recursive-parent-id"))
+      .rejects.toThrow("- recursive-grandchild (failed)\n- recursive-child (completed)");
+
+    const parentTools = new Map<string, any>();
+    (manager as any).childExtension("recursive-child-id").factory({
+      on() {},
+      registerTool(tool: any) { parentTools.set(tool.name, tool); },
+    });
+    await parentTools.get("worktree").execute("nested-merge", {
+      action: "merge",
+      target: "recursive-grandchild-id",
+    });
+    expect(manager.getAgent("recursive-grandchild-id")).toBeUndefined();
+
+    await (manager as any).worktreeAction(repo, "merge", "recursive-child-id");
+    await (manager as any).worktreeAction(repo, "merge", "recursive-parent-id");
+    expect(manager.getAgent("recursive-child-id")).toBeUndefined();
+    expect(manager.getAgent("recursive-parent-id")).toBeUndefined();
+    expect(manager.getAgent("recursive-unrelated-id")).toBeDefined();
+
+    await (manager as any).worktreeAction(repo, "merge", "recursive-unrelated-id");
+    await manager.detachMain();
+  });
+
+  test("serializes concurrent spawns against a custom active limit", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir, maxActiveSubagents: 1 });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const attempts = await Promise.allSettled([
+      manager.spawn({ task: "First race task.", name: "capacity-race-first", modelId: "mock/mock-model", thinkingLevel: "off" }),
+      manager.spawn({ task: "Second race task.", name: "capacity-race-second", modelId: "mock/mock-model", thinkingLevel: "off" }),
+    ]);
+
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.filter((attempt) => attempt.status === "rejected")).toHaveLength(1);
+    expect(String((attempts.find((attempt) => attempt.status === "rejected") as PromiseRejectedResult).reason))
+      .toContain("All 1 subagent slots are active");
+    const retained = manager.getAgents()[0]!;
+    await waitUntil(() => !["starting", "running"].includes(manager.getAgent(retained.id)?.status ?? ""));
+    await (manager as any).worktreeAction(repo, "merge", retained.id);
+    await manager.detachMain();
+  });
+
+  test("rejects a descendant spawn queued behind successful parent closure", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const parentWorktree = await createWorktree(repo, "closure-race-parent");
+    retainAgent(manager, "closure-race-parent-id", parentWorktree, "idle");
+
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const lockEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const held = (manager as any).withWorktreeLock(async () => {
+      entered();
+      await gate;
+    });
+    await lockEntered;
+    const merge = (manager as any).worktreeAction(repo, "merge", "closure-race-parent-id");
+    const spawn = manager.spawn({
+      task: "A descendant that must not become orphaned.",
+      name: "closure-race-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+      parentAgentId: "closure-race-parent-id",
+    });
+    release();
+    await held;
+    await merge;
+    await expect(spawn).rejects.toThrow("Spawner subagent no longer exists");
+    expect(manager.getAgents()).toEqual([]);
+    expect(existsSync(join(repo, ".pum", "worktrees", "closure-race-child"))).toBe(false);
+    await manager.detachMain();
   });
 });

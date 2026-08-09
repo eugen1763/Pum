@@ -41,7 +41,7 @@ async function render(coordinator: CheckApprovalCoordinator, checkApprovalStore?
       onNewSession={async () => session}
       loadSessions={async () => []}
       onSwitchSession={async () => session}
-      settings={{ showThinking: false, theme: "tokyonight", animations: false, workingRuleAnimation: "off", webSearch: false, writingStyle: "none", explanationStrength: "simple", checkMode: "ask", checkModel: "mock/check" }}
+      settings={{ showThinking: false, theme: "tokyonight", animations: false, workingRuleAnimation: "off", webSearch: false, writingStyle: "none", explanationStrength: "simple", checkMode: "ask", checkModel: "mock/check", maxActiveSubagents: 10 }}
       searchProviders={[]}
       subagentManager={manager}
       checkApprovalCoordinator={coordinator}

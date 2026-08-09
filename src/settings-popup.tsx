@@ -19,6 +19,7 @@ export type SettingRowId =
   | "clearCheckApprovals"
   | "thinkingLevel"
   | "showThinking"
+  | "maxActiveSubagents"
   | "providers"
   | "model";
 
@@ -38,6 +39,7 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "model", label: "Model", category: "Agent", keywords: "provider llm active search", description: "Select the model used by the main agent. Search matches provider and model names." },
   { id: "thinkingLevel", label: "Thinking level", category: "Agent", keywords: "reasoning effort clamp capability", description: "Set reasoning effort. Pi clamps the level to the selected model capability." },
   { id: "showThinking", label: "Show thinking", category: "Agent", keywords: "reasoning visible transcript trace", description: "Show or hide streamed reasoning traces in the transcript." },
+  { id: "maxActiveSubagents", label: "Active subagents", category: "Agent", keywords: "parallel capacity maximum limit starting running workers", description: "Set the maximum number of starting and running managed subagents from 1 through 25." },
   { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose ste simplified technical english", description: "Add per-turn response guidance. STE requests concise Simplified Technical English." },
   { id: "explanationStrength", label: "Explanations", category: "Agent", keywords: "progress updates output none simple detailed rationale", description: "Choose how much regular output explains the agent plan, actions, decisions, and results." },
   { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },

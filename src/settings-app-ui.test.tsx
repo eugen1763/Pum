@@ -19,6 +19,7 @@ const settings = {
   explanationStrength: "simple" as const,
   checkMode: "off" as const,
   checkModel: "mock/check",
+  maxActiveSubagents: 10,
 };
 
 const models = [

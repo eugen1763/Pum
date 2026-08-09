@@ -27,6 +27,7 @@ async function renderStatus(width: number, agentCount: number, runningAgentCount
         elapsedSec={0}
         agentCount={agentCount}
         runningAgentCount={runningAgentCount}
+        maxActiveAgentCount={10}
       />
     </AnimationProvider>,
   );
@@ -42,15 +43,15 @@ describe("StatusBar usage and subagent counts", () => {
     const frame = await renderStatus(100, 0, 0);
     expect(frame).toContain("main · ↑ 1.2k · ↓ 345 · ↺ 2.4k · 20%");
   });
-  test("shows separate idle and static working counts in a wide layout", async () => {
+  test("shows separate idle and capacity-aware working counts in a wide layout", async () => {
     const frame = await renderStatus(100, 5, 2);
-    expect(frame).toContain("◇ 3 • 2");
+    expect(frame).toContain("◇ 3 • 2/10");
     expect(frame).not.toContain("◇ 5");
   });
 
   test("preserves both counts in the narrow stacked layout", async () => {
     const frame = await renderStatus(48, 5, 2);
-    expect(frame).toContain("◇ 3 • 2");
+    expect(frame).toContain("◇ 3 • 2/10");
     expect(frame).toContain("main · ↑ 1.2k · ↓ 345 · ↺ 2.4k · 20%");
   });
 
@@ -63,7 +64,7 @@ describe("StatusBar usage and subagent counts", () => {
     destroy = undefined;
 
     const active = await renderStatus(80, 2, 2);
-    expect(active).toContain("• 2");
+    expect(active).toContain("• 2/10");
     expect(active).not.toContain("◇ 0");
   });
 });
