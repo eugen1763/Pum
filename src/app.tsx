@@ -1486,8 +1486,7 @@ export function App({
       inputValue.endsWith("\\") &&
       (inputRef.current?.cursorOffset ?? 0) >= inputValue.length;
     const isWordBackspace =
-      (key.ctrl && (key.name === "backspace" || key.name === "w")) ||
-      (key.name === "backspace" && key.sequence === "\b");
+      key.ctrl && (key.name === "backspace" || key.name === "w");
 
     if ((key.meta || key.option) && key.name === "v") {
       key.stopPropagation();
@@ -1504,7 +1503,9 @@ export function App({
       return;
     }
 
-    // Terminals encode Ctrl+Backspace as Ctrl+Backspace, Ctrl+W, or ^H.
+    // Enhanced keyboard protocols distinguish Ctrl+Backspace from Ctrl+H.
+    // Legacy terminals can send both Ctrl+H and Backspace as raw ^H. Treat
+    // that ambiguous byte as Backspace, and leave /history as the fallback.
     if (isWordBackspace) {
       key.stopPropagation();
       inputRef.current?.deleteWordBackward();
