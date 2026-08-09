@@ -58,7 +58,7 @@ bun run start    # open the TUI in the current directory
 | Ctrl+L | Open the agent transcript tree; use Up/Down and Right/Enter to select |
 | Esc | Once warns, twice within 2s cancels the selected agent's running turn |
 | Ctrl+P | Open settings; Esc closes, or steps back from the model list |
-| Ctrl+C | Once arms and shows a hint, twice within 2s quits |
+| Ctrl+C | Clear the selected non-empty draft; on an empty draft, once arms and twice within 2s quits |
 | Questionnaire: ↑/↓, ←/→ or Tab, Enter, Esc | Select options, move questions, confirm, or cancel |
 
 ## Locked decisions
@@ -85,7 +85,10 @@ These were chosen deliberately. Change them only on purpose.
   endpoint and probes only the OpenAI-compatible `/models` route. PUM does not
   infer a different API shape from a failed probe. Config writes use a temporary
   file and atomic rename.
-- **Coding tools run without asking.** No approval prompt.
+- **Coding tools follow the active Check mode profile.** Off mode runs without
+  approval. Strict and balanced apply their verifier policies. Ask mode presents
+  unresolved calls for exact approval. Hard blocks and explicit `UNSAFE`
+  decisions cannot be approved.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
@@ -127,8 +130,10 @@ These were chosen deliberately. Change them only on purpose.
 - **Cache range execution is main-agent orchestration.** Shift+Up and Shift+Down
   select a contiguous stash range. Enter sends a generated coordination prompt
   to the main agent. The main agent can group related tasks and spawns independent
-  worktree agents in parallel. Merge each successful agent when it settles unless
-  a concrete dependency, conflict risk, or integration order requires waiting.
+  worktree agents in parallel. Merge each successful agent after its completion
+  notice arrives and its status is `completed`, unless a concrete dependency,
+  conflict risk, or integration order requires waiting. Idle settlement is not
+  completion.
 - **Follow-up implementation work uses available parallel capacity.** Count only
   `starting` and `running` subagents toward the configured active limit. The PUM
   setting defaults to 10 and accepts values from 1 through 25. When a slot is

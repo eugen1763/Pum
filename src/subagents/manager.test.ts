@@ -124,9 +124,12 @@ describe("SubagentManager extension", () => {
     );
     expect(definitions.get("message_agent").description).toContain("durable queued message");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Use finish_subagent as the only final completion report");
+    expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("exactly one successful finish_subagent call");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Do not automatically reply to an acknowledgement");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("stop the exchange immediately");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("A normal 'Message from <agent>' is not a completion notification");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("An idle settlement is not completion");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).not.toContain("as soon as it settles");
 
     handlers.get("message_start")?.[0]?.({
       message: {

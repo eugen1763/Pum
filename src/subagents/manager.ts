@@ -80,7 +80,7 @@ const AVAILABLE_TRIGGER_TARGET_STATUSES = new Set<SubagentStatus>(["starting", "
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
-- Use finish_subagent as the only final completion report. It sends the sole completion notification to the direct spawner after the status changes.
+- Use finish_subagent as the only final completion report. Call it only after every retained descendant closes. Complete exactly one successful finish_subagent call; rejected attempts do not count as completion. It sends the sole completion notification to the direct spawner after the status changes.
 - Before finish_subagent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
 - Every retained descendant blocks finish_subagent regardless of status. Completion does not close a descendant.
 - Do not send a final summary, test report, done message, or completion status through message_agent.
@@ -106,7 +106,7 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Treat "wait for every subagent" as yielding until completion notifications arrive, not as active polling.
 - Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
 - For a coordinated batch, track unfinished agents from completion notifications.
-- Merge each successful agent as soon as it settles.
+- Merge each successful agent after its completion notification arrives and its status is completed. An idle settlement is not completion.
 - Before merging a managed parent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
 - Every retained descendant blocks its parent regardless of status. Completion does not close a descendant.
 - Wait to merge only when another unfinished task has a concrete dependency, a known conflict risk, or a required integration order. State that reason explicitly.
@@ -702,7 +702,7 @@ export class SubagentManager {
               `Work only in ${record.snapshot.worktree.path} on branch ${record.snapshot.worktree.branch}. ` +
               "Use message_agent only for questions, blockers, coordination, or intermediate information that needs action. " +
               "Never send the final summary through message_agent. " +
-              "Commit completed changes before finishing. Call finish_subagent exactly once with the final summary; it sends the sole completion notification after status changes.\n\n" +
+              "Commit completed changes before finishing. Call finish_subagent only after every retained descendant closes. Complete exactly one successful finish_subagent call with the final summary; rejected attempts do not count as completion. It sends the sole completion notification after status changes.\n\n" +
               SUBAGENT_COMMUNICATION_SYSTEM_PROMPT + "\n\n" +
               SUBAGENT_COORDINATION_SYSTEM_PROMPT + "\n\n" +
               buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
@@ -911,7 +911,7 @@ export class SubagentManager {
             "Do not route unrelated work to an arbitrary subagent. Keep it pending when no appropriate recipient is clear.",
             "Give each spawn_subagent call a complete, self-contained task.",
             "After spawning background agents, end the current turn. Never poll with bash sleep or status loops.",
-            "Merge each successful agent when it settles unless a concrete dependency or conflict requires waiting.",
+            "Merge each successful agent only after its completion notification arrives and its status is completed, unless a concrete dependency or conflict requires waiting. Idle is not completion.",
             "Recursively close every retained descendant before merging a managed parent. Close the deepest descendants first.",
           ],
           parameters: Type.Object({
