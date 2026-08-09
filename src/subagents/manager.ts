@@ -29,6 +29,11 @@ import { editCounts, toolArg, type ToolCall } from "../tool-line";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
+  registerTriggerTools,
+  type TriggerRuntimeManager,
+  type TriggerTargetSelector,
+} from "../triggers/tools";
+import {
   DEFAULT_MAX_ACTIVE_SUBAGENTS,
   normalizeMaxActiveSubagents,
 } from "../settings";
@@ -51,7 +56,9 @@ import {
   AGENT_MESSAGE_DISPLAY_TYPE,
   SUBAGENT_CUSTOM_TYPE,
   TOOL_EVENT_CUSTOM_TYPE,
+  TRIGGER_EVENT_CUSTOM_TYPE,
   type AgentMessageData,
+  type TriggerEventData,
   type AgentTranscript,
   type SpawnSubagentOptions,
   type SubagentManagerEvent,
@@ -148,6 +155,7 @@ type ManagerOptions = {
   maxActiveSubagents?: number;
   childExtensionFactories?: InlineExtension[];
   questionnaireManager?: QuestionnaireManager;
+  triggerManager?: TriggerRuntimeManager;
 };
 
 const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
@@ -198,6 +206,7 @@ export class SubagentManager {
   private readonly agentDir: string;
   private readonly childExtensionFactories: InlineExtension[];
   private readonly questionnaireManager?: QuestionnaireManager;
+  private readonly triggerManager?: TriggerRuntimeManager;
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly listeners = new Set<(event: SubagentManagerEvent) => void>();
   private mainApi?: ExtensionAPI;
@@ -215,6 +224,7 @@ export class SubagentManager {
     this.maxActiveSubagents = normalizeMaxActiveSubagents(options.maxActiveSubagents);
     this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
     this.questionnaireManager = options.questionnaireManager;
+    this.triggerManager = options.triggerManager;
   }
 
   subscribe(listener: (event: SubagentManagerEvent) => void): () => void {
@@ -266,6 +276,13 @@ export class SubagentManager {
     this.mainCwd = cwd;
     this.parentSessionId = sessionId;
     this.mainRunning = false;
+    this.emit({
+      type: "trigger-target",
+      sessionId,
+      agentId: null,
+      available: true,
+      settled: true,
+    });
 
     const restored = new Map<string, Omit<SubagentSnapshot, "transcript">>();
     for (const entry of sessionManager.getEntries()) {
@@ -335,7 +352,15 @@ export class SubagentManager {
   }
 
   async detachMain(): Promise<void> {
+    const sessionId = this.parentSessionId;
     await this.stopAll("interrupted", true);
+    this.emit({
+      type: "trigger-target",
+      sessionId,
+      agentId: null,
+      available: false,
+      settled: true,
+    });
     this.mainApi = undefined;
     this.mainSessionManager = undefined;
     this.records.clear();
@@ -411,7 +436,8 @@ export class SubagentManager {
     switch (event.type) {
       case "message_start": {
         const message = event.message;
-        if (message?.role === "custom" && message.customType === AGENT_MESSAGE_CUSTOM_TYPE) {
+        if (message?.role === "custom"
+          && [AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) {
           const id = message.details?.id;
           if (typeof id === "string") this.resolvePending(record, id);
         } else if (message?.role === "user") {
@@ -505,6 +531,19 @@ export class SubagentManager {
       }
       case "agent_settled": {
         this.updateTranscript(record, flushTranscript);
+        if (record.session) {
+          void this.triggerManager?.markTargetSettled(
+            record.session.sessionId,
+            record.snapshot.id,
+          );
+          this.emit({
+            type: "trigger-target",
+            sessionId: record.session.sessionId,
+            agentId: record.snapshot.id,
+            available: true,
+            settled: true,
+          });
+        }
         const error = record.session?.agent.state.errorMessage;
         const status: SubagentStatus = error
           ? "failed"
@@ -554,6 +593,19 @@ export class SubagentManager {
             id: agentId,
             name: questionnaireRecord.snapshot.name,
           });
+        }
+        if (this.triggerManager) {
+          registerTriggerTools(
+            pi,
+            this.triggerManager,
+            (ctx) => ({
+              kind: "subagent",
+              sessionId: ctx.sessionManager.getSessionId(),
+              agentId,
+              cwd: ctx.cwd,
+            }),
+            { audience: "subagent" },
+          );
         }
 
         pi.registerTool({
@@ -659,10 +711,19 @@ export class SubagentManager {
         });
         pi.on("agent_settled", () => {
           this.mainRunning = false;
+          void this.triggerManager?.markTargetSettled(this.parentSessionId);
+          this.emit({
+            type: "trigger-target",
+            sessionId: this.parentSessionId,
+            agentId: null,
+            available: true,
+            settled: true,
+          });
         });
         pi.on("message_start", (event) => {
           const message = event.message;
-          if (message.role !== "custom" || message.customType !== AGENT_MESSAGE_CUSTOM_TYPE) return;
+          if (message.role !== "custom"
+            || ![AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) return;
           const id = (message.details as AgentMessageData | undefined)?.id;
           if (typeof id === "string") this.emit({ type: "main-pending-resolve", id });
         });
@@ -670,8 +731,27 @@ export class SubagentManager {
           await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
         });
         pi.on("session_shutdown", async () => {
+          const sessionId = this.parentSessionId;
           await this.detachMain();
+          await this.triggerManager?.invalidateSession(sessionId, "session shutdown");
         });
+
+        if (this.triggerManager) {
+          registerTriggerTools(
+            pi,
+            this.triggerManager,
+            (ctx) => ({
+              kind: "main",
+              sessionId: ctx.sessionManager.getSessionId(),
+              cwd: ctx.cwd,
+            }),
+            {
+              audience: "main",
+              resolveTarget: (requester, selector) => this.resolveTriggerSelector(requester.sessionId, selector),
+              authorizeTarget: (requester, target) => this.authorizeTriggerTarget(requester.sessionId, target),
+            },
+          );
+        }
 
         pi.registerTool({
           name: "spawn_subagent",
@@ -882,6 +962,10 @@ export class SubagentManager {
       tools: [
         "read", "write", "edit", "apply_patch", "bash", "questionnaire",
         "spawn_subagent", "message_agent", "list_subagents", "finish_subagent", "worktree",
+        ...(this.triggerManager ? [
+          "create_trigger", "list_triggers", "inspect_trigger", "pause_trigger",
+          "resume_trigger", "cancel_trigger", "invoke_trigger",
+        ] : []),
       ],
     });
     record.session = result.session;
@@ -911,12 +995,85 @@ export class SubagentManager {
       record.session = undefined;
       record.api = undefined;
     };
+    this.emit({
+      type: "trigger-target",
+      sessionId: result.session.sessionId,
+      agentId: record.snapshot.id,
+      available: true,
+      settled: !result.session.isStreaming,
+    });
     this.persist({
       event: "spawned",
       id: record.snapshot.id,
       at: Date.now(),
       snapshot: snapshotMetadata(record.snapshot),
     });
+  }
+
+  private async authorizeTriggerTarget(
+    requesterSessionId: string,
+    target: { sessionId: string; agentId: string | null },
+  ): Promise<boolean> {
+    if (requesterSessionId !== this.parentSessionId) return false;
+    if (target.agentId === null) return target.sessionId === this.parentSessionId;
+    const record = this.records.get(target.agentId);
+    if (!record) return false;
+    await this.ensureRuntime(record);
+    return record.session?.sessionId === target.sessionId;
+  }
+
+  private async resolveTriggerSelector(
+    sessionId: string,
+    selector: TriggerTargetSelector,
+  ): Promise<{ target: { sessionId: string; agentId: string | null; label: string }; cwd: string }> {
+    if (selector.kind === "main") {
+      if (sessionId !== this.parentSessionId) throw new Error("The main trigger session is no longer active");
+      return {
+        target: { sessionId, agentId: null, label: "main" },
+        cwd: this.mainCwd,
+      };
+    }
+    if (selector.kind !== "subagent") throw new Error("Invalid main-session trigger target");
+    const record = this.findRecord(selector.agent);
+    if (!record) throw new Error(`Unknown subagent: ${selector.agent}`);
+    await this.ensureRuntime(record);
+    if (!record.session) throw new Error(`Subagent session is unavailable: ${record.snapshot.name}`);
+    return {
+      target: {
+        sessionId: record.session.sessionId,
+        agentId: record.snapshot.id,
+        label: record.snapshot.name,
+      },
+      cwd: record.snapshot.worktree.path,
+    };
+  }
+
+  async resolveRetainedTriggerTarget(agent?: string): Promise<{
+    sessionId: string;
+    agentId: string | null;
+    label: string;
+    cwd: string;
+    available: boolean;
+  }> {
+    if (!agent || agent === "main") {
+      return {
+        sessionId: this.parentSessionId,
+        agentId: null,
+        label: "main",
+        cwd: this.mainCwd,
+        available: Boolean(this.mainApi),
+      };
+    }
+    const record = this.findRecord(agent);
+    if (!record) throw new Error(`Unknown subagent: ${agent}`);
+    await this.ensureRuntime(record);
+    return {
+      sessionId: record.session!.sessionId,
+      agentId: record.snapshot.id,
+      label: record.snapshot.name,
+      cwd: record.snapshot.worktree.path,
+      available: Boolean(record.api && record.session),
+    };
   }
 
   private findRecord(target: string): RuntimeRecord | undefined {
@@ -1024,6 +1181,57 @@ export class SubagentManager {
       recipient: data.recipient,
       text: data.text,
     };
+  }
+
+  async deliverTriggerEvent(data: TriggerEventData): Promise<void> {
+    if (!data.id || !data.triggerId || !data.triggerName || !data.text.trim()) {
+      throw new Error("Trigger event is incomplete");
+    }
+    const line: Extract<Line, { kind: "agent-message" }> = {
+      kind: "agent-message",
+      sender: `trigger:${data.triggerName}`,
+      recipient: data.agentId ?? "main",
+      text: data.text,
+    };
+    const pending: PendingLine = { id: data.id, line };
+    const message = {
+      customType: TRIGGER_EVENT_CUSTOM_TYPE,
+      content: data.text,
+      display: true,
+      details: data,
+    };
+
+    if (data.agentId === null) {
+      if (data.sessionId !== this.parentSessionId || !this.mainApi) {
+        throw new Error("The main trigger target is unavailable");
+      }
+      this.mainApi.appendEntry(TRIGGER_EVENT_CUSTOM_TYPE, data);
+      this.emit({ type: "main-line", line });
+      this.emit({ type: "main-pending-add", pending });
+      if (!this.wakeMain(message, data.text, this.mainRunning ? "steer" : "followUp")) {
+        this.emit({ type: "main-pending-drop", id: data.id });
+        throw new Error("The main trigger target is unavailable");
+      }
+      return;
+    }
+
+    const record = this.records.get(data.agentId);
+    if (!record) throw new Error(`Unknown trigger target agent: ${data.agentId}`);
+    await this.ensureRuntime(record);
+    if (!record.session || !record.api || record.session.sessionId !== data.sessionId) {
+      throw new Error("The child trigger target is unavailable");
+    }
+    record.session.sessionManager.appendCustomEntry(TRIGGER_EVENT_CUSTOM_TYPE, data);
+    this.addPending(record, pending);
+    try {
+      withSearchRoute(record.session.sessionId, () => {
+        record.api!.sendMessage(message, { deliverAs: "steer", triggerTurn: true });
+      });
+      this.updateStatus(record, "running");
+    } catch (error) {
+      this.dropPending(record, pending.id);
+      throw error;
+    }
   }
 
   async routeMessage(senderTarget: string, recipientTarget: string, text: string): Promise<void> {
@@ -1241,6 +1449,16 @@ export class SubagentManager {
   }
 
   private forgetManagedAgent(record: RuntimeRecord): void {
+    void this.triggerManager?.invalidateAgent(record.snapshot.id, "managed subagent closed");
+    if (record.session) {
+      this.emit({
+        type: "trigger-target",
+        sessionId: record.session.sessionId,
+        agentId: record.snapshot.id,
+        available: false,
+        settled: true,
+      });
+    }
     this.records.delete(record.snapshot.id);
     this.persist({ event: "removed", id: record.snapshot.id, at: Date.now() });
     this.emit();

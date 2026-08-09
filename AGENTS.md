@@ -244,8 +244,19 @@ These were chosen deliberately. Change them only on purpose.
   operations as approvals.
 - **Checked tools stay out of parallel mixed batches.** pi prepares every tool
   in a parallel assistant batch before it executes any tool. A waiting `bash`,
-  `edit`, or `apply_patch` check would make unrelated `read` calls look stuck.
-  Run reads first, then issue each checked tool in a later assistant step.
+  `edit`, `apply_patch`, or external-trigger process check would make unrelated
+  `read` calls look stuck. Run reads first, then issue each checked tool in a
+  later assistant step. Run `create_trigger`, `resume_trigger`, and
+  `invoke_trigger` separately because each tool can start a checked process.
+- **Trigger model tools bind exact targets.** Child schemas accept only an
+  omitted target or `{kind: "self"}`. Main schemas accept `main` or a retained
+  subagent selector that `SubagentManager` resolves to an exact session, agent,
+  and worktree. Never accept model-supplied raw `TriggerTarget` fields.
+- **External-trigger checks preserve argv boundaries.** Check mode evaluates
+  `{executable, args, cwd}` as structured process data. It never flattens the
+  proposal into shell text. Shell and interpreter entrypoints require embedded
+  command analysis or verifier review. Ask approvals bind to the exact target,
+  model, project, and canonical process input.
 - **The check cache is narrow and exact.** `check-mode-cache.json` stores at
   most 256 explicit `SAFE` decisions for simple, read-only Git inspection
   commands in strict mode. A hit matches the verifier model, cwd, and canonical

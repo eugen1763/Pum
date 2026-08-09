@@ -7,6 +7,7 @@ describe("graceful shutdown", () => {
     const shutdown = createShutdown({
       unmount: () => calls.push("unmount"),
       cleanup: () => calls.push("cleanup"),
+      shutdownTriggers: async () => { calls.push("triggers"); },
       dispose: async () => { calls.push("dispose"); },
       destroy: () => calls.push("destroy"),
       exit: (code) => calls.push(`exit:${code}`),
@@ -14,7 +15,7 @@ describe("graceful shutdown", () => {
 
     await shutdown(0);
     await shutdown(1);
-    expect(calls).toEqual(["unmount", "cleanup", "dispose", "destroy", "exit:0"]);
+    expect(calls).toEqual(["unmount", "cleanup", "triggers", "dispose", "destroy", "exit:0"]);
   });
 
   test("restores the terminal and exits when session disposal fails", async () => {

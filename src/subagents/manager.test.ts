@@ -7,7 +7,7 @@ import {
   countActiveSubagents,
   isCompletionOnlyMessage,
 } from "./manager";
-import type { SubagentStatus } from "./types";
+import { TRIGGER_EVENT_CUSTOM_TYPE, type SubagentStatus } from "./types";
 
 function addTestAgent(
   manager: SubagentManager,
@@ -98,6 +98,63 @@ describe("SubagentManager extension", () => {
       },
     });
     expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
+  });
+
+  test("routes typed trigger events to the exact main and child sessions", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    const mainDeliveries: any[] = [];
+    const mainEntries: any[] = [];
+    (manager as any).parentSessionId = "main-session";
+    (manager as any).mainRunning = true;
+    (manager as any).mainApi = {
+      appendEntry(customType: string, data: any) { mainEntries.push({ customType, data }); },
+      sendMessage(message: any, options: any) { mainDeliveries.push({ message, options }); },
+    };
+    await manager.deliverTriggerEvent({
+      id: "event-main",
+      triggerId: "trigger-main",
+      triggerName: "tests",
+      sessionId: "main-session",
+      agentId: null,
+      text: "Main tests completed.",
+      at: 1,
+    });
+    expect(mainEntries[0].customType).toBe(TRIGGER_EVENT_CUSTOM_TYPE);
+    expect(mainDeliveries[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
+
+    addTestAgent(manager, "child", "idle");
+    const childEntries: any[] = [];
+    const childDeliveries: any[] = [];
+    const record = (manager as any).records.get("child");
+    record.session = {
+      sessionId: "child-session",
+      sessionManager: {
+        appendCustomEntry(customType: string, data: any) { childEntries.push({ customType, data }); },
+      },
+    };
+    record.api = {
+      sendMessage(message: any, options: any) { childDeliveries.push({ message, options }); },
+    };
+    await manager.deliverTriggerEvent({
+      id: "event-child",
+      triggerId: "trigger-child",
+      triggerName: "build",
+      sessionId: "child-session",
+      agentId: "child",
+      text: "Child build completed.",
+      at: 2,
+    });
+    expect(childEntries[0].customType).toBe(TRIGGER_EVENT_CUSTOM_TYPE);
+    expect(childDeliveries[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
+    await expect(manager.deliverTriggerEvent({
+      id: "wrong-session",
+      triggerId: "trigger-child",
+      triggerName: "build",
+      sessionId: "other-session",
+      agentId: "child",
+      text: "Wrong target.",
+      at: 3,
+    })).rejects.toThrow("unavailable");
   });
 
   test("recognizes completion-only messages without blocking actionable communication", () => {
