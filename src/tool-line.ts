@@ -1,4 +1,4 @@
-import { relative } from "node:path";
+import { posix, win32 } from "node:path";
 
 export type ToolCall = {
   id: string;
@@ -10,6 +10,24 @@ export type ToolCall = {
   detail?: string;
 };
 
+function isWindowsAbsolute(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");
+}
+
+/** Render project-local paths with `/`, while preserving supplied external path syntax. */
+export function displayToolPath(path: string, cwd: string): string {
+  const windowsCwd = isWindowsAbsolute(cwd);
+  if ((isWindowsAbsolute(path) && !windowsCwd) || (posix.isAbsolute(path) && windowsCwd)) return path;
+
+  const flavor = windowsCwd ? win32 : posix;
+  const root = flavor.resolve(cwd);
+  const absolute = flavor.resolve(root, path);
+  const relative = flavor.relative(root, absolute);
+  const outside = relative === ".." || relative.startsWith(`..${flavor.sep}`) || flavor.isAbsolute(relative);
+  if (!relative || outside) return path;
+  return windowsCwd ? relative.replaceAll("\\", "/") : relative;
+}
+
 /** Tool args are typed `any`, so every access here is defensive. */
 export function toolArg(name: string, args: any, cwd: string): string {
   if (!args || typeof args !== "object") return "";
@@ -18,8 +36,7 @@ export function toolArg(name: string, args: any, cwd: string): string {
     return args.command.split("\n")[0]!.trim();
   }
   if (name === "read" && typeof args.path === "string") {
-    const rel = relative(cwd, args.path);
-    const path = rel && !rel.startsWith("..") ? rel : args.path;
+    const path = displayToolPath(args.path, cwd);
     const range: string[] = [];
     if (typeof args.offset === "number" && Number.isFinite(args.offset)) {
       range.push(`offset=${args.offset}`);
@@ -70,8 +87,7 @@ export function toolArg(name: string, args: any, cwd: string): string {
     return label ? `${count} question${count === 1 ? "" : "s"} · ${label}` : `${count} questions`;
   }
   if (typeof args.path === "string") {
-    const rel = relative(cwd, args.path);
-    return rel && !rel.startsWith("..") ? rel : args.path;
+    return displayToolPath(args.path, cwd);
   }
   const first = Object.values(args).find((v) => typeof v === "string");
   return typeof first === "string" ? first.split("\n")[0]! : "";

@@ -55,6 +55,15 @@ describe("bash structure analysis", () => {
     ]);
   });
 
+  test("preserves Windows backslashes inside valid shell quotes", () => {
+    expect(analyzeBashCommand("cat 'C:\\work space\\repo\\file.txt'").stages[0]?.argv)
+      .toEqual(["cat", "C:\\work space\\repo\\file.txt"]);
+    expect(analyzeBashCommand('cat "C:\\work space\\repo\\file.txt"').stages[0]?.argv)
+      .toEqual(["cat", "C:\\work space\\repo\\file.txt"]);
+    expect(analyzeBashCommand("cat C:\\work\\repo\\file.txt").stages[0]?.argv)
+      .toEqual(["cat", "C:workrepofile.txt"]);
+  });
+
   test("recognizes case-clause separator operators", () => {
     const analysis = analyzeBashCommand("echo one ;; echo two ;& echo three ;;& echo four");
     expect(analysis.operators.map((item) => item.operator)).toEqual([";;", ";&", ";;&"]);
@@ -111,8 +120,8 @@ describe("deterministic hard blocks", () => {
 
   test("blocks Windows drive and UNC paths outside the project", () => {
     const fs: CheckPolicyFileSystem = { exists: () => false, isSymbolicLink: () => false, realpath: (path) => path };
-    const drive = analyzeCheckPolicy({ command: "cat D:\\secrets\\token.txt", cwd: "C:\\work\\repo", fileSystem: fs });
-    const unc = analyzeCheckPolicy({ command: "cat \\\\server\\share\\file.txt", cwd: "C:\\work\\repo", fileSystem: fs });
+    const drive = analyzeCheckPolicy({ command: "cat 'D:\\secrets\\token.txt'", cwd: "C:\\work\\repo", fileSystem: fs });
+    const unc = analyzeCheckPolicy({ command: "cat '\\\\server\\share\\file.txt'", cwd: "C:\\work\\repo", fileSystem: fs });
 
     expect(drive.decision).toBe("block");
     expect(drive.findings.map((item) => item.code)).toContain("outside-project");
@@ -122,7 +131,7 @@ describe("deterministic hard blocks", () => {
 
   test("accepts a Windows project-local absolute path for boundary analysis", () => {
     const fs: CheckPolicyFileSystem = { exists: () => false, isSymbolicLink: () => false, realpath: (path) => path };
-    const result = analyzeCheckPolicy({ command: "cat C:\\work\\repo\\src\\index.ts", cwd: "C:\\work\\repo", fileSystem: fs });
+    const result = analyzeCheckPolicy({ command: "cat 'C:\\work\\repo\\src\\index.ts'", cwd: "C:\\work\\repo", fileSystem: fs });
 
     expect(result.decision).toBe("allow");
     expect(result.findings).toEqual([]);
@@ -195,8 +204,55 @@ describe("deterministic hard blocks", () => {
     for (const command of ["rm -rf .", "rm -rf *", "rm -rf build cache", `rm -rf ${cwd}`]) {
       expect(findingCodes(command, cwd)).toContain("broad-deletion");
     }
+
+    const spacedCwd = "/work space/repo";
+    for (const command of ["rm -rf '/work space/repo'", 'rm -rf "/work space/repo"', "rm -rf '/work space/repo/'"]) {
+      expect(findingCodes(command, spacedCwd)).toContain("broad-deletion");
+    }
+
     expect(analyzeCheckPolicy({ command: "rm -f build.txt", cwd }).decision).toBe("allow");
     expect(analyzeCheckPolicy({ command: "rm -rf build", cwd }).decision).toBe("ask");
+  });
+
+  test("blocks Windows drive and UNC project-root deletion variants", () => {
+    const fs: CheckPolicyFileSystem = { exists: () => false, isSymbolicLink: () => false, realpath: (path) => path };
+    const driveCwd = "C:\\work space\\repo";
+    const driveCommands = [
+      "rm -rf 'C:\\work space\\repo'",
+      'rm -rf "C:\\work space\\repo"',
+      "rm -rf 'C:/work space/repo'",
+      "rm -rf 'c:\\WORK SPACE\\REPO'",
+    ];
+    for (const command of driveCommands) {
+      const result = analyzeCheckPolicy({ command, cwd: driveCwd, fileSystem: fs });
+      expect(result.findings.map((item) => item.code)).toContain("broad-deletion");
+    }
+
+    const noSpaceCwd = "C:\\work\\repo";
+    const driveResult = analyzeCheckPolicy({ command: "rm -rf C:/work/repo", cwd: noSpaceCwd, fileSystem: fs });
+    expect(driveResult.findings.map((item) => item.code)).toContain("broad-deletion");
+
+    const uncCwd = "\\\\server\\share\\repo space";
+    for (const command of ["rm -rf '\\\\server\\share\\repo space'", "rm -rf '//server/share/repo space'"]) {
+      const result = analyzeCheckPolicy({ command, cwd: uncCwd, fileSystem: fs });
+      expect(result.findings.map((item) => item.code)).toContain("broad-deletion");
+    }
+  });
+
+  test("fails closed without misreading an unquoted backslash path as the Windows root", () => {
+    const cwd = "C:\\work\\repo";
+    const malformed = analyzeCheckPolicy({ command: "rm -rf C:\\work\\repo", cwd });
+    expect(malformed.decision).toBe("ask");
+    expect(malformed.findings.map((item) => item.code)).toContain("mutation");
+    expect(malformed.findings.map((item) => item.code)).not.toContain("broad-deletion");
+
+    const split = analyzeCheckPolicy({ command: "rm -rf C:\\work space\\repo", cwd: "C:\\work space\\repo" });
+    expect(split.decision).toBe("block");
+    expect(split.findings.map((item) => item.code)).toContain("broad-deletion");
+
+    const unbalanced = analyzeCheckPolicy({ command: "rm -rf 'C:\\work\\repo", cwd });
+    expect(unbalanced.decision).toBe("block");
+    expect(unbalanced.findings.map((item) => item.code)).toContain("unbalanced-shell");
   });
 });
 

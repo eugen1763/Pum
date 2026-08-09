@@ -159,6 +159,26 @@ describe("subagent transcript replay", () => {
     });
   });
 
+  test("restores Windows project paths with stable display separators", () => {
+    const lines = replayEntries([{
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "read-windows",
+          name: "read",
+          arguments: { path: "C:\\work space\\repo\\src\\file name.ts", limit: 8 },
+        }],
+      },
+    }], "C:\\work space\\repo", true);
+
+    expect(lines[0]).toMatchObject({
+      kind: "tool",
+      call: { id: "read-windows", arg: "src/file name.ts · limit=8", state: "ok" },
+    });
+  });
+
   test("restores questionnaire completion details", () => {
     const lines = replayEntries([
       {
