@@ -1,5 +1,19 @@
-import { SyntaxStyle } from "@opentui/core";
+import { CodeRenderable, SyntaxStyle, type BaseRenderable } from "@opentui/core";
 import type { Theme } from "./theme";
+
+/** Wait for every highlight request that belongs to a renderable tree. */
+export async function settleSyntaxHighlighting(root: BaseRenderable): Promise<void> {
+  const pending: Promise<void>[] = [];
+  const visit = (renderable: BaseRenderable) => {
+    if (renderable instanceof CodeRenderable) pending.push(renderable.highlightingDone);
+    for (const child of renderable.getChildren()) visit(child);
+  };
+  visit(root);
+
+  const results = await Promise.allSettled(pending);
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failure) throw failure.reason;
+}
 
 /**
  * OpenTUI's <markdown> and <code> need a SyntaxStyle and ship no default. The
