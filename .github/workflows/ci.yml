@@ -17,4 +17,5 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun test
       - run: bunx tsc --noEmit
+      - run: bun run pack:check
       - run: git diff --check
