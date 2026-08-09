@@ -26,6 +26,10 @@ export const COMMANDS: Command[] = [
     description: "Add or update a provider login",
   },
   {
+    name: "/triggers",
+    description: "Manage external triggers",
+  },
+  {
     name: "/worktree",
     description: "Create a PUM Git worktree from the current branch",
   },

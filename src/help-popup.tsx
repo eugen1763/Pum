@@ -54,6 +54,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/clear", "Start a fresh session"],
       ["/history", "Browse saved sessions"],
       ["/login", "Add or update a provider"],
+      ["/triggers", "Manage external triggers"],
       ["/worktree", "Create a managed worktree"],
       ["Tab", "Complete a command preview"],
     ],
@@ -62,6 +63,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     title: "Application",
     controls: [
       ["Ctrl+P", "Open Settings"],
+      ["Ctrl+T", "Open external triggers"],
       ["/ in Settings", "Focus settings search"],
       ["Esc", "Close; twice to cancel work"],
       ["Ctrl+C", "Press twice to quit"],

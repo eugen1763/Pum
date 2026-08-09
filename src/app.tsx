@@ -99,6 +99,14 @@ import type {
   CheckApprovalRequest,
   CheckApprovalStore,
 } from "./check-approvals";
+import {
+  moveTriggerSelection,
+  sortTriggers,
+  triggerActionForKey,
+  TriggersPopup,
+  type TriggerAction,
+  type TriggerManagerLike,
+} from "./triggers/popup";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -309,6 +317,7 @@ export function App({
   onExit = () => process.exit(0),
   checkApprovalCoordinator,
   checkApprovalStore,
+  triggerManager,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -326,6 +335,7 @@ export function App({
   onExit?: () => void | Promise<void>;
   checkApprovalCoordinator?: CheckApprovalCoordinator;
   checkApprovalStore?: CheckApprovalStore;
+  triggerManager?: TriggerManagerLike;
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -384,6 +394,9 @@ export function App({
   const [checkApproval, setCheckApproval] = useState<CheckApprovalRequest | null>(null);
   const [checkApprovalDecision, setCheckApprovalDecision] = useState<CheckApprovalDecision>("allowOnce");
   const [, setAgentRevision] = useState(0);
+  const [triggersOpen, setTriggersOpen] = useState(false);
+  const [triggerCursor, setTriggerCursor] = useState(0);
+  const [, setTriggerRevision] = useState(0);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
   const { width, height } = useTerminalDimensions();
@@ -404,6 +417,7 @@ export function App({
   const visibleElapsedSec = activeAgent ? agentElapsedSec : elapsedSec;
   const visibleUsage = activeAgent?.usage ?? usage;
   const agentTreeRows = buildAgentTree(agents);
+  const triggers = sortTriggers(triggerManager?.getTriggers() ?? []);
   const inputHint = cancelArmed
     ? " esc again to cancel "
     : quitArmed
@@ -425,11 +439,13 @@ export function App({
   const inputRef = useRef<TextareaRenderable>(null);
   const questionnaireInputRef = useRef<TextareaRenderable>(null);
   const settingsOpenRef = useRef(settingsOpen);
+  const triggersOpenRef = useRef(false);
   const settingsPageRef = useRef(page);
   const settingsSearchFocusedRef = useRef(settingsSearchFocused);
   const focusInputAfterSwitch = useRef(false);
   const activeAgentIdRef = useRef<string | null>(null);
   const agentSelectorCursorRef = useRef(0);
+  const triggerCursorRef = useRef(0);
   const commandCursorRef = useRef(0);
   const stashRef = useRef(stash);
   const stashOpenRef = useRef(false);
@@ -473,6 +489,23 @@ export function App({
     settingsOpenRef.current = false;
     setSettingsOpen(false);
     queueMicrotask(() => inputRef.current?.focus());
+  };
+  const setTriggerPopup = (open: boolean, restoreFocus = true) => {
+    triggersOpenRef.current = open;
+    setTriggersOpen(open);
+    if (!open && restoreFocus) queueMicrotask(() => inputRef.current?.focus());
+  };
+  const openTriggers = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setStashMode(false);
+    const nextCursor = Math.min(triggerCursorRef.current, Math.max(0, triggers.length - 1));
+    triggerCursorRef.current = nextCursor;
+    setTriggerCursor(nextCursor);
+    setTriggerPopup(true);
   };
   // The event subscription is set up once, so it reads the toggle via a ref.
   const showThinkingRef = useRef(initial.showThinking);
@@ -711,6 +744,14 @@ export function App({
     setCheckApprovalDecision("allowOnce");
   }), [checkApprovalCoordinator]);
 
+  useEffect(() => triggerManager?.subscribe(() => {
+    setTriggerRevision((revision) => revision + 1);
+    const count = triggerManager.getTriggers().length;
+    const next = Math.min(triggerCursorRef.current, Math.max(0, count - 1));
+    triggerCursorRef.current = next;
+    setTriggerCursor(next);
+  }), [triggerManager]);
+
   useEffect(
     () => subagentManager.subscribe((event) => {
       if (event.type === "main-line") append(event.line);
@@ -731,6 +772,7 @@ export function App({
         setHelpOpen(false);
         setHistoryOpen(false);
         setAgentSelectorOpen(false);
+        setTriggerPopup(false, false);
         setLoginOpen(false);
       }
       setQuestionnaireRevision((revision) => revision + 1);
@@ -977,6 +1019,7 @@ export function App({
     setHelpOpen(false);
     setHistoryOpen(false);
     setAgentSelectorOpen(false);
+    setTriggerPopup(false, false);
     setLoginOpen(true);
     loginControllerRef.current?.open();
   };
@@ -1023,6 +1066,7 @@ export function App({
     settingsOpenRef.current = false;
     setSettingsOpen(false);
     setHelpOpen(false);
+    setTriggerPopup(false, false);
     loadSessions()
       .then((sessions) => {
         const currentPath = session.sessionFile;
@@ -1111,8 +1155,9 @@ export function App({
     const clear = /^\/(?:clear|new)$/.test(trimmed);
     const historyCommand = trimmed === "/history";
     const loginCommand = trimmed === "/login";
+    const triggersCommand = trimmed === "/triggers";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !triggersCommand && !worktreeCommand) return false;
     editingStashIndex.current = null;
 
     if (historyCommand) {
@@ -1123,6 +1168,11 @@ export function App({
     if (loginCommand) {
       setEditorText("");
       openLogin();
+      return true;
+    }
+    if (triggersCommand) {
+      setEditorText("");
+      openTriggers();
       return true;
     }
 
@@ -1289,6 +1339,21 @@ export function App({
       append({ kind: "text", role: "error", text: String(error) });
       setWorking(false);
     });
+  };
+
+  const performTriggerAction = (action: TriggerAction) => {
+    const trigger = triggers[triggerCursorRef.current];
+    if (!trigger || !triggerManager) return;
+    let result: unknown;
+    if (action === "pause") result = triggerManager.pause(trigger.id);
+    else if (action === "resume") result = triggerManager.resume(trigger.id);
+    else if (action === "cancel") result = triggerManager.cancel(trigger.id);
+    else result = triggerManager.invoke(trigger.id, action);
+    Promise.resolve(result).catch((error) => append({
+      kind: "text",
+      role: "error",
+      text: `trigger ${action} failed: ${String(error)}`,
+    }));
   };
 
   const resolveCheckApproval = (decision: CheckApprovalDecision) => {
@@ -1501,6 +1566,33 @@ export function App({
       return;
     }
 
+    if (key.ctrl && key.name === "t") {
+      key.stopPropagation();
+      if (triggersOpenRef.current) setTriggerPopup(false);
+      else openTriggers();
+      return;
+    }
+
+    if (triggersOpenRef.current) {
+      key.stopPropagation();
+      if (key.name === "escape") {
+        setTriggerPopup(false);
+      } else if (key.name === "up" || key.name === "down" || key.name === "pageup" || key.name === "pagedown") {
+        const direction = key.name === "up" || key.name === "pageup" ? -1 : 1;
+        const steps = key.name === "pageup" || key.name === "pagedown" ? 5 : 1;
+        let next = triggerCursorRef.current;
+        for (let index = 0; index < steps; index++) {
+          next = moveTriggerSelection(next, triggers.length, direction);
+        }
+        triggerCursorRef.current = next;
+        setTriggerCursor(next);
+      } else {
+        const action = triggerActionForKey(key, triggers[triggerCursorRef.current]);
+        if (action) performTriggerAction(action);
+      }
+      return;
+    }
+
     if (key.ctrl && key.name === "l") {
       key.stopPropagation();
       if (agentSelectorOpen) {
@@ -1511,6 +1603,7 @@ export function App({
         setSettingsOpen(false);
         setHelpOpen(false);
         setHistoryOpen(false);
+        setTriggerPopup(false, false);
         const selected = Math.max(
           0,
           agentTreeRows.findIndex((row) => row.id === activeAgentIdRef.current),
@@ -2076,7 +2169,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="char"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !loginOpen && !questionnaire && !checkApproval}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !checkApproval}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -2113,6 +2206,15 @@ export function App({
             terminalWidth={width}
             terminalHeight={height}
             scrollOffset={helpScrollOffset}
+          />
+        ) : null}
+        {triggersOpen ? (
+          <TriggersPopup
+            theme={theme}
+            triggers={triggers}
+            cursor={triggerCursor}
+            terminalWidth={width}
+            terminalHeight={height}
           />
         ) : null}
         {agentSelectorOpen ? (
