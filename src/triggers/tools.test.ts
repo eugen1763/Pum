@@ -94,7 +94,9 @@ describe("trigger model tools", () => {
     expect(Value.Check(create, valid)).toBe(true);
     expect(Value.Check(create, { ...valid, sessionId: "forged" })).toBe(false);
     expect(Value.Check(create, { ...valid, target: { kind: "subagent", agent: "other" } })).toBe(false);
-    expect(Value.Check(tools.get("invoke_trigger").parameters, { id: "one", mode: "run" })).toBe(true);
+    expect(Value.Check(tools.get("invoke_trigger").parameters, { id: "one" })).toBe(true);
+    expect(Value.Check(tools.get("invoke_trigger").parameters, { id: "one", mode: "run" })).toBe(false);
+    expect(Value.Check(tools.get("invoke_trigger").parameters, { id: "one", mode: "fire" })).toBe(false);
     expect(Value.Check(tools.get("invoke_trigger").parameters, { id: "one", mode: "shell" })).toBe(false);
   });
 
@@ -152,6 +154,24 @@ describe("trigger model tools", () => {
     await expect(pause.execute("call", { id: "trigger-1" }, undefined, undefined, context))
       .rejects.toThrow("different target");
     expect(calls).toEqual(["inspect:trigger-1:subagent"]);
+  });
+
+  test("runs the configured executable without an invocation mode", async () => {
+    const calls: unknown[][] = [];
+    const requester: TriggerRequester = {
+      kind: "subagent",
+      sessionId: "session-1",
+      agentId: "child-1",
+      cwd: "/repo/child",
+    };
+    const manager = managerFor();
+    manager.invoke = async (...args) => {
+      calls.push(args);
+      return snapshot();
+    };
+    const invoke = setup(manager, requester, "subagent").get("invoke_trigger");
+    await invoke.execute("call", { id: "trigger-1" }, undefined, undefined, context);
+    expect(calls).toEqual([["trigger-1", requester]]);
   });
 
   test("filters child lists even when the manager returns other targets", async () => {

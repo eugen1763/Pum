@@ -145,9 +145,9 @@ The `message_cache_send` tool accepts stable entry IDs. Single entries use the s
 
 ### External triggers
 
-The trigger tools create process-local supervised commands with an executable and argument array. Trigger definitions can be listed, inspected, paused, resumed, cancelled, run manually, or fired synthetically. Definitions disappear when PUM exits.
+The trigger tools create process-local supervised commands with an executable and argument array. Trigger definitions can be listed, inspected, paused, resumed, cancelled, or run manually. Definitions disappear when PUM exits.
 
-Use `Ctrl+T` or `/triggers` to inspect active definitions. PUM limits definitions, pending deliveries, output size, fire counts, repeat frequency, and lifetime. Output goes to a private temporary file and is removed after the triggered turn settles.
+Use `Ctrl+T` or `/triggers` to inspect active definitions. PUM limits definitions, pending deliveries, output size, run counts, repeat frequency, and lifetime. Output goes to a private temporary file and is removed after the triggered turn settles.
 
 Trigger events target one exact main or retained child session. A missing session or child cancels its definitions instead of redirecting them. Check mode evaluates each process proposal without flattening its argument boundaries into shell text.
 

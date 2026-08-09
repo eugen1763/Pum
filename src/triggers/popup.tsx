@@ -9,11 +9,11 @@ export type TriggerManagerLike = {
   getTriggers(): TriggerSnapshot[];
   pause(id: string): Promise<unknown> | unknown;
   resume(id: string): Promise<unknown> | unknown;
-  invoke(id: string, mode: "run" | "fire"): Promise<unknown> | unknown;
+  invoke(id: string): Promise<unknown> | unknown;
   cancel(id: string): Promise<unknown> | unknown;
 };
 
-export type TriggerAction = "pause" | "resume" | "run" | "fire" | "cancel";
+export type TriggerAction = "pause" | "resume" | "run" | "cancel";
 
 export function sortTriggers(triggers: readonly TriggerSnapshot[]): TriggerSnapshot[] {
   return triggers
@@ -35,7 +35,6 @@ export function triggerActionForKey(
     return trigger?.paused || trigger?.state === "paused" ? "resume" : "pause";
   }
   if (key.name === "r" || key.sequence === "r") return "run";
-  if (key.name === "f" || key.sequence === "f") return "fire";
   if (key.name === "c" || key.sequence === "c") return "cancel";
   return null;
 }
@@ -94,7 +93,7 @@ export function triggerFields(trigger: TriggerSnapshot): Array<[string, string]>
     ["Directory", trigger.cwd],
     ["Mode", trigger.mode === "repeat" ? `repeat · ${durationText(trigger.restartDelayMs ?? undefined)}` : "once"],
     ["Runtime", durationText(trigger.lastResult?.durationMs)],
-    ["Fires", `${trigger.fireCount}/${trigger.maxFires}`],
+    ["Runs", `${trigger.fireCount}/${trigger.maxFires}`],
     ["Pending", `${trigger.pendingCount} · ${trigger.coalescedCount} coalesced`],
     ["Next", timeText(trigger.nextRestartAt)],
     ["Last", timeText(trigger.lastResult?.finishedAt ?? null)],
@@ -227,8 +226,8 @@ export function TriggersPopup({
       ) : null}
       <text
         content={geometry.compact
-          ? "↑↓ select  p pause/resume  r run  f fire  c cancel  esc close"
-          : "↑↓ select   p pause/resume   r run   f fire   c cancel   esc close"}
+          ? "↑↓ select  p pause/resume  r run  c cancel  esc close"
+          : "↑↓ select   p pause/resume   r run   c cancel   esc close"}
         fg={theme.dim}
         bg={theme.popupBg}
         wrapMode="none"

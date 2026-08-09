@@ -107,7 +107,7 @@ async function renderApp(options: { loginRequired?: boolean } = {}) {
     getTriggers: () => snapshots,
     pause: (id) => { calls.push(`pause:${id}`); },
     resume: (id) => { calls.push(`resume:${id}`); },
-    invoke: (id, mode) => { calls.push(`${mode}:${id}`); },
+    invoke: (id) => { calls.push(`run:${id}`); },
     cancel: (id) => { calls.push(`cancel:${id}`); },
   };
   const subagentManager = {
@@ -159,7 +159,7 @@ describe("external trigger App controls", () => {
     setup.mockInput.pressKey("f");
     setup.mockInput.pressKey("c");
     await settle(setup);
-    expect(calls).toEqual(["resume:first", "run:first", "fire:first", "cancel:first"]);
+    expect(calls).toEqual(["resume:first", "run:first", "cancel:first"]);
 
     setup.mockInput.pressArrow("down");
     setup.mockInput.pressKey("p");

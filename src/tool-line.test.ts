@@ -86,8 +86,8 @@ describe("apply_patch tool metadata", () => {
       template: "large output template",
     }, "/repo")).toBe("tests · bun");
     expect(toolArg("pause_trigger", { id: "trigger-1" }, "/repo")).toBe("trigger-1");
-    expect(toolArg("invoke_trigger", { id: "trigger-1", mode: "fire" }, "/repo"))
-      .toBe("trigger-1 · fire");
+    expect(toolArg("invoke_trigger", { id: "trigger-1" }, "/repo"))
+      .toBe("trigger-1");
   });
 
   test("counts unified patch additions and removals", () => {
