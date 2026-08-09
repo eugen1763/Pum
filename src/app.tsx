@@ -471,10 +471,16 @@ export function App({
     setStashCursor(index);
   };
 
+  const refreshHistoryAfterStashMutation = () => {
+    history.current = promptHistoryStore.load(cwd);
+    histCursor.current = null;
+  };
+
   const addToStash = (prompt: string, executed = false) => {
     const next = promptStashStore.append(cwd, prompt, executed);
     stashRef.current = next;
     setStash(next);
+    refreshHistoryAfterStashMutation();
     if (stashOpenRef.current) setSelectedStash(-1);
   };
 
@@ -482,12 +488,14 @@ export function App({
     const next = promptStashStore.markExecuted(cwd, index);
     stashRef.current = next;
     setStash(next);
+    refreshHistoryAfterStashMutation();
   };
 
   const replaceStashedPrompt = (index: number, prompt: string, executed: boolean) => {
     const next = promptStashStore.replace(cwd, index, prompt, executed);
     stashRef.current = next;
     setStash(next);
+    refreshHistoryAfterStashMutation();
   };
 
   const deleteStashedPrompt = (index: number) => {
@@ -497,7 +505,7 @@ export function App({
     const next = promptStashStore.remove(cwd, index);
     stashRef.current = next;
     setStash(next);
-    history.current = promptHistoryStore.remove(cwd, prompt.text);
+    history.current = promptHistoryStore.load(cwd);
     histCursor.current = null;
 
     const editingIndex = editingStashIndex.current;
@@ -1124,13 +1132,13 @@ export function App({
 
     if (attachments.length === 0 && runCommand(promptText)) return;
 
+    if (promptText) history.current = promptHistoryStore.append(cwd, promptText);
     if (promptText && stashIndex === undefined) {
       const editingIndex = editingStashIndex.current;
       if (editingIndex === null) addToStash(promptText, true);
       else replaceStashedPrompt(editingIndex, promptText, true);
     }
     editingStashIndex.current = null;
-    if (promptText) history.current = promptHistoryStore.append(cwd, promptText);
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
@@ -1179,10 +1187,11 @@ export function App({
       ...prompts.map((prompt, index) => `${index + 1}. ${prompt}`),
     ].join("\n");
 
+    for (const prompt of prompts) history.current = promptHistoryStore.append(cwd, prompt);
     const next = promptStashStore.markExecutedMany(cwd, indices);
     stashRef.current = next;
     setStash(next);
-    for (const prompt of prompts) history.current = promptHistoryStore.append(cwd, prompt);
+    refreshHistoryAfterStashMutation();
     editingStashIndex.current = null;
     histCursor.current = null;
     draft.current = "";
@@ -1606,8 +1615,8 @@ export function App({
       if (index >= 0) {
         const prompt = stashRef.current[index];
         if (prompt) {
-          executeStashedPrompt(index);
           submitPrompt(prompt.text, index);
+          executeStashedPrompt(index);
         }
       } else if (inputValue.trim()) {
         addToStash(inputValue);
