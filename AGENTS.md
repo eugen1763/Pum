@@ -27,16 +27,26 @@ bun run start    # open the TUI in the current directory
 | `src/history.ts` | Prompt-history adapter for the shared prompt cache |
 | `src/prompt-stash.ts` | Prompt-stash adapter for the shared prompt cache |
 | `src/prompt-cache.ts` | Reconciliation, retention, migration, and atomic persistence |
+| `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
+| `src/session-history-metadata.ts` | Bounded session JSONL metadata and usage index |
+| `src/session-history-popup.tsx` | Responsive session history list and metadata rows |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
 | `src/login-popup.tsx` | Presentational provider login and custom-provider popup |
 | `src/login-controller.ts` | Provider auth state machine and popup keyboard actions |
 | `src/login-flow.ts` | Provider registry, custom discovery, redaction, and atomic config writes |
 | `src/settings.ts` | PUM's own `pum.json` |
-| `src/check-mode.ts` | Optional model safety gate for `bash`, `edit`, and `apply_patch` |
+| `src/check-mode.ts` | Safety profiles for commands, mutations, and trigger processes |
+| `src/check-policy.ts` | Deterministic shell and structured-process hard rules |
+| `src/check-mutation.ts` | Pre-execution edit and patch diff proposals |
+| `src/check-approvals.ts` | Exact once, session, and project approval state |
+| `src/check-approval-popup.tsx` | Responsive Ask-mode approval popup |
+| `src/triggers/manager.ts` | Process-local trigger lifecycle, limits, routing, and cleanup |
+| `src/triggers/tools.ts` | Main/child trigger model tools and target authorization |
+| `src/triggers/popup.tsx` | Responsive Ctrl+T trigger management popup |
 | `src/writing-style.ts` | Configurable per-turn system-prompt writing guidance |
 | `src/config.ts` | Where the config dir lives |
 
@@ -58,6 +68,7 @@ bun run start    # open the TUI in the current directory
 | Ctrl+L | Open the agent transcript tree; use Up/Down and Right/Enter to select |
 | Esc | Once warns, twice within 2s cancels the selected agent's running turn |
 | Ctrl+P | Open settings; Esc closes, or steps back from the model list |
+| Ctrl+T | Open process-local external triggers |
 | Ctrl+C | Clear the selected non-empty draft; on an empty draft, once arms and twice within 2s quits |
 | Questionnaire: ↑/↓, ←/→ or Tab, Enter, Esc | Select options, move questions, confirm, or cancel |
 
@@ -106,7 +117,7 @@ These were chosen deliberately. Change them only on purpose.
   name. An agent deletes only its own rows. Sends accept stable IDs and use the
   App user-execution bridge. Multi-entry sends use main-agent orchestration.
 - **Colours are never literals.** Everything reads a semantic token from
-  `theme.ts`. Three presets ship; `theme.json` in the config dir overrides any
+  `theme.ts`. Nine presets ship; `theme.json` in the config dir overrides any
   subset of tokens. Add a token rather than a hex code.
 - **Compact by default.** No borders around the input, no blank rows between
   turns, no padding that does not earn its place. A user turn is a full-width

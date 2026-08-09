@@ -17,7 +17,7 @@ A release is complete only when all of these are true:
 3. `README.md` accurately describes the shipped product.
 4. `AGENTS.md` accurately describes the shipped architecture, controls, invariants, and testing constraints.
 5. `CHANGELOG.md` contains a dated entry for the exact release version.
-6. `package.json` and `bun.lock` contain the exact same release version.
+6. `package.json` contains the exact release version and `bun.lock` is regenerated and consistent. Bun does not store the root workspace version in this lockfile format.
 7. Local validation passes.
 8. The release commit and matching annotated tag are pushed.
 9. Ubuntu and Windows CI pass for the release commit/tag.
@@ -152,7 +152,7 @@ Derive the entry from the complete diff and commit range since the latest tag, p
 
 ## 6. Update version metadata
 
-Update the exact version in `package.json`. Regenerate `bun.lock` with Bun so the root package version matches. Do not create a `package-lock.json`.
+Update the exact version in `package.json`. Regenerate `bun.lock` with Bun so dependency and workspace metadata remain consistent. Bun lockfile version 1 does not store the root workspace package version. Do not add an unsupported field and do not create a `package-lock.json`.
 
 After updating:
 
@@ -164,8 +164,9 @@ bun install --frozen-lockfile
 Inspect the resulting diff. The release version must be identical in:
 
 - `package.json`
-- `bun.lock`
 - tag name `v<VERSION>`
+
+Confirm that `bun install --frozen-lockfile` accepts `bun.lock` after the version change.
 
 Update documentation references to an exact old version only when they are meant to track the current release. Keep `@beta` installation instructions for prereleases.
 

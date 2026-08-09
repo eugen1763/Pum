@@ -23,7 +23,7 @@ pum
 PUM opens the login panel automatically on the first start.
 
 > [!WARNING]
-> PUM can read, write, and delete files. PUM can also run shell commands without approval. Start PUM only inside a workspace where these actions are acceptable. Check mode adds a verifier, but it is not a sandbox.
+> PUM can read, write, and delete files. PUM can also run commands and supervised trigger processes. Check mode can verify or ask about these operations, but it is not a sandbox. Start PUM only inside a workspace where these actions are acceptable.
 
 ## See PUM in action
 
@@ -42,10 +42,11 @@ The following screens are real OpenTUI renders captured through `tmux`. A local 
 
 - **Compact terminal UI:** Streaming Markdown, syntax highlighting, thinking traces, tool rows, usage, cost, and Git status.
 - **Full coding loop:** Built-in `read`, `write`, `edit`, `bash`, and atomic `apply_patch` tools.
-- **Parallel subagents:** Persistent agents work in isolated Git worktrees and report to the main agent.
-- **Prompt control:** Steer active work, answer model questionnaires, stash prompt batches, attach clipboard images, cancel turns, and resume sessions.
+- **Parallel subagents:** Persistent agents work in isolated Git worktrees, communicate durably, and report lifecycle transitions to their direct spawners.
+- **Prompt control:** Steer active work, answer model questionnaires, use an ownership-aware message cache, attach clipboard images, and resume sessions with metadata-rich history.
+- **External triggers:** Supervise background commands such as `gh run watch` and automatically wake the exact target agent when they exit.
 - **Provider choice:** Use the login methods exposed by pi, or add an OpenAI-compatible custom endpoint.
-- **Optional safeguards:** Use strict, balanced, or ask Check mode for `bash`, `edit`, and `apply_patch` calls.
+- **Optional safeguards:** Use strict, balanced, or ask Check mode for `bash`, `edit`, `apply_patch`, and external-trigger process proposals.
 - **Terminal-first appearance:** Nine themes, semantic color overrides, Unicode glyphs, and optional animation.
 
 PUM uses [pi](https://github.com/earendil-works/pi) for the agent loop and [OpenTUI](https://github.com/anomalyco/opentui) for rendering.
@@ -104,24 +105,27 @@ The package is named `pum-agent` because the bare `pum` name is already owned. T
 | `Shift+Tab` / `Ctrl+Shift+Tab` | Cycle through agent transcripts |
 | `Ctrl+H` | Open session history when the terminal reports the key distinctly |
 | `Ctrl+P` | Open settings |
+| `Ctrl+T` | Open supervised external triggers |
 | `Esc` twice | Cancel the selected working agent |
-| `Ctrl+C` twice | Quit |
+| `Ctrl+C` | Clear the selected non-empty draft; on an empty draft, press twice to quit |
 | `?` | Show all controls when the prompt is empty |
 
-Useful commands include `/login`, `/history`, `/clear`, `/compress`, and `/worktree`.
+Useful commands include `/login`, `/history`, `/triggers`, `/clear`, `/compress`, and `/worktree`.
 
 ## Parallel subagents
 
-PUM can run up to five active subagents. Each subagent has these resources:
+PUM runs up to 10 active subagents by default. Configure a limit from 1 through 25 in Settings. Only starting and running agents count toward the limit. Each subagent has these resources:
 
 - A persistent pi session
 - An isolated branch and worktree under `.pum/worktrees`
 - Its own transcript, draft, usage data, and cancellation state
 - Tools for progress messages and a single final completion report
 
-Select a range of stashed prompts and press `Enter`. The main agent can group related work and run independent groups in parallel. Successful managed merges remove the completed worktree and branch.
+Select a range of stashed prompts and press `Enter`. The main agent can group related work and run independent groups in parallel. Successful managed merges remove the completed worktree and branch. A parent cannot finish, merge, or be removed until every retained descendant closes deepest-first.
 
 Use `Ctrl+L` to select an agent transcript. Input then goes to that agent. Finished or interrupted agents remain available until PUM merges or removes them.
+
+Idle notices report settled work cycles to the direct spawner. They are not completion notices. PUM persists completion intent and delivery state so interrupted notification delivery can resume without duplicate completion messages.
 
 ## Tools and safeguards
 
@@ -139,13 +143,21 @@ Agents can add entries. An agent can delete only entries created by that exact a
 
 The `message_cache_send` tool accepts stable entry IDs. Single entries use the selected agent delivery path. Multiple entries use main-agent worktree orchestration.
 
+### External triggers
+
+The trigger tools create process-local supervised commands with an executable and argument array. Trigger definitions can be listed, inspected, paused, resumed, cancelled, run manually, or fired synthetically. Definitions disappear when PUM exits.
+
+Use `Ctrl+T` or `/triggers` to inspect active definitions. PUM limits definitions, pending deliveries, output size, fire counts, repeat frequency, and lifetime. Output goes to a private temporary file and is removed after the triggered turn settles.
+
+Trigger events target one exact main or retained child session. A missing session or child cancels its definitions instead of redirecting them. Check mode evaluates each process proposal without flattening its argument boundaries into shell text.
+
 ### Atomic `apply_patch`
 
 `apply_patch` supports add, update, delete, move, multiple files, and multiple hunks. PUM validates the full patch before changing files. It rejects traversal, absolute paths, escaping symlinks, path conflicts, and ambiguous context. A failed commit restores all touched files.
 
 ### Check mode
 
-Select a Check mode profile in `Ctrl+P`:
+Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_patch`, and external-trigger process execution:
 
 - **Strict:** Run deterministic hard rules, then require a clear verifier approval.
 - **Balanced:** Permit only narrow, recognized project-local operations after hard rules. Send all other calls to the verifier.
@@ -203,6 +215,8 @@ Set `PUM_DIR` to override the complete PUM data directory.
 | `check-mode-approvals.json` | Exact project approvals created in Ask mode |
 
 PUM preserves all stashed prompt occurrences. PUM also keeps the 100 most recent additional sent-history occurrences for each working directory.
+
+Session history shows the latest sent user-message time, on-disk JSONL size, and known outgoing, incoming, and cache-read token counts. Corrupt or partially written session lines do not prevent the history popup from opening.
 
 PUM keeps this directory separate from pi's default configuration directory.
 
