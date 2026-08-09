@@ -45,7 +45,7 @@ The following screens are real OpenTUI renders captured through `tmux`. A local 
 - **Parallel subagents:** Persistent agents work in isolated Git worktrees, communicate durably, and report lifecycle transitions to their direct spawners.
 - **Prompt control:** Steer active work, answer model questionnaires, use an ownership-aware message cache, attach clipboard images, and resume sessions with metadata-rich history.
 - **External triggers:** Supervise background commands such as `gh run watch` and automatically wake the exact target agent when they exit.
-- **Provider choice:** Use the login methods exposed by pi, or add an OpenAI-compatible custom endpoint.
+- **Provider choice:** Search the providers exposed by pi, or add an OpenAI-compatible custom endpoint.
 - **Optional safeguards:** Use strict, balanced, or ask Check mode for `bash`, `edit`, `apply_patch`, and external-trigger process proposals.
 - **Terminal-first appearance:** Nine themes, semantic color overrides, Unicode glyphs, and optional animation.
 

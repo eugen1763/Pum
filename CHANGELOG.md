@@ -2,6 +2,29 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.1.3-beta.1] - 2026-08-09
+
+### Added
+- Added optional `spawn_subagent` previews with a responsive Markdown approval popup and a separate user note delivered after spawn.
+- Added provider-list search and metadata filtering to the login flow.
+- Added `pum --help`, `pum -h`, `pum --version`, and `pum -v` with side-effect-free early CLI dispatch.
+- Added Up Arrow recall for the newest undelivered user message in the selected main or child transcript.
+- Added subtle semantic popup shadows and terminal-height scaling for Settings.
+
+### Changed
+- Made the status header stay on exactly one row and remove lower-priority fields progressively as terminal width decreases.
+- Made Help categories stack vertically when two columns would clip on narrow terminals.
+- Changed Ask mode to require the approval popup for every non-hard-blocked checked call unless an exact prior approval matches.
+- Changed Balanced mode to permit complete ordinary project-local work, including long validated patches, while blocking hard rules, suspicious execution, obfuscation, malformed input, and explicit verifier `UNSAFE` decisions.
+- Allowed the authoritative main agent to request exact approval for direct `npm publish` and exact-version `npm dist-tag add` calls.
+
+### Removed
+- Removed the public synthetic Fire action from external triggers. Manual Run continues to execute the configured process through Check mode.
+
+### Security
+- Allowed only the exact POSIX `/dev/null` device through project-boundary checks; other device and external paths remain blocked.
+- Bound spawn previews, queued-message recall, and Ask approvals to authoritative main or child identities outside model input.
+
 ## [0.1.2-beta.1] - 2026-08-09
 
 ### Fixed
@@ -37,5 +60,6 @@ All notable changes to PUM are documented in this file.
 - Added deterministic blocks for project escape, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion.
 - Added sanitized trigger environments, inert templates, strict argument-boundary checks, private bounded output files, and non-overridable hard-block or explicit `UNSAFE` decisions.
 
+[0.1.3-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.2-beta.1...v0.1.3-beta.1
 [0.1.2-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.1-beta.1...v0.1.2-beta.1
 [0.1.1-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.0-beta.3...v0.1.1-beta.1

@@ -16,7 +16,8 @@ bun run start    # open the TUI in the current directory
 | `src/cli.ts` | CLI parsing, package metadata, help text, and error formatting |
 | `src/main.tsx` | Boot: config dir, login hand-off, credential check, session, render |
 | `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
-| `src/theme.ts` | Semantic colour tokens, three presets, `theme.json` merge |
+| `src/theme.ts` | Semantic colour tokens, nine presets, `theme.json` merge |
+| `src/popup-frame.tsx` | Shared responsive popup frame and semantic drop shadow |
 | `src/animation.tsx` | One frame clock; shimmer, spinner, caret |
 | `src/status-bar.tsx` | Top bar; always one measured row with responsive field priorities |
 | `src/transcript.tsx` | Row rendering per role |
@@ -33,7 +34,10 @@ bun run start    # open the TUI in the current directory
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
+| `src/subagents/spawn-preview.ts` | Requester-bound preview queue and approval settlement |
+| `src/subagents/spawn-preview-popup.tsx` | Responsive Markdown preview and optional note input |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
+| `src/queue-recall.ts` | Atomic newest-first recall of queued user messages |
 | `src/session-history-metadata.ts` | Bounded session JSONL metadata and usage index |
 | `src/session-history-popup.tsx` | Responsive session history list and metadata rows |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
