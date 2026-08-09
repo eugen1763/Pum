@@ -1,0 +1,78 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { createTestRenderer } from "@opentui/core/testing";
+import { createRoot } from "@opentui/react";
+import {
+  filterSettingsRows,
+  isSettingsSearchShortcut,
+  moveSettingSelection,
+  SettingsPopup,
+  SETTINGS_ROWS,
+  type SettingRowId,
+} from "./settings-popup";
+import { loadTheme } from "./theme";
+
+let destroy: (() => void) | undefined;
+afterEach(() => destroy?.());
+
+const values = Object.fromEntries(
+  SETTINGS_ROWS.map((row) => [row.id, row.id === "workingRuleAnimation" ? "‹ coordinated ›" : "‹ on ›"]),
+) as Record<SettingRowId, string>;
+
+describe("settings search and navigation", () => {
+  test("filters labels, categories, and useful keywords", () => {
+    expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
+    expect(filterSettingsRows("safety").map((row) => row.id)).toEqual(["checkMode", "checkModel"]);
+    expect(filterSettingsRows("reasoning visible").map((row) => row.id)).toEqual(["showThinking"]);
+  });
+
+  test("moves only through filtered rows and wraps", () => {
+    const rows = filterSettingsRows("check");
+    expect(moveSettingSelection(rows, "checkMode", 1)).toBe("checkModel");
+    expect(moveSettingSelection(rows, "checkModel", 1)).toBe("checkMode");
+    expect(moveSettingSelection([], "checkMode", 1)).toBeNull();
+  });
+
+  test("uses slash to focus search only from a highlighted row", () => {
+    const slash = { name: "/", sequence: "/" };
+    expect(isSettingsSearchShortcut(slash, false)).toBe(true);
+    expect(isSettingsSearchShortcut(slash, true)).toBe(false);
+    expect(isSettingsSearchShortcut({ ...slash, ctrl: true }, false)).toBe(false);
+  });
+});
+
+describe("settings popup layout", () => {
+  test("keeps search, categories, values, and controls visible in a narrow terminal", async () => {
+    const setup = await createTestRenderer({ width: 48, height: 18 });
+    destroy = () => setup.renderer.destroy();
+    createRoot(setup.renderer).render(
+      <box style={{ width: 48, height: 18 }}>
+        <SettingsPopup
+          theme={loadTheme("tokyonight")}
+          page="main"
+          rows={SETTINGS_ROWS}
+          selectedId="workingRuleAnimation"
+          values={values}
+          query=""
+          searchFocused={false}
+          terminalWidth={48}
+          terminalHeight={18}
+          models={[]}
+          onSearchChange={() => {}}
+          onSelectModel={() => {}}
+          onSelectCheckModel={() => {}}
+        />
+      </box>,
+    );
+    await setup.renderOnce();
+    await setup.flush();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setup.renderOnce();
+    await setup.flush();
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("Search");
+    expect(frame).toContain("Appearance");
+    expect(frame).toContain("Working rules");
+    expect(frame).toContain("coordinated");
+    expect(frame).toContain("/ search");
+  });
+});

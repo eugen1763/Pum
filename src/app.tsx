@@ -4,9 +4,23 @@ import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime, SessionInfo } from "@earendil-works/pi-coding-agent";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { AnimationProvider, supportsTrueColor, useSlidingRule } from "./animation";
-import { ROWS, SettingsPopup, THINKING_LEVELS, type ThinkingLevel } from "./settings-popup";
-import { saveSettings, type PumSettings } from "./settings";
+import { AnimationProvider, supportsTrueColor, useWorkingRule, type WorkingRuleRole } from "./animation";
+import {
+  filterSettingsRows,
+  isSettingsSearchShortcut,
+  moveSettingSelection,
+  SettingsPopup,
+  SETTINGS_ROWS,
+  THINKING_LEVELS,
+  type SettingRowId,
+  type ThinkingLevel,
+} from "./settings-popup";
+import {
+  saveSettings,
+  WORKING_RULE_ANIMATION_MODES,
+  type PumSettings,
+  type WorkingRuleAnimationMode,
+} from "./settings";
 import { StatusBar } from "./status-bar";
 import {
   AgentMessageLine,
@@ -21,7 +35,7 @@ import {
 } from "./transcript";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
 import { readBranch, watchBranch } from "./git-branch";
-import { HelpPopup } from "./help-popup";
+import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
 import { appendHistory, loadHistory, removeHistory } from "./history";
 import {
   appendPromptStash,
@@ -69,22 +83,28 @@ const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup"
 /** A blank row. An empty <text> measures to nothing, so this needs a height. */
 const Gap = () => <box style={{ height: 1, flexShrink: 0 }} />;
 
-function InputRule({
+function WorkingRule({
   theme,
   width,
   busy,
-  dimmed,
+  dimmed = false,
+  mode,
+  role,
 }: {
   theme: Theme;
   width: number;
   busy: boolean;
-  dimmed: boolean;
+  dimmed?: boolean;
+  mode: WorkingRuleAnimationMode;
+  role: WorkingRuleRole;
 }) {
-  const ref = useSlidingRule({
+  const ref = useWorkingRule({
     width,
     color: dimmed ? theme.dim : theme.border,
     highlight: theme.highlight,
     active: busy,
+    mode,
+    role,
   });
   return <text ref={ref} style={{ flexShrink: 0 }} />;
 }
@@ -232,10 +252,13 @@ export function App({
   const [cancelArmed, setCancelArmed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [helpScrollOffset, setHelpScrollOffset] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySessions, setHistorySessions] = useState<SessionInfo[]>([]);
   const [page, setPage] = useState<"main" | "models" | "checkModels">("main");
-  const [cursor, setCursor] = useState(0);
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const [settingsSearchFocused, setSettingsSearchFocused] = useState(true);
+  const [selectedSettingId, setSelectedSettingId] = useState<SettingRowId | null>(SETTINGS_ROWS[0]!.id);
   const [settings, setSettings] = useState(initial);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(
     session.agent.state.thinkingLevel as ThinkingLevel,
@@ -274,6 +297,7 @@ export function App({
   const visibleBranch = activeAgent?.worktree.branch ?? branch;
   const visibleElapsedSec = activeAgent ? agentElapsedSec : elapsedSec;
   const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
+  const visibleSettingRows = filterSettingsRows(settingsQuery);
 
   const inputRef = useRef<TextareaRenderable>(null);
   const focusInputAfterSwitch = useRef(false);
@@ -758,6 +782,14 @@ export function App({
     update({ writingStyle: next });
   };
 
+  const stepWorkingRuleAnimation = (step: number) => {
+    const i = WORKING_RULE_ANIMATION_MODES.indexOf(settings.workingRuleAnimation);
+    const next = WORKING_RULE_ANIMATION_MODES[
+      (i + step + WORKING_RULE_ANIMATION_MODES.length) % WORKING_RULE_ANIMATION_MODES.length
+    ]!;
+    update({ workingRuleAnimation: next });
+  };
+
   const selectModel = (model: Model<any>) => {
     setPage("main");
     session
@@ -1034,30 +1066,44 @@ export function App({
     });
   };
 
-  // One entry per popup row, so adding a row cannot desynchronise the indices.
-  const rowActions: { step?: (n: number) => void; enter?: () => void }[] = [
-    { step: stepTheme },
-    { step: () => update({ animations: !settings.animations }) },
-    { step: () => update({ webSearch: !settings.webSearch }) },
-    { step: stepWritingStyle },
-    { step: () => update({ checkMode: !settings.checkMode }) },
-    { enter: () => setPage("checkModels") },
-    { step: stepThinking },
-    { step: () => update({ showThinking: !settings.showThinking }) },
-    { enter: () => setPage("models") },
-  ];
+  const rowActions: Record<SettingRowId, { step?: (n: number) => void; enter?: () => void }> = {
+    theme: { step: stepTheme },
+    animations: { step: () => update({ animations: !settings.animations }) },
+    workingRuleAnimation: { step: stepWorkingRuleAnimation },
+    webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
+    writingStyle: { step: stepWritingStyle },
+    checkMode: { step: () => update({ checkMode: !settings.checkMode }) },
+    checkModel: { enter: () => setPage("checkModels") },
+    thinkingLevel: { step: stepThinking },
+    showThinking: { step: () => update({ showThinking: !settings.showThinking }) },
+    model: { enter: () => setPage("models") },
+  };
 
-  const rowValues = [
-    `‹ ${theme.name} ›`,
-    `‹ ${settings.animations ? "on" : "off"} ›${settings.animations && !animations ? "  (no truecolor)" : ""}`,
-    `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on this provider)"}`,
-    `‹ ${settings.writingStyle} ›`,
-    `‹ ${settings.checkMode ? "on" : "off"} ›`,
-    `${settings.checkModel} ›`,
-    `‹ ${thinkingLevel} ›`,
-    `‹ ${settings.showThinking ? "on" : "off"} ›`,
-    `${modelId} ›`,
-  ];
+  const animationUnavailable = !settings.animations
+    ? "  (global off)"
+    : !supportsTrueColor()
+      ? "  (no truecolor)"
+      : "";
+  const rowValues: Record<SettingRowId, string> = {
+    theme: `‹ ${theme.name} ›`,
+    animations: `‹ ${settings.animations ? "on" : "off"} ›`,
+    workingRuleAnimation: `‹ ${settings.workingRuleAnimation} ›${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
+    webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
+    writingStyle: `‹ ${settings.writingStyle} ›`,
+    checkMode: `‹ ${settings.checkMode ? "on" : "off"} ›`,
+    checkModel: `${settings.checkModel} ›`,
+    thinkingLevel: `‹ ${thinkingLevel} ›`,
+    showThinking: `‹ ${settings.showThinking ? "on" : "off"} ›`,
+    model: `${modelId} ›`,
+  };
+
+  const updateSettingsQuery = (query: string) => {
+    const rows = filterSettingsRows(query);
+    setSettingsQuery(query);
+    setSelectedSettingId((current) =>
+      rows.some((row) => row.id === current) ? current : rows[0]?.id ?? null,
+    );
+  };
 
   const cycleAgentView = (direction: -1 | 1) => {
     if (pendingImages.current.length > 0) {
@@ -1101,6 +1147,13 @@ export function App({
     if (helpOpen) {
       key.stopPropagation();
       if (key.name === "escape" || key.sequence === "?") setHelpOpen(false);
+      else if (key.name === "up" || key.name === "pageup") {
+        setHelpScrollOffset((offset) => Math.max(0, offset - (key.name === "pageup" ? 5 : 1)));
+      } else if (key.name === "down" || key.name === "pagedown") {
+        setHelpScrollOffset((offset) =>
+          Math.min(maxHelpScrollOffset(height), offset + (key.name === "pagedown" ? 5 : 1)),
+        );
+      }
       return;
     }
 
@@ -1122,6 +1175,7 @@ export function App({
     // With text already in the line it is just a character.
     if (key.sequence === "?" && !settingsOpen && !inputRef.current?.plainText) {
       key.stopPropagation();
+      setHelpScrollOffset(0);
       setHelpOpen(true);
       return;
     }
@@ -1130,17 +1184,43 @@ export function App({
       if (key.name === "escape") {
         key.stopPropagation();
         if (page !== "main") setPage("main");
+        else if (settingsSearchFocused) setSettingsSearchFocused(false);
         else setSettingsOpen(false);
         return;
       }
       if (page !== "main") return; // up/down/return belong to the <select>
 
+      const isSettingsReturn =
+        key.name === "return" || key.name === "enter" || key.name === "kpenter" || key.name === "linefeed";
+      if (settingsSearchFocused) {
+        if (key.name === "down" || key.name === "up" || isSettingsReturn) {
+          key.stopPropagation();
+          setSettingsSearchFocused(false);
+          setSelectedSettingId((current) =>
+            visibleSettingRows.some((row) => row.id === current)
+              ? current
+              : key.name === "up"
+                ? visibleSettingRows.at(-1)?.id ?? null
+                : visibleSettingRows[0]?.id ?? null,
+          );
+        }
+        return; // printable keys and editing keys belong to the focused <input>
+      }
+
+      if (isSettingsSearchShortcut(key, settingsSearchFocused)) {
+        key.stopPropagation();
+        setSettingsSearchFocused(true);
+        return;
+      }
+
       key.stopPropagation();
-      const action = rowActions[cursor];
-      const confirming = key.name === "space" || key.sequence === " " || key.name === "return";
-      if (key.name === "up") setCursor((c) => (c + ROWS.length - 1) % ROWS.length);
-      else if (key.name === "down") setCursor((c) => (c + 1) % ROWS.length);
-      else if (key.name === "left") action?.step?.(-1);
+      const action = selectedSettingId ? rowActions[selectedSettingId] : undefined;
+      const confirming = key.name === "space" || key.sequence === " " || isSettingsReturn;
+      if (key.name === "up" || key.name === "down") {
+        setSelectedSettingId((current) =>
+          moveSettingSelection(visibleSettingRows, current, key.name === "up" ? -1 : 1),
+        );
+      } else if (key.name === "left") action?.step?.(-1);
       else if (key.name === "right") action?.step?.(1);
       else if (confirming) (action?.enter ?? (() => action?.step?.(1)))();
       return;
@@ -1379,7 +1459,9 @@ export function App({
     }
     if (key.ctrl && key.name === "p") {
       key.stopPropagation();
-      setCursor(0);
+      setSettingsQuery("");
+      setSelectedSettingId(SETTINGS_ROWS[0]!.id);
+      setSettingsSearchFocused(true);
       setPage("main");
       setSettingsOpen(true);
     }
@@ -1393,10 +1475,12 @@ export function App({
   return (
     <AnimationProvider enabled={animations}>
       <box style={{ flexDirection: "column", height: "100%", backgroundColor: theme.bg }}>
-        <text
-          content={"─".repeat(Math.max(0, width))}
-          fg={theme.border}
-          style={{ flexShrink: 0 }}
+        <WorkingRule
+          theme={theme}
+          width={Math.max(0, width)}
+          busy={visibleBusy}
+          mode={settings.workingRuleAnimation}
+          role="header"
         />
         <StatusBar
           theme={theme}
@@ -1471,11 +1555,13 @@ export function App({
             </>
           ) : null}
         </scrollbox>
-        <InputRule
+        <WorkingRule
           theme={theme}
           width={Math.max(0, width)}
           busy={visibleBusy}
           dimmed={stashOpen}
+          mode={settings.workingRuleAnimation}
+          role="inputTop"
         />
         {stashOpen ? (
           <PromptStash
@@ -1561,13 +1647,22 @@ export function App({
           {cancelArmed ? <text content=" esc again to cancel " fg={theme.warn} /> : null}
           {quitArmed ? <text content=" ctrl+c again to quit " fg={theme.warn} /> : null}
         </box>
-        <InputRule
+        <WorkingRule
           theme={theme}
           width={Math.max(0, width)}
           busy={visibleBusy}
           dimmed={stashOpen}
+          mode={settings.workingRuleAnimation}
+          role="inputBottom"
         />
-        {helpOpen ? <HelpPopup theme={theme} /> : null}
+        {helpOpen ? (
+          <HelpPopup
+            theme={theme}
+            terminalWidth={width}
+            terminalHeight={height}
+            scrollOffset={helpScrollOffset}
+          />
+        ) : null}
         {historyOpen ? (
           <SessionHistoryPopup
             theme={theme}
@@ -1579,9 +1674,15 @@ export function App({
           <SettingsPopup
             theme={theme}
             page={page}
-            cursor={cursor}
+            rows={visibleSettingRows}
+            selectedId={selectedSettingId}
             values={rowValues}
+            query={settingsQuery}
+            searchFocused={settingsSearchFocused}
+            terminalWidth={width}
+            terminalHeight={height}
             models={modelRuntime.getAvailableSnapshot()}
+            onSearchChange={updateSettingsQuery}
             onSelectModel={selectModel}
             onSelectCheckModel={selectCheckModel}
           />
