@@ -118,6 +118,44 @@ describe("subagent transcript replay", () => {
     });
   });
 
+  test("restores questionnaire completion details", () => {
+    const lines = replayEntries([
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "questionnaire-1",
+            name: "questionnaire",
+            arguments: {
+              questions: [{ id: "scope", label: "Scope", prompt: "Choose", options: [] }],
+            },
+          }],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "questionnaire-1",
+          toolName: "questionnaire",
+          content: [{ type: "text", text: "structured answers" }],
+          details: {
+            cancelled: false,
+            answers: [{ questionId: "scope", value: "small", label: "Small", custom: false }],
+          },
+          isError: false,
+        },
+      },
+    ], process.cwd(), true);
+
+    expect(lines[0]).toMatchObject({
+      kind: "tool",
+      call: { name: "questionnaire", arg: "1 question · Scope", detail: "1 answer", state: "ok" },
+    });
+  });
+
   test("restores rejected tools as a distinct state", () => {
     const lines = replayEntries([
       {

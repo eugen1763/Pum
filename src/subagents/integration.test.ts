@@ -10,6 +10,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { applyPatchExtension } from "../apply-patch";
+import { QuestionnaireManager } from "../questionnaire";
 import { SubagentManager } from "./manager";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
@@ -101,6 +102,75 @@ async function waitUntil(predicate: () => boolean, timeout = 5_000): Promise<voi
 }
 
 describe("background subagents", () => {
+  test("runs questionnaire tools through main and child pi sessions", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const model = runtime.getModel("mock", "mock-model");
+    expect(model).toBeDefined();
+    const questionnaireManager = new QuestionnaireManager();
+    const unsubscribeUi = questionnaireManager.subscribe(() => {});
+    const services = await createAgentSessionServices({
+      cwd: repo,
+      agentDir,
+      modelRuntime: runtime,
+      resourceLoaderOptions: {
+        extensionFactories: [questionnaireManager.extension({ id: "main", name: "main" })],
+      },
+    });
+    const main = await createAgentSessionFromServices({
+      services,
+      sessionManager: SessionManager.inMemory(repo),
+      model,
+      tools: ["questionnaire"],
+    });
+    const mainTool = main.session.agent.state.tools.find((tool) => tool.name === "questionnaire")!;
+    const mainExecution = mainTool.execute("main-questionnaire", { questions: [{
+      id: "scope",
+      prompt: "Choose scope",
+      options: [{ value: "small", label: "Small" }],
+    }] });
+    expect(questionnaireManager.current()?.requester).toEqual({ id: "main", name: "main" });
+    questionnaireManager.select();
+    questionnaireManager.select();
+    const mainResult = await mainExecution;
+    expect(JSON.parse((mainResult.content[0] as any).text)).toEqual({
+      cancelled: false,
+      answers: [{ questionId: "scope", value: "small", label: "Small", custom: false }],
+    });
+    main.session.dispose();
+
+    const manager = new SubagentManager({
+      modelRuntime: runtime,
+      agentDir,
+      questionnaireManager,
+    });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const child = await manager.spawn({
+      task: "Wait for questionnaire availability inspection.",
+      name: "questionnaire-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    });
+    const childSession = (manager as any).records.get(child.id).session;
+    const childTool = childSession.agent.state.tools.find((tool: any) => tool.name === "questionnaire");
+    expect(childTool).toBeDefined();
+    const childExecution = childTool.execute("child-questionnaire", { questions: [{
+      id: "format",
+      prompt: "Choose format",
+      options: [{ value: "json", label: "JSON" }],
+    }] });
+    expect(questionnaireManager.current()?.requester).toEqual({ id: child.id, name: "questionnaire-child" });
+    questionnaireManager.cancel();
+    expect(JSON.parse(((await childExecution).content[0] as any).text)).toEqual({
+      cancelled: true,
+      answers: [],
+    });
+    await manager.detachMain();
+    unsubscribeUi();
+  });
+
   test("makes apply_patch available in main and child pi sessions", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
