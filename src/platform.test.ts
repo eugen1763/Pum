@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { win32 } from "node:path";
 import {
+  canonicalPathIdentity,
   defaultAgentDir,
   isPathInside,
+  pathsHaveSameIdentity,
   projectStorageKey,
   sessionDirectoryName,
   shutdownSignals,
@@ -45,6 +47,18 @@ describe("Windows platform paths", () => {
     expect(isPathInside(root, "C:\\repo\\.pum\\worktrees-other\\agent", "win32")).toBe(false);
     expect(isPathInside(root, "D:\\repo\\agent", "win32")).toBe(false);
     expect(isPathInside(root, root, "win32")).toBe(false);
+  });
+
+  test("compares canonical Windows identities instead of short-path spelling", async () => {
+    const resolvePath = async (path: string) => path.replace("RUNNER~1", "runneradmin");
+    expect(await canonicalPathIdentity("C:\\Users\\RUNNER~1\\project", "win32", resolvePath))
+      .toBe("c:\\users\\runneradmin\\project");
+    expect(await pathsHaveSameIdentity(
+      "C:\\Users\\RUNNER~1\\project",
+      "c:\\users\\runneradmin\\PROJECT",
+      "win32",
+      resolvePath,
+    )).toBe(true);
   });
 
   test("uses only signals supported by normal Windows console processes", () => {

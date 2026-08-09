@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
+  lstatSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
   mkdirSync,
 } from "node:fs";
@@ -180,7 +182,9 @@ describe("apply_patch mutations", () => {
     const cwd = project();
     const outside = project();
     writeFileSync(join(outside, "outside.txt"), "safe\n");
-    await Bun.$`ln -s ${outside} ${join(cwd, "link")}`;
+    const link = join(cwd, "link");
+    symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
 
     await expect(applyPatch(cwd, `*** Begin Patch
 *** Add File: ../outside.txt
@@ -191,7 +195,7 @@ describe("apply_patch mutations", () => {
 @@
 -safe
 +bad
-*** End Patch`)).rejects.toThrow("resolves outside the project");
+*** End Patch`)).rejects.toThrow("Patch paths cannot contain symbolic links");
     expect(text(join(outside, "outside.txt"))).toBe("safe\n");
   });
 

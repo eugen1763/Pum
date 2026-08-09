@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 
@@ -61,6 +62,29 @@ export function isPathInside(
   const paths = pathApi(platform);
   const relative = paths.relative(paths.resolve(parent), paths.resolve(candidate));
   return relative !== "" && relative !== ".." && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative);
+}
+
+export async function canonicalPathIdentity(
+  path: string,
+  platform: RuntimePlatform = process.platform,
+  resolvePath: (path: string) => Promise<string> = realpath,
+): Promise<string> {
+  const paths = pathApi(platform);
+  const canonical = paths.resolve(await resolvePath(path));
+  return platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+export async function pathsHaveSameIdentity(
+  first: string,
+  second: string,
+  platform: RuntimePlatform = process.platform,
+  resolvePath: (path: string) => Promise<string> = realpath,
+): Promise<boolean> {
+  const [firstIdentity, secondIdentity] = await Promise.all([
+    canonicalPathIdentity(first, platform, resolvePath),
+    canonicalPathIdentity(second, platform, resolvePath),
+  ]);
+  return firstIdentity === secondIdentity;
 }
 
 export function shutdownSignals(
