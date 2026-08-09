@@ -91,9 +91,9 @@ export function StatusBar(props: StatusProps) {
     right.push(fg(color)(text));
   };
   if (branch) push(branch, theme.toolArg);
-  if (outgoingTokens) push(`↑${fmtTokens(outgoingTokens)}`, theme.dim);
-  if (incomingTokens) push(`↓${fmtTokens(incomingTokens)}`, theme.dim);
-  if (cacheReadTokens) push(`○${fmtTokens(cacheReadTokens)}`, theme.dim);
+  if (outgoingTokens) push(`↑ ${fmtTokens(outgoingTokens)}`, theme.dim);
+  if (incomingTokens) push(`↓ ${fmtTokens(incomingTokens)}`, theme.dim);
+  if (cacheReadTokens) push(`↺ ${fmtTokens(cacheReadTokens)}`, theme.dim);
   if (cost) push(fmtCost(cost), theme.dim);
   if (contextPct !== null) {
     push(`${contextPct}%`, contextPct > 75 ? theme.warn : theme.dim);

@@ -214,14 +214,14 @@ describe("subagent transcript UI", () => {
       />,
     );
     await settle(setup);
-    expect(setup.captureCharFrame()).toContain("↑1.3k · ↓345 · ○2.4k · $0.250 · 12%");
+    expect(setup.captureCharFrame()).toContain("↑ 1.3k · ↓ 345 · ↺ 2.4k · $0.250 · 12%");
 
     await setup.mockInput.typeText("/new");
     setup.mockInput.pressEnter();
     await settle(setup);
-    expect(setup.captureCharFrame()).not.toContain("↑1.3k");
-    expect(setup.captureCharFrame()).not.toContain("↓345");
-    expect(setup.captureCharFrame()).not.toContain("○2.4k");
+    expect(setup.captureCharFrame()).not.toContain("↑ 1.3k");
+    expect(setup.captureCharFrame()).not.toContain("↓ 345");
+    expect(setup.captureCharFrame()).not.toContain("↺ 2.4k");
   });
 
   test("sends a direct selected-subagent prompt only through the manager", async () => {
@@ -307,7 +307,7 @@ describe("subagent transcript UI", () => {
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("worker-one");
     expect(setup.captureCharFrame()).toContain("Subagent transcript");
-    expect(setup.captureCharFrame()).toContain("↑1.2k · ↓345 · ○2.4k · $0.250 · 40%");
+    expect(setup.captureCharFrame()).toContain("↑ 1.2k · ↓ 345 · ↺ 2.4k · $0.250 · 40%");
 
     setup.mockInput.pressTab({ shift: true, ctrl: true });
     await new Promise((resolve) => setTimeout(resolve, 10));

@@ -40,7 +40,7 @@ async function renderStatus(width: number, agentCount: number, runningAgentCount
 describe("StatusBar usage and subagent counts", () => {
   test("shows separate compact token metrics in a wide layout", async () => {
     const frame = await renderStatus(100, 0, 0);
-    expect(frame).toContain("main · ↑1.2k · ↓345 · ○2.4k · 20%");
+    expect(frame).toContain("main · ↑ 1.2k · ↓ 345 · ↺ 2.4k · 20%");
   });
   test("shows separate idle and static working counts in a wide layout", async () => {
     const frame = await renderStatus(100, 5, 2);
@@ -49,9 +49,9 @@ describe("StatusBar usage and subagent counts", () => {
   });
 
   test("preserves both counts in the narrow stacked layout", async () => {
-    const frame = await renderStatus(34, 5, 2);
+    const frame = await renderStatus(48, 5, 2);
     expect(frame).toContain("◇ 3 • 2");
-    expect(frame).toContain("main · ↑1.2k · ↓345 · ○2.4k · 20%");
+    expect(frame).toContain("main · ↑ 1.2k · ↓ 345 · ↺ 2.4k · 20%");
   });
 
   test("omits zero-count indicators", async () => {
