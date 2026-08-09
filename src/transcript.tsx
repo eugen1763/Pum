@@ -347,9 +347,9 @@ export function ToolLine({
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
   const rejected = call.state === "rejected";
-  const toolColor = failed ? theme.error : rejected ? theme.warn : theme.tool;
-  const argColor = failed ? theme.error : rejected ? theme.warn : theme.toolArg;
-  const detailColor = failed ? theme.error : rejected ? theme.warn : theme.dim;
+  const toolColor = failed ? theme.error : rejected ? theme.rejection : theme.tool;
+  const argColor = failed ? theme.error : rejected ? theme.rejection : theme.toolArg;
+  const detailColor = failed ? theme.error : rejected ? theme.rejection : theme.dim;
 
   const prefix = call.arg
     ? new StyledText([fg(toolColor)(call.name), fg(detailColor)(" · ")])
@@ -362,12 +362,16 @@ export function ToolLine({
   const caret = useBlinkingText({
     chunks: bodyChunks,
     contentKey: `${call.name}:${call.arg}:${call.state}:${call.detail ?? ""}`,
-    caretColor: failed ? theme.error : rejected ? theme.warn : theme.accent,
+    caretColor: failed ? theme.error : rejected ? theme.rejection : theme.accent,
     active: workingCaret,
   });
 
   return (
-    <Row glyph={GUTTER} glyphColor={toolColor}>
+    <Row
+      glyph={GUTTER}
+      glyphColor={toolColor}
+      background={rejected ? theme.rejectionBg : undefined}
+    >
       <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
         {prefix ? <text content={prefix} style={{ flexShrink: 0 }} /> : null}
         <text
@@ -384,7 +388,7 @@ export function ToolLine({
         ) : (
           <text
             content={toolStateGlyph(call.state)}
-            fg={call.state === "ok" ? theme.success : call.state === "rejected" ? theme.warn : theme.error}
+            fg={call.state === "ok" ? theme.success : rejected ? theme.rejection : theme.error}
           />
         )}
       </box>
