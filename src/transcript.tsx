@@ -186,8 +186,8 @@ export function TextLine({
         background={isUser ? theme.userBg : undefined}
       >
         <markdown
-          ref={isAssistant && workingCaret ? markdownCaret : undefined}
-          content={isAssistant && workingCaret ? undefined : text}
+          ref={isAssistant && workingCaret ? markdownCaret.ref : undefined}
+          content={isAssistant && workingCaret ? markdownCaret.content : text}
           streaming={false}
           syntaxStyle={syntaxStyle}
           fg={color}
@@ -237,11 +237,12 @@ export function StreamLine({
     <Row glyph={GUTTER} glyphColor={color}>
       {role === "assistant" ? (
         <markdown
-          ref={markdown}
+          ref={markdown.ref}
+          content={markdown.content}
           streaming
           syntaxStyle={syntaxStyle}
           fg={color}
-          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
+          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
         />
       ) : (
         <text

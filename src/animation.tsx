@@ -318,11 +318,16 @@ export function markdownCaretContent(text: string, visible: boolean): string {
   return text + (visible ? CARET : CARET_PLACEHOLDER);
 }
 
+export type MarkdownCaretBinding = {
+  ref: RefObject<MarkdownRenderable | null>;
+  content: string;
+};
+
 /** Keep a blinking caret at the end of incrementally rendered Markdown. */
 export function useMarkdownCaret(
   text: string,
   active: boolean,
-): RefObject<MarkdownRenderable | null> {
+): MarkdownCaretBinding {
   const ref = useRef<MarkdownRenderable>(null);
   const { subscribe, enabled } = useClock();
   const latest = useRef(text);
@@ -359,7 +364,12 @@ export function useMarkdownCaret(
     if (active) paint();
   }, [text, active, paint]);
 
-  return ref;
+  // React applies this value in the same commit as each transcript delta.
+  // The direct frame writes only change the width-stable caret glyph.
+  return {
+    ref,
+    content: active ? markdownCaretContent(text, caretVisible.current) : text,
+  };
 }
 
 function ruleText(width: number, base: RGBA, hi: RGBA, head: number): StyledText {

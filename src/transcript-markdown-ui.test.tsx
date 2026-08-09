@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   BoxRenderable,
+  CodeRenderable,
   MarkdownRenderable,
   TextRenderable,
   parseColor,
@@ -9,11 +10,20 @@ import {
 } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
+import {
+  act,
+  useLayoutEffect,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
+import { useMarkdownCaret } from "./animation";
 import { replayEntries } from "./replay";
 import { buildSyntaxStyle } from "./syntax";
 import {
   AgentMessageLine,
   PendingMessageLine,
+  StreamLine,
   TextLine,
   type Line,
 } from "./transcript";
@@ -22,11 +32,15 @@ import {
   AGENT_MESSAGE_DISPLAY_TYPE,
 } from "./subagents/types";
 
+const reactTestEnvironment = globalThis as typeof globalThis & {
+  IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+
 let destroy: (() => void) | undefined;
-afterEach(async () => {
-  // Fenced-code highlighting finishes asynchronously after the first frame.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+afterEach(() => {
+  reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = false;
   destroy?.();
+  destroy = undefined;
 });
 
 const markdownText = [
@@ -87,12 +101,124 @@ function TranscriptRows({
 }
 
 async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await act(async () => {});
   await setup.renderOnce();
+  await setup.flush();
+  await Promise.all(
+    descendants(setup.renderer.root, CodeRenderable).map((row) => row.highlightingDone),
+  );
   await setup.flush();
 }
 
 describe("transcript Markdown rows", () => {
+  test("keeps one streaming Markdown renderable while unstable constructs arrive", async () => {
+    reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    const setup = await createTestRenderer({ width: 32, height: 40 });
+    destroy = () => setup.renderer.destroy();
+    const root = createRoot(setup.renderer);
+    const theme = loadTheme("tokyonight");
+    const syntaxStyle = buildSyntaxStyle(theme);
+    const content = [
+      "# Heading",
+      "",
+      "- item with `code`, **strong**, *emphasis*, and [link](https://example.com)",
+      "",
+      "> quote",
+      "",
+      "| A | B |",
+      "| - | - |",
+      "| one | two |",
+      "",
+      "```typescript",
+      "const answer = 42;",
+      "```",
+      "",
+      "Partial [link]( and `code and **strong",
+    ].join("\n");
+
+    let setText: Dispatch<SetStateAction<string>> = () => {};
+    function StreamingHarness() {
+      const [text, updateText] = useState(content.slice(0, 1));
+      setText = updateText;
+      return (
+        <box style={{ flexDirection: "column", width: "100%" }}>
+          <StreamLine
+            theme={theme}
+            syntaxStyle={syntaxStyle}
+            role="assistant"
+            text={text}
+          />
+        </box>
+      );
+    }
+
+    await act(async () => {
+      root.render(<StreamingHarness />);
+    });
+
+    let markdown: MarkdownRenderable | undefined;
+    for (let length = 1; length <= content.length; length += 1) {
+      if (length > 1) {
+        await act(async () => setText(content.slice(0, length)));
+      }
+      await setup.flush();
+
+      const current = descendants(setup.renderer.root, MarkdownRenderable)[0];
+      expect(current).toBeDefined();
+      if (markdown) expect(current).toBe(markdown);
+      markdown = current;
+      expect(current!.content).toBe(`${content.slice(0, length)}▊`);
+      expect(current!.streaming).toBe(true);
+      expect(current!.width).toBe(30);
+      expect(current!.height).toBeGreaterThan(0);
+      const frame = setup.captureCharFrame();
+      expect(frame.trim().length).toBeGreaterThan(0);
+      expect(frame.split("\n").every((line) => line.length <= 32)).toBe(true);
+    }
+
+    await Promise.all(
+      descendants(setup.renderer.root, CodeRenderable).map((row) => row.highlightingDone),
+    );
+  });
+
+  test("commits every Markdown delta before passive caret effects", async () => {
+    reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    const setup = await createTestRenderer({ width: 24, height: 12 });
+    destroy = () => setup.renderer.destroy();
+    const root = createRoot(setup.renderer);
+    const theme = loadTheme("tokyonight");
+    const syntaxStyle = buildSyntaxStyle(theme);
+    const commits: string[] = [];
+    let setText: Dispatch<SetStateAction<string>> = () => {};
+
+    function CaretHarness() {
+      const [text, updateText] = useState("#");
+      const markdown = useMarkdownCaret(text, true);
+      setText = updateText;
+      useLayoutEffect(() => {
+        commits.push(markdown.ref.current?.content ?? "<missing>");
+      }, [markdown.content]);
+      return (
+        <markdown
+          ref={markdown.ref}
+          content={markdown.content}
+          streaming
+          syntaxStyle={syntaxStyle}
+          fg={theme.assistant}
+          style={{ width: "100%" }}
+        />
+      );
+    }
+
+    await act(async () => root.render(<CaretHarness />));
+    expect(commits.at(-1)).toBe("#▊");
+
+    for (const text of ["##", "```", "```typescript\n", "[link](", "**strong"] as const) {
+      await act(async () => setText(text));
+      expect(commits.at(-1)).toBe(`${text}▊`);
+    }
+  });
+
   test("uses static Markdown for user, agent, and pending message bodies", async () => {
     const setup = await createTestRenderer({ width: 48, height: 40 });
     destroy = () => setup.renderer.destroy();
@@ -153,42 +279,43 @@ describe("transcript Markdown rows", () => {
     expect(boxes.some((box) => box.backgroundColor.equals(parseColor(theme.agentMessageBg)))).toBe(true);
   });
 
-  test("updates syntax and semantic colors after a theme change", async () => {
+  test("updates syntax and semantic colors in place after a theme change", async () => {
+    reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
     const setup = await createTestRenderer({ width: 48, height: 20 });
     destroy = () => setup.renderer.destroy();
     const root = createRoot(setup.renderer);
     const firstTheme = loadTheme("tokyonight");
     const firstStyle = buildSyntaxStyle(firstTheme);
-
-    root.render(
-      <TranscriptRows
-        theme={firstTheme}
-        syntaxStyle={firstStyle}
-        lines={[
-          { kind: "text", role: "user", text: markdownText },
-          { kind: "agent-message", sender: "alpha", recipient: "beta", text: markdownText },
-        ]}
-      />,
-    );
-    await settle(setup);
-    expect(descendants(setup.renderer.root, MarkdownRenderable).every((row) => row.syntaxStyle === firstStyle))
-      .toBe(true);
-
     const nextTheme = loadTheme("gruvbox");
     const nextStyle = buildSyntaxStyle(nextTheme);
-    root.render(
-      <TranscriptRows
-        theme={nextTheme}
-        syntaxStyle={nextStyle}
-        lines={[
-          { kind: "text", role: "user", text: markdownText },
-          { kind: "agent-message", sender: "alpha", recipient: "beta", text: markdownText },
-        ]}
-      />,
-    );
+    let switchTheme = () => {};
+
+    function ThemeHarness() {
+      const [current, setCurrent] = useState({ theme: firstTheme, style: firstStyle });
+      switchTheme = () => setCurrent({ theme: nextTheme, style: nextStyle });
+      return (
+        <TranscriptRows
+          theme={current.theme}
+          syntaxStyle={current.style}
+          lines={[
+            { kind: "text", role: "user", text: markdownText },
+            { kind: "agent-message", sender: "alpha", recipient: "beta", text: markdownText },
+          ]}
+        />
+      );
+    }
+
+    await act(async () => root.render(<ThemeHarness />));
+    await settle(setup);
+    const firstRows = descendants(setup.renderer.root, MarkdownRenderable);
+    expect(firstRows.every((row) => row.syntaxStyle === firstStyle)).toBe(true);
+
+    await act(async () => switchTheme());
     await settle(setup);
 
     const markdownRows = descendants(setup.renderer.root, MarkdownRenderable);
+    expect(markdownRows[0]).toBe(firstRows[0]);
+    expect(markdownRows[1]).toBe(firstRows[1]);
     expect(markdownRows.every((row) => row.syntaxStyle === nextStyle)).toBe(true);
     expect(markdownRows[0]!.fg?.equals(parseColor(nextTheme.user))).toBe(true);
     expect(markdownRows[1]!.fg?.equals(parseColor(nextTheme.agentMessage))).toBe(true);
