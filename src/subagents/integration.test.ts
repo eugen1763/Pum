@@ -3,7 +3,13 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  createAgentSessionFromServices,
+  createAgentSessionServices,
+  ModelRuntime,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+import { applyPatchExtension } from "../apply-patch";
 import { SubagentManager } from "./manager";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
@@ -95,6 +101,41 @@ async function waitUntil(predicate: () => boolean, timeout = 5_000): Promise<voi
 }
 
 describe("background subagents", () => {
+  test("makes apply_patch available in main and child pi sessions", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const model = runtime.getModel("mock", "mock-model");
+    expect(model).toBeDefined();
+    const services = await createAgentSessionServices({
+      cwd: repo,
+      agentDir,
+      modelRuntime: runtime,
+      resourceLoaderOptions: { extensionFactories: [applyPatchExtension] },
+    });
+    const main = await createAgentSessionFromServices({
+      services,
+      sessionManager: SessionManager.inMemory(repo),
+      model,
+      tools: ["read", "write", "edit", "apply_patch", "bash"],
+    });
+    expect(main.session.agent.state.tools.map((tool) => tool.name)).toContain("apply_patch");
+    main.session.dispose();
+
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const child = await manager.spawn({
+      task: "Wait for apply_patch availability inspection.",
+      name: "apply-patch-availability-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    });
+    const childSession = (manager as any).records.get(child.id).session;
+    expect(childSession.agent.state.tools.map((tool: any) => tool.name)).toContain("apply_patch");
+    await manager.detachMain();
+  });
+
   test("finish_subagent routes a main-spawned child completion to main", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),

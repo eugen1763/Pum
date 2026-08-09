@@ -176,7 +176,7 @@ export function replayEntries(
           : message.isError
             ? "error"
             : "ok";
-        if (call.name === "edit") call.detail = editCounts(message);
+        if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
       }
     }
   }

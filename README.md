@@ -208,11 +208,24 @@ The STE option applies to explanatory text. It preserves code, commands, paths,
 identifiers, quoted text, and required project terminology. It is writing
 guidance, not a formal STE compliance checker or ASD certification.
 
+## Apply patch
+
+PUM adds a model-callable `apply_patch` tool to main agents and subagents. The
+tool accepts the OpenAI Codex patch envelope and supports add, update, delete,
+move, multiple files, and multiple hunks.
+
+PUM parses and validates the complete patch before it changes a file. It rejects
+absolute paths, traversal, escaping symlinks, conflicting paths, missing context,
+and ambiguous context. PUM preserves existing CRLF endings where practical.
+PUM stages every output and backs up every touched file. A commit failure
+restores the complete file set without a partial patch.
+
 ## Check mode
 
 Ctrl+P can enable `Check mode` and select a `Check model`. The default verifier
-is `deepseek/deepseek-v4-flash`. Before each `bash` or `edit` call, PUM sends the
-verifier only the working directory, tool name, and proposed tool input.
+is `deepseek/deepseek-v4-flash`. Before each `bash`, `edit`, or `apply_patch`
+call, PUM sends the verifier only the working directory, tool name, and proposed
+input.
 
 The verifier must return a clear `SAFE` decision. PUM blocks the tool call when
 it returns `UNSAFE`, gives an unclear response, is unavailable, times out, or
@@ -221,8 +234,8 @@ fails.
 PUM caches explicit `SAFE` decisions for a small set of simple, read-only Git
 inspection commands. A cache hit requires the same working directory, verifier
 model, and complete `bash` input, including fields such as `timeout`. PUM never
-caches `edit` checks or rejected, failed, malformed, timed-out, or aborted
-checks. The cache holds at most 256 entries.
+caches `edit` or `apply_patch` checks. PUM also never caches rejected, failed,
+malformed, timed-out, or aborted checks. The cache holds at most 256 entries.
 
 The cache policy treats recognized built-in Git inspection operations as
 safety-stable across repository-content changes. PUM does not cache project
@@ -246,8 +259,8 @@ tokens you care about:
 { "accent": "#ff7a93", "userBg": "#2a2f45" }
 ```
 
-The agent has four built-in coding tools: `read`, `write`, `edit`, and `bash`.
-PUM also adds subagent communication and worktree tools. **Coding tools run
+The agent has four pi coding tools: `read`, `write`, `edit`, and `bash`. PUM adds
+`apply_patch`, subagent communication, and worktree tools. **Coding tools run
 without asking.** Start PUM somewhere you are happy for it to make changes.
 
 ## Where things live

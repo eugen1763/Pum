@@ -26,6 +26,7 @@ import {
   withSearchRoute,
 } from "../web-search";
 import { editCounts, toolArg, type ToolCall } from "../tool-line";
+import { applyPatchExtension } from "../apply-patch";
 import {
   resolvePendingDelivery,
   settleTranscriptMessage,
@@ -197,7 +198,7 @@ export class SubagentManager {
   constructor(options: ManagerOptions) {
     this.modelRuntime = options.modelRuntime;
     this.agentDir = options.agentDir;
-    this.childExtensionFactories = options.childExtensionFactories ?? [];
+    this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
   }
 
   subscribe(listener: (event: SubagentManagerEvent) => void): () => void {
@@ -456,7 +457,9 @@ export class SubagentManager {
             : event.isError
               ? "error"
               : "ok",
-          detail: event.toolName === "edit" ? editCounts(event.result) : undefined,
+          detail: event.toolName === "edit" || event.toolName === "apply_patch"
+            ? editCounts(event.result)
+            : undefined,
         });
         break;
       case "agent_start":
@@ -815,7 +818,7 @@ export class SubagentManager {
       model,
       thinkingLevel: record.snapshot.thinkingLevel as any,
       tools: [
-        "read", "write", "edit", "bash",
+        "read", "write", "edit", "apply_patch", "bash",
         "spawn_subagent", "message_agent", "list_subagents", "finish_subagent",
       ],
     });
