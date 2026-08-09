@@ -56,6 +56,9 @@ const ACTIVE_SUBAGENT_STATUSES = new Set<SubagentStatus>(["starting", "running"]
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
+- Use finish_subagent as the only final completion report. It sends the sole completion notification after the status changes.
+- Do not send a final summary, test report, done message, or completion status through message_agent.
+- Use message_agent for questions, blockers, coordination, or intermediate information that needs action before completion.
 - Do not automatically reply to an acknowledgement, status-only message, or completion notice.
 - Never echo a peer message repeatedly.
 - Send one acknowledgement only when acknowledgement is necessary.
@@ -73,6 +76,7 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Never wait for subagents with bash sleep, shell polling loops, repeated list_subagents calls, or repeated worktree status calls.
 - After you spawn all currently independent subagents, finish the current turn and yield the main agent loop.
 - A subagent completion notification will automatically start or steer a later main-agent turn.
+- A normal 'Message from <agent>' is not a completion notification. Do not merge until the agent status is completed.
 - Treat "wait for every subagent" as yielding until completion notifications arrive, not as active polling.
 - Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
 - For a coordinated batch, track unfinished agents from completion notifications.
@@ -94,6 +98,15 @@ export function countActiveSubagents(agents: Iterable<Pick<SubagentSnapshot, "st
     if (ACTIVE_SUBAGENT_STATUSES.has(agent.status)) count += 1;
   }
   return count;
+}
+
+/** Prevent the common duplicate where an agent reports done, then finish_subagent reports it again. */
+export function isCompletionOnlyMessage(text: string): boolean {
+  const message = text.trim();
+  if (!message) return false;
+  const requestsAction = /\?|\b(?:please|need|blocked|blocking|conflict|question|review|start|spawn|coordinate|help)\b/i.test(message);
+  if (requestsAction) return false;
+  return /^(?:completed|finished|done\b|implemented\b|task complete\b|work complete\b|all requested .* complete)/i.test(message);
 }
 
 function activeLimitError(): Error {
@@ -481,8 +494,9 @@ export class SubagentManager {
           return {
             systemPrompt: `${event.systemPrompt}\n\nYou are subagent ${record.snapshot.name} (${agentId}). ` +
               `Work only in ${record.snapshot.worktree.path} on branch ${record.snapshot.worktree.branch}. ` +
-              "Use message_agent to communicate with the main agent or peers. " +
-              "Commit completed changes before finishing. Call finish_subagent with a concise summary when the task is complete.\n\n" +
+              "Use message_agent only for questions, blockers, coordination, or intermediate information that needs action. " +
+              "Never send the final summary through message_agent. " +
+              "Commit completed changes before finishing. Call finish_subagent exactly once with the final summary; it sends the sole completion notification after status changes.\n\n" +
               SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
           };
         });
@@ -513,13 +527,16 @@ export class SubagentManager {
         pi.registerTool({
           name: "message_agent",
           label: "Message Agent",
-          description: "Send a message to the main agent or another active subagent.",
+          description: "Send a question, blocker, coordination request, or actionable intermediate message. Never use this tool for a final completion report; use finish_subagent instead.",
           promptSnippet: "Send a message to the main agent or another subagent",
           parameters: Type.Object({
             target: Type.String({ description: 'Target agent id/name, or "main"' }),
             message: Type.String({ description: "Message to send" }),
           }),
           execute: async (_id, params) => {
+            if (params.target === "main" && isCompletionOnlyMessage(params.message)) {
+              throw new Error("Use finish_subagent for the final summary. message_agent does not send completion-only reports to main.");
+            }
             await this.routeMessage(agentId, params.target, params.message);
             return textResult(`Message delivered to ${params.target}`);
           },
@@ -536,7 +553,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "finish_subagent",
           label: "Finish Subagent",
-          description: "Mark this subagent task complete and report a summary to the main agent.",
+          description: "Mark this task complete and send the sole final summary after the agent status changes. Do not send the summary with message_agent first.",
           parameters: Type.Object({
             summary: Type.String({ description: "Summary of completed work, tests, and remaining concerns" }),
           }),

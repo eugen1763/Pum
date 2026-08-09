@@ -6,6 +6,7 @@ import {
   SubagentManager,
   buildSubagentCapacityPrompt,
   countActiveSubagents,
+  isCompletionOnlyMessage,
 } from "./manager";
 import type { SubagentStatus } from "./types";
 
@@ -80,8 +81,10 @@ describe("SubagentManager extension", () => {
       "At five active subagents, queue related follow-up work through message_agent instead of spawning a sixth.",
     );
     expect(definitions.get("message_agent").description).toContain("durable queued message");
+    expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Use finish_subagent as the only final completion report");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Do not automatically reply to an acknowledgement");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("stop the exchange immediately");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("A normal 'Message from <agent>' is not a completion notification");
 
     handlers.get("message_start")?.[0]?.({
       message: {
@@ -91,6 +94,35 @@ describe("SubagentManager extension", () => {
       },
     });
     expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
+  });
+
+  test("recognizes completion-only messages without blocking actionable communication", () => {
+    expect(isCompletionOnlyMessage("Completed and committed all requested work. Tests pass.")).toBe(true);
+    expect(isCompletionOnlyMessage("Implemented the feature as abc123. Validation passed.")).toBe(true);
+    expect(isCompletionOnlyMessage("Task complete. No remaining concerns.")).toBe(true);
+    expect(isCompletionOnlyMessage("Completed the first part. Please review the conflict.")).toBe(false);
+    expect(isCompletionOnlyMessage("I am blocked on the API shape." )).toBe(false);
+    expect(isCompletionOnlyMessage("Can you answer a question?" )).toBe(false);
+  });
+
+  test("blocks duplicate final reports from the child message tool", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const definitions = new Map<string, any>();
+    const extension = (manager as any).childExtension("worker");
+    extension.factory({
+      on() {},
+      registerTool(tool: any) {
+        definitions.set(tool.name, tool);
+      },
+    });
+
+    const messageTool = definitions.get("message_agent");
+    expect(messageTool.description).toContain("Never use this tool for a final completion report");
+    await expect(messageTool.execute("call-1", {
+      target: "main",
+      message: "Completed and committed the implementation. All tests pass.",
+    })).rejects.toThrow("Use finish_subagent for the final summary");
   });
 
   test("counts only starting and running subagents as active", () => {

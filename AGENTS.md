@@ -128,6 +128,11 @@ These were chosen deliberately. Change them only on purpose.
 - **The main agent never polls background agents.** After spawning all available
   work, the main turn ends. Completion notifications restart or steer the main
   loop. Do not use `bash sleep`, shell polling, or repeated status tool calls.
+- **`finish_subagent` sends the sole completion notice.** Subagents use
+  `message_agent` only for questions, blockers, coordination, or actionable
+  intermediate information. Never send a final summary through `message_agent`.
+  The main agent must not merge after a normal `Message from <agent>` row. Merge
+  only after the completion notice arrives and the agent status is `completed`.
 - **Inter-agent acknowledgements do not recurse.** Do not reply to acknowledgements,
   status-only messages, or completion notices unless they contain new work or a
   question. Stop any acknowledgement echo loop immediately.

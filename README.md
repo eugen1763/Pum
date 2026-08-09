@@ -87,8 +87,10 @@ temporary confirmation hint.
 
 The main agent can start parallel subagents with `spawn_subagent`. Each subagent
 gets a persistent pi session and a branch under `.pum/worktrees`. Completion
-notices return to the main agent automatically. `message_agent` routes messages
-between the main agent and subagents, or directly between peers.
+notices return to the main agent automatically. `finish_subagent` sends the sole
+final completion notice after the agent status changes. `message_agent` routes
+questions, blockers, and actionable intermediate messages between agents. It
+does not send final completion reports.
 
 PUM allows five active subagents. Only `starting` and `running` agents consume
 an active slot. For follow-up implementation work, the main agent prefers a new
