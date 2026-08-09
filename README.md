@@ -9,9 +9,20 @@ interface. The whole thing is about 400 lines.
 
 ## Requirements
 
-[Bun](https://bun.sh). OpenTUI's renderer needs it.
+PUM requires [Bun](https://bun.sh) and an interactive terminal. OpenTUI's
+renderer needs Bun.
+
+On Windows, install Git for Windows. pi uses its Git Bash executable for the
+`bash` coding tool, even when PowerShell launches PUM. Keep Git Bash in its
+standard install location or add `bash.exe` to `PATH`.
+
+Use Windows Terminal with PowerShell 7 or Windows PowerShell. Do not use
+PowerShell ISE. Do not redirect PUM's standard input or output. The terminal
+must support ANSI/VT escape sequences and Unicode.
 
 ## Install
+
+### Linux and macOS
 
 ```bash
 git clone https://github.com/eugen1763/Pum
@@ -19,12 +30,33 @@ cd Pum
 bun install
 ```
 
+### Windows PowerShell
+
+```powershell
+git clone https://github.com/eugen1763/Pum
+Set-Location .\Pum
+bun install
+```
+
+This release includes tested Windows path and command-selection logic. Native
+Windows TUI execution was not validated as part of this change. Treat Windows
+execution as provisional until the Windows CI job and native terminal testing
+pass for the target environment.
+
 ## Log in
 
 PUM keeps its own credentials, separate from pi's. Start PUM with no configured
 provider and PUM opens the in-app login popup automatically.
 
+Linux and macOS:
+
 ```bash
+bun run login
+```
+
+Windows PowerShell:
+
+```powershell
 bun run login
 ```
 
@@ -38,7 +70,16 @@ the key only in PUM's `auth.json`. PUM keeps entered values after a failed probe
 
 ## Use it
 
+Linux and macOS:
+
 ```bash
+bun run start        # new session in the current directory
+bun run start -r     # pick up the most recent session here
+```
+
+Windows PowerShell:
+
+```powershell
 bun run start        # new session in the current directory
 bun run start -r     # pick up the most recent session here
 ```
@@ -119,8 +160,10 @@ subagent becomes `interrupted` when the parent session resumes with `-r`.
 Finished and interrupted subagents can receive more prompts after resume. A new
 parent session does not adopt subagents from another parent session.
 
-Alt+V reads an image from the Wayland or X11 clipboard and stores it in a
-temporary PUM directory. The input shows `[Image #1]`, `[Image #2]`, and so on.
+Alt+V reads an image from the Windows, Wayland, or X11 clipboard and stores it
+in a temporary PUM directory. Windows capture uses a native clipboard adapter.
+PUM falls back to `powershell.exe` in STA mode and converts the image to PNG.
+The input shows `[Image #1]`, `[Image #2]`, and so on.
 Editing any character inside a marker removes the complete marker and deletes
 its temporary file. Sent images are converted to pi image attachments and the
 temporary files are removed.
@@ -209,7 +252,14 @@ without asking.** Start PUM somewhere you are happy for it to make changes.
 
 ## Where things live
 
-Everything sits under `~/.config/pum` — set `PUM_DIR` to move it.
+PUM uses these default config directories:
+
+- Linux: `~/.config/pum`, or `$XDG_CONFIG_HOME/pum`.
+- macOS: `~/Library/Application Support/pum`.
+- Windows: `$env:LOCALAPPDATA\pum`, with `$env:APPDATA\pum` as a fallback.
+
+Set `PUM_DIR` to move the config directory. In PowerShell, use
+`$env:PUM_DIR = 'D:\path\to\pum-data'` before starting PUM.
 
 | | |
 |---|---|

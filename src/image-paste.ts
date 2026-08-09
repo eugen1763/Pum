@@ -32,9 +32,30 @@ function ensureImageDir(): string {
   return imageDir;
 }
 
+type CommandRunner = (command: string, args: string[]) => Promise<Buffer>;
+type NativeClipboard = {
+  hasImage(): boolean;
+  getImageBinary(): Promise<Array<number>>;
+};
+
+export type ClipboardBackend = "windows" | "wayland" | "x11";
+
+export function clipboardBackend(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): ClipboardBackend | null {
+  if (platform === "win32") return "windows";
+  if (platform === "linux" && env.WAYLAND_DISPLAY) return "wayland";
+  if (platform === "linux" && env.DISPLAY) return "x11";
+  return null;
+}
+
 function run(command: string, args: string[]): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let size = 0;
@@ -57,36 +78,98 @@ function run(command: string, args: string[]): Promise<Buffer> {
   });
 }
 
-async function readWaylandClipboard(): Promise<{ data: Buffer; mimeType: string; ext: string }> {
-  const offered = (await run("wl-paste", ["--list-types"]))
+const WINDOWS_CLIPBOARD_SCRIPT = [
+  "Add-Type -AssemblyName System.Windows.Forms",
+  "Add-Type -AssemblyName System.Drawing",
+  "$image = [System.Windows.Forms.Clipboard]::GetImage()",
+  "if ($null -eq $image) { [Console]::Error.Write('Clipboard does not contain an image'); exit 2 }",
+  "$stream = New-Object System.IO.MemoryStream",
+  "try {",
+  "  $image.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)",
+  "  $bytes = $stream.ToArray()",
+  "  [Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)",
+  "} finally {",
+  "  $stream.Dispose()",
+  "  $image.Dispose()",
+  "}",
+].join("\n");
+
+async function loadNativeClipboard(): Promise<NativeClipboard | null> {
+  try {
+    return await import("@mariozechner/clipboard");
+  } catch {
+    return null;
+  }
+}
+
+async function readWindowsClipboard(
+  runner: CommandRunner,
+  nativeClipboard: NativeClipboard | null | undefined,
+): Promise<{ data: Buffer; mimeType: string; ext: string }> {
+  const clipboard = nativeClipboard === undefined ? await loadNativeClipboard() : nativeClipboard;
+  if (clipboard?.hasImage()) {
+    const bytes = await clipboard.getImageBinary();
+    if (bytes.length > 0) {
+      return { data: Buffer.from(bytes), mimeType: "image/png", ext: "png" };
+    }
+  }
+
+  const data = await runner("powershell.exe", [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-STA",
+    "-Command",
+    WINDOWS_CLIPBOARD_SCRIPT,
+  ]);
+  if (data.length === 0) throw new Error("Clipboard image is empty");
+  return { data, mimeType: "image/png", ext: "png" };
+}
+
+async function readWaylandClipboard(
+  runner: CommandRunner,
+): Promise<{ data: Buffer; mimeType: string; ext: string }> {
+  const offered = (await runner("wl-paste", ["--list-types"]))
     .toString("utf8")
     .split(/\r?\n/)
     .map((type) => type.trim().toLowerCase());
   const imageType = IMAGE_TYPES.find(([mimeType]) => offered.includes(mimeType));
   if (!imageType) throw new Error("Clipboard does not contain an image");
   const [mimeType, ext] = imageType;
-  const data = await run("wl-paste", ["--no-newline", "--type", mimeType]);
+  const data = await runner("wl-paste", ["--no-newline", "--type", mimeType]);
   if (data.length === 0) throw new Error("Clipboard image is empty");
   return { data, mimeType, ext };
 }
 
-async function readX11Clipboard(): Promise<{ data: Buffer; mimeType: string; ext: string }> {
-  const offered = (await run("xclip", ["-selection", "clipboard", "-t", "TARGETS", "-o"]))
+async function readX11Clipboard(
+  runner: CommandRunner,
+): Promise<{ data: Buffer; mimeType: string; ext: string }> {
+  const offered = (await runner("xclip", ["-selection", "clipboard", "-t", "TARGETS", "-o"]))
     .toString("utf8")
     .split(/\r?\n/)
     .map((type) => type.trim().toLowerCase());
   const imageType = IMAGE_TYPES.find(([mimeType]) => offered.includes(mimeType));
   if (!imageType) throw new Error("Clipboard does not contain an image");
   const [mimeType, ext] = imageType;
-  const data = await run("xclip", ["-selection", "clipboard", "-t", mimeType, "-o"]);
+  const data = await runner("xclip", ["-selection", "clipboard", "-t", mimeType, "-o"]);
   if (data.length === 0) throw new Error("Clipboard image is empty");
   return { data, mimeType, ext };
 }
 
-export async function captureClipboardImage(): Promise<{ path: string; mimeType: string }> {
+export async function captureClipboardImage(options: {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  runner?: CommandRunner;
+  nativeClipboard?: NativeClipboard | null;
+} = {}): Promise<{ path: string; mimeType: string }> {
+  const runner = options.runner ?? run;
+  const backend = clipboardBackend(options.platform, options.env);
   let image: { data: Buffer; mimeType: string; ext: string };
-  if (process.env.WAYLAND_DISPLAY) image = await readWaylandClipboard();
-  else if (process.env.DISPLAY) image = await readX11Clipboard();
+  if (backend === "windows") {
+    image = await readWindowsClipboard(runner, options.nativeClipboard);
+  }
+  else if (backend === "wayland") image = await readWaylandClipboard(runner);
+  else if (backend === "x11") image = await readX11Clipboard(runner);
   else throw new Error("No supported graphical clipboard is available");
 
   const path = join(ensureImageDir(), `image-${++fileSequence}.${image.ext}`);

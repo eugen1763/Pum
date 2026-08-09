@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_DIR } from "./config";
 import { loadHistory } from "./history";
+import { projectStorageKey } from "./platform";
 
 export type StashedPrompt = {
   text: string;
@@ -26,7 +27,8 @@ function readFile(): StashFile {
 }
 
 export function loadPromptStash(cwd: string): StashedPrompt[] {
-  const entries = readFile()[cwd];
+  const file = readFile();
+  const entries = file[projectStorageKey(cwd)] ?? file[cwd];
   if (!Array.isArray(entries)) return [];
   const executedPrompts = new Set(loadHistory(cwd));
   return sortStash(
@@ -48,10 +50,12 @@ export function appendPromptStash(
   executed = false,
 ): StashedPrompt[] {
   const file = readFile();
+  const key = projectStorageKey(cwd);
   const list = loadPromptStash(cwd);
   list.push({ text: prompt, executed });
   const trimmed = sortStash(list).slice(-MAX_ENTRIES);
-  file[cwd] = trimmed;
+  file[key] = trimmed;
+  if (key !== cwd) delete file[cwd];
   try {
     writeFileSync(STASH_PATH, JSON.stringify(file, null, 2));
   } catch {
@@ -68,10 +72,12 @@ export function replacePromptStash(
   executed: boolean,
 ): StashedPrompt[] {
   const file = readFile();
+  const key = projectStorageKey(cwd);
   const list = loadPromptStash(cwd);
   if (list[index]) list[index] = { text: prompt, executed };
   const sorted = sortStash(list);
-  file[cwd] = sorted;
+  file[key] = sorted;
+  if (key !== cwd) delete file[cwd];
   try {
     writeFileSync(STASH_PATH, JSON.stringify(file, null, 2));
   } catch {
@@ -83,9 +89,11 @@ export function replacePromptStash(
 /** Remove one prompt from the stash. */
 export function removePromptStash(cwd: string, index: number): StashedPrompt[] {
   const file = readFile();
+  const key = projectStorageKey(cwd);
   const list = loadPromptStash(cwd);
   if (index >= 0 && index < list.length) list.splice(index, 1);
-  file[cwd] = list;
+  file[key] = list;
+  if (key !== cwd) delete file[cwd];
   try {
     writeFileSync(STASH_PATH, JSON.stringify(file, null, 2));
   } catch {
@@ -100,12 +108,14 @@ export function markPromptStashExecutedMany(
   indices: Iterable<number>,
 ): StashedPrompt[] {
   const file = readFile();
+  const key = projectStorageKey(cwd);
   const selected = new Set(indices);
   const list = loadPromptStash(cwd).map((prompt, index) =>
     selected.has(index) ? { ...prompt, executed: true } : prompt,
   );
   const sorted = sortStash(list);
-  file[cwd] = sorted;
+  file[key] = sorted;
+  if (key !== cwd) delete file[cwd];
   try {
     writeFileSync(STASH_PATH, JSON.stringify(file, null, 2));
   } catch {

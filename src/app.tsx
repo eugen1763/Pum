@@ -290,6 +290,7 @@ export function App({
   loginRequired = false,
   promptHistoryStore = DEFAULT_PROMPT_HISTORY_STORE,
   promptStashStore = DEFAULT_PROMPT_STASH_STORE,
+  onExit = () => process.exit(0),
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -303,6 +304,7 @@ export function App({
   loginRequired?: boolean;
   promptHistoryStore?: PromptHistoryStore;
   promptStashStore?: PromptStashStore;
+  onExit?: () => void | Promise<void>;
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -1293,7 +1295,7 @@ export function App({
       // Keyed off a timestamp, not `quitArmed`: two fast presses can land in
       // one React batch, where the state has not updated between them yet.
       const now = Date.now();
-      if (now - lastQuitPress.current < QUIT_WINDOW_MS) process.exit(0);
+      if (now - lastQuitPress.current < QUIT_WINDOW_MS) void onExit();
       lastQuitPress.current = now;
       setQuitArmed(true);
       clearTimeout(quitTimer.current);

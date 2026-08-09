@@ -20,6 +20,9 @@ import {
 } from "./explanation-strength";
 import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
 import { SubagentManager } from "./subagents/manager";
+import { cleanupPendingImages } from "./image-paste";
+import { shutdownSignals } from "./platform";
+import { createShutdown } from "./shutdown";
 
 mkdirSync(AGENT_DIR, { recursive: true });
 
@@ -94,7 +97,19 @@ const sessionRuntime = await createAgentSessionRuntime(
 if (sessionRuntime.modelFallbackMessage) console.error(sessionRuntime.modelFallbackMessage);
 
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
-createRoot(renderer).render(
+const root = createRoot(renderer);
+const shutdown = createShutdown({
+  unmount: () => root.unmount(),
+  cleanup: cleanupPendingImages,
+  dispose: () => sessionRuntime.dispose(),
+  destroy: () => renderer.destroy(),
+  exit: (code) => process.exit(code),
+});
+for (const signal of shutdownSignals()) {
+  process.on(signal, () => void shutdown(1));
+}
+
+root.render(
   <App
     session={sessionRuntime.session}
     onNewSession={async () => {
@@ -111,5 +126,6 @@ createRoot(renderer).render(
     searchProviders={searchProviders}
     subagentManager={subagentManager}
     loginRequired={loginRequired}
+    onExit={() => shutdown(0)}
   />,
 );

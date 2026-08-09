@@ -1,11 +1,12 @@
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { AGENT_DIR } from "./config";
+import { projectStorageKey } from "./platform";
 
 export const DEFAULT_CHECK_MODEL = "deepseek/deepseek-v4-flash";
-export const CHECK_MODE_CACHE_PATH = `${AGENT_DIR}/check-mode-cache.json`;
+export const CHECK_MODE_CACHE_PATH = join(AGENT_DIR, "check-mode-cache.json");
 export const CHECK_MODE_CACHE_LIMIT = 256;
 
 export type CheckModeConfig = {
@@ -180,17 +181,19 @@ export class BashSafetyCache {
   has(model: string, cwd: string, input: unknown): boolean {
     const serialized = this.serialize(input);
     if (serialized === undefined) return false;
+    const key = projectStorageKey(cwd);
     this.load();
-    return this.entries.some((entry) => entry.model === model && entry.cwd === cwd && entry.input === serialized);
+    return this.entries.some((entry) => entry.model === model && entry.cwd === key && entry.input === serialized);
   }
 
   add(model: string, cwd: string, input: unknown): void {
     const serialized = this.serialize(input);
     if (serialized === undefined) return;
+    const key = projectStorageKey(cwd);
     this.load();
-    if (this.entries.some((entry) => entry.model === model && entry.cwd === cwd && entry.input === serialized)) return;
+    if (this.entries.some((entry) => entry.model === model && entry.cwd === key && entry.input === serialized)) return;
     const previous = this.entries;
-    this.entries = this.bounded([...this.entries, { model, cwd, input: serialized }]);
+    this.entries = this.bounded([...this.entries, { model, cwd: key, input: serialized }]);
     if (!this.persist()) this.entries = previous;
   }
 

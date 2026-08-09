@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, posix, resolve, win32 } from "node:path";
+import { isPathInside, type RuntimePlatform } from "./platform";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
 
@@ -85,23 +86,29 @@ export async function createWorktree(cwd: string, requestedName?: string): Promi
   return { name, path: directory, branch, baseBranch, baseCommit };
 }
 
-export async function listWorktrees(cwd: string): Promise<WorktreeRecord[]> {
-  const root = await repositoryRoot(cwd);
-  const managedRoot = resolve(root, ".pum", "worktrees");
-  const output = await git(root, ["worktree", "list", "--porcelain"]);
+export function parseWorktreePorcelain(
+  output: string,
+  managedRoot: string,
+  platform: RuntimePlatform = process.platform,
+): WorktreeRecord[] {
+  const nulDelimited = output.includes("\0");
+  const blocks = nulDelimited ? output.split(/\0\0+/) : output.split(/\r?\n\r?\n+/);
+  const paths = platform === "win32" ? win32 : posix;
   const records: WorktreeRecord[] = [];
 
-  for (const block of output.split(/\n\n+/)) {
+  for (const block of blocks) {
     const fields = new Map<string, string>();
-    for (const line of block.split("\n")) {
+    const lines = nulDelimited ? block.split("\0") : block.split(/\r?\n/);
+    for (const rawLine of lines) {
+      const line = rawLine.replace(/\r$/, "");
       const space = line.indexOf(" ");
       if (space > 0) fields.set(line.slice(0, space), line.slice(space + 1));
     }
     const path = fields.get("worktree");
-    if (!path || !resolve(path).startsWith(`${managedRoot}/`)) continue;
+    if (!path || !isPathInside(managedRoot, path, platform)) continue;
     const branchRef = fields.get("branch") ?? "";
     records.push({
-      name: basename(path),
+      name: paths.basename(path),
       path,
       branch: branchRef.replace(/^refs\/heads\//, ""),
       baseBranch: "",
@@ -109,6 +116,13 @@ export async function listWorktrees(cwd: string): Promise<WorktreeRecord[]> {
     });
   }
   return records;
+}
+
+export async function listWorktrees(cwd: string): Promise<WorktreeRecord[]> {
+  const root = await repositoryRoot(cwd);
+  const managedRoot = resolve(root, ".pum", "worktrees");
+  const output = await git(root, ["worktree", "list", "--porcelain", "-z"]);
+  return parseWorktreePorcelain(output, managedRoot);
 }
 
 export async function worktreeStatus(cwd: string, record: WorktreeRecord): Promise<string> {
@@ -133,7 +147,7 @@ export async function removeWorktree(
   const root = await repositoryRoot(cwd);
   if (!force) {
     const merged = await git(root, ["branch", "--merged", "HEAD", "--format=%(refname:short)"]);
-    if (!merged.split("\n").includes(record.branch)) {
+    if (!merged.split(/\r?\n/).includes(record.branch)) {
       throw new Error(`Branch ${record.branch} is not merged; use force to remove it`);
     }
   }

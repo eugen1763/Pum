@@ -7,6 +7,7 @@ import {
   createWorktree,
   listWorktrees,
   mergeWorktree,
+  parseWorktreePorcelain,
   removeWorktree,
 } from "./worktree";
 
@@ -15,6 +16,39 @@ const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+describe("worktree porcelain parsing", () => {
+  test("accepts CRLF and Windows paths with spaces and case variants", () => {
+    const output = [
+      "worktree C:\\Repo With Space\\.pum\\worktrees\\Agent One",
+      "HEAD abc123",
+      "branch refs/heads/pum/agent-one",
+      "",
+      "worktree C:\\Repo With Space\\.pum\\worktrees-other\\Agent Two",
+      "HEAD def456",
+      "branch refs/heads/pum/agent-two",
+      "",
+    ].join("\r\n");
+    const records = parseWorktreePorcelain(
+      output,
+      "c:\\repo with space\\.PUM\\WORKTREES",
+      "win32",
+    );
+    expect(records).toEqual([{
+      name: "Agent One",
+      path: "C:\\Repo With Space\\.pum\\worktrees\\Agent One",
+      branch: "pum/agent-one",
+      baseBranch: "",
+      baseCommit: "abc123",
+    }]);
+  });
+
+  test("accepts NUL-delimited paths without quoting", () => {
+    const output = "worktree /repo/.pum/worktrees/agent one\0HEAD abc123\0branch refs/heads/pum/agent-one\0\0";
+    expect(parseWorktreePorcelain(output, "/repo/.pum/worktrees", "linux")[0]?.name)
+      .toBe("agent one");
+  });
+});
 
 describe("PUM worktrees", () => {
   test("create, list, merge, and remove", async () => {
