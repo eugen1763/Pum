@@ -90,6 +90,14 @@ gets a persistent pi session and a branch under `.pum/worktrees`. Completion
 notices return to the main agent automatically. `message_agent` routes messages
 between the main agent and subagents, or directly between peers.
 
+PUM allows five active subagents. Only `starting` and `running` agents consume
+an active slot. For follow-up implementation work, the main agent prefers a new
+worktree subagent while a slot is available. At capacity, the main agent queues
+related work to an appropriate running subagent through `message_agent`. This
+uses the durable recipient-side message and steering queue. If no appropriate
+recipient is clear, the main agent reports the capacity issue and keeps the task
+pending for deliberate routing.
+
 In the cache, hold Shift and use Up or Down to select a range. Enter sends the
 selected prompts to the main agent as a worktree batch. The main agent can group
 related prompts into one subagent and runs independent groups in parallel. Each

@@ -49,9 +49,10 @@ import {
   type SubagentStatus,
 } from "./types";
 
-const MAX_RUNNING_AGENTS = 4;
+export const MAX_ACTIVE_SUBAGENTS = 5;
 const MAX_RETAINED_AGENTS = 8;
 const MAX_MESSAGE_LENGTH = 12_000;
+const ACTIVE_SUBAGENT_STATUSES = new Set<SubagentStatus>(["starting", "running"]);
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
@@ -64,6 +65,11 @@ export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communicatio
 export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coordination
 
 - spawn_subagent returns after setup. The subagent continues in the background.
+- Count only starting and running subagents as active. The active limit is five.
+- For follow-up implementation work, prefer a new managed worktree subagent when fewer than five subagents are active.
+- When five subagents are active, use message_agent to queue follow-up work for an appropriate related running subagent.
+- message_agent uses the durable recipient-side message and steering queue. Do not create a shell queue or another hidden queue.
+- Do not send unrelated work to an arbitrary subagent. If no appropriate recipient is clear, state the capacity issue and keep the work pending for deliberate routing.
 - Never wait for subagents with bash sleep, shell polling loops, repeated list_subagents calls, or repeated worktree status calls.
 - After you spawn all currently independent subagents, finish the current turn and yield the main agent loop.
 - A subagent completion notification will automatically start or steer a later main-agent turn.
@@ -73,6 +79,30 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Merge each successful agent as soon as it settles.
 - Wait to merge only when another unfinished task has a concrete dependency, a known conflict risk, or a required integration order. State that reason explicitly.
 - If a notification does not arrive, report the notification fault instead of creating a sleep loop.`;
+
+export function buildSubagentCapacityPrompt(activeCount: number): string {
+  const available = Math.max(0, MAX_ACTIVE_SUBAGENTS - activeCount);
+  if (available > 0) {
+    return `Current subagent capacity: ${activeCount}/${MAX_ACTIVE_SUBAGENTS} active; ${available} slot${available === 1 ? "" : "s"} available. Prefer spawn_subagent for follow-up implementation work that can run in parallel.`;
+  }
+  return `Current subagent capacity: ${activeCount}/${MAX_ACTIVE_SUBAGENTS} active; no slots available. Queue follow-up work with message_agent only when an appropriate related running subagent is clear. Otherwise, state the capacity issue and keep the work pending for deliberate routing.`;
+}
+
+export function countActiveSubagents(agents: Iterable<Pick<SubagentSnapshot, "status">>): number {
+  let count = 0;
+  for (const agent of agents) {
+    if (ACTIVE_SUBAGENT_STATUSES.has(agent.status)) count += 1;
+  }
+  return count;
+}
+
+function activeLimitError(): Error {
+  return new Error(
+    `All ${MAX_ACTIVE_SUBAGENTS} subagent slots are active (starting or running). ` +
+      "Queue follow-up work to an appropriate related running subagent with message_agent. " +
+      "If no appropriate recipient is clear, keep the task pending and state the capacity issue.",
+  );
+}
 
 type RuntimeRecord = {
   snapshot: SubagentSnapshot;
@@ -532,7 +562,7 @@ export class SubagentManager {
         // extensions after session_start, so every tool also binds lazily.
         this.mainApi = pi;
         pi.on("before_agent_start", (event) => ({
-          systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}`,
+          systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}\n\n${buildSubagentCapacityPrompt(this.activeCount())}`,
         }));
         pi.on("message_start", (event) => {
           const message = event.message;
@@ -550,10 +580,13 @@ export class SubagentManager {
         pi.registerTool({
           name: "spawn_subagent",
           label: "Spawn Subagent",
-          description: "Start a nonblocking subagent in a new Git worktree. The subagent runs in parallel and reports when it stops.",
+          description: "Start a nonblocking subagent in a new Git worktree. The subagent runs in parallel and reports when it stops. Five starting or running subagents can be active.",
           promptSnippet: "Start a parallel subagent in an isolated Git worktree",
           promptGuidelines: [
             "Use spawn_subagent for independent tasks that can run in parallel.",
+            "For follow-up implementation work, prefer spawn_subagent while fewer than five subagents are starting or running.",
+            "At five active subagents, queue related follow-up work through message_agent instead of spawning a sixth.",
+            "Do not route unrelated work to an arbitrary subagent. Keep it pending when no appropriate recipient is clear.",
             "Give each spawn_subagent call a complete, self-contained task.",
             "After spawning background agents, end the current turn. Never poll with bash sleep or status loops.",
             "Merge each successful agent when it settles unless a concrete dependency or conflict requires waiting.",
@@ -582,8 +615,8 @@ export class SubagentManager {
         pi.registerTool({
           name: "message_agent",
           label: "Message Agent",
-          description: "Send a message from the main agent to a subagent.",
-          promptSnippet: "Send an instruction or question to a subagent",
+          description: "Send a durable queued message from the main agent to a subagent. At capacity, use this for related follow-up work when an appropriate running recipient is clear.",
+          promptSnippet: "Queue an instruction or question to an appropriate subagent",
           parameters: Type.Object({
             target: Type.String({ description: "Subagent id or name" }),
             message: Type.String({ description: "Message to send" }),
@@ -665,34 +698,38 @@ export class SubagentManager {
     return model;
   }
 
-  async spawn(options: SpawnSubagentOptions): Promise<SubagentSnapshot> {
-    const running = [...this.records.values()].filter((record) =>
-      ["starting", "running"].includes(record.snapshot.status),
-    ).length;
-    if (running >= MAX_RUNNING_AGENTS) throw new Error(`At most ${MAX_RUNNING_AGENTS} subagents can run at once`);
-    if (this.records.size >= MAX_RETAINED_AGENTS) throw new Error(`At most ${MAX_RETAINED_AGENTS} subagents can be retained`);
+  activeCount(): number {
+    return countActiveSubagents([...this.records.values()].map((record) => record.snapshot));
+  }
 
-    const worktree = await this.withWorktreeLock(() => createWorktree(this.mainCwd, options.name));
-    const id = randomUUID().slice(0, 8);
-    const now = Date.now();
-    const snapshot: SubagentSnapshot = {
-      id,
-      name: worktree.name,
-      task: options.task,
-      status: "starting",
-      worktree,
-      parentAgentId: options.parentAgentId ?? null,
-      modelId: options.modelId,
-      thinkingLevel: options.thinkingLevel,
-      transcript: emptyTranscript(),
-      startedAt: now,
-      updatedAt: now,
-      usage: emptyAgentUsage(),
-    };
-    const record: RuntimeRecord = { snapshot };
-    this.records.set(id, record);
-    this.persist({ event: "spawned", id, at: now, snapshot: snapshotMetadata(snapshot) });
-    this.emit();
+  async spawn(options: SpawnSubagentOptions): Promise<SubagentSnapshot> {
+    const record = await this.withWorktreeLock(async () => {
+      if (this.activeCount() >= MAX_ACTIVE_SUBAGENTS) throw activeLimitError();
+      if (this.records.size >= MAX_RETAINED_AGENTS) throw new Error(`At most ${MAX_RETAINED_AGENTS} subagents can be retained`);
+
+      const worktree = await createWorktree(this.mainCwd, options.name);
+      const id = randomUUID().slice(0, 8);
+      const now = Date.now();
+      const snapshot: SubagentSnapshot = {
+        id,
+        name: worktree.name,
+        task: options.task,
+        status: "starting",
+        worktree,
+        parentAgentId: options.parentAgentId ?? null,
+        modelId: options.modelId,
+        thinkingLevel: options.thinkingLevel,
+        transcript: emptyTranscript(),
+        startedAt: now,
+        updatedAt: now,
+        usage: emptyAgentUsage(),
+      };
+      const created: RuntimeRecord = { snapshot };
+      this.records.set(id, created);
+      this.persist({ event: "spawned", id, at: now, snapshot: snapshotMetadata(snapshot) });
+      this.emit();
+      return created;
+    });
 
     try {
       await this.ensureRuntime(record);

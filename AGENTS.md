@@ -107,6 +107,14 @@ These were chosen deliberately. Change them only on purpose.
   to the main agent. The main agent can group related tasks and spawns independent
   worktree agents in parallel. Merge each successful agent when it settles unless
   a concrete dependency, conflict risk, or integration order requires waiting.
+- **Follow-up implementation work uses available parallel capacity.** Count only
+  `starting` and `running` subagents toward the five-agent active limit. When a
+  slot is available, prefer another managed worktree subagent. At capacity, use
+  `message_agent` to queue related work for an appropriate running subagent. This
+  uses the durable recipient-side message and steering queue. Never create shell
+  polling or hidden queues. Never route unrelated work to an arbitrary agent. If
+  no appropriate recipient is clear, state the capacity issue and keep the task
+  pending for deliberate routing.
 - **Subagents are persistent background AgentSessions.** Each subagent gets a
   managed Git worktree and an independent session file. Spawn tools return after
   setup, not after the task. Completion becomes a custom message to the main

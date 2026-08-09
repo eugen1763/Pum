@@ -9,7 +9,11 @@ export function buildStashBatchPrompt(prompts: string[]): string {
   return `Coordinate the following cached tasks with managed worktree subagents.
 
 Rules:
-- Use spawn_subagent for the implementation work.
+- Count only starting and running subagents as active. The active limit is five.
+- Use spawn_subagent for implementation work while fewer than five subagents are active.
+- At five active subagents, queue related work to an appropriate running subagent with message_agent.
+- message_agent uses the durable recipient-side message and steering queue.
+- Do not route unrelated work to an arbitrary subagent. Keep it pending when no appropriate recipient is clear.
 - You may group related tasks into one subagent when grouping reduces conflicts or duplicated work.
 - Run independent task groups in parallel.
 - Keep each subagent task complete and self-contained.
