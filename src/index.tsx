@@ -24,6 +24,7 @@ import { cleanupPendingImages } from "./image-paste";
 import { shutdownSignals } from "./platform";
 import { createShutdown } from "./shutdown";
 import { applyPatchExtension } from "./apply-patch";
+import { QuestionnaireManager } from "./questionnaire";
 
 mkdirSync(AGENT_DIR, { recursive: true });
 
@@ -38,9 +39,11 @@ setWritingStyle(settings.writingStyle);
 setExplanationStrength(settings.explanationStrength);
 setCheckModeConfig({ enabled: settings.checkMode, model: settings.checkModel });
 const checkModeExtension = createCheckModeExtension(modelRuntime);
+const questionnaireManager = new QuestionnaireManager();
 const subagentManager = new SubagentManager({
   modelRuntime,
   agentDir: AGENT_DIR,
+  questionnaireManager,
   childExtensionFactories: [
     writingStyleExtension,
     explanationStrengthExtension,
@@ -69,6 +72,7 @@ const sessionRuntime = await createAgentSessionRuntime(
           explanationStrengthExtension,
           checkModeExtension,
           applyPatchExtension,
+          questionnaireManager.extension({ id: "main", name: "main" }),
           subagentExtension,
         ],
       },
@@ -79,7 +83,7 @@ const sessionRuntime = await createAgentSessionRuntime(
         sessionManager,
         sessionStartEvent,
         tools: [
-          "read", "write", "edit", "apply_patch", "bash",
+          "read", "write", "edit", "apply_patch", "bash", "questionnaire",
           "spawn_subagent", "message_agent", "list_subagents", "stop_subagent", "worktree",
         ],
       })),
@@ -127,6 +131,7 @@ root.render(
     settings={settings}
     searchProviders={searchProviders}
     subagentManager={subagentManager}
+    questionnaireManager={questionnaireManager}
     loginRequired={loginRequired}
     onExit={() => shutdown(0)}
   />,

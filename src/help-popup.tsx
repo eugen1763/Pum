@@ -23,9 +23,9 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["Ctrl/Shift+Enter", "Insert a new line"],
       ["\\ then Enter", "Insert a new line fallback"],
       ["Alt+Enter", "Cache without sending"],
-      ["Ctrl+Alt+Enter", "Cache alias"],
       ["Alt+V", "Attach a clipboard image"],
       ["Ctrl+Backspace", "Delete the previous word"],
+      ["Questionnaire", "↑↓/←→ move · Enter select · Esc cancel"],
     ],
   },
   {

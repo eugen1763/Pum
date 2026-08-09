@@ -47,6 +47,16 @@ export function toolArg(name: string, args: any, cwd: string): string {
     const target = args.target ?? args.name;
     return target ? `${args.action} ${target}` : args.action;
   }
+  if (name === "questionnaire" && Array.isArray(args.questions)) {
+    const count = args.questions.length;
+    const first = args.questions[0];
+    const label = typeof first?.label === "string"
+      ? first.label
+      : typeof first?.prompt === "string"
+        ? first.prompt
+        : "";
+    return label ? `${count} question${count === 1 ? "" : "s"} · ${label}` : `${count} questions`;
+  }
   if (typeof args.path === "string") {
     const rel = relative(cwd, args.path);
     return rel && !rel.startsWith("..") ? rel : args.path;

@@ -27,6 +27,7 @@ import {
 } from "../web-search";
 import { editCounts, toolArg, type ToolCall } from "../tool-line";
 import { applyPatchExtension } from "../apply-patch";
+import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
   resolvePendingDelivery,
   settleTranscriptMessage,
@@ -138,6 +139,7 @@ type ManagerOptions = {
   modelRuntime: ModelRuntime;
   agentDir: string;
   childExtensionFactories?: InlineExtension[];
+  questionnaireManager?: QuestionnaireManager;
 };
 
 const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
@@ -185,6 +187,7 @@ export class SubagentManager {
   private readonly modelRuntime: ModelRuntime;
   private readonly agentDir: string;
   private readonly childExtensionFactories: InlineExtension[];
+  private readonly questionnaireManager?: QuestionnaireManager;
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly listeners = new Set<(event: SubagentManagerEvent) => void>();
   private mainApi?: ExtensionAPI;
@@ -199,6 +202,7 @@ export class SubagentManager {
     this.modelRuntime = options.modelRuntime;
     this.agentDir = options.agentDir;
     this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
+    this.questionnaireManager = options.questionnaireManager;
   }
 
   subscribe(listener: (event: SubagentManagerEvent) => void): () => void {
@@ -459,7 +463,9 @@ export class SubagentManager {
               : "ok",
           detail: event.toolName === "edit" || event.toolName === "apply_patch"
             ? editCounts(event.result)
-            : undefined,
+            : event.toolName === "questionnaire"
+              ? questionnaireDetail(event.result)
+              : undefined,
         });
         break;
       case "agent_start":
@@ -525,6 +531,14 @@ export class SubagentManager {
               SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
           };
         });
+
+        const questionnaireRecord = this.records.get(agentId);
+        if (questionnaireRecord) {
+          this.questionnaireManager?.registerTool(pi, {
+            id: agentId,
+            name: questionnaireRecord.snapshot.name,
+          });
+        }
 
         pi.registerTool({
           name: "spawn_subagent",
@@ -818,7 +832,7 @@ export class SubagentManager {
       model,
       thinkingLevel: record.snapshot.thinkingLevel as any,
       tools: [
-        "read", "write", "edit", "apply_patch", "bash",
+        "read", "write", "edit", "apply_patch", "bash", "questionnaire",
         "spawn_subagent", "message_agent", "list_subagents", "finish_subagent",
       ],
     });

@@ -84,6 +84,8 @@ import { AgentSelectorPopup, buildAgentTree, moveAgentSelection } from "./agent-
 import { LoginPopup, type LoginPage } from "./login-popup";
 import { LoginController } from "./login-controller";
 import { providerLoginMethods, refreshAndSelectModel } from "./login-flow";
+import { questionnaireDetail, QuestionnaireManager } from "./questionnaire";
+import { QuestionnairePopup } from "./questionnaire-popup";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -287,6 +289,7 @@ export function App({
   settings: initial,
   searchProviders,
   subagentManager,
+  questionnaireManager,
   loginRequired = false,
   promptHistoryStore = DEFAULT_PROMPT_HISTORY_STORE,
   promptStashStore = DEFAULT_PROMPT_STASH_STORE,
@@ -301,6 +304,7 @@ export function App({
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
   subagentManager: SubagentManager;
+  questionnaireManager?: QuestionnaireManager;
   loginRequired?: boolean;
   promptHistoryStore?: PromptHistoryStore;
   promptStashStore?: PromptStashStore;
@@ -352,6 +356,7 @@ export function App({
   const [agentSelectorCursor, setAgentSelectorCursor] = useState(0);
   const [agentElapsedSec, setAgentElapsedSec] = useState(0);
   const [loginOpen, setLoginOpen] = useState(loginRequired);
+  const [, setQuestionnaireRevision] = useState(0);
   const [loginPage, setLoginPage] = useState<LoginPage>(() => ({
     kind: "providers",
     methods: providerLoginMethods((modelRuntime as any).getProviders?.() ?? []),
@@ -369,6 +374,7 @@ export function App({
   const activeAgent = activeAgentId
     ? agents.find((agent) => agent.id === activeAgentId)
     : undefined;
+  const questionnaire = questionnaireManager?.current();
   const visibleTx = activeAgent?.transcript ?? tx;
   const visibleBusy = activeAgent
     ? activeAgent.status === "starting" || activeAgent.status === "running"
@@ -398,6 +404,7 @@ export function App({
   ), [modelRuntime, modelId, modelQuery, loginPage]);
 
   const inputRef = useRef<TextareaRenderable>(null);
+  const questionnaireInputRef = useRef<TextareaRenderable>(null);
   const focusInputAfterSwitch = useRef(false);
   const activeAgentIdRef = useRef<string | null>(null);
   const agentSelectorCursorRef = useRef(0);
@@ -676,6 +683,20 @@ export function App({
   );
 
   useEffect(() => {
+    if (!questionnaireManager) return;
+    return questionnaireManager.subscribe(() => {
+      if (questionnaireManager.current()) {
+        setSettingsOpen(false);
+        setHelpOpen(false);
+        setHistoryOpen(false);
+        setAgentSelectorOpen(false);
+        setLoginOpen(false);
+      }
+      setQuestionnaireRevision((revision) => revision + 1);
+    });
+  }, [questionnaireManager]);
+
+  useEffect(() => {
     if (activeAgentId && !agents.some((agent) => agent.id === activeAgentId)) {
       activeAgentIdRef.current = null;
       setActiveAgentId(null);
@@ -754,7 +775,9 @@ export function App({
                 : "ok",
             detail: event.toolName === "edit" || event.toolName === "apply_patch"
               ? editCounts(event.result)
-              : undefined,
+              : event.toolName === "questionnaire"
+                ? questionnaireDetail(event.result)
+                : undefined,
           });
           break;
         case "agent_start":
@@ -1311,6 +1334,51 @@ export function App({
       setQuitArmed(false);
     }
     if (key.name !== "escape" && lastCancelPress.current !== null) resetCancelArm();
+
+    if (questionnaire) {
+      const isQuestionnaireReturn =
+        key.name === "return" ||
+        key.name === "enter" ||
+        key.name === "kpenter" ||
+        key.name === "linefeed";
+      if (questionnaire.customInput) {
+        if (key.name === "escape") {
+          key.stopPropagation();
+          questionnaireInputRef.current?.setText("");
+          questionnaireManager?.cancelCustom();
+        } else if (
+          isQuestionnaireReturn &&
+          !key.shift &&
+          !key.ctrl &&
+          !key.meta &&
+          !key.option
+        ) {
+          key.stopPropagation();
+          const value = questionnaireInputRef.current?.plainText ?? "";
+          if (questionnaireManager?.submitCustom(value)) {
+            questionnaireInputRef.current?.setText("");
+          }
+        }
+        return;
+      }
+
+      key.stopPropagation();
+      if (key.name === "escape") questionnaireManager?.cancel();
+      else if (key.name === "up") questionnaireManager?.moveOption(-1);
+      else if (key.name === "down") questionnaireManager?.moveOption(1);
+      else if (
+        key.name === "left" ||
+        (key.name === "tab" && key.shift) ||
+        key.name === "backtab" ||
+        key.sequence === "\u001b[Z"
+      ) questionnaireManager?.movePage(-1);
+      else if (key.name === "right" || key.name === "tab") questionnaireManager?.movePage(1);
+      else if (isQuestionnaireReturn) {
+        const action = questionnaireManager?.select();
+        if (action === "custom") queueMicrotask(() => questionnaireInputRef.current?.focus());
+      }
+      return;
+    }
 
     if (loginOpen) {
       key.stopPropagation();
@@ -1883,7 +1951,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="char"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !loginOpen}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !loginOpen && !questionnaire}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -1904,6 +1972,15 @@ export function App({
         />
         {loginOpen ? (
           <LoginPopup theme={theme} page={loginPage} terminalWidth={width} terminalHeight={height} />
+        ) : null}
+        {questionnaire ? (
+          <QuestionnairePopup
+            theme={theme}
+            request={questionnaire}
+            terminalWidth={width}
+            terminalHeight={height}
+            inputRef={questionnaireInputRef}
+          />
         ) : null}
         {helpOpen ? (
           <HelpPopup

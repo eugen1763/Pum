@@ -16,6 +16,15 @@ describe("apply_patch tool metadata", () => {
     }, "/repo")).toBe("2 files · one.ts");
   });
 
+  test("summarizes questionnaire arguments without exposing every option", () => {
+    expect(toolArg("questionnaire", {
+      questions: [
+        { id: "scope", label: "Scope", prompt: "Choose scope", options: [] },
+        { id: "format", prompt: "Choose format", options: [] },
+      ],
+    }, "/repo")).toBe("2 questions · Scope");
+  });
+
   test("counts unified patch additions and removals", () => {
     expect(editCounts({
       details: {

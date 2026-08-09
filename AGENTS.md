@@ -20,6 +20,8 @@ bun run start    # open the TUI in the current directory
 | `src/transcript.tsx` | Row rendering per role |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
 | `src/apply-patch.ts` | Codex patch parser, validation, atomic commit, and pi tool |
+| `src/questionnaire.ts` | Model tool, request queue, answer state, and main/child bridge |
+| `src/questionnaire-popup.tsx` | OpenTUI questionnaire popup and responsive layout |
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
 | `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
 | `src/history.ts` | Prompt history, one list per working directory |
@@ -56,6 +58,7 @@ bun run start    # open the TUI in the current directory
 | Esc | Once warns, twice within 2s cancels the selected agent's running turn |
 | Ctrl+P | Open settings; Esc closes, or steps back from the model list |
 | Ctrl+C | Once arms and shows a hint, twice within 2s quits |
+| Questionnaire: ↑/↓, ←/→ or Tab, Enter, Esc | Select options, move questions, confirm, or cancel |
 
 ## Locked decisions
 
@@ -82,6 +85,7 @@ These were chosen deliberately. Change them only on purpose.
   infer a different API shape from a failed probe. Config writes use a temporary
   file and atomic rename.
 - **Coding tools run without asking.** No approval prompt.
+- **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
   absolute paths, escaping symlinks, conflicting paths, missing context, and

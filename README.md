@@ -43,7 +43,7 @@ The following screens are real OpenTUI renders captured through `tmux`. A local 
 - **Compact terminal UI:** Streaming Markdown, syntax highlighting, thinking traces, tool rows, usage, cost, and Git status.
 - **Full coding loop:** Built-in `read`, `write`, `edit`, `bash`, and atomic `apply_patch` tools.
 - **Parallel subagents:** Persistent agents work in isolated Git worktrees and report to the main agent.
-- **Prompt control:** Steer active work, stash prompt batches, attach clipboard images, cancel turns, and resume sessions.
+- **Prompt control:** Steer active work, answer model questionnaires, stash prompt batches, attach clipboard images, cancel turns, and resume sessions.
 - **Provider choice:** Use the login methods exposed by pi, or add an OpenAI-compatible custom endpoint.
 - **Optional safeguards:** Enable fail-closed Check mode for `bash`, `edit`, and `apply_patch` calls.
 - **Terminal-first appearance:** Nine themes, semantic color overrides, Unicode glyphs, and optional animation.
@@ -124,6 +124,12 @@ Select a range of stashed prompts and press `Enter`. The main agent can group re
 Use `Ctrl+L` to select an agent transcript. Input then goes to that agent. Finished or interrupted agents remain available until PUM merges or removes them.
 
 ## Tools and safeguards
+
+### Interactive questionnaires
+
+The `questionnaire` tool asks one or more questions inside PUM's OpenTUI interface. Each question provides selectable options and a custom-answer field. Use arrow keys or `Tab` to move, `Enter` to select, and `Esc` to cancel.
+
+PUM returns structured answers to the requesting main agent or managed child agent. Custom text stays outside React labels and session data until the user explicitly submits the answer.
 
 ### Atomic `apply_patch`
 
