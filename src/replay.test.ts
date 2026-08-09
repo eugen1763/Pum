@@ -118,6 +118,47 @@ describe("subagent transcript replay", () => {
     });
   });
 
+  test("restores read path and range arguments", () => {
+    const lines = replayEntries([
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "read-1",
+            name: "read",
+            arguments: {
+              path: "/repo/src/file name.ts",
+              offset: 12,
+              limit: 40,
+            },
+          }],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "read-1",
+          toolName: "read",
+          content: [{ type: "text", text: "file contents" }],
+          isError: false,
+        },
+      },
+    ], "/repo", true);
+
+    expect(lines[0]).toEqual({
+      kind: "tool",
+      call: {
+        id: "read-1",
+        name: "read",
+        arg: "src/file name.ts · offset=12 · limit=40",
+        state: "ok",
+      },
+    });
+  });
+
   test("restores questionnaire completion details", () => {
     const lines = replayEntries([
       {

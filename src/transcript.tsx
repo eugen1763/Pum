@@ -381,7 +381,11 @@ export function ToolLine({
           style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
         />
       </box>
-      <box style={{ width: 1, flexShrink: 0 }} />
+      {/* The transcript scrollbox uses two padding columns and one pinned
+          scrollbar column. The row then uses a two-column gutter and a
+          one-column state marker. Bash reserves one additional column before
+          the marker so commands wrap before the terminal-edge boundary. */}
+      <box style={{ width: call.name === "bash" ? 2 : 1, flexShrink: 0 }} />
       <box style={{ width: 1, flexShrink: 0 }}>
         {call.state === "running" ? (
           <text ref={spinner} fg={theme.accent} />

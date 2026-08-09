@@ -46,6 +46,34 @@ function rejectedReplayCall(): ToolCall {
   return (lines[0] as Extract<(typeof lines)[number], { kind: "tool" }>).call;
 }
 
+function replayedReadCall(): ToolCall {
+  const lines = replayEntries([
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "replayed-read",
+          name: "read",
+          arguments: { path: "/repo/file name.ts", offset: 2, limit: 8 },
+        }],
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "toolResult",
+        toolCallId: "replayed-read",
+        toolName: "read",
+        content: [{ type: "text", text: "contents" }],
+        isError: false,
+      },
+    },
+  ], "/repo", false);
+  return (lines[0] as Extract<(typeof lines)[number], { kind: "tool" }>).call;
+}
+
 describe("tool line state", () => {
   test("uses a distinct marker for rejected calls", () => {
     expect(toolStateGlyph("rejected")).toBe("!");
@@ -115,6 +143,84 @@ describe("tool line state", () => {
     expect(failedMarker?.fg.equals(parseColor(theme.error))).toBe(true);
     expect(successMarker?.fg.equals(parseColor(theme.success))).toBe(true);
     expect(failed?.bg.equals(parseColor(theme.rejectionBg))).toBe(false);
+  });
+
+  test("shows identical read arguments for every tool-row state", async () => {
+    const setup = await createTestRenderer({ width: 52, height: 12 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const arg = "file name.ts · offset=2 · limit=8";
+    const calls: Array<{ call: ToolCall; workingCaret?: boolean }> = [
+      { call: { id: "live", name: "read", arg, state: "running" }, workingCaret: true },
+      { call: { id: "settled", name: "read", arg, state: "ok" } },
+      { call: { id: "rejected", name: "read", arg, state: "rejected" } },
+      { call: { id: "failed", name: "read", arg, state: "error" } },
+      { call: replayedReadCall() },
+    ];
+
+    createRoot(setup.renderer).render(
+      <box style={{ flexDirection: "column", width: "100%" }}>
+        {calls.map(({ call, workingCaret }) => (
+          <ToolLine key={call.id} theme={theme} call={call} workingCaret={workingCaret} />
+        ))}
+      </box>,
+    );
+    await settle(setup);
+
+    expect(setup.captureCharFrame().match(/file name\.ts · offset=2 · limit=8/g)).toHaveLength(5);
+  });
+
+  test("wraps bash commands one column earlier inside the transcript scrollbox", async () => {
+    const setup = await createTestRenderer({ width: 28, height: 4 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const arg = "abcdefghijklmno";
+
+    createRoot(setup.renderer).render(
+      <scrollbox
+        style={{ flexGrow: 1, paddingLeft: 1, paddingRight: 1 }}
+        verticalScrollbarOptions={{ visible: true }}
+      >
+        <ToolLine theme={theme} call={{ id: "bash", name: "bash", arg, state: "ok" }} />
+        <ToolLine theme={theme} call={{ id: "read", name: "read", arg, state: "ok" }} />
+      </scrollbox>,
+    );
+    await settle(setup);
+
+    const frameLines = setup.captureCharFrame().trimEnd().split("\n");
+    expect(frameLines.every((line) => line.length === 28)).toBe(true);
+    expect(frameLines.every((line) => line.endsWith("█"))).toBe(true);
+    const lines = frameLines.map((line) => line.slice(0, -2).trimEnd()).filter((line) => line.trim());
+    expect(lines).toEqual([
+      "   bash · abcdefghijklmn ✓",
+      "          o",
+      "   read · abcdefghijklmno✓",
+    ]);
+  });
+
+  test("aligns wrapped read ranges under the path argument", async () => {
+    const setup = await createTestRenderer({ width: 28, height: 6 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "read-wrap",
+          name: "read",
+          arg: "folder/file name.ts · offset=12 · limit=40",
+          state: "ok",
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const lines = setup.captureCharFrame().split("\n").map((line) => line.trimEnd()).filter((line) => line.trim());
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.slice(1).every((line) => line.search(/\S/) === "  read · ".length)).toBe(true);
+    expect(lines.join(" ")).toContain("offset=12");
+    expect(lines.join(" ")).toContain("limit=40");
   });
 
   test("updates rejection colors after a theme change", async () => {

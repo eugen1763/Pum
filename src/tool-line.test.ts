@@ -1,6 +1,33 @@
 import { describe, expect, test } from "bun:test";
 import { editCounts, toolArg } from "./tool-line";
 
+describe("read tool metadata", () => {
+  test("shows the path and only supplied range arguments", () => {
+    expect(toolArg("read", { path: "/repo/src/file name.ts" }, "/repo")).toBe("src/file name.ts");
+    expect(toolArg("read", {
+      path: "/repo/src/file name.ts",
+      offset: 12,
+    }, "/repo")).toBe("src/file name.ts · offset=12");
+    expect(toolArg("read", {
+      path: "/repo/src/file name.ts",
+      limit: 40,
+    }, "/repo")).toBe("src/file name.ts · limit=40");
+    expect(toolArg("read", {
+      path: "/repo/src/file name.ts",
+      offset: 12,
+      limit: 40,
+    }, "/repo")).toBe("src/file name.ts · offset=12 · limit=40");
+  });
+
+  test("preserves Windows paths and spaces", () => {
+    expect(toolArg("read", {
+      path: "C:\\Users\\Jane Doe\\project\\file name.ts",
+      offset: 2,
+      limit: 8,
+    }, "/repo")).toBe("C:\\Users\\Jane Doe\\project\\file name.ts · offset=2 · limit=8");
+  });
+});
+
 describe("apply_patch tool metadata", () => {
   test("shows compact single-file and multi-file arguments", () => {
     expect(toolArg("apply_patch", {
