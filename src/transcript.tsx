@@ -1,4 +1,5 @@
-import { StyledText, fg, type SyntaxStyle } from "@opentui/core";
+import { StyledText, fg, type MarkdownRenderable, type SyntaxStyle } from "@opentui/core";
+import type { MarkdownProps } from "@opentui/react";
 import {
   useBlinkingText,
   useMarkdownCaret,
@@ -31,6 +32,16 @@ export type PendingTranscriptState = {
   stream: { kind: "assistant" | "thinking"; text: string } | null;
   pending: PendingLine[];
 };
+
+/** OpenTUI 0.5.1 supports Markdown selection at runtime but omits the React prop. */
+function SelectableMarkdown({ ref, ...props }: MarkdownProps) {
+  const setRef = (renderable: MarkdownRenderable | null) => {
+    if (renderable) renderable.selectable = true;
+    if (typeof ref === "function") ref(renderable);
+    else if (ref) ref.current = renderable;
+  };
+  return <markdown {...props} ref={setRef} />;
+}
 
 /** Resolve a delivered message without splitting the active streamed output. */
 export function resolvePendingDelivery<T extends PendingTranscriptState>(value: T, id: string): T {
@@ -187,7 +198,7 @@ export function TextLine({
         glyphColor={color}
         background={isUser ? theme.userBg : undefined}
       >
-        <markdown
+        <SelectableMarkdown
           ref={isAssistant && workingCaret ? markdownCaret.ref : undefined}
           content={isAssistant && workingCaret ? markdownCaret.content : text}
           streaming={false}
@@ -238,7 +249,7 @@ export function StreamLine({
   return (
     <Row glyph={GUTTER} glyphColor={color}>
       {role === "assistant" ? (
-        <markdown
+        <SelectableMarkdown
           ref={markdown.ref}
           content={markdown.content}
           streaming
@@ -277,7 +288,7 @@ export function PendingMessageLine({
             wrapMode="word"
             style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
           />
-          <markdown
+          <SelectableMarkdown
             content={line.text}
             streaming={false}
             syntaxStyle={syntaxStyle}
@@ -291,7 +302,7 @@ export function PendingMessageLine({
 
   return (
     <Row glyph="○ " glyphColor={theme.dim} background={theme.userBg}>
-      <markdown
+      <SelectableMarkdown
         content={line.text}
         streaming={false}
         syntaxStyle={syntaxStyle}
@@ -320,7 +331,7 @@ export function AgentMessageLine({
           wrapMode="word"
           style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
         />
-        <markdown
+        <SelectableMarkdown
           content={line.text}
           streaming={false}
           syntaxStyle={syntaxStyle}
