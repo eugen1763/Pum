@@ -3,7 +3,9 @@ import { parseColor } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import {
+  filterModels,
   filterSettingsRows,
+  isModelSearchShortcut,
   isSettingsSearchShortcut,
   moveSettingSelection,
   SettingsPopup,
@@ -24,6 +26,19 @@ describe("settings search and navigation", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual(["checkMode", "checkModel"]);
     expect(filterSettingsRows("reasoning visible").map((row) => row.id)).toEqual(["showThinking"]);
+    expect(filterSettingsRows("fail-closed bash edit").map((row) => row.id)).toEqual(["checkMode"]);
+    expect(SETTINGS_ROWS.every((row) => row.description.length > 20)).toBe(true);
+  });
+
+  test("filters model and check-model rows across provider and model metadata", () => {
+    const models = [
+      { provider: "openai", id: "gpt-5", name: "GPT Five" },
+      { provider: "anthropic", id: "claude", name: "Claude" },
+    ] as any;
+    const providerName = (id: string) => id === "openai" ? "OpenAI Platform" : "Anthropic";
+    expect(filterModels(models, "platform five", providerName).map((model) => model.id)).toEqual(["gpt-5"]);
+    expect(filterModels(models, "CLAUDE", providerName).map((model) => model.id)).toEqual(["claude"]);
+    expect(filterModels(models, "missing", providerName)).toEqual([]);
   });
 
   test("moves only through filtered rows and wraps", () => {
@@ -38,6 +53,8 @@ describe("settings search and navigation", () => {
     expect(isSettingsSearchShortcut(slash, false)).toBe(true);
     expect(isSettingsSearchShortcut(slash, true)).toBe(false);
     expect(isSettingsSearchShortcut({ ...slash, ctrl: true }, false)).toBe(false);
+    expect(isModelSearchShortcut(slash, false)).toBe(true);
+    expect(isModelSearchShortcut(slash, true)).toBe(false);
   });
 });
 
@@ -74,6 +91,8 @@ describe("settings popup layout", () => {
     expect(frame).toContain("Appearance");
     expect(frame).toContain("Working animation");
     expect(frame).toContain("coordinated");
+    expect(frame).toContain("header and input rules");
+    expect(frame).toContain("animate while an agent works");
     expect(frame).toContain("/ search");
   });
 

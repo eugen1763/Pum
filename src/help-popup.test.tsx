@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
+import { helpLines, HelpPopup, HELP_SUMMARY, maxHelpScrollOffset } from "./help-popup";
 import { loadTheme } from "./theme";
 
 let destroy: (() => void) | undefined;
@@ -29,6 +29,17 @@ async function renderHelp(width: number, height: number, scrollOffset: number) {
 }
 
 describe("Help popup layout", () => {
+  test("summarizes the main workflow", async () => {
+    const frame = await renderHelp(80, 28, 0);
+    expect(frame).toContain("PUM workflow");
+    for (const line of HELP_SUMMARY) expect(frame).toContain(line);
+  });
+
+  test("adds category gaps only when terminal height permits", () => {
+    expect(helpLines(40).filter((line) => line.kind === "blank").length).toBeGreaterThan(0);
+    expect(helpLines(16).some((line) => line.kind === "blank")).toBe(false);
+  });
+
   test("uses readable grouped columns in a wide terminal", async () => {
     const frame = await renderHelp(100, 28, 0);
     expect(frame).toContain("Prompt");

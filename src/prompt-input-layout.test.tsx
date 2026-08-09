@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { App } from "./app";
+import { App, promptPlaceholder } from "./app";
 
 let destroy: (() => void) | undefined;
 afterEach(() => destroy?.());
@@ -33,6 +33,19 @@ function fakeSession() {
 }
 
 describe("prompt input layout", () => {
+  test("shows responsive controls only when they are valid", () => {
+    expect(promptPlaceholder({ width: 100, busy: false, stashOpen: false }))
+      .toBe("Ask something…   [Tab] cache list [^L] list agents");
+    expect(promptPlaceholder({ width: 55, busy: false, stashOpen: false }))
+      .toBe("Ask something…   [Tab] cache [^L] agents");
+    expect(promptPlaceholder({ width: 40, busy: false, stashOpen: false })).toBe("Ask something…");
+    expect(promptPlaceholder({ width: 100, activeAgentName: "worker", busy: false, stashOpen: false }))
+      .toBe("Message worker…   [^L] list agents");
+    expect(promptPlaceholder({ width: 100, activeAgentName: "worker", busy: true, stashOpen: false }))
+      .toBe("Steer worker…   [^L] list agents");
+    expect(promptPlaceholder({ width: 100, busy: false, stashOpen: true })).toBe("Cache…");
+  });
+
   test("wraps four columns before the former terminal-edge boundary", async () => {
     const setup = await createTestRenderer({ width: 40, height: 16, kittyKeyboard: true });
     destroy = () => setup.renderer.destroy();

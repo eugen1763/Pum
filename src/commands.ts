@@ -22,6 +22,10 @@ export const COMMANDS: Command[] = [
     description: "Browse saved sessions for this directory",
   },
   {
+    name: "/login",
+    description: "Add or update a provider login",
+  },
+  {
     name: "/worktree",
     description: "Create a PUM Git worktree from the current branch",
   },

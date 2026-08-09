@@ -28,6 +28,9 @@ bun run start    # open the TUI in the current directory
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
+| `src/login-popup.tsx` | Presentational provider login and custom-provider popup |
+| `src/login-controller.ts` | Provider auth state machine and popup keyboard actions |
+| `src/login-flow.ts` | Provider registry, custom discovery, redaction, and atomic config writes |
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/check-mode.ts` | Optional model safety gate for `bash` and `edit` |
 | `src/writing-style.ts` | Configurable per-turn system-prompt writing guidance |
@@ -64,6 +67,17 @@ These were chosen deliberately. Change them only on purpose.
   It does not share pi's `~/.pi/agent`, so it needs its own login. pi stores
   auth, settings, and sessions together under one directory, so this is all or
   nothing.
+- **Login runs inside PUM.** Startup without an available provider opens the
+  login popup. `/login` opens the same popup. The provider list comes from
+  `ModelRuntime.getProviders()` and must not be replaced with a local allowlist.
+- **Submitted keys never enter React labels or session data.** The login
+  controller keeps secrets outside React state. The popup renders only a length
+  mask. Custom keys go to PUM's `auth.json`, while `models.json` contains only
+  endpoint, compatibility, and model metadata.
+- **Custom provider discovery is conservative.** PUM normalizes an HTTP(S)
+  endpoint and probes only the OpenAI-compatible `/models` route. PUM does not
+  infer a different API shape from a failed probe. Config writes use a temporary
+  file and atomic rename.
 - **All four tools run without asking.** No approval prompt.
 - **Sessions persist** to `<config dir>/sessions`.
 - **Colours are never literals.** Everything reads a semantic token from
@@ -202,7 +216,8 @@ Each of these cost real debugging. They are not obvious from the docs.
   popup unmounts and never comes back.
 - **The popup's main page has no focusable children.** Rows are plain `<text>`
   and the cursor is state. That avoids the missing-checkbox problem and the
-  focus juggling at once. Only the model list is a real focusable `<select>`.
+  focus juggling at once. Model pages use one `<input>` and one `<select>` with
+  a single explicit focus owner.
 - **`<textarea onSubmit>` receives no text value.** Read `plainText` from the
   textarea ref instead.
 - **A `<text>` whose `content` is a `StyledText` measures to nothing.** It
