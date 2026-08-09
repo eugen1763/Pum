@@ -33,10 +33,16 @@ function result(text: string, stopReason = "stop") {
 
 function runtime(replies: Array<ReturnType<typeof result> | Error>) {
   let calls = 0;
+  const contexts: any[] = [];
+  const options: any[] = [];
   return {
     get calls() { return calls; },
+    contexts,
+    options,
     getAvailableSnapshot: () => [model],
-    completeSimple: async () => {
+    completeSimple: async (_model: unknown, context: unknown, requestOptions: unknown) => {
+      contexts.push(context);
+      options.push(requestOptions);
       const reply = replies[calls++] ?? result("SAFE");
       if (reply instanceof Error) throw reply;
       return reply;
@@ -74,22 +80,138 @@ describe("bash safety cache", () => {
     expect((await verifyToolCall(verifier, cache, { ...base, config: { ...config, model: "test/other" } }))?.reason).toContain("unavailable");
   });
 
-  test("does not cache rejected, malformed, failed, or aborted decisions", async () => {
-    const replies = [
-      result("UNSAFE: no"),
-      result("maybe"),
-      new Error("offline"),
-      result("SAFE", "aborted"),
+  test("does not cache rejected, unclear, failed, or aborted decisions", async () => {
+    const cases = [
+      { replies: [result("UNSAFE: no")], callsAfterBlock: 1 },
+      { replies: [result("maybe"), result("still maybe")], callsAfterBlock: 2 },
+      { replies: [new Error("offline")], callsAfterBlock: 1 },
+      { replies: [result("SAFE", "aborted")], callsAfterBlock: 1 },
     ];
 
-    for (const reply of replies) {
+    for (const testCase of cases) {
       const { cache } = temporaryCache();
-      const verifier = runtime([reply, result("SAFE")]);
+      const verifier = runtime([...testCase.replies, result("SAFE")]);
       const call = { toolName: "bash" as const, input: { command: "git status" }, cwd: "/repo", config };
       expect(await verifyToolCall(verifier, cache, call)).toBeDefined();
       expect(await verifyToolCall(verifier, cache, call)).toBeUndefined();
-      expect(verifier.calls).toBe(2);
+      expect(verifier.calls).toBe(testCase.callsAfterBlock + 1);
     }
+  });
+
+  test("sends complete long composed commands with structured shell stages", async () => {
+    const { cache } = temporaryCache();
+    const segments = Array.from({ length: 90 }, (_, index) => `printf '${String(index).padStart(3, "0")}${"x".repeat(157)}'`);
+    const command = `${segments.slice(0, 30).join(" && ")} ; ${segments.slice(30, 60).join(" | ")} ; ${segments.slice(60).join(" && ")}`;
+    expect(command.length).toBeGreaterThan(12_000);
+    const verifier = runtime([result("SAFE: bounded development inspection")]);
+
+    expect(await verifyToolCall(verifier, cache, { toolName: "bash", input: { command }, cwd: "/repo", config })).toBeUndefined();
+    expect(verifier.calls).toBe(1);
+    const prompt = verifier.contexts[0].messages[0].content as string;
+    expect(prompt).toContain(command);
+    expect(prompt).toContain('"operator": "&&"');
+    expect(prompt).toContain('"operator": ";"');
+    expect(prompt).toContain('"operator": "|"');
+    expect(prompt).toContain('"stages"');
+    expect(prompt).toContain('"cwd": "/repo"');
+  });
+
+  test("annotates command substitutions, redirections, and mutation intent", async () => {
+    const { cache } = temporaryCache();
+    const command = "printf '%s' \"$(git rev-parse HEAD)\" | tee report.txt 2>>errors.log; echo \"`git status --short`\"";
+    const verifier = runtime([result("SAFE")]);
+
+    expect(await verifyToolCall(verifier, cache, { toolName: "bash", input: { command }, cwd: "/repo", config })).toBeUndefined();
+    const prompt = verifier.contexts[0].messages[0].content as string;
+    expect(prompt).toContain('"kind": "dollar-paren"');
+    expect(prompt).toContain('"kind": "backtick"');
+    expect(prompt).toContain('"operator": "2>>"');
+    expect(prompt).toContain("output redirection can write files");
+    expect(prompt).toContain("filesystem write command");
+  });
+
+  test("preserves dangerous segments hidden late in a long command", async () => {
+    const { cache } = temporaryCache();
+    const lateSegment = "rm -rf /tmp/important-build-state";
+    const command = `${Array.from({ length: 100 }, (_, index) => `printf '%0140d' ${index}`).join(" && ")} && ${lateSegment}`;
+    const verifier = runtime([result("UNSAFE: destructive late stage")]);
+
+    const block = await verifyToolCall(verifier, cache, { toolName: "bash", input: { command }, cwd: "/repo", config });
+    expect(block?.reason).toContain("UNSAFE");
+    expect(verifier.calls).toBe(1);
+    expect(verifier.contexts[0].messages[0].content).toContain(lateSegment);
+  });
+
+  test("blocks oversized input instead of sending a truncated verifier request", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([result("SAFE")]);
+    const command = `${"echo safe && ".repeat(12_000)}rm -rf /late-danger`;
+
+    const block = await verifyToolCall(verifier, cache, { toolName: "bash", input: { command }, cwd: "/repo", config });
+    expect(block?.reason).toMatch(/too (?:large|complex)/);
+    expect(block?.reason).toMatch(/complete|truncated/);
+    expect(verifier.calls).toBe(0);
+  });
+
+  test("does not retry an explicit UNSAFE decision", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([result("UNSAFE: destructive"), result("SAFE")]);
+
+    const block = await verifyToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command: "rm -rf build" },
+      cwd: "/repo",
+      config,
+    });
+    expect(block?.reason).toContain("UNSAFE");
+    expect(verifier.calls).toBe(1);
+  });
+
+  test("permits one clarification for an unclear first response", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([result("This looks ordinary."), result("SAFE: adjudicated")]);
+
+    expect(await verifyToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command: "bun test src/check-mode.test.ts" },
+      cwd: "/repo",
+      config,
+    })).toBeUndefined();
+    expect(verifier.calls).toBe(2);
+    expect(verifier.contexts[1].messages[0].content).toContain("Adjudication request");
+    expect(verifier.options[1].timeoutMs).toBeLessThanOrEqual(verifier.options[0].timeoutMs);
+  });
+
+  test("uses one shared watchdog across the first response and clarification", async () => {
+    const { cache } = temporaryCache();
+    let calls = 0;
+    let secondSignal: AbortSignal | undefined;
+    const verifier = {
+      getAvailableSnapshot: () => [model],
+      completeSimple: async (_model: unknown, _context: unknown, options: { signal: AbortSignal }) => {
+        calls++;
+        if (calls === 1) {
+          await Bun.sleep(15);
+          return result("unclear");
+        }
+        secondSignal = options.signal;
+        return await new Promise<never>(() => {});
+      },
+    } as any;
+
+    const started = Date.now();
+    const block = await verifyToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command: "bun test" },
+      cwd: "/repo",
+      config,
+      timeoutMs: 30,
+    });
+
+    expect(block?.reason).toContain("timeout");
+    expect(calls).toBe(2);
+    expect(secondSignal?.aborted).toBe(true);
+    expect(Date.now() - started).toBeLessThan(150);
   });
 
   test("persists accepted commands and ignores corrupt cache files", async () => {
