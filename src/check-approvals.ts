@@ -10,8 +10,15 @@ export const CHECK_APPROVALS_LIMIT = 256;
 export type CheckedToolName = "bash" | "edit" | "apply_patch";
 export type CheckApprovalChoice = "allow-once" | "allow-session" | "allow-project" | "deny";
 
+export type CheckApprovalTarget = {
+  sessionId: string;
+  agentId?: string;
+};
+
 export type CheckApprovalRequest = {
   id: string;
+  /** Non-forgeable routing metadata supplied by the owning session integration. */
+  target?: CheckApprovalTarget;
   toolName: CheckedToolName;
   model: string;
   cwd: string;
@@ -141,6 +148,15 @@ export class CheckApprovalStore {
       return false;
     }
   }
+}
+
+export function exactApprovalKey(
+  tool: string,
+  model: string,
+  cwd: string,
+  canonicalInput: string,
+): string {
+  return `${tool}\n${model}\n${projectStorageKey(cwd)}\n${canonicalInput}`;
 }
 
 type PendingApproval = {
