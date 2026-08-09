@@ -16,7 +16,7 @@ bun run start    # open the TUI in the current directory
 | `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
 | `src/theme.ts` | Semantic colour tokens, three presets, `theme.json` merge |
 | `src/animation.tsx` | One frame clock; shimmer, spinner, caret |
-| `src/status-bar.tsx` | Top bar; one row, or two when narrow |
+| `src/status-bar.tsx` | Top bar; always one measured row with responsive field priorities |
 | `src/transcript.tsx` | Row rendering per role |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
 | `src/apply-patch.ts` | Codex patch parser, validation, atomic commit, and pi tool |
@@ -124,6 +124,10 @@ These were chosen deliberately. Change them only on purpose.
 - **Colours are never literals.** Everything reads a semantic token from
   `theme.ts`. Nine presets ship; `theme.json` in the config dir overrides any
   subset of tokens. Add a token rather than a hex code.
+- **The status bar is always exactly one rendered row.** Narrow layouts remove
+  cost, cache-read tokens, outgoing tokens, incoming tokens, then the PUM title.
+  Remaining metadata follows explicit operational priorities and Unicode column
+  measurements. The status bar never wraps or switches to a stacked layout.
 - **Compact by default.** No borders around the input, no blank rows between
   turns, no padding that does not earn its place. A user turn is a full-width
   background bar; everything after it indents two columns.
@@ -359,8 +363,7 @@ Each of these cost real debugging. They are not obvious from the docs.
   drifted between wrapped and unwrapped rows. Use a `<box>` with a *numeric*
   `width` — numeric sizes also set `flexShrink: 0`, string ones do not.
 - **Auto-sized boxes shrink.** Anything that must keep its height needs
-  `flexShrink: 0`, or a taller sibling steals its rows and overdraws it. The
-  two-row status bar lost its rule to this.
+  `flexShrink: 0`, or a taller sibling steals its rows and overdraws it.
 - **The scrollbar auto-shows and re-wraps everything.** Once the transcript
   passes one screen it appears, costs a column, and every message re-flows.
   `verticalScrollbarOptions={{ visible: true }}` pins it.
