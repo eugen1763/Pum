@@ -95,6 +95,9 @@ These were chosen deliberately. Change them only on purpose.
   Finished agents remain reusable until merge or removal. A successful managed
   merge closes the agent, removes the worktree and branch, and removes its view.
   Resume restores retained agents. Previously running agents become interrupted.
+- **The main agent never polls background agents.** After spawning all available
+  work, the main turn ends. Completion notifications restart or steer the main
+  loop. Do not use `bash sleep`, shell polling, or repeated status tool calls.
 - **Inter-agent messages are durable.** The recipient gets a custom context
   message. The sender gets a display-only custom entry. Both render with the
   `agentMessage` and `agentMessageBg` theme tokens.

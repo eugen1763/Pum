@@ -41,6 +41,17 @@ const MAX_RUNNING_AGENTS = 4;
 const MAX_RETAINED_AGENTS = 8;
 const MAX_MESSAGE_LENGTH = 12_000;
 
+export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coordination
+
+- spawn_subagent returns after setup. The subagent continues in the background.
+- Never wait for subagents with bash sleep, shell polling loops, repeated list_subagents calls, or repeated worktree status calls.
+- After you spawn all currently independent subagents, finish the current turn and yield the main agent loop.
+- A subagent completion notification will automatically start or steer a later main-agent turn.
+- Treat "wait for every subagent" as yielding until completion notifications arrive, not as active polling.
+- Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
+- For a coordinated batch, track unfinished agents from completion notifications. Merge only after every required agent has settled.
+- If a notification does not arrive, report the notification fault instead of creating a sleep loop.`;
+
 type RuntimeRecord = {
   snapshot: SubagentSnapshot;
   session?: AgentSession;
@@ -372,6 +383,9 @@ export class SubagentManager {
     return {
       name: "pum-subagents",
       factory: (pi) => {
+        pi.on("before_agent_start", (event) => ({
+          systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}`,
+        }));
         pi.on("session_start", async (_event, ctx) => {
           await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
         });
@@ -394,6 +408,7 @@ export class SubagentManager {
           promptGuidelines: [
             "Use spawn_subagent for independent tasks that can run in parallel.",
             "Give each spawn_subagent call a complete, self-contained task.",
+            "After spawning background agents, end the current turn. Never poll with bash sleep or status loops.",
           ],
           parameters: Type.Object({
             task: Type.String({ description: "Complete task for the subagent" }),
