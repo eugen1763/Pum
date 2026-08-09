@@ -63,7 +63,9 @@ export function LoginPopup({ theme, page, terminalWidth, terminalHeight }: {
   terminalHeight: number;
 }) {
   const geometry = popupGeometry(terminalWidth, terminalHeight);
+  const providerCursor = page.kind === "providers" ? page.cursor : null;
   const title = page.kind === "providers" ? " Login " : page.kind.startsWith("custom") ? " Custom provider " : " Provider login ";
+
   return (
     <box
       title={title}
@@ -82,23 +84,30 @@ export function LoginPopup({ theme, page, terminalWidth, terminalHeight }: {
       }}
     >
       {page.kind === "providers" ? <>
-        <text content="Select a provider login method" fg={theme.dim} bg={theme.popupBg} />
+        <text content="Select a provider login method" fg={theme.dim} bg={theme.popupBg} style={{ flexShrink: 0 }} />
         <box style={{ height: 1, flexShrink: 0 }} />
-        <scrollbox style={{ flexGrow: 1, minHeight: 1 }} verticalScrollbarOptions={{ visible: true }}>
+        <scrollbox
+          id="login-provider-list"
+          style={{ flexGrow: 1, minHeight: 1 }}
+          verticalScrollbarOptions={{ visible: true }}
+          renderBefore={function () {
+            if (providerCursor !== null) this.scrollChildIntoView(`login-provider-${providerCursor}`);
+          }}
+        >
           <box style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}>
             {page.methods.map((method, index) => {
               const selected = page.cursor === index;
               const label = `${method.providerName} — ${method.authType === "oauth" ? method.loginLabel ?? method.methodName : method.methodName}`;
-              return <box key={`${method.providerId}:${method.authType}`} style={{ height: 1, flexShrink: 0, backgroundColor: selected ? theme.selectionBg : theme.popupBg }}>
+              return <box id={`login-provider-${index}`} key={`${method.providerId}:${method.authType}`} style={{ height: 1, flexShrink: 0, backgroundColor: selected ? theme.selectionBg : theme.popupBg }}>
                 <text content={`${selected ? "› " : "  "}${label}${method.canLogin ? "" : " (external setup)"}`} fg={selected ? theme.accent : theme.fg} bg={selected ? theme.selectionBg : theme.popupBg} wrapMode="none" />
               </box>;
             })}
-            <box style={{ height: 1, flexShrink: 0, backgroundColor: page.cursor === page.methods.length ? theme.selectionBg : theme.popupBg }}>
+            <box id={`login-provider-${page.methods.length}`} style={{ height: 1, flexShrink: 0, backgroundColor: page.cursor === page.methods.length ? theme.selectionBg : theme.popupBg }}>
               <text content={`${page.cursor === page.methods.length ? "› " : "  "}Custom OpenAI-compatible provider`} fg={page.cursor === page.methods.length ? theme.accent : theme.fg} bg={page.cursor === page.methods.length ? theme.selectionBg : theme.popupBg} />
             </box>
           </box>
         </scrollbox>
-        <text content="↑↓ move   enter select   esc close" fg={theme.dim} bg={theme.popupBg} />
+        <text content="↑↓ move   enter select   esc close" fg={theme.dim} bg={theme.popupBg} style={{ height: 1, flexShrink: 0 }} />
       </> : page.kind === "prompt" ? <>
         <text content={page.providerName} fg={theme.accent} bg={theme.popupBg} />
         <text content={page.prompt.message} fg={theme.fg} bg={theme.popupBg} wrapMode="word" />

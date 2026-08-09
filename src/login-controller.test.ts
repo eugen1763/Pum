@@ -90,4 +90,35 @@ describe("login controller", () => {
     await settle();
     expect(attempts).toBe(2);
   });
+
+  test("retains the provider cursor when child pages return", async () => {
+    const pages: LoginPage[] = [];
+    const providers = Array.from({ length: 8 }, (_, index) => ({
+      id: `provider-${index}`,
+      name: `Provider ${index}`,
+      auth: { apiKey: { name: "API key", login() {}, resolve() {} } },
+    }));
+    const runtime = {
+      getProviders: () => providers,
+      login: async (_id: string, _type: string, interaction: any) => {
+        await new Promise((_resolve, reject) => interaction.signal.addEventListener("abort", () => reject(new Error("cancelled"))));
+      },
+    } as any;
+    const controller = new LoginController(runtime, () => ({}) as any, (page) => pages.push(page), () => {}, () => {});
+    controller.open();
+
+    for (let index = 0; index < providers.length; index++) controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    expect(pages.at(-1)?.kind).toBe("custom-endpoint");
+    controller.handleKey({ name: "escape" });
+    expect(pages.at(-1)).toMatchObject({ kind: "providers", cursor: providers.length });
+
+    controller.handleKey({ name: "up" });
+    controller.handleKey({ name: "enter" });
+    await settle();
+    expect(pages.at(-1)?.kind).toBe("working");
+    controller.handleKey({ name: "escape" });
+    await settle();
+    expect(pages.at(-1)).toMatchObject({ kind: "providers", cursor: providers.length - 1 });
+  });
 });
