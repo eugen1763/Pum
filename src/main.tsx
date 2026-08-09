@@ -40,6 +40,7 @@ import {
   systemTriggerClock,
 } from "./triggers/process";
 import type { StartupOptions } from "./cli";
+import { installSelectionClipboard } from "./clipboard";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -183,10 +184,14 @@ export async function start(options: StartupOptions): Promise<void> {
   if (sessionRuntime.modelFallbackMessage) console.error(sessionRuntime.modelFallbackMessage);
 
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  const selectionClipboard = installSelectionClipboard(renderer);
   const root = createRoot(renderer);
   const shutdown = createShutdown({
     unmount: () => root.unmount(),
-    cleanup: cleanupPendingImages,
+    cleanup: () => {
+      selectionClipboard.dispose();
+      cleanupPendingImages();
+    },
     shutdownTriggers: () => triggerManager.shutdown(),
     dispose: () => sessionRuntime.dispose(),
     destroy: () => renderer.destroy(),

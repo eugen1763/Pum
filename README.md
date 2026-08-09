@@ -131,6 +131,28 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `
 
 Useful commands include `/login`, `/history`, `/triggers`, `/clear`, `/compress`, and `/worktree`.
 
+### Copy transcript text
+
+Drag across transcript text with the left mouse button. PUM copies the completed selection when you release the button.
+
+- On local Windows, PUM first uses the native clipboard module. PUM then tries `clip.exe`.
+- On local macOS, PUM first uses the native clipboard module. PUM then tries `pbcopy`.
+- On local Linux, PUM tries `wl-copy`, `xclip`, or `xsel` when the matching display is available.
+- Over SSH or Mosh, PUM sends OSC 52 through OpenTUI. OpenTUI wraps OSC 52 for detected `tmux` sessions.
+
+Windows Terminal accepts OSC 52 from remote sessions. The terminal can still ask for clipboard-write approval.
+
+For `tmux`, enable clipboard integration and passthrough when the server configuration blocks OSC 52:
+
+```tmux
+set -g set-clipboard on
+set -g allow-passthrough on
+```
+
+Reload the `tmux` configuration after this change. Use the terminal's Shift-drag selection as a manual fallback.
+
+PUM limits remote OSC 52 payloads to 100,000 Base64 characters. This limit prevents large selections from corrupting terminal output.
+
 ## Parallel subagents
 
 PUM runs up to 10 active subagents by default. Configure a limit from 1 through 25 in Settings. Only starting and running agents count toward the limit. Each subagent has these resources:

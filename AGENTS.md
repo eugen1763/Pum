@@ -32,6 +32,7 @@ bun run start    # open the TUI in the current directory
 | `src/prompt-cache.ts` | Reconciliation, retention, migration, and atomic persistence |
 | `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
+| `src/clipboard.ts` | Completed text selection copy routes for native clipboards and OSC 52 |
 | `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
 | `src/subagents/spawn-preview.ts` | Requester-bound preview queue and approval settlement |
@@ -148,6 +149,10 @@ These were chosen deliberately. Change them only on purpose.
   bytes under the system temp directory and inserts `[Image #n]`. Any marker
   edit removes the full marker and file. Sending converts files to pi image
   content, then removes the temporary files.
+- **Completed text selections copy on mouse release.** Local Windows and macOS
+  prefer the native clipboard module, then platform commands. Local Linux uses
+  display clipboard commands. SSH and Mosh use OpenTUI OSC 52, including its
+  detected tmux passthrough framing. Remote OSC 52 output has a bounded payload.
 - **Enter steers while the selected agent is working.** Main-agent input uses
   `session.steer()`. Subagent input routes through `SubagentManager`.
 - **Queued messages stay pending until insertion.** Steering and recipient-side
