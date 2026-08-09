@@ -17,6 +17,7 @@ import {
   type RefObject,
 } from "react";
 import { mix, rgba } from "./theme";
+import type { WorkingRuleAnimationMode } from "./settings";
 
 /** A colour sweep quantised to 256 colours reads as flicker, not motion. */
 export function supportsTrueColor(): boolean {
@@ -45,6 +46,24 @@ const CARET_PERIOD_MS = 900;
 
 const RULE_CHARS_PER_MS = 0.08;
 const RULE_HIGHLIGHT_WIDTH = 10;
+
+export type WorkingRuleRole = "header" | "inputTop" | "inputBottom";
+export type CoordinatedRuleState = {
+  activeRole: "header" | "inputBottom";
+  head: number;
+  direction: -1 | 1;
+};
+
+/** Shared elapsed time makes the bottom and header rules one continuous route. */
+export function coordinatedRuleState(width: number, elapsedMs: number): CoordinatedRuleState {
+  const safeWidth = Math.max(1, width);
+  const route = safeWidth * 2;
+  const position = (elapsedMs * RULE_CHARS_PER_MS) % route;
+  if (position < safeWidth) {
+    return { activeRole: "inputBottom", head: position, direction: 1 };
+  }
+  return { activeRole: "header", head: route - position - 1, direction: -1 };
+}
 
 type Subscriber = (elapsedMs: number) => void;
 
@@ -266,14 +285,43 @@ export function useMarkdownCaret(
   return ref;
 }
 
-/** A fast, one-direction light sweep for horizontal rules. */
-export function useSlidingRule(opts: {
+function ruleText(width: number, base: RGBA, hi: RGBA, head: number): StyledText {
+  const chunks = [];
+  for (let i = 0; i < width; i++) {
+    const distance = Math.abs(i - head);
+    const strength = distance < RULE_HIGHLIGHT_WIDTH
+      ? 1 - distance / RULE_HIGHLIGHT_WIDTH
+      : 0;
+    chunks.push(fg(strength > 0 ? mix(base, hi, strength * 0.8) : base)("─"));
+  }
+  return new StyledText(chunks);
+}
+
+/** Preserve the original input-rule sweep, including its wrapped highlight tail. */
+function inputRuleText(width: number, base: RGBA, hi: RGBA, head: number): StyledText {
+  const chunks = [];
+  for (let i = 0; i < width; i++) {
+    const clockwise = (head - i + width) % width;
+    const counterclockwise = (i - head + width) % width;
+    const distance = Math.min(clockwise, counterclockwise);
+    const strength = distance < RULE_HIGHLIGHT_WIDTH
+      ? 1 - distance / RULE_HIGHLIGHT_WIDTH
+      : 0;
+    chunks.push(fg(strength > 0 ? mix(base, hi, strength * 0.8) : base)("─"));
+  }
+  return new StyledText(chunks);
+}
+
+/** Paint one rule from the shared frame clock without per-frame React state. */
+export function useWorkingRule(opts: {
   width: number;
   color: string;
   highlight: string;
   active: boolean;
+  mode: WorkingRuleAnimationMode;
+  role: WorkingRuleRole;
 }): RefObject<TextRenderable | null> {
-  const { width, color, highlight, active } = opts;
+  const { width, color, highlight, active, mode, role } = opts;
   const ref = useRef<TextRenderable>(null);
   const { subscribe, enabled } = useClock();
 
@@ -282,7 +330,9 @@ export function useSlidingRule(opts: {
   }, [color, width]);
 
   useEffect(() => {
-    if (!active || !enabled || width <= 0) {
+    const animatesInput = mode === "input-only" && role !== "header";
+    const animatesCoordinated = mode === "coordinated" && role !== "inputTop";
+    if (!active || !enabled || mode === "off" || width <= 0 || (!animatesInput && !animatesCoordinated)) {
       plain();
       return;
     }
@@ -291,24 +341,22 @@ export function useSlidingRule(opts: {
     const hi = rgba(highlight);
     return subscribe((elapsedMs) => {
       if (!ref.current) return;
-      const head = (elapsedMs * RULE_CHARS_PER_MS) % width;
-      const chunks = [];
-      for (let i = 0; i < width; i++) {
-        const clockwise = (head - i + width) % width;
-        const counterclockwise = (i - head + width) % width;
-        const distance = Math.min(clockwise, counterclockwise);
-        const strength = distance < RULE_HIGHLIGHT_WIDTH
-          ? 1 - distance / RULE_HIGHLIGHT_WIDTH
-          : 0;
-        chunks.push(fg(strength > 0 ? mix(base, hi, strength * 0.8) : base)("─"));
+      if (mode === "input-only") {
+        const head = (elapsedMs * RULE_CHARS_PER_MS) % width;
+        ref.current.content = inputRuleText(width, base, hi, head);
+        return;
       }
-      ref.current.content = new StyledText(chunks);
+
+      const state = coordinatedRuleState(width, elapsedMs);
+      ref.current.content = state.activeRole === role
+        ? ruleText(width, base, hi, state.head)
+        : new StyledText([fg(color)("─".repeat(width))]);
     });
-  }, [active, enabled, width, color, highlight, plain, subscribe]);
+  }, [active, enabled, mode, role, width, color, highlight, plain, subscribe]);
 
   useEffect(() => {
-    if (!active || !enabled) plain();
-  }, [width, color, active, enabled, plain]);
+    if (!active || !enabled || mode === "off") plain();
+  }, [width, color, active, enabled, mode, plain]);
 
   return ref;
 }
