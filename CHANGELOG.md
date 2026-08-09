@@ -2,6 +2,13 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.1.2-beta.1] - 2026-08-09
+
+### Fixed
+- Fixed a Windows session-history metadata test that treated a native nested path as one opaque filename.
+- Fixed broad-deletion policy test fixtures by quoting generated Windows paths without weakening production hard blocks.
+- Fixed an intermittent `/new` usage-reset test race by waiting for the observable asynchronous session transition.
+
 ## [0.1.1-beta.1] - 2026-08-09
 
 ### Added
@@ -30,4 +37,5 @@ All notable changes to PUM are documented in this file.
 - Added deterministic blocks for project escape, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion.
 - Added sanitized trigger environments, inert templates, strict argument-boundary checks, private bounded output files, and non-overridable hard-block or explicit `UNSAFE` decisions.
 
+[0.1.2-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.1-beta.1...v0.1.2-beta.1
 [0.1.1-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.0-beta.3...v0.1.1-beta.1
