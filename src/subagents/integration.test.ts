@@ -435,6 +435,56 @@ describe("background subagents", () => {
     await restoredManager.detachMain();
   });
 
+  test("retries one stable idle settlement after a manager restart", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const parent = SessionManager.inMemory(repo);
+    const firstManager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await firstManager.attachMain({
+      appendEntry(customType: string, data: unknown) {
+        parent.appendCustomEntry(customType, data);
+      },
+      sendMessage() {
+        throw new Error("main queue unavailable");
+      },
+    } as any, parent, repo);
+
+    const child = await firstManager.spawn({
+      task: "Return to idle for restart delivery testing.",
+      name: "restart-idle-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    });
+    await waitUntil(() => firstManager.getAgent(child.id)?.status === "idle");
+    const settlementBeforeRestart = parent.getEntries()
+      .filter((entry: any) => entry.type === "custom" && entry.customType === "pum.subagent")
+      .map((entry: any) => entry.data)
+      .find((event: any) => event.event === "settlement" && event.settlement?.agentId === child.id);
+    expect(settlementBeforeRestart.settlement.acknowledgedAt).toBeUndefined();
+    await firstManager.detachMain();
+
+    const deliveries: any[] = [];
+    const restored = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await restored.attachMain({
+      appendEntry(customType: string, data: unknown) {
+        parent.appendCustomEntry(customType, data);
+      },
+      sendMessage(message: any) {
+        deliveries.push(message);
+      },
+    } as any, parent, repo);
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].details.id).toBe(settlementBeforeRestart.settlement.messageId);
+    await (restored as any).retrySettlementsForParent(null);
+    expect(deliveries).toHaveLength(1);
+
+    await (restored as any).worktreeAction(repo, "merge", child.id);
+    await restored.detachMain();
+  });
+
   test("closes a retained hierarchy deepest first without unrelated blockers", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),

@@ -5,6 +5,7 @@ import {
   SubagentManager,
   buildSubagentCapacityPrompt,
   countActiveSubagents,
+  isAcknowledgementOnlyMessage,
   isCompletionOnlyMessage,
 } from "./manager";
 import { MESSAGE_CACHE_TOOLS } from "../message-cache";
@@ -63,7 +64,17 @@ function addTestAgent(
       updatedAt: 1,
       usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
     },
+    activityGeneration: 0,
+    idleNotifiedGeneration: 0,
   });
+}
+
+function processAgentEvent(manager: SubagentManager, id: string, event: any): void {
+  (manager as any).processSessionEvent((manager as any).records.get(id), event);
+}
+
+function settleAgent(manager: SubagentManager, id: string): void {
+  processAgentEvent(manager, id, { type: "agent_settled" });
 }
 
 describe("SubagentManager extension", () => {
@@ -237,6 +248,9 @@ describe("SubagentManager extension", () => {
     expect(isCompletionOnlyMessage("Completed the first part. Please review the conflict.")).toBe(false);
     expect(isCompletionOnlyMessage("I am blocked on the API shape." )).toBe(false);
     expect(isCompletionOnlyMessage("Can you answer a question?" )).toBe(false);
+    expect(isAcknowledgementOnlyMessage("Acknowledged.")).toBe(true);
+    expect(isAcknowledgementOnlyMessage("Thanks!" )).toBe(true);
+    expect(isAcknowledgementOnlyMessage("Thanks, please run the tests." )).toBe(false);
   });
 
   test("blocks duplicate final reports from the child message tool", async () => {
@@ -339,6 +353,382 @@ describe("SubagentManager extension", () => {
     expect(manager.getAgent("parent")?.transcript.pending).toHaveLength(1);
     expect(mainDeliveries).toEqual([]);
     expect(events.some((event) => event.type === "main-line")).toBe(false);
+  });
+
+  test("sends one initial idle notice and suppresses duplicate settles", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const deliveries: any[] = [];
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); },
+    };
+
+    processAgentEvent(manager, "worker", { type: "message_start", message: { role: "user", content: "Initial task" } });
+    processAgentEvent(manager, "worker", { type: "agent_end" });
+    settleAgent(manager, "worker");
+    settleAgent(manager, "worker");
+    await Promise.resolve();
+
+    expect(deliveries.filter((delivery) => delivery.details.kind === "idle")).toHaveLength(1);
+    expect(manager.getAgent("worker")?.status).toBe("idle");
+  });
+
+  test("sends a fresh idle notice after each accepted main, sibling, or trigger cycle", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "sender", "idle");
+    addTestAgent(manager, "worker", "idle");
+    const mainDeliveries: any[] = [];
+    const childDeliveries: any[] = [];
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any) { mainDeliveries.push(message); },
+    };
+    const worker = (manager as any).records.get("worker");
+    worker.session = {
+      sessionId: "worker-session",
+      isStreaming: false,
+      sessionManager: { appendCustomEntry() {} },
+    };
+    worker.api = {
+      sendMessage(message: any) { childDeliveries.push(message); },
+    };
+
+    await manager.routeMessage("main", "worker", "Run the main-requested check.");
+    processAgentEvent(manager, "worker", {
+      type: "message_start",
+      message: { role: "custom", ...childDeliveries.shift() },
+    });
+    settleAgent(manager, "worker");
+    await manager.routeMessage("sender", "worker", "Run the sibling review.");
+    processAgentEvent(manager, "worker", {
+      type: "message_start",
+      message: { role: "custom", ...childDeliveries.shift() },
+    });
+    settleAgent(manager, "worker");
+    processAgentEvent(manager, "worker", {
+      type: "message_start",
+      message: {
+        role: "custom",
+        customType: TRIGGER_EVENT_CUSTOM_TYPE,
+        details: { id: "trigger-event" },
+      },
+    });
+    settleAgent(manager, "worker");
+    await Promise.resolve();
+
+    expect(mainDeliveries.filter((delivery) => delivery.details.kind === "idle")).toHaveLength(3);
+  });
+
+  test("routes child-woken re-idle only to the direct spawner", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "grandparent", "idle");
+    addTestAgent(manager, "parent", "idle", "grandparent");
+    addTestAgent(manager, "child", "idle", "parent");
+    const mainDeliveries: any[] = [];
+    const parentInputs: any[] = [];
+    const grandparentInputs: any[] = [];
+    (manager as any).mainApi = { appendEntry() {}, sendMessage(message: any) { mainDeliveries.push(message); } };
+    for (const [id, inputs] of [["parent", parentInputs], ["grandparent", grandparentInputs]] as const) {
+      const record = (manager as any).records.get(id);
+      record.session = {
+        sessionId: `${id}-session`,
+        isStreaming: false,
+        sessionManager: { appendCustomEntry() {} },
+      };
+      record.api = { sendMessage(message: any) { inputs.push(message); } };
+    }
+
+    await manager.routeMessage("child", "parent", "Inspect the child result.");
+    processAgentEvent(manager, "parent", {
+      type: "message_start",
+      message: { role: "custom", ...parentInputs.shift() },
+    });
+    settleAgent(manager, "parent");
+    await Promise.resolve();
+
+    expect(grandparentInputs).toHaveLength(1);
+    expect(grandparentInputs[0].details.kind).toBe("idle");
+    expect(grandparentInputs[0].details.recipient).toBe("grandparent");
+    expect(mainDeliveries).toEqual([]);
+  });
+
+  test("does not create cycles for failed delivery, lifecycle notices, or acknowledgements", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "sender", "idle");
+    addTestAgent(manager, "worker", "idle");
+    const mainDeliveries: any[] = [];
+    (manager as any).mainApi = { appendEntry() {}, sendMessage(message: any) { mainDeliveries.push(message); } };
+    const worker = (manager as any).records.get("worker");
+    worker.session = {
+      sessionId: "worker-session",
+      isStreaming: false,
+      sessionManager: { appendCustomEntry() {} },
+    };
+    worker.api = { sendMessage() { throw new Error("delivery failed"); } };
+
+    await expect(manager.routeMessage("sender", "worker", "Do the work.")).rejects.toThrow("delivery failed");
+    expect(worker.snapshot.transcript.pending).toEqual([]);
+    settleAgent(manager, "worker");
+
+    for (const kind of ["idle", "completion", "status", "acknowledgement"] as const) {
+      processAgentEvent(manager, "worker", {
+        type: "message_start",
+        message: {
+          role: "custom",
+          customType: "pum.agent_message",
+          details: { id: kind, kind },
+        },
+      });
+      settleAgent(manager, "worker");
+    }
+    await Promise.resolve();
+
+    expect(mainDeliveries).toEqual([]);
+  });
+
+  test("restores interrupted activity as consumed before a new cycle", async () => {
+    const entries = [
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: {
+          event: "spawned",
+          id: "worker",
+          snapshot: {
+            id: "worker",
+            name: "worker",
+            task: "task",
+            status: "running",
+            worktree: { name: "worker", path: "/tmp/worker", branch: "pum/worker", baseBranch: "main", baseCommit: "abc" },
+            parentAgentId: null,
+            modelId: "mock/model",
+            thinkingLevel: "off",
+            startedAt: 1,
+            updatedAt: 1,
+            usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
+          },
+        },
+      },
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: { event: "activity", id: "worker", activityGeneration: 3, idleNotifiedGeneration: 2 },
+      },
+    ];
+    const deliveries: any[] = [];
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    await manager.attachMain({ appendEntry() {}, sendMessage(message: any) { deliveries.push(message); } } as any, {
+      getSessionId: () => "main-session",
+      getEntries: () => entries,
+    } as any, "/repo");
+
+    expect(manager.getAgent("worker")?.status).toBe("interrupted");
+    settleAgent(manager, "worker");
+    processAgentEvent(manager, "worker", { type: "message_start", message: { role: "user", content: "Resume with new work" } });
+    settleAgent(manager, "worker");
+    await Promise.resolve();
+
+    expect(deliveries.filter((delivery) => delivery.details.kind === "idle")).toHaveLength(1);
+  });
+
+  test("keeps a failed main wake unacknowledged and retries the stable message ID", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const events: any[] = [];
+    const lines: any[] = [];
+    manager.subscribe((event) => {
+      if (event.type === "main-line") lines.push(event.line);
+    });
+    (manager as any).mainApi = {
+      appendEntry(_type: string, event: any) { events.push(event); },
+      sendMessage() { throw new Error("main wake failed"); },
+    };
+
+    processAgentEvent(manager, "worker", { type: "message_start", message: { role: "user", content: "Work" } });
+    settleAgent(manager, "worker");
+    await Promise.resolve();
+    const unacknowledged = [...(manager as any).settlements.values()][0];
+    expect(unacknowledged.acknowledgedAt).toBeUndefined();
+    expect(lines).toEqual([]);
+
+    const deliveries: any[] = [];
+    (manager as any).mainApi = {
+      appendEntry(_type: string, event: any) { events.push(event); },
+      sendMessage(message: any) { deliveries.push(message); },
+    };
+    await (manager as any).retrySettlementsForParent(null);
+    await (manager as any).retrySettlementsForParent(null);
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].details.id).toBe(unacknowledged.messageId);
+    expect(lines).toHaveLength(1);
+    expect(events.filter((event) => event.event === "settlement").at(-1).settlement.acknowledgedAt).toBeNumber();
+  });
+
+  test("persists finish intent before finish_subagent returns and restores completion delivery", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const entries: any[] = [{
+      type: "custom",
+      customType: "pum.subagent",
+      data: {
+        event: "spawned",
+        id: "worker",
+        snapshot: { ...(manager.getAgent("worker") as any), transcript: undefined },
+      },
+    }];
+    (manager as any).mainApi = {
+      appendEntry(customType: string, data: any) { entries.push({ type: "custom", customType, data }); },
+    };
+    const tools = new Map<string, any>();
+    (manager as any).childExtension("worker").factory({
+      on() {},
+      registerTool(tool: any) { tools.set(tool.name, tool); },
+    });
+
+    await tools.get("finish_subagent").execute("finish", { summary: "Persisted summary." });
+    expect(entries.at(-1).data).toMatchObject({
+      event: "finish",
+      id: "worker",
+      finishSummary: "Persisted summary.",
+    });
+
+    const deliveries: any[] = [];
+    const restored = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    await restored.attachMain({
+      appendEntry(customType: string, data: any) { entries.push({ type: "custom", customType, data }); },
+      sendMessage(message: any) { deliveries.push(message); },
+    } as any, {
+      getSessionId: () => "main-session",
+      getEntries: () => entries,
+    } as any, "/repo");
+    settleAgent(restored, "worker");
+    await Promise.resolve();
+
+    expect(restored.getAgent("worker")?.status).toBe("completed");
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].content).toContain("summary: Persisted summary.");
+    expect(entries.some((entry) => entry.data?.event === "finish" && entry.data.finishSummary === null)).toBe(true);
+  });
+
+  test("retries an unacknowledged persisted settlement and skips an acknowledged settlement", async () => {
+    const baseSnapshot = {
+      id: "worker",
+      name: "worker",
+      task: "task",
+      status: "idle",
+      worktree: { name: "worker", path: "/tmp/worker", branch: "pum/worker", baseBranch: "main", baseCommit: "abc" },
+      parentAgentId: null,
+      modelId: "mock/model",
+      thinkingLevel: "off",
+      startedAt: 1,
+      updatedAt: 1,
+      usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
+    };
+    const settlement = {
+      id: "worker:1:idle",
+      messageId: "settlement-worker:1:idle",
+      agentId: "worker",
+      parentAgentId: null,
+      status: "idle",
+      activityGeneration: 1,
+      content: "Subagent worker idle.",
+      createdAt: 2,
+    };
+    const entries = [
+      { type: "custom", customType: "pum.subagent", data: { event: "spawned", id: "worker", snapshot: baseSnapshot } },
+      { type: "custom", customType: "pum.subagent", data: { event: "settlement", id: "worker", settlement } },
+    ];
+    const deliveries: any[] = [];
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    await manager.attachMain({
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); },
+    } as any, { getSessionId: () => "main", getEntries: () => entries } as any, "/repo");
+    expect(deliveries.map((delivery) => delivery.details.id)).toEqual([settlement.messageId]);
+
+    const acknowledgedEntries = [
+      ...entries,
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: {
+          event: "settlement",
+          id: "worker",
+          settlement: { ...settlement, acknowledgedAt: 3 },
+        },
+      },
+    ];
+    const secondDeliveries: any[] = [];
+    const restored = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    await restored.attachMain({
+      appendEntry() {},
+      sendMessage(message: any) { secondDeliveries.push(message); },
+    } as any, { getSessionId: () => "main", getEntries: () => acknowledgedEntries } as any, "/repo");
+    expect(secondDeliveries).toEqual([]);
+  });
+
+  test("retries a nested settlement only when the exact parent runtime accepts it", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "idle");
+    addTestAgent(manager, "child", "running", "parent");
+    const child = (manager as any).records.get("child");
+    child.activityGeneration = 1;
+    await (manager as any).recordSettlement(child, "idle");
+    const settlement = [...(manager as any).settlements.values()][0];
+    expect(settlement.acknowledgedAt).toBeUndefined();
+
+    const parent = (manager as any).records.get("parent");
+    const deliveries: any[] = [];
+    parent.session = {
+      sessionId: "parent-session",
+      isStreaming: false,
+      sessionManager: { getEntries: () => [], appendCustomEntry() {} },
+    };
+    parent.api = { sendMessage(message: any) { deliveries.push(message); } };
+    await (manager as any).retrySettlementsForParent("parent");
+    await (manager as any).retrySettlementsForParent("parent");
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].details.id).toBe(settlement.messageId);
+    expect(settlement.acknowledgedAt).toBeNumber();
+  });
+
+  test("deduplicates a crash-window nested settlement at the recipient session boundary", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "idle");
+    addTestAgent(manager, "child", "idle", "parent");
+    const settlement: any = {
+      id: "child:1:idle",
+      messageId: "settlement-child:1:idle",
+      agentId: "child",
+      parentAgentId: "parent",
+      status: "idle",
+      activityGeneration: 1,
+      content: "Subagent child idle.",
+      createdAt: 2,
+    };
+    (manager as any).settlements.set(settlement.id, settlement);
+    const sends: any[] = [];
+    const parent = (manager as any).records.get("parent");
+    parent.session = {
+      sessionId: "parent-session",
+      isStreaming: false,
+      sessionManager: {
+        getEntries: () => [{
+          type: "custom_message",
+          customType: "pum.agent_message",
+          details: { id: settlement.messageId },
+        }],
+      },
+    };
+    parent.api = { sendMessage(message: any) { sends.push(message); } };
+
+    await (manager as any).retrySettlementsForParent("parent");
+
+    expect(sends).toEqual([]);
+    expect(settlement.acknowledgedAt).toBeNumber();
   });
 
   test("counts only starting and running subagents as active", () => {
