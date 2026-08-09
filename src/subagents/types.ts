@@ -6,6 +6,8 @@ export const SUBAGENT_CUSTOM_TYPE = "pum.subagent";
 export const AGENT_MESSAGE_CUSTOM_TYPE = "pum.agent_message";
 export const AGENT_MESSAGE_DISPLAY_TYPE = "pum.agent_message_display";
 export const TOOL_EVENT_CUSTOM_TYPE = "pum.tool_event";
+/** Hidden user-message prefix used only to guarantee that the main loop wakes. */
+export const SUBAGENT_WAKE_PREFIX = "[PUM internal subagent wake]";
 
 export type SubagentStatus =
   | "starting"

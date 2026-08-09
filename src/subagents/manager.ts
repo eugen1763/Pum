@@ -27,6 +27,7 @@ import {
   AGENT_MESSAGE_CUSTOM_TYPE,
   AGENT_MESSAGE_DISPLAY_TYPE,
   SUBAGENT_CUSTOM_TYPE,
+  SUBAGENT_WAKE_PREFIX,
   TOOL_EVENT_CUSTOM_TYPE,
   type AgentMessageData,
   type AgentTranscript,
@@ -111,8 +112,6 @@ export class SubagentManager {
   private mainApi?: ExtensionAPI;
   private mainSessionManager?: ExtensionContext["sessionManager"];
   private mainCwd = process.cwd();
-  private mainRunning = false;
-  private mainWakeGeneration = 0;
   private parentSessionId = "detached";
   private worktreeQueue: Promise<void> = Promise.resolve();
   private readonly messageTimes = new Map<string, number[]>();
@@ -168,8 +167,6 @@ export class SubagentManager {
     this.mainApi = pi;
     this.mainSessionManager = sessionManager;
     this.mainCwd = cwd;
-    this.mainRunning = false;
-    this.mainWakeGeneration++;
     this.parentSessionId = sessionManager.getSessionId();
 
     const restored = new Map<string, Omit<SubagentSnapshot, "transcript">>();
@@ -216,8 +213,6 @@ export class SubagentManager {
     await this.stopAll("interrupted", true);
     this.mainApi = undefined;
     this.mainSessionManager = undefined;
-    this.mainRunning = false;
-    this.mainWakeGeneration++;
     this.records.clear();
     this.emit();
   }
@@ -388,13 +383,6 @@ export class SubagentManager {
         }));
         pi.on("session_start", async (_event, ctx) => {
           await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
-        });
-        pi.on("agent_start", () => {
-          this.mainRunning = true;
-          this.mainWakeGeneration++;
-        });
-        pi.on("agent_settled", () => {
-          this.mainRunning = false;
         });
         pi.on("session_shutdown", async () => {
           await this.detachMain();
@@ -700,18 +688,14 @@ export class SubagentManager {
   ): void {
     const api = this.mainApi;
     if (!api) return;
-    const wasRunning = this.mainRunning;
-    const generation = this.mainWakeGeneration;
-    api.sendMessage(message, { deliverAs: "steer", triggerTurn: true });
-    if (wasRunning) return;
-
-    setTimeout(() => {
-      if (this.mainApi !== api || this.mainRunning || this.mainWakeGeneration !== generation) return;
-      api.sendUserMessage(
-        `[PUM subagent notification]\n${fallback}`,
-        { deliverAs: "followUp" },
-      );
-    }, 300);
+    // Keep the structured custom message in context and use a hidden user
+    // message as the reliable wake signal. Pi guarantees user messages start a
+    // turn, while a custom trigger can emit agent_start without a visible turn.
+    api.sendMessage(message, { deliverAs: "followUp" });
+    api.sendUserMessage(
+      `${SUBAGENT_WAKE_PREFIX}\n${fallback}`,
+      { deliverAs: "followUp" },
+    );
   }
 
   private notifyMain(record: RuntimeRecord, status: SubagentStatus, summary?: string): void {

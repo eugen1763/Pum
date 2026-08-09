@@ -3,6 +3,7 @@ import { replayEntries } from "./replay";
 import {
   AGENT_MESSAGE_CUSTOM_TYPE,
   AGENT_MESSAGE_DISPLAY_TYPE,
+  SUBAGENT_WAKE_PREFIX,
   TOOL_EVENT_CUSTOM_TYPE,
 } from "./subagents/types";
 
@@ -28,6 +29,13 @@ describe("subagent transcript replay", () => {
         customType: AGENT_MESSAGE_CUSTOM_TYPE,
         content: "Message from worker-a:\nReview the parser change",
         details: message,
+      },
+      {
+        type: "message",
+        message: {
+          role: "user",
+          content: `${SUBAGENT_WAKE_PREFIX}\nProcess the completion notice`,
+        },
       },
       {
         type: "custom",

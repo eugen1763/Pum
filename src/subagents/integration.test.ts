@@ -84,7 +84,7 @@ describe("background subagents", () => {
     });
     const parent = SessionManager.inMemory(repo);
     const notices: string[] = [];
-    const wakeFallbacks: string[] = [];
+    const wakeMessages: string[] = [];
     const mainApi = {
       appendEntry(customType: string, data: unknown) {
         parent.appendCustomEntry(customType, data);
@@ -99,7 +99,7 @@ describe("background subagents", () => {
         );
       },
       sendUserMessage(content: string) {
-        wakeFallbacks.push(content);
+        wakeMessages.push(content);
       },
     };
     const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
@@ -146,8 +146,7 @@ describe("background subagents", () => {
     await manager.routeMessage(spawned.id, "main", "The peer review has started.");
     expect(notices.some((notice) => notice.includes("Message from integration-agent"))).toBe(true);
 
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    expect(wakeFallbacks.some((notice) => notice.includes("PUM subagent notification"))).toBe(true);
+    expect(wakeMessages.some((notice) => notice.includes("PUM internal subagent wake"))).toBe(true);
 
     const merged = await (manager as any).worktreeAction(repo, "merge", spawned.id);
     expect(merged.content[0].text).toContain("Closed integration-agent and removed its worktree");

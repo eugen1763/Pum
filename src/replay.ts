@@ -7,6 +7,7 @@ import {
 import {
   AGENT_MESSAGE_CUSTOM_TYPE,
   AGENT_MESSAGE_DISPLAY_TYPE,
+  SUBAGENT_WAKE_PREFIX,
   TOOL_EVENT_CUSTOM_TYPE,
   type AgentMessageData,
 } from "./subagents/types";
@@ -139,6 +140,7 @@ export function replayEntries(
 
     if (message?.role === "user") {
       const text = textOf(message.content);
+      if (text.startsWith(SUBAGENT_WAKE_PREFIX)) continue;
       if (text) lines.push({ kind: "text", role: "user", text });
       continue;
     }
