@@ -1,4 +1,5 @@
 import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
+import { randomUUID } from "node:crypto";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime, SessionInfo } from "@earendil-works/pi-coding-agent";
@@ -10,10 +11,12 @@ import { StatusBar } from "./status-bar";
 import {
   AgentMessageLine,
   needsTranscriptGap,
+  PendingMessageLine,
   StreamLine,
   TextLine,
   ToolLine,
   type Line,
+  type PendingLine,
   type Role,
 } from "./transcript";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
@@ -56,7 +59,7 @@ import { CANCEL_WINDOW_MS, confirmsCancellation } from "./cancel-confirmation";
 import { buildStashBatchPrompt, selectedRange } from "./stash-batch";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
-type Transcript = { lines: Line[]; stream: Stream };
+type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
 
 const QUIT_WINDOW_MS = 2000;
 const MAX_INPUT_ROWS = 8;
@@ -173,11 +176,21 @@ export function PromptStash({
   );
 }
 
+function messageText(message: any): string {
+  if (typeof message?.content === "string") return message.content.trim();
+  if (!Array.isArray(message?.content)) return "";
+  return message.content
+    .filter((block: any) => block?.type === "text" && typeof block.text === "string")
+    .map((block: any) => block.text)
+    .join("")
+    .trim();
+}
+
 /** Move any buffered stream into the transcript so later lines land in order. */
 function flushed(t: Transcript): Transcript {
   if (t.stream && t.stream.text.trim()) {
     const line: Line = { kind: "text", role: t.stream.kind, text: t.stream.text.trim() };
-    return { lines: [...t.lines, line], stream: null };
+    return { lines: [...t.lines, line], stream: null, pending: t.pending };
   }
   return { ...t, stream: null };
 }
@@ -212,6 +225,7 @@ export function App({
       initial.showThinking,
     ),
     stream: null,
+    pending: [],
   }));
   const [busy, setBusy] = useState(false);
   const [quitArmed, setQuitArmed] = useState(false);
@@ -498,9 +512,44 @@ export function App({
       return { ...f, lines: [...f.lines, line] };
     });
 
+  const addPending = (pending: PendingLine) =>
+    setTx((value) => ({ ...value, pending: [...value.pending, pending] }));
+
+  const resolvePending = (id: string) =>
+    setTx((value) => {
+      const pending = value.pending.find((item) => item.id === id);
+      if (!pending) return value;
+      const f = flushed(value);
+      return {
+        ...f,
+        lines: [...f.lines, pending.line],
+        pending: f.pending.filter((item) => item.id !== id),
+      };
+    });
+
+  const dropPending = (id: string) =>
+    setTx((value) => ({
+      ...value,
+      pending: value.pending.filter((item) => item.id !== id),
+    }));
+
+  const resolvePendingText = (text: string) =>
+    setTx((value) => {
+      const pending = value.pending.find((item) => item.deliveryText === text);
+      if (!pending) return value;
+      const f = flushed(value);
+      return {
+        ...f,
+        lines: [...f.lines, pending.line],
+        pending: f.pending.filter((item) => item.id !== pending.id),
+      };
+    });
+
   useEffect(
     () => subagentManager.subscribe((event) => {
       if (event.type === "main-line") append(event.line);
+      else if (event.type === "main-pending-add") addPending(event.pending);
+      else if (event.type === "main-pending-resolve") resolvePending(event.id);
       setAgentRevision((revision) => revision + 1);
     }),
     [subagentManager],
@@ -535,6 +584,7 @@ export function App({
     setTx({
       lines: replayEntries(session.sessionManager.buildContextEntries(), cwd, showThinkingRef.current),
       stream: null,
+      pending: [],
     });
     setUsage({ tokens: 0, cost: 0, contextPct: null });
     if (focusInputAfterSwitch.current) {
@@ -544,6 +594,13 @@ export function App({
 
     return session.subscribe((event) => {
       switch (event.type) {
+        case "message_start": {
+          if (event.message.role === "user") {
+            const text = messageText(event.message);
+            if (text) resolvePendingText(text);
+          }
+          break;
+        }
         case "message_update": {
           const update = event.assistantMessageEvent;
           if (update.type === "text_delta") delta("assistant", update.delta);
@@ -748,6 +805,10 @@ export function App({
     // Hand a prompt back for editing: the queued steer if there is one, since
     // that is the newest thing written, otherwise the prompt that was running.
     const queued = session.clearQueue().steering;
+    setTx((value) => ({
+      ...value,
+      pending: value.pending.filter((item) => item.line.kind === "agent-message"),
+    }));
     const restore = queued.length ? queued[queued.length - 1]! : inFlight.current;
     if (inputRef.current && !inputRef.current.plainText) setEditorText(restore);
     histCursor.current = null;
@@ -890,17 +951,29 @@ export function App({
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
-    append({ kind: "text", role: "user", text: displayText.trim() });
+    const userLine: Extract<Line, { kind: "text" }> = {
+      kind: "text",
+      role: "user",
+      text: displayText.trim(),
+    };
 
-    // Working already: queue it as steering, delivered once the current step's
-    // tool calls finish, rather than starting a second turn.
+    // Working already: keep the steering message pending at the transcript
+    // bottom until pi emits message_start for its actual insertion.
     if (busyRef.current) {
+      const pending: PendingLine = {
+        id: randomUUID().slice(0, 12),
+        line: userLine,
+        deliveryText: promptText,
+      };
+      addPending(pending);
       withSearchRoute(session.sessionId, () => session.steer(promptText, images)).catch((err) => {
+        dropPending(pending.id);
         append({ kind: "text", role: "error", text: String(err) });
       });
       return;
     }
 
+    append(userLine);
     inFlight.current = promptText;
     setWorking(true);
     withSearchRoute(session.sessionId, () => session.prompt(promptText, { images })).catch((err) => {
@@ -932,18 +1005,30 @@ export function App({
     draft.current = "";
     setStashMode(false);
     setEditorText("");
-    append({ kind: "text", role: "user", text: displayText });
+    const userLine: Extract<Line, { kind: "text" }> = {
+      kind: "text",
+      role: "user",
+      text: displayText,
+    };
 
     if (busyRef.current) {
-      session.steer(orchestrationPrompt).catch((error) => {
+      const pending: PendingLine = {
+        id: randomUUID().slice(0, 12),
+        line: userLine,
+        deliveryText: orchestrationPrompt,
+      };
+      addPending(pending);
+      withSearchRoute(session.sessionId, () => session.steer(orchestrationPrompt)).catch((error) => {
+        dropPending(pending.id);
         append({ kind: "text", role: "error", text: String(error) });
       });
       return;
     }
 
+    append(userLine);
     inFlight.current = orchestrationPrompt;
     setWorking(true);
-    session.prompt(orchestrationPrompt).catch((error) => {
+    withSearchRoute(session.sessionId, () => session.prompt(orchestrationPrompt)).catch((error) => {
       append({ kind: "text", role: "error", text: String(error) });
       setWorking(false);
     });
@@ -1375,6 +1460,14 @@ export function App({
                 role={visibleTx.stream.kind}
                 text={visibleTx.stream.text}
               />
+            </>
+          ) : null}
+          {visibleTx.pending.length > 0 ? (
+            <>
+              {(visibleTx.lines.length > 0 || visibleTx.stream) ? <Gap /> : null}
+              {visibleTx.pending.map((pending) => (
+                <PendingMessageLine key={pending.id} theme={theme} pending={pending} />
+              ))}
             </>
           ) : null}
         </scrollbox>

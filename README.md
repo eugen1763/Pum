@@ -70,8 +70,11 @@ type `\` and press Enter; PUM removes the `\` and inserts a line break.
 
 While it is working the prompt reads `Steer…`. Anything you send then is
 delivered once the current step's tool calls finish, so you can redirect the
-agent without stopping it. Press Esc twice within two seconds to cancel the
-selected agent. The first press shows a temporary confirmation hint.
+agent without stopping it. Queued steering stays in a dim pending section at
+the transcript bottom until pi inserts it into the next turn. Inter-agent
+messages use the same pending behavior on the recipient transcript. Press Esc
+twice within two seconds to cancel the selected agent. The first press shows a
+temporary confirmation hint.
 
 The main agent can start parallel subagents with `spawn_subagent`. Each subagent
 gets a persistent pi session and a branch under `.pum/worktrees`. Completion

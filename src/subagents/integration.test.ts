@@ -139,6 +139,9 @@ describe("background subagents", () => {
       (line) => line.kind === "text" && line.role === "assistant",
     ).length ?? 0;
     await manager.routeMessage(spawned.id, peer.id, "Review the completed task.");
+    expect(manager.getAgent(peer.id)?.transcript.pending.some(
+      (pending) => pending.line.kind === "agent-message" && pending.line.sender === "integration-agent",
+    )).toBe(true);
     const messageDeadline = Date.now() + 5_000;
     while (Date.now() < messageDeadline && manager.getAgent(peer.id)?.status === "running") {
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -146,6 +149,7 @@ describe("background subagents", () => {
     expect(manager.getAgent(peer.id)?.transcript.lines.filter(
       (line) => line.kind === "text" && line.role === "assistant",
     ).length).toBe(peerAnswersBefore + 1);
+    expect(manager.getAgent(peer.id)?.transcript.pending).toEqual([]);
     expect(manager.getAgent(spawned.id)?.transcript.lines.some(
       (line) => line.kind === "agent-message" && line.recipient === "integration-peer",
     )).toBe(true);

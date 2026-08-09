@@ -29,6 +29,7 @@ const snapshot: SubagentSnapshot = {
       text: "Subagent transcript",
     }],
     stream: null,
+    pending: [],
   },
   startedAt: 1,
   updatedAt: 1,

@@ -20,7 +20,7 @@ import {
   withSearchRoute,
 } from "../web-search";
 import { editCounts, toolArg, type ToolCall } from "../tool-line";
-import type { Line } from "../transcript";
+import type { Line, PendingLine } from "../transcript";
 import {
   createWorktree,
   listWorktrees,
@@ -84,7 +84,7 @@ type ManagerOptions = {
   childExtensionFactories?: InlineExtension[];
 };
 
-const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null });
+const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
 
 function flushTranscript(transcript: AgentTranscript): AgentTranscript {
   if (!transcript.stream?.text.trim()) return { ...transcript, stream: null };
@@ -94,6 +94,7 @@ function flushTranscript(transcript: AgentTranscript): AgentTranscript {
       { kind: "text", role: transcript.stream.kind, text: transcript.stream.text.trim() },
     ],
     stream: null,
+    pending: transcript.pending,
   };
 }
 
@@ -111,6 +112,10 @@ function cloneSnapshot(record: RuntimeRecord): SubagentSnapshot {
       stream: record.snapshot.transcript.stream
         ? { ...record.snapshot.transcript.stream }
         : null,
+      pending: record.snapshot.transcript.pending.map((pending) => ({
+        ...pending,
+        line: { ...pending.line },
+      })),
     },
   };
 }
@@ -214,6 +219,7 @@ export class SubagentManager {
           transcript = {
             lines: replayEntries(childManager.buildContextEntries(), snapshot.worktree.path, true),
             stream: null,
+            pending: [],
           };
         } catch {
           // Keep metadata even if an old subagent session cannot be opened.
@@ -273,6 +279,38 @@ export class SubagentManager {
     });
   }
 
+  private addPending(record: RuntimeRecord, pending: PendingLine): void {
+    this.updateTranscript(record, (value) => ({
+      ...value,
+      pending: [...value.pending, pending],
+    }));
+  }
+
+  private resolvePending(record: RuntimeRecord, id: string): void {
+    this.updateTranscript(record, (value) => {
+      const pending = value.pending.find((item) => item.id === id);
+      if (!pending) return value;
+      const flushed = flushTranscript(value);
+      return {
+        ...flushed,
+        lines: [...flushed.lines, pending.line],
+        pending: flushed.pending.filter((item) => item.id !== id),
+      };
+    });
+  }
+
+  private resolvePendingText(record: RuntimeRecord, text: string): void {
+    const pending = record.snapshot.transcript.pending.find((item) => item.deliveryText === text);
+    if (pending) this.resolvePending(record, pending.id);
+  }
+
+  private dropPending(record: RuntimeRecord, id: string): void {
+    this.updateTranscript(record, (value) => ({
+      ...value,
+      pending: value.pending.filter((item) => item.id !== id),
+    }));
+  }
+
   private patchTool(record: RuntimeRecord, id: string, patch: Partial<ToolCall>): void {
     this.updateTranscript(record, (value) => ({
       ...value,
@@ -286,6 +324,25 @@ export class SubagentManager {
 
   private processSessionEvent(record: RuntimeRecord, event: any): void {
     switch (event.type) {
+      case "message_start": {
+        const message = event.message;
+        if (message?.role === "custom" && message.customType === AGENT_MESSAGE_CUSTOM_TYPE) {
+          const id = message.details?.id;
+          if (typeof id === "string") this.resolvePending(record, id);
+        } else if (message?.role === "user") {
+          const text = typeof message.content === "string"
+            ? message.content
+            : Array.isArray(message.content)
+              ? message.content
+                .filter((block: any) => block?.type === "text")
+                .map((block: any) => block.text)
+                .join("")
+                .trim()
+              : "";
+          if (text) this.resolvePendingText(record, text);
+        }
+        break;
+      }
       case "message_update": {
         const update = event.assistantMessageEvent;
         const kind = update.type === "text_delta" ? "assistant" : update.type === "thinking_delta" ? "thinking" : null;
@@ -419,6 +476,12 @@ export class SubagentManager {
         pi.on("before_agent_start", (event) => ({
           systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}`,
         }));
+        pi.on("message_start", (event) => {
+          const message = event.message;
+          if (message.role !== "custom" || message.customType !== AGENT_MESSAGE_CUSTOM_TYPE) return;
+          const id = (message.details as AgentMessageData | undefined)?.id;
+          if (typeof id === "string") this.emit({ type: "main-pending-resolve", id });
+        });
         pi.on("session_start", async (_event, ctx) => {
           await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
         });
@@ -662,14 +725,25 @@ export class SubagentManager {
     const record = this.findRecord(id);
     if (!record) throw new Error(`Unknown subagent: ${id}`);
     await this.ensureRuntime(record);
-    this.appendLine(record, { kind: "text", role: "user", text: displayText });
+    const pending: PendingLine = {
+      id: randomUUID().slice(0, 12),
+      line: { kind: "text", role: "user", text: displayText },
+      deliveryText: text,
+    };
+    this.addPending(record, pending);
     this.updateStatus(record, "running");
     if (record.session!.isStreaming) {
-      await withSearchRoute(record.session!.sessionId, () => record.session!.steer(text, images));
+      try {
+        await withSearchRoute(record.session!.sessionId, () => record.session!.steer(text, images));
+      } catch (error) {
+        this.dropPending(record, pending.id);
+        throw error;
+      }
     } else void withSearchRoute(
       record.session!.sessionId,
       () => record.session!.prompt(text, { images }),
     ).catch((error) => {
+      this.dropPending(record, pending.id);
       this.updateStatus(record, "failed", String(error));
       this.notifyMain(record, "failed", String(error));
     });
@@ -681,7 +755,7 @@ export class SubagentManager {
     await record.session.abort();
   }
 
-  private agentMessageLine(data: AgentMessageData): Line {
+  private agentMessageLine(data: AgentMessageData): Extract<Line, { kind: "agent-message" }> {
     return {
       kind: "agent-message",
       sender: data.sender,
@@ -717,6 +791,7 @@ export class SubagentManager {
     };
 
     const line = this.agentMessageLine(data);
+    const pending: PendingLine = { id: data.id, line };
     if (sender) {
       sender.session?.sessionManager.appendCustomEntry(AGENT_MESSAGE_DISPLAY_TYPE, data);
       this.appendLine(sender, line);
@@ -733,12 +808,12 @@ export class SubagentManager {
     };
     if (recipientTarget === "main") {
       if (!this.mainApi) throw new Error("Main agent is unavailable");
+      this.emit({ type: "main-pending-add", pending });
       this.wakeMain(customMessage, customMessage.content);
-      this.emit({ type: "main-line", line });
     } else if (recipient) {
       await this.ensureRuntime(recipient);
       if (!recipient.api) throw new Error(`Agent message API is unavailable: ${recipient.snapshot.name}`);
-      this.appendLine(recipient, line);
+      this.addPending(recipient, pending);
       withSearchRoute(recipient.session!.sessionId, () => {
         recipient.api!.sendMessage(customMessage, { deliverAs: "steer", triggerTurn: true });
       });
@@ -805,6 +880,7 @@ export class SubagentManager {
     const record = this.findRecord(id);
     if (!record) return;
     if (record.dispose) await record.dispose();
+    record.snapshot.transcript.pending = [];
     if (persist) this.updateStatus(record, status);
     else {
       record.snapshot.status = status;

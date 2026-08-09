@@ -82,6 +82,9 @@ These were chosen deliberately. Change them only on purpose.
   content, then removes the temporary files.
 - **Enter steers while the selected agent is working.** Main-agent input uses
   `session.steer()`. Subagent input routes through `SubagentManager`.
+- **Queued messages stay pending until insertion.** Steering and recipient-side
+  inter-agent messages render in a dim section at the transcript bottom. A
+  matching pi `message_start` moves each message into the normal transcript.
 - **Escape requires confirmation while working.** The first press shows a hint.
   A second press within two seconds cancels the same selected agent.
 - **Cache range execution is main-agent orchestration.** Shift+Up and Shift+Down

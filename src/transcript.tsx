@@ -15,6 +15,13 @@ export type Line =
   | { kind: "tool"; call: ToolCall }
   | { kind: "agent-message"; sender: string; recipient: string; text: string };
 
+export type PendingLine = {
+  id: string;
+  line: Extract<Line, { kind: "text" | "agent-message" }>;
+  /** Text used to match pi's message_start event. */
+  deliveryText?: string;
+};
+
 type LineGroup = "tool" | "thinking" | "other";
 
 const lineGroup = (line: Line): LineGroup => {
@@ -193,6 +200,26 @@ export function StreamLine({
       ) : (
         <text ref={shimmer} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
       )}
+    </Row>
+  );
+}
+
+export function PendingMessageLine({ theme, pending }: { theme: Theme; pending: PendingLine }) {
+  const line = pending.line;
+  if (line.kind === "agent-message") {
+    return (
+      <Row glyph="◇ " glyphColor={theme.dim} background={theme.agentMessageBg}>
+        <box style={{ flexDirection: "column", flexGrow: 1, minWidth: 0 }}>
+          <text content={`${line.sender} → ${line.recipient} · queued`} fg={theme.dim} />
+          <text content={line.text} fg={theme.dim} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
+        </box>
+      </Row>
+    );
+  }
+
+  return (
+    <Row glyph="○ " glyphColor={theme.dim} background={theme.userBg}>
+      <text content={line.text} fg={theme.dim} wrapMode="word" style={{ flexGrow: 1, minWidth: 0 }} />
     </Row>
   );
 }

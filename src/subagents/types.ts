@@ -1,5 +1,5 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { Line } from "../transcript";
+import type { Line, PendingLine } from "../transcript";
 import type { WorktreeRecord } from "../worktree";
 
 export const SUBAGENT_CUSTOM_TYPE = "pum.subagent";
@@ -23,6 +23,7 @@ export type AgentStream = { kind: "assistant" | "thinking"; text: string } | nul
 export type AgentTranscript = {
   lines: Line[];
   stream: AgentStream;
+  pending: PendingLine[];
 };
 
 export type SubagentSnapshot = {
@@ -60,7 +61,9 @@ export type AgentMessageData = {
 
 export type SubagentManagerEvent =
   | { type: "changed" }
-  | { type: "main-line"; line: Line };
+  | { type: "main-line"; line: Line }
+  | { type: "main-pending-add"; pending: PendingLine }
+  | { type: "main-pending-resolve"; id: string };
 
 export type SpawnSubagentOptions = {
   task: string;

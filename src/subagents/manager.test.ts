@@ -21,6 +21,8 @@ describe("SubagentManager extension", () => {
       modelRuntime: {} as any,
       agentDir: "/tmp/pum-test",
     });
+    const events: any[] = [];
+    manager.subscribe((event) => events.push(event));
 
     const extension = manager.mainExtension() as { factory: (api: any) => void };
     extension.factory(pi);
@@ -40,6 +42,15 @@ describe("SubagentManager extension", () => {
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Do not automatically reply to an acknowledgement");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("stop the exchange immediately");
+
+    handlers.get("message_start")?.[0]?.({
+      message: {
+        role: "custom",
+        customType: "pum.agent_message",
+        details: { id: "message-1" },
+      },
+    });
+    expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
   });
 
   test("binds the main session even when session_start was missed", async () => {
