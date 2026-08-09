@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { rejectedToolDetails } from "./check-mode";
 import { replayEntries } from "./replay";
 import {
   AGENT_MESSAGE_CUSTOM_TYPE,
@@ -73,6 +74,39 @@ describe("subagent transcript replay", () => {
         state: "ok",
         detail: "pum/test",
       },
+    });
+  });
+
+  test("restores rejected tools as a distinct state", () => {
+    const lines = replayEntries([
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "blocked-1",
+            name: "bash",
+            arguments: { command: "unsafe" },
+          }],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "blocked-1",
+          toolName: "bash",
+          content: [{ type: "text", text: "blocked" }],
+          details: rejectedToolDetails({}),
+          isError: true,
+        },
+      },
+    ], process.cwd(), true);
+
+    expect(lines[0]).toMatchObject({
+      kind: "tool",
+      call: { id: "blocked-1", state: "rejected" },
     });
   });
 });

@@ -213,6 +213,12 @@ export function AgentMessageLine({ theme, line }: { theme: Theme; line: Extract<
   );
 }
 
+export function toolStateGlyph(state: ToolCall["state"]): string {
+  if (state === "ok") return "✓";
+  if (state === "rejected") return "!";
+  return "✗";
+}
+
 export function ToolLine({
   theme,
   call,
@@ -224,9 +230,10 @@ export function ToolLine({
 }) {
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
-  const toolColor = failed ? theme.error : theme.tool;
-  const argColor = failed ? theme.error : theme.toolArg;
-  const detailColor = failed ? theme.error : theme.dim;
+  const rejected = call.state === "rejected";
+  const toolColor = failed ? theme.error : rejected ? theme.warn : theme.tool;
+  const argColor = failed ? theme.error : rejected ? theme.warn : theme.toolArg;
+  const detailColor = failed ? theme.error : rejected ? theme.warn : theme.dim;
 
   const prefix = call.arg
     ? new StyledText([fg(toolColor)(call.name), fg(detailColor)(" · ")])
@@ -239,7 +246,7 @@ export function ToolLine({
   const caret = useBlinkingText({
     chunks: bodyChunks,
     contentKey: `${call.name}:${call.arg}:${call.state}:${call.detail ?? ""}`,
-    caretColor: failed ? theme.error : theme.accent,
+    caretColor: failed ? theme.error : rejected ? theme.warn : theme.accent,
     active: workingCaret,
   });
 
@@ -260,8 +267,8 @@ export function ToolLine({
           <text ref={spinner} fg={theme.accent} />
         ) : (
           <text
-            content={call.state === "ok" ? "✓" : "✗"}
-            fg={call.state === "ok" ? theme.success : theme.error}
+            content={toolStateGlyph(call.state)}
+            fg={call.state === "ok" ? theme.success : call.state === "rejected" ? theme.warn : theme.error}
           />
         )}
       </box>

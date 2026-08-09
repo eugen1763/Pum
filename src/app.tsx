@@ -32,8 +32,14 @@ import {
 import { replayEntries } from "./replay";
 import { loadTheme, PRESET_NAMES, type Theme } from "./theme";
 import { buildSyntaxStyle } from "./syntax";
-import { observeSearchCalls, persistSearchCall, webSearch } from "./web-search";
-import { matchingCommands } from "./commands";
+import {
+  observeSearchCalls,
+  persistSearchCall,
+  webSearch,
+  withSearchRoute,
+} from "./web-search";
+import { matchingCommands, moveCommandSelection } from "./commands";
+import { isRejectedToolResult } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
 import { setWritingStyle, WRITING_STYLES } from "./writing-style";
 import { setCheckModeConfig } from "./check-mode";
@@ -80,7 +86,7 @@ function InputRule({
   return <text ref={ref} style={{ flexShrink: 0 }} />;
 }
 
-function PromptStashRow({
+export function PromptStashRow({
   theme,
   prompt,
   index,
@@ -103,7 +109,9 @@ function PromptStashRow({
         backgroundColor: selected ? theme.selectionBg : "transparent",
       }}
     >
-      <text content={prompt.executed ? "✓ " : "○ "} fg={prompt.executed ? theme.success : theme.dim} />
+      <box style={{ width: 2, flexShrink: 0 }}>
+        <text content={prompt.executed ? "✓ " : "○ "} fg={prompt.executed ? theme.success : theme.dim} />
+      </box>
       <text
         content={prompt.text}
         fg={color}
@@ -114,7 +122,7 @@ function PromptStashRow({
   );
 }
 
-function PromptStash({
+export function PromptStash({
   theme,
   prompts,
   cursor,
@@ -130,13 +138,14 @@ function PromptStash({
   const scrollRef = useRef<ScrollBoxRenderable>(null);
 
   useEffect(() => {
-    if (!scrollRef.current) return;
-    // Open at the newest entries, immediately above the input. Once keyboard
-    // navigation starts, scroll the actual selected row into view rather than
-    // estimating its position — prompts may wrap onto multiple lines.
-    if (cursor < 0) scrollRef.current.scrollTo({ x: 0, y: 1_000_000 });
-    else scrollRef.current.scrollChildIntoView(`stash-prompt-${cursor}`);
-  }, [cursor]);
+    // Reconcile after OpenTUI has measured appended or wrapped rows.
+    const timer = setTimeout(() => {
+      if (!scrollRef.current) return;
+      const target = cursor < 0 ? prompts.length - 1 : cursor;
+      if (target >= 0) scrollRef.current.scrollChildIntoView(`stash-prompt-${target}`);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [cursor, prompts.length]);
 
   return (
     <scrollbox
@@ -146,6 +155,8 @@ function PromptStash({
         flexShrink: 0,
       }}
       verticalScrollbarOptions={{ visible: true }}
+      stickyScroll
+      stickyStart="bottom"
     >
       <box style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}>
       {prompts.map((prompt, i) => (
@@ -225,6 +236,7 @@ export function App({
   const [stashSelection, setStashSelection] = useState<Set<number>>(() => new Set());
   const [stashOpen, setStashOpen] = useState(false);
   const [commandInput, setCommandInput] = useState("");
+  const [commandCursor, setCommandCursor] = useState(0);
   const [inputRows, setInputRows] = useState(1);
   const [inputCursorRow, setInputCursorRow] = useState(0);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
@@ -247,9 +259,11 @@ export function App({
   const visibleThinkingLevel = activeAgent?.thinkingLevel ?? thinkingLevel;
   const visibleBranch = activeAgent?.worktree.branch ?? branch;
   const visibleElapsedSec = activeAgent ? agentElapsedSec : elapsedSec;
+  const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
 
   const inputRef = useRef<TextareaRenderable>(null);
   const focusInputAfterSwitch = useRef(false);
+  const commandCursorRef = useRef(0);
   const stashRef = useRef(stash);
   const stashOpenRef = useRef(false);
   const stashCursorRef = useRef(-1);
@@ -315,6 +329,7 @@ export function App({
     const next = appendPromptStash(cwd, prompt, executed);
     stashRef.current = next;
     setStash(next);
+    if (stashOpenRef.current) setSelectedStash(-1);
   };
 
   const executeStashedPrompt = (index: number) => {
@@ -381,6 +396,8 @@ export function App({
       input.cursorOffset = Math.max(0, Math.min(cursorOffset, value.length));
     }
     lastInputValue.current = value;
+    commandCursorRef.current = 0;
+    setCommandCursor(0);
     setCommandInput(value);
     scheduleInputMetrics();
   };
@@ -429,6 +446,8 @@ export function App({
       inputRef.current.cursorOffset = Math.min(cleanupCursor ?? value.length, value.length);
     }
     lastInputValue.current = value;
+    commandCursorRef.current = 0;
+    setCommandCursor(0);
     setCommandInput(value);
     scheduleInputMetrics();
   };
@@ -542,7 +561,11 @@ export function App({
           break;
         case "tool_execution_end":
           patchTool(event.toolCallId, {
-            state: event.isError ? "error" : "ok",
+            state: isRejectedToolResult(event.result)
+              ? "rejected"
+              : event.isError
+                ? "error"
+                : "ok",
             detail: event.toolName === "edit" ? editCounts(event.result) : undefined,
           });
           break;
@@ -597,7 +620,7 @@ export function App({
 
   // Hosted web searches are not pi tool calls, so they arrive out of band.
   useEffect(() => {
-    observeSearchCalls((call) => {
+    return observeSearchCalls(session.sessionId, (call) => {
       if (call.phase === "start") {
         append({
           kind: "tool",
@@ -869,7 +892,7 @@ export function App({
     // Working already: queue it as steering, delivered once the current step's
     // tool calls finish, rather than starting a second turn.
     if (busyRef.current) {
-      session.steer(promptText, images).catch((err) => {
+      withSearchRoute(session.sessionId, () => session.steer(promptText, images)).catch((err) => {
         append({ kind: "text", role: "error", text: String(err) });
       });
       return;
@@ -877,7 +900,7 @@ export function App({
 
     inFlight.current = promptText;
     setWorking(true);
-    session.prompt(promptText, { images }).catch((err) => {
+    withSearchRoute(session.sessionId, () => session.prompt(promptText, { images })).catch((err) => {
       append({ kind: "text", role: "error", text: String(err) });
       setWorking(false);
     });
@@ -1058,6 +1081,9 @@ export function App({
     const isPlainReturn =
       isReturn && !key.ctrl && !key.shift && !key.meta && !key.option;
     const inputValue = inputRef.current?.plainText ?? "";
+    const commandMatches = stashOpenRef.current
+      ? []
+      : matchingCommands(inputValue).slice(0, 5);
     const isContinuationReturn =
       isPlainReturn &&
       inputValue.endsWith("\\") &&
@@ -1144,14 +1170,13 @@ export function App({
         } else if (stashRef.current.length > 0) {
           setStashMode(true);
         }
+        queueMicrotask(() => inputRef.current?.focus());
         return;
       }
-      const matches = matchingCommands(inputValue);
-      if (matches.length > 0 && !/\s/.test(inputValue)) {
+      if (commandMatches.length > 0 && !/\s/.test(inputValue)) {
         key.stopPropagation();
-        const current = matches.findIndex((command) => command.name === inputValue);
-        const next = matches[(current + 1) % matches.length]!;
-        setEditorText(next.name);
+        const selected = commandMatches[Math.min(commandCursorRef.current, commandMatches.length - 1)]!;
+        setEditorText(selected.name);
         return;
       }
     }
@@ -1163,6 +1188,13 @@ export function App({
       handleTextareaChange();
       histCursor.current = null;
       if (stashOpenRef.current) setSelectedStash(-1);
+      return;
+    }
+
+    if (isPlainReturn && commandMatches.length > 0 && !/\s/.test(inputValue)) {
+      key.stopPropagation();
+      const selected = commandMatches[Math.min(commandCursorRef.current, commandMatches.length - 1)]!;
+      submitPrompt(selected.name);
       return;
     }
 
@@ -1201,6 +1233,17 @@ export function App({
 
     if (key.name === "up" || key.name === "down") {
       if (activeAgentId) return;
+      if (commandMatches.length > 0) {
+        key.stopPropagation();
+        const next = moveCommandSelection(
+          commandCursorRef.current,
+          commandMatches.length,
+          key.name === "up" ? -1 : 1,
+        );
+        commandCursorRef.current = next;
+        setCommandCursor(next);
+        return;
+      }
       if (stashOpenRef.current) {
         key.stopPropagation();
         moveStash(key.name === "up" ? -1 : 1, key.shift);
@@ -1347,12 +1390,28 @@ export function App({
             height={height}
           />
         ) : null}
-        {matchingCommands(commandInput).length > 0 ? (
-          <box style={{ height: 1, flexShrink: 0, paddingLeft: 2 }}>
-            <text
-              content={`${matchingCommands(commandInput)[0]!.name}  —  ${matchingCommands(commandInput)[0]!.description}  [Tab to complete]`}
-              fg={theme.dim}
-            />
+        {commandSuggestions.length > 0 ? (
+          <box
+            style={{
+              height: commandSuggestions.length,
+              flexShrink: 0,
+              flexDirection: "column",
+            }}
+          >
+            {commandSuggestions.map((command, index) => {
+              const highlighted = index === Math.min(commandCursor, commandSuggestions.length - 1);
+              return (
+                <box key={command.name} style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
+                  <box style={{ width: 2, flexShrink: 0 }}>
+                    {highlighted ? <text content="> " fg={theme.fg} /> : null}
+                  </box>
+                  <text
+                    content={`${command.name}  —  ${command.description}`}
+                    fg={highlighted ? theme.fg : theme.dim}
+                  />
+                </box>
+              );
+            })}
           </box>
         ) : null}
         <box

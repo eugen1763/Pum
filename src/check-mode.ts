@@ -13,6 +13,24 @@ export type CheckModeConfig = {
   model: string;
 };
 
+const REJECTED_TOOL_DETAIL = "pumRejected";
+
+export function rejectedToolDetails(details: unknown): unknown {
+  if (details && typeof details === "object" && !Array.isArray(details)) {
+    return { ...details, [REJECTED_TOOL_DETAIL]: true };
+  }
+  return { [REJECTED_TOOL_DETAIL]: true };
+}
+
+export function isRejectedToolResult(result: unknown): boolean {
+  const details = (result as { details?: unknown } | null)?.details;
+  return Boolean(
+    details &&
+    typeof details === "object" &&
+    (details as Record<string, unknown>)[REJECTED_TOOL_DETAIL] === true,
+  );
+}
+
 let current: CheckModeConfig = {
   enabled: false,
   model: DEFAULT_CHECK_MODEL,
@@ -108,13 +126,7 @@ const REV_PARSE_ARGS = new Set([
 ]);
 const LS_FILES_ARGS = new Set(["--cached", "--deleted", "--modified", "--others", "--ignored", "--stage"]);
 
-/**
- * Cache only simple, read-only Git inspection commands.
- *
- * Commands that invoke a project script, compose shell operations, write output,
- * or can run configurable helpers are verified every time. Their safety can
- * change when the filesystem or project configuration changes.
- */
+/** Cache only simple, read-only Git inspection commands. */
 export function isBashCacheEligible(input: unknown): boolean {
   if (!input || typeof input !== "object") return false;
   const command = (input as { command?: unknown }).command;
@@ -214,8 +226,6 @@ export class BashSafetyCache {
       renameSync(temporary, this.path);
       return true;
     } catch {
-      // A cache failure must become a cache miss later. A completed SAFE check
-      // can still proceed because the verifier already accepted this call.
       return false;
     }
   }
@@ -286,15 +296,24 @@ export function createCheckModeExtension(
   return {
     name: "pum-check-mode",
     factory(pi) {
+      const rejected = new Set<string>();
+
       pi.on("tool_call", async (event, ctx) => {
         if (!current.enabled || (event.toolName !== "bash" && event.toolName !== "edit")) return;
-        return verifyToolCall(runtime, cache, {
+        const block = await verifyToolCall(runtime, cache, {
           toolName: event.toolName,
           input: event.input,
           cwd: ctx.cwd,
           signal: ctx.signal,
           config: current,
         });
+        if (block) rejected.add(event.toolCallId);
+        return block;
+      });
+
+      pi.on("tool_result", (event) => {
+        if (!rejected.delete(event.toolCallId)) return;
+        return { details: rejectedToolDetails(event.details) };
       });
     },
   };

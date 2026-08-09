@@ -28,9 +28,14 @@ export const COMMANDS: Command[] = [
 ];
 
 export function matchingCommands(input: string): Command[] {
-  if (!input.startsWith("/")) return [];
+  if (!input.startsWith("/") || input.includes("\n")) return [];
   const name = input.split(/\s/, 1)[0]!;
   return COMMANDS.filter((command) =>
     /\s/.test(input) ? command.name === name : command.name.startsWith(input),
   );
+}
+
+export function moveCommandSelection(current: number, count: number, step: -1 | 1): number {
+  if (count <= 0) return 0;
+  return (current + step + count) % count;
 }

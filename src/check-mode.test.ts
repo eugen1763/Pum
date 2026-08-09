@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   BashSafetyCache,
+  createCheckModeExtension,
   isBashCacheEligible,
+  isRejectedToolResult,
+  setCheckModeConfig,
   verifyToolCall,
   type CheckModeConfig,
 } from "./check-mode";
@@ -42,6 +45,7 @@ function runtime(replies: Array<ReturnType<typeof result> | Error>) {
 }
 
 afterEach(() => {
+  setCheckModeConfig({ enabled: false, model: "test/verifier" });
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -132,5 +136,32 @@ describe("bash safety cache", () => {
     expect(isBashCacheEligible({ command: "git diff --output=report" })).toBe(false);
     expect(isBashCacheEligible({ command: "git status && rm -rf tmp" })).toBe(false);
     expect(isBashCacheEligible({ command: "bun test" })).toBe(false);
+  });
+
+  test("marks blocked tool results for rejected rendering and replay", async () => {
+    const handlers = new Map<string, Function>();
+    const extension = createCheckModeExtension({
+      getAvailableSnapshot: () => [],
+      completeSimple: async () => { throw new Error("not called"); },
+    }, temporaryCache().cache);
+    (extension as { factory: (pi: any) => void }).factory({
+      on(name: string, handler: Function) {
+        handlers.set(name, handler);
+      },
+    });
+    setCheckModeConfig({ enabled: true, model: "missing/model" });
+
+    const block = await handlers.get("tool_call")?.(
+      { toolName: "bash", toolCallId: "call-1", input: { command: "echo test" } },
+      { cwd: process.cwd() },
+    );
+    const patch = await handlers.get("tool_result")?.({
+      toolName: "bash",
+      toolCallId: "call-1",
+      details: {},
+    });
+
+    expect(block).toMatchObject({ block: true });
+    expect(isRejectedToolResult({ details: patch.details })).toBe(true);
   });
 });
