@@ -28,6 +28,8 @@ export type Theme = {
   rejectionBg: string;
   selectionBg: string;
   popupBg: string;
+  /** Colour for the clipped one-cell popup shadow. */
+  popupShadow: string;
   /** The bright colour a shimmer sweeps toward. */
   highlight: string;
   /** Syntax colours for markdown code blocks. */
@@ -61,6 +63,7 @@ const tokyonight: Theme = {
   rejectionBg: "#332b24",
   selectionBg: "#33467c",
   popupBg: "#1f2335",
+  popupShadow: "#10131f",
   highlight: "#ffffff",
   codeKeyword: "#bb9af7",
   codeString: "#9ece6a",
@@ -92,6 +95,7 @@ const gruvbox: Theme = {
   rejectionBg: "#3c3836",
   selectionBg: "#504945",
   popupBg: "#32302f",
+  popupShadow: "#1d1b1a",
   highlight: "#fbf1c7",
   codeKeyword: "#fb4934",
   codeString: "#b8bb26",
@@ -123,6 +127,7 @@ const catppuccin: Theme = {
   rejectionBg: "#3b342f",
   selectionBg: "#45475a",
   popupBg: "#181825",
+  popupShadow: "#101019",
   highlight: "#f5e0dc",
   codeKeyword: "#cba6f7",
   codeString: "#a6e3a1",
@@ -154,6 +159,7 @@ const nord: Theme = {
   rejectionBg: "#3b3b3b",
   selectionBg: "#4c566a",
   popupBg: "#3b4252",
+  popupShadow: "#20242d",
   highlight: "#eceff4",
   codeKeyword: "#b48ead",
   codeString: "#a3be8c",
@@ -185,6 +191,7 @@ const dracula: Theme = {
   rejectionBg: "#3d3f36",
   selectionBg: "#44475a",
   popupBg: "#21222c",
+  popupShadow: "#15161d",
   highlight: "#ffffff",
   codeKeyword: "#ff79c6",
   codeString: "#f1fa8c",
@@ -216,6 +223,7 @@ const rosepine: Theme = {
   rejectionBg: "#393029",
   selectionBg: "#403d52",
   popupBg: "#1f1d2e",
+  popupShadow: "#11101a",
   highlight: "#fffaf3",
   codeKeyword: "#c4a7e7",
   codeString: "#9ccfd8",
@@ -247,6 +255,7 @@ const solarized: Theme = {
   rejectionBg: "#343b35",
   selectionBg: "#0b4b59",
   popupBg: "#073642",
+  popupShadow: "#001f27",
   highlight: "#fdf6e3",
   codeKeyword: "#6c71c4",
   codeString: "#859900",
@@ -278,6 +287,7 @@ const kanagawa: Theme = {
   rejectionBg: "#39352d",
   selectionBg: "#2d4f67",
   popupBg: "#16161d",
+  popupShadow: "#0c0c11",
   highlight: "#c8c093",
   codeKeyword: "#957fb8",
   codeString: "#98bb6c",
@@ -309,6 +319,7 @@ const githubLight: Theme = {
   rejectionBg: "#fff1c2",
   selectionBg: "#b6d7ff",
   popupBg: "#f6f8fa",
+  popupShadow: "#8c959f",
   highlight: "#000000",
   codeKeyword: "#cf222e",
   codeString: "#0a3069",

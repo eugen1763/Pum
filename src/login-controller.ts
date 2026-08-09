@@ -19,6 +19,22 @@ export type LoginKey = {
   option?: boolean;
 };
 
+export function filterLoginMethods(methods: readonly LoginMethod[], query: string): LoginMethod[] {
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [...methods];
+  return methods.filter((method) => {
+    const metadata = method.canLogin ? "login available" : "external setup credentials";
+    const haystack = `${method.providerName} ${method.providerId} ${method.authType} ${method.methodName} ${method.loginLabel ?? ""} ${metadata}`.toLocaleLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+function customProviderVisible(query: string): boolean {
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const haystack = "custom openai compatible provider endpoint api key local server models";
+  return terms.every((term) => haystack.includes(term));
+}
+
 type PromptWaiter = {
   prompt: AuthPrompt;
   resolve(value: string): void;
@@ -33,6 +49,8 @@ export class LoginController {
   private endpoint = "";
   private customKey = "";
   private providerCursor = 0;
+  private providerQuery = "";
+  private providerSearchFocused = true;
   private retry?: () => void;
 
   constructor(
@@ -50,18 +68,46 @@ export class LoginController {
     this.show(page);
   }
 
-  private providerPage(): LoginPage {
+  private providerPage(): Extract<LoginPage, { kind: "providers" }> {
     const providers = (this.runtime as any).getProviders?.() ?? [];
-    const methods = providerLoginMethods(providers);
-    this.providerCursor = Math.min(this.providerCursor, methods.length);
-    return { kind: "providers", methods, cursor: this.providerCursor };
+    const methods = filterLoginMethods(providerLoginMethods(providers), this.providerQuery);
+    const customVisible = customProviderVisible(this.providerQuery);
+    const count = methods.length + (customVisible ? 1 : 0);
+    this.providerCursor = count > 0 ? Math.min(this.providerCursor, count - 1) : 0;
+    return {
+      kind: "providers",
+      methods,
+      cursor: this.providerCursor,
+      query: this.providerQuery,
+      searchFocused: this.providerSearchFocused,
+      customVisible,
+    };
   }
 
   open() {
     this.cancelOperation();
     this.retry = undefined;
     this.providerCursor = 0;
+    this.providerQuery = "";
+    this.providerSearchFocused = true;
     this.setPage(this.providerPage());
+  }
+
+  setProviderQuery(query: string) {
+    const current = this.page;
+    if (current.kind !== "providers") return;
+    const selected = current.methods[current.cursor];
+    const selectedKey = selected
+      ? `${selected.providerId}:${selected.authType}`
+      : current.customVisible && current.cursor === current.methods.length ? "custom" : undefined;
+    this.providerQuery = query;
+    const next = this.providerPage();
+    if (selectedKey === "custom" && next.customVisible) this.providerCursor = next.methods.length;
+    else if (selectedKey) {
+      const index = next.methods.findIndex((method) => `${method.providerId}:${method.authType}` === selectedKey);
+      if (index >= 0) this.providerCursor = index;
+    }
+    this.setPage({ ...next, cursor: this.providerCursor });
   }
 
   cancelOperation() {
@@ -191,15 +237,30 @@ export class LoginController {
       return true;
     }
     if (this.page.kind === "providers") {
-      const count = this.page.methods.length + 1;
+      const count = this.page.methods.length + (this.page.customVisible ? 1 : 0);
+      const slash = !key.ctrl && !key.meta && !key.option && (key.name === "/" || key.sequence === "/");
+      if (this.page.searchFocused) {
+        if ((key.name === "up" || key.name === "down" || enter) && count > 0) {
+          this.providerSearchFocused = false;
+          this.setPage({ ...this.page, searchFocused: false });
+          return true;
+        }
+        return false;
+      }
+      if (slash) {
+        this.providerSearchFocused = true;
+        this.setPage({ ...this.page, searchFocused: true });
+        return true;
+      }
       if (key.name === "up" || key.name === "down") {
+        if (count === 0) return true;
         const step = key.name === "up" ? -1 : 1;
         this.providerCursor = (this.page.cursor + step + count) % count;
         this.setPage({ ...this.page, cursor: this.providerCursor });
       } else if (enter) {
         const method = this.page.methods[this.page.cursor];
         if (method) this.startProvider(method);
-        else this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint });
+        else if (this.page.customVisible) this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint });
       }
       return true;
     }

@@ -1,4 +1,5 @@
 import type { Theme } from "./theme";
+import { PopupFrame } from "./popup-frame";
 
 type HelpGroup = { title: string; controls: [string, string][] };
 
@@ -96,9 +97,18 @@ type HelpLayout = {
 };
 
 const POPUP_FRAME_ROWS = 4;
+const MIN_TWO_COLUMN_CONTENT_WIDTH = KEY_WIDTH * 2 + 38 + 27 + 2;
+
+function helpMargin(terminalWidth: number): number {
+  return terminalWidth < 3
+    ? 0
+    : terminalWidth < 64 ? 1 : Math.max(2, Math.floor(terminalWidth * 0.08));
+}
 
 export function helpLayout(terminalWidth: number, terminalHeight: number): HelpLayout {
-  const twoColumns = terminalWidth >= 82;
+  const margin = helpMargin(terminalWidth);
+  const contentWidth = Math.max(0, terminalWidth - margin * 2 - 4);
+  const twoColumns = contentWidth >= MIN_TWO_COLUMN_CONTENT_WIDTH;
   const categorySpacing = terminalHeight >= 32;
   const desiredHeight = twoColumns ? (categorySpacing ? 30 : 28) : 39;
   const popupHeight = Math.max(1, Math.min(terminalHeight, desiredHeight));
@@ -206,30 +216,25 @@ export function HelpPopup({
   scrollOffset: number;
 }) {
   const layout = helpLayout(terminalWidth, terminalHeight);
-  const margin = terminalWidth < 3
-    ? 0
-    : terminalWidth < 64 ? 1 : Math.max(2, Math.floor(terminalWidth * 0.08));
+  const margin = helpMargin(terminalWidth);
   const popupWidth = Math.max(1, terminalWidth - margin * 2);
   const split = 3;
   const lines = helpLines(terminalHeight);
   const spaced = terminalHeight >= 32;
 
   return (
-    <box
-      title=" Controls "
-      style={{
-        position: "absolute",
+    <PopupFrame
+      theme={theme}
+      terminalWidth={terminalWidth}
+      terminalHeight={terminalHeight}
+      geometry={{
         top: Math.max(0, Math.floor((terminalHeight - layout.popupHeight) / 2)),
         left: margin,
         width: popupWidth,
         height: layout.popupHeight,
-        zIndex: 100,
-        border: true,
-        borderColor: theme.border,
-        backgroundColor: theme.popupBg,
-        flexDirection: "column",
-        padding: 1,
       }}
+      zIndex={100}
+      title=" Controls "
     >
       <box style={{ height: layout.summaryHeight, flexShrink: 0, flexDirection: "column" }}>
         {layout.summaryLines.map((line, index) => (
@@ -276,6 +281,6 @@ export function HelpPopup({
           />
         </box>
       ) : null}
-    </box>
+    </PopupFrame>
   );
 }

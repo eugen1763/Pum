@@ -1,4 +1,5 @@
 import type { Theme } from "./theme";
+import { PopupFrame } from "./popup-frame";
 
 export type CheckApprovalDecision =
   | "allowOnce"
@@ -149,21 +150,19 @@ export function CheckApprovalPopup(props: CheckApprovalPopupProps) {
   const previewLabel = request.preview.kind === "command" ? "Command" : "Diff";
 
   return (
-    <box
-      title=" Approval required "
-      style={{
-        position: "absolute",
+    <PopupFrame
+      theme={theme}
+      terminalWidth={terminalWidth}
+      terminalHeight={terminalHeight}
+      geometry={{
         top: Math.max(0, Math.floor((terminalHeight - layout.popupHeight) / 2)),
         left: layout.margin,
         width: layout.popupWidth,
         height: layout.popupHeight,
-        zIndex: 140,
-        border: true,
-        borderColor: theme.warn,
-        backgroundColor: theme.popupBg,
-        flexDirection: "column",
-        padding: 1,
       }}
+      zIndex={140}
+      title=" Approval required "
+      borderColor={theme.warn}
     >
       <box style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
         <text content={request.tool} fg={theme.warn} bg={theme.popupBg} wrapMode="none" />
@@ -220,6 +219,6 @@ export function CheckApprovalPopup(props: CheckApprovalPopupProps) {
         wrapMode="none"
         style={{ height: 1, flexShrink: 0 }}
       />
-    </box>
+    </PopupFrame>
   );
 }

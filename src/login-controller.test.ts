@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { LoginController } from "./login-controller";
+import { filterLoginMethods, LoginController } from "./login-controller";
 import type { LoginPage } from "./login-popup";
 
 const model = {
@@ -13,6 +13,42 @@ function settle() {
 }
 
 describe("login controller", () => {
+  test("filters provider names and useful login metadata", () => {
+    const methods = [
+      { providerId: "openai", providerName: "OpenAI", authType: "oauth", methodName: "Account", loginLabel: "ChatGPT Plus", canLogin: true },
+      { providerId: "local-api", providerName: "Local API", authType: "api_key", methodName: "Environment key", canLogin: false },
+    ] as const;
+    expect(filterLoginMethods(methods, "chatgpt oauth").map((method) => method.providerId)).toEqual(["openai"]);
+    expect(filterLoginMethods(methods, "external credentials").map((method) => method.providerId)).toEqual(["local-api"]);
+    expect(filterLoginMethods(methods, "LOCAL api_key").map((method) => method.providerId)).toEqual(["local-api"]);
+  });
+
+  test("preserves provider search and selection across the custom child page", () => {
+    const pages: LoginPage[] = [];
+    const runtime = { getProviders: () => [] } as any;
+    const controller = new LoginController(runtime, () => ({}) as any, (page) => pages.push(page), () => {}, () => {});
+    controller.open();
+    controller.setProviderQuery("custom endpoint");
+    expect(pages.at(-1)).toMatchObject({ kind: "providers", query: "custom endpoint", searchFocused: true, customVisible: true });
+
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    expect(pages.at(-1)?.kind).toBe("custom-endpoint");
+    controller.handleKey({ name: "escape" });
+    expect(pages.at(-1)).toMatchObject({ kind: "providers", query: "custom endpoint", cursor: 0, searchFocused: false });
+  });
+
+  test("lets the focused input own text keys and uses slash to restore focus", () => {
+    const pages: LoginPage[] = [];
+    const runtime = { getProviders: () => [] } as any;
+    const controller = new LoginController(runtime, () => ({}) as any, (page) => pages.push(page), () => {}, () => {});
+    controller.open();
+    expect(controller.handleKey({ name: "a", sequence: "a" })).toBe(false);
+    controller.handleKey({ name: "down" });
+    expect(controller.handleKey({ name: "/", sequence: "/" })).toBe(true);
+    expect(pages.at(-1)).toMatchObject({ kind: "providers", searchFocused: true });
+  });
+
   test("moves an API-key login through prompt, storage, refresh, and selection", async () => {
     let submitted = "";
     const pages: LoginPage[] = [];
@@ -35,6 +71,7 @@ describe("login controller", () => {
       () => {},
     );
     controller.open();
+    controller.handleKey({ name: "down" });
     controller.handleKey({ name: "enter" });
     await settle();
     expect(pages.at(-1)?.kind).toBe("prompt");
@@ -65,6 +102,7 @@ describe("login controller", () => {
     } as any;
     const controller = new LoginController(runtime, () => ({}) as any, (page) => pages.push(page), () => {}, () => {});
     controller.open();
+    controller.handleKey({ name: "down" });
     controller.handleKey({ name: "enter" });
     await settle();
     expect(pages.at(-1)).toMatchObject({ kind: "working", event: { type: "device_code", userCode: "ABCD" } });
@@ -83,6 +121,7 @@ describe("login controller", () => {
     } as any;
     const controller = new LoginController(runtime, () => ({}) as any, (page) => pages.push(page), () => {}, () => {});
     controller.open();
+    controller.handleKey({ name: "down" });
     controller.handleKey({ name: "enter" });
     await settle();
     expect(pages.at(-1)?.kind).toBe("error");
@@ -106,6 +145,7 @@ describe("login controller", () => {
     } as any;
     const controller = new LoginController(runtime, () => ({}) as any, (page) => pages.push(page), () => {}, () => {});
     controller.open();
+    controller.handleKey({ name: "down" });
 
     for (let index = 0; index < providers.length; index++) controller.handleKey({ name: "down" });
     controller.handleKey({ name: "enter" });

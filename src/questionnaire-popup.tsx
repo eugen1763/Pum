@@ -2,6 +2,7 @@ import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 import { useEffect, useRef } from "react";
 import type { QuestionnaireRequest } from "./questionnaire";
 import type { Theme } from "./theme";
+import { PopupFrame } from "./popup-frame";
 
 export function questionnairePopupGeometry(width: number, height: number) {
   const margin = width < 4 ? 0 : width < 60 ? 1 : Math.max(2, Math.floor(width * 0.1));
@@ -53,21 +54,15 @@ export function QuestionnairePopup({
     : question?.label ?? `Question ${request.page + 1}`;
 
   return (
-    <box
+    <PopupFrame
+      theme={theme}
+      terminalWidth={terminalWidth}
+      terminalHeight={terminalHeight}
+      geometry={geometry}
+      zIndex={120}
       title={geometry.compact ? undefined : ` Questionnaire · ${request.requester.name} `}
-      style={{
-        position: "absolute",
-        top: geometry.top,
-        left: geometry.left,
-        width: geometry.width,
-        height: geometry.height,
-        zIndex: 120,
-        border: !geometry.compact,
-        borderColor: theme.border,
-        backgroundColor: theme.popupBg,
-        flexDirection: "column",
-        padding: geometry.compact ? 0 : 1,
-      }}
+      border={!geometry.compact}
+      padding={geometry.compact ? 0 : 1}
     >
       {!geometry.compact ? (
         <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
@@ -199,6 +194,6 @@ export function QuestionnairePopup({
           style={{ height: 1, flexShrink: 0 }}
         />
       ) : null}
-    </box>
+    </PopupFrame>
   );
 }
