@@ -466,6 +466,90 @@ function normalizeConfig(config: ToolCheck["config"]): CheckModeConfig {
   return "profile" in config ? config : { profile: config.enabled ? "strict" : "off", model: config.model };
 }
 
+const NPM_BOOLEAN_RELEASE_FLAGS = new Set([
+  "--dry-run", "--foreground-scripts", "--ignore-scripts", "--json", "--no-color",
+  "--no-progress", "--no-provenance", "--no-unicode", "--progress", "--provenance",
+  "--quiet", "--silent", "--timing", "--unicode", "--verbose", "-d", "-dd", "-ddd", "-q", "-s",
+]);
+
+function npmRegistryValue(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:")
+      && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
+
+function npmTagValue(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+}
+
+function npmReleaseFlagValue(flag: string, value: string): boolean {
+  if (flag === "--registry") return npmRegistryValue(value);
+  if (flag === "--loglevel") return new Set(["silent", "error", "warn", "notice", "http", "info", "verbose", "silly"]).has(value);
+  if (flag === "--access") return value === "public" || value === "restricted";
+  if (flag === "--tag") return npmTagValue(value);
+  return false;
+}
+
+function npmReleasePositionals(argv: readonly string[]): string[] | undefined {
+  const positionals: string[] = [];
+  for (let index = 1; index < argv.length; index++) {
+    const argument = argv[index]!;
+    if (NPM_BOOLEAN_RELEASE_FLAGS.has(argument)) continue;
+    const assignment = argument.match(/^(--(?:registry|loglevel|access|tag))=(.*)$/s);
+    if (assignment) {
+      if (!npmReleaseFlagValue(assignment[1]!, assignment[2]!)) return undefined;
+      continue;
+    }
+    if (["--registry", "--loglevel", "--access", "--tag"].includes(argument)) {
+      const value = argv[++index];
+      if (value === undefined || !npmReleaseFlagValue(argument, value)) return undefined;
+      continue;
+    }
+    if (argument.startsWith("-")) return undefined;
+    positionals.push(argument);
+  }
+  return positionals;
+}
+
+function npmPackageName(value: string): boolean {
+  return /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/.test(value);
+}
+
+function npmExactVersionPackageSpec(value: string): boolean {
+  const separator = value.lastIndexOf("@");
+  if (separator <= 0) return false;
+  const name = value.slice(0, separator);
+  const version = value.slice(separator + 1);
+  return npmPackageName(name)
+    && /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version);
+}
+
+/** Recognize only direct npm release mutations that may use the main Ask-mode exception. */
+export function isRecognizedNpmPublishMutation(input: unknown, prepared: PreparedCheck): boolean {
+  if (isProcessCheckProposal(input) || !input || typeof input !== "object") return false;
+  const command = (input as { command?: unknown }).command;
+  if (typeof command !== "string") return false;
+  const analysis = prepared.bash;
+  if (!analysis || analysis.stages.length !== 1 || analysis.operators.length !== 0
+    || analysis.substitutions.length !== 0 || analysis.redirections.length !== 0) return false;
+  const stage = analysis.stages[0]!;
+  if (Object.keys(stage.envAssignments).length !== 0 || stage.substitutions.length !== 0 || stage.redirections.length !== 0) return false;
+  const executable = stage.argv[0]?.replaceAll("\\", "/").split("/").at(-1)?.replace(/\.(?:cmd|exe)$/i, "").toLowerCase();
+  if (executable !== "npm") return false;
+  const positionals = npmReleasePositionals(stage.argv);
+  if (!positionals) return false;
+  if (positionals[0] === "publish") return positionals.length === 1 || (positionals.length === 2 && positionals[1] === ".");
+  return positionals.length === 4
+    && positionals[0] === "dist-tag"
+    && positionals[1] === "add"
+    && npmExactVersionPackageSpec(positionals[2]!)
+    && npmTagValue(positionals[3]!);
+}
+
 export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafetyCache, call: ToolCheck): Promise<ToolEvaluation> {
   const config = normalizeConfig(call.config);
   if (config.profile === "off") return { decision: "allow", reason: "Check mode is off", category: "off" };
@@ -520,8 +604,9 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
 
     if (verdict.decision === "unsafe") {
       const mainPublishMutationException = profile === "ask"
-        && verdict.category === "publish-mutation"
-        && call.requester?.kind === "main";
+        && call.requester?.kind === "main"
+        && call.toolName === "bash"
+        && isRecognizedNpmPublishMutation(call.input, prepared);
       return {
         decision: mainPublishMutationException ? "ask" : "block",
         reason: `Verifier UNSAFE [${verdict.category}]: ${verdict.reason}`,
