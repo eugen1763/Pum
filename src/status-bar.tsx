@@ -1,6 +1,10 @@
 import { StyledText, fg, type TextChunk } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import { useShimmerText, useSpinner } from "./animation";
+import {
+  statusMetadataChunks,
+  statusMetadataItems,
+} from "./status-metadata";
 import type { Theme } from "./theme";
 
 export type StatusProps = {
@@ -20,12 +24,6 @@ export type StatusProps = {
   activeAgentName?: string;
 };
 
-const fmtTokens = (n: number) => {
-  if (n < 1000) return `${n}`;
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`;
-  return `${(n / 1_000_000).toFixed(1)}m`;
-};
-const fmtCost = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 const fmtElapsed = (seconds: number) => {
   const minutes = Math.floor(seconds / 60);
   const remaining = seconds % 60;
@@ -85,19 +83,14 @@ export function StatusBar(props: StatusProps) {
   const workingAgentText = runningAgentCount > 0 ? `${idleAgentCount > 0 ? " " : ""}• ${runningAgentCount}` : "";
   const activeAgentText = activeAgentName ? ` · ${activeAgentName}` : "";
 
-  const right: TextChunk[] = [];
-  const push = (text: string, color: string) => {
-    if (right.length) right.push(fg(theme.dim)(" · "));
-    right.push(fg(color)(text));
-  };
-  if (branch) push(branch, theme.toolArg);
-  if (outgoingTokens) push(`↑ ${fmtTokens(outgoingTokens)}`, theme.dim);
-  if (incomingTokens) push(`↓ ${fmtTokens(incomingTokens)}`, theme.dim);
-  if (cacheReadTokens) push(`↺ ${fmtTokens(cacheReadTokens)}`, theme.dim);
-  if (cost) push(fmtCost(cost), theme.dim);
-  if (contextPct !== null) {
-    push(`${contextPct}%`, contextPct > 75 ? theme.warn : theme.dim);
-  }
+  const right: TextChunk[] = statusMetadataChunks(statusMetadataItems({
+    branch,
+    outgoingTokens,
+    incomingTokens,
+    cacheReadTokens,
+    cost,
+    contextPct,
+  }), theme);
 
   const plainLen = (chunks: { text: string }[]) => chunks.reduce((n, c) => n + c.text.length, 0);
   // The working indicator is its own element, so allow for it when measuring.

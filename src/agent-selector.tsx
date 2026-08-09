@@ -1,6 +1,14 @@
-import type { ScrollBoxRenderable } from "@opentui/core";
+import { StyledText, type ScrollBoxRenderable } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import { useEffect, useRef } from "react";
+import { normalizeAgentUsage } from "./agent-usage";
+import {
+  fitStatusMetadata,
+  statusMetadataChunks,
+  statusMetadataItems,
+  statusMetadataWidth,
+  type StatusMetadataValues,
+} from "./status-metadata";
 import type { Theme } from "./theme";
 import type { SubagentSnapshot } from "./subagents/types";
 
@@ -9,7 +17,38 @@ export type AgentTreeRow = {
   name: string;
   status?: SubagentSnapshot["status"];
   depth: number;
+  metadata?: StatusMetadataValues;
 };
+
+export type AgentSelectorRowLayout = {
+  indent: number;
+  label: string;
+  labelWidth: number;
+  metadata: ReturnType<typeof statusMetadataItems>;
+  metadataWidth: number;
+};
+
+export function agentSelectorRowLayout(
+  row: AgentTreeRow,
+  popupColumns: number,
+): AgentSelectorRowLayout {
+  const indent = Math.min(2 + row.depth * 2, Math.max(2, popupColumns - 12));
+  // One column remains clear for the pinned scrollbar.
+  const contentColumns = Math.max(1, popupColumns - indent - 1);
+  const label = row.status ? `${row.name} · ${row.status}` : row.name;
+  const minimumLabelWidth = Math.min(
+    label.length,
+    Math.max(8, Math.ceil(contentColumns * 0.45)),
+  );
+  const availableMetadataWidth = Math.max(0, contentColumns - minimumLabelWidth - 2);
+  const metadata = fitStatusMetadata(
+    row.metadata ? statusMetadataItems(row.metadata) : [],
+    availableMetadataWidth,
+  );
+  const metadataWidth = statusMetadataWidth(metadata);
+  const labelWidth = Math.max(1, contentColumns - (metadataWidth ? metadataWidth + 2 : 0));
+  return { indent, label, labelWidth, metadata, metadataWidth };
+}
 
 export function buildAgentTree(agents: readonly SubagentSnapshot[]): AgentTreeRow[] {
   const children = new Map<string | null, SubagentSnapshot[]>();
@@ -28,7 +67,21 @@ export function buildAgentTree(agents: readonly SubagentSnapshot[]): AgentTreeRo
     for (const agent of children.get(parentId) ?? []) {
       if (seen.has(agent.id)) continue;
       seen.add(agent.id);
-      rows.push({ id: agent.id, name: agent.name, status: agent.status, depth });
+      const usage = normalizeAgentUsage(agent.usage);
+      rows.push({
+        id: agent.id,
+        name: agent.name,
+        status: agent.status,
+        depth,
+        metadata: {
+          branch: agent.worktree.branch ?? null,
+          outgoingTokens: usage.outgoing,
+          incomingTokens: usage.incoming,
+          cacheReadTokens: usage.cacheRead,
+          cost: usage.cost,
+          contextPct: usage.contextPct,
+        },
+      });
       visit(agent.id, depth + 1);
     }
   };
@@ -36,7 +89,21 @@ export function buildAgentTree(agents: readonly SubagentSnapshot[]): AgentTreeRo
   // A corrupt parent cycle must not hide a retained agent.
   for (const agent of agents) {
     if (seen.has(agent.id)) continue;
-    rows.push({ id: agent.id, name: agent.name, status: agent.status, depth: 1 });
+    const usage = normalizeAgentUsage(agent.usage);
+    rows.push({
+      id: agent.id,
+      name: agent.name,
+      status: agent.status,
+      depth: 1,
+      metadata: {
+        branch: agent.worktree.branch ?? null,
+        outgoingTokens: usage.outgoing,
+        incomingTokens: usage.incoming,
+        cacheReadTokens: usage.cacheRead,
+        cost: usage.cost,
+        contextPct: usage.contextPct,
+      },
+    });
   }
   return rows;
 }
@@ -97,8 +164,7 @@ export function AgentSelectorPopup({
         <box style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}>
           {rows.map((row, index) => {
             const selected = index === cursor;
-            const label = row.status ? `${row.name} · ${row.status}` : row.name;
-            const indent = Math.min(2 + row.depth * 2, Math.max(2, popupColumns - 12));
+            const layout = agentSelectorRowLayout(row, popupColumns);
             return (
               <box
                 id={`agent-tree-${index}`}
@@ -110,18 +176,29 @@ export function AgentSelectorPopup({
                   backgroundColor: selected ? theme.selectionBg : theme.popupBg,
                 }}
               >
-                <box style={{ width: indent, flexShrink: 0 }}>
-                  {selected ? <text content="› " fg={theme.accent} bg={selected ? theme.selectionBg : theme.popupBg} /> : null}
+                <box style={{ width: layout.indent, height: 1, flexShrink: 0 }}>
+                  {selected ? <text content="› " fg={theme.accent} bg={theme.selectionBg} /> : null}
                 </box>
                 <text
-                  content={label}
+                  content={layout.label}
                   fg={selected ? theme.fg : theme.dim}
                   bg={selected ? theme.selectionBg : theme.popupBg}
-                  wrapMode="char"
-                  style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
+                  wrapMode="none"
+                  style={{ width: layout.labelWidth, height: 1, flexShrink: 0 }}
                 />
+                {layout.metadataWidth ? (
+                  <>
+                    <box style={{ width: 2, height: 1, flexShrink: 0 }} />
+                    <text
+                      content={new StyledText(statusMetadataChunks(layout.metadata, theme))}
+                      bg={selected ? theme.selectionBg : theme.popupBg}
+                      wrapMode="none"
+                      style={{ width: layout.metadataWidth, height: 1, flexShrink: 0 }}
+                    />
+                  </>
+                ) : null}
                 {/* Reserve the pinned scrollbar column so it cannot cover text. */}
-                <box style={{ width: 1, flexShrink: 0 }} />
+                <box style={{ width: 1, height: 1, flexShrink: 0 }} />
               </box>
             );
           })}
