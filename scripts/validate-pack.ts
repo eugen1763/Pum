@@ -42,7 +42,7 @@ if (forbidden.length > 0) {
   throw new Error(`The package contains forbidden files:\n${forbidden.join("\n")}`);
 }
 
-if (packageJson.name !== "@eugen1763/pum") {
+if (packageJson.name !== "pum-agent") {
   throw new Error(`Unexpected package name: ${packageJson.name ?? "missing"}.`);
 }
 if (!packageJson.version || packageJson.version === "0.0.1") {

@@ -1,12 +1,12 @@
 # Releasing PUM
 
-PUM uses the npm package name `@eugen1763/pum`. The installed executable remains `pum`.
+PUM uses the npm package name `pum-agent`. The installed executable remains `pum`.
 
 ## First-publish bootstrap
 
 npm trusted publishing requires an existing package. Complete these steps once:
 
-1. Confirm that the `@eugen1763` npm scope belongs to the release owner.
+1. Confirm that the `pum-agent` npm package name is still available.
 2. Run all validation commands from the release commit.
 3. Create a granular npm token that can create the package under the scope.
 4. Add the token as the `NPM_TOKEN` GitHub Actions secret.

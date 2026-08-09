@@ -7,7 +7,7 @@
 Plan, edit, run commands, review Markdown, and coordinate parallel Git worktrees without leaving the TUI.
 
 [![CI](https://github.com/eugen1763/Pum/actions/workflows/ci.yml/badge.svg)](https://github.com/eugen1763/Pum/actions/workflows/ci.yml)
-[![npm beta](https://img.shields.io/npm/v/%40eugen1763%2Fpum/beta?label=npm%20beta)](https://www.npmjs.com/package/@eugen1763/pum)
+[![npm beta](https://img.shields.io/npm/v/pum-agent/beta?label=npm%20beta)](https://www.npmjs.com/package/pum-agent)
 [![License: MIT](https://img.shields.io/github/license/eugen1763/Pum)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-f9f1e1?logo=bun&logoColor=14151a)](https://bun.sh)
 
@@ -75,11 +75,11 @@ bun run start -r
 ### Install the beta package
 
 ```bash
-bun i -g @eugen1763/pum@beta
+bun i -g pum-agent@beta
 pum
 ```
 
-The npm package is scoped because the bare `pum` name is already owned. The installed command is still `pum`.
+The package is named `pum-agent` because the bare `pum` name is already owned. The installed command is still `pum`.
 
 ## Essential controls
 

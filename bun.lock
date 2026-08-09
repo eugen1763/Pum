@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@eugen1763/pum",
+      "name": "pum-agent",
       "dependencies": {
         "@earendil-works/pi-ai": "^0.84.1",
         "@earendil-works/pi-coding-agent": "^0.84.1",
