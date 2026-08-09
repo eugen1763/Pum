@@ -35,4 +35,26 @@ describe("SubagentManager extension", () => {
     expect(result.systemPrompt).toContain(SUBAGENT_COORDINATION_SYSTEM_PROMPT);
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
   });
+
+  test("binds the main session even when session_start was missed", async () => {
+    const pi = {
+      on() {},
+      registerTool() {},
+      appendEntry() {},
+    };
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+    });
+    const extension = manager.mainExtension() as { factory: (api: any) => void };
+    extension.factory(pi);
+
+    await manager.bindMainSession({
+      getSessionId: () => "main-session",
+      getEntries: () => [],
+    } as any, "/repo");
+
+    expect((manager as any).parentSessionId).toBe("main-session");
+    expect((manager as any).mainApi).toBe(pi);
+  });
 });

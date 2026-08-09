@@ -527,6 +527,9 @@ export function App({
     }));
 
   useEffect(() => {
+    void subagentManager
+      .bindMainSession(session.sessionManager, cwd)
+      .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
     setThinkingLevel(session.agent.state.thinkingLevel as ThinkingLevel);
     setModelId(session.agent.state.model.id);
     setTx({

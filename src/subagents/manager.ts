@@ -170,13 +170,15 @@ export class SubagentManager {
     sessionManager: ExtensionContext["sessionManager"],
     cwd: string,
   ): Promise<void> {
+    const sessionId = sessionManager.getSessionId();
+    if (this.mainApi === pi && this.parentSessionId === sessionId && this.mainSessionManager) return;
     await this.stopAll("interrupted", false);
     this.records.clear();
     this.messageTimes.clear();
     this.mainApi = pi;
     this.mainSessionManager = sessionManager;
     this.mainCwd = cwd;
-    this.parentSessionId = sessionManager.getSessionId();
+    this.parentSessionId = sessionId;
 
     const restored = new Map<string, Omit<SubagentSnapshot, "transcript">>();
     for (const entry of sessionManager.getEntries()) {
@@ -216,6 +218,14 @@ export class SubagentManager {
       this.records.set(snapshot.id, { snapshot: { ...snapshot, status, transcript } });
     }
     this.emit();
+  }
+
+  async bindMainSession(
+    sessionManager: ExtensionContext["sessionManager"],
+    cwd: string,
+  ): Promise<void> {
+    if (!this.mainApi) throw new Error("Subagent extension API is unavailable");
+    await this.attachMain(this.mainApi, sessionManager, cwd);
   }
 
   async detachMain(): Promise<void> {
@@ -391,6 +401,9 @@ export class SubagentManager {
     return {
       name: "pum-subagents",
       factory: (pi) => {
+        // Capture the API immediately. Some session creation paths load inline
+        // extensions after session_start, so every tool also binds lazily.
+        this.mainApi = pi;
         pi.on("before_agent_start", (event) => ({
           systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}`,
         }));
@@ -417,6 +430,7 @@ export class SubagentManager {
             name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
           }),
           execute: async (_id, params, _signal, _update, ctx) => {
+            await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
             if (!ctx.model) throw new Error("No model is selected");
             const snapshot = await this.spawn({
               task: params.task,
@@ -441,7 +455,8 @@ export class SubagentManager {
             target: Type.String({ description: "Subagent id or name" }),
             message: Type.String({ description: "Message to send" }),
           }),
-          execute: async (_id, params) => {
+          execute: async (_id, params, _signal, _update, ctx) => {
+            await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
             await this.routeMessage("main", params.target, params.message);
             return textResult(`Message delivered to ${params.target}`);
           },
@@ -452,7 +467,10 @@ export class SubagentManager {
           label: "List Subagents",
           description: "List subagents, status, branch, and worktree.",
           parameters: Type.Object({}),
-          execute: async () => textResult(this.formatAgentList()),
+          execute: async (_id, _params, _signal, _update, ctx) => {
+            await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
+            return textResult(this.formatAgentList());
+          },
         });
 
         pi.registerTool({
@@ -460,7 +478,8 @@ export class SubagentManager {
           label: "Stop Subagent",
           description: "Abort and stop a subagent.",
           parameters: Type.Object({ target: Type.String({ description: "Subagent id or name" }) }),
-          execute: async (_id, params) => {
+          execute: async (_id, params, _signal, _update, ctx) => {
+            await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
             const record = this.findRecord(params.target);
             if (!record) throw new Error(`Unknown subagent: ${params.target}`);
             await this.stop(record.snapshot.id, "stopped");
@@ -480,6 +499,7 @@ export class SubagentManager {
             force: Type.Optional(Type.Boolean({ description: "Force removal of an unmerged worktree" })),
           }),
           execute: async (_id, params, _signal, _update, ctx) => {
+            await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
             return this.worktreeAction(ctx.cwd, params.action, params.target, params.name, params.force);
           },
         });

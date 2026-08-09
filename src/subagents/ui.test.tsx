@@ -67,6 +67,7 @@ describe("subagent transcript UI", () => {
     const manager = {
       getAgents: () => [snapshot],
       subscribe: () => () => {},
+      bindMainSession: async () => {},
       sendUserMessage: async () => {},
       abortAgent: async () => {},
       persistToolEvent() {},
@@ -121,6 +122,7 @@ describe("subagent transcript UI", () => {
     const manager = {
       getAgents: () => [runningSnapshot],
       subscribe: () => () => {},
+      bindMainSession: async () => {},
       sendUserMessage: async () => {},
       abortAgent: async () => { aborts++; },
       persistToolEvent() {},
