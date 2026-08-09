@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { MarkdownRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
-import { createRoot } from "@opentui/react";
+import { createRoot, flushSync } from "@opentui/react";
 import { App } from "../app";
 import type { SubagentSnapshot } from "./types";
 
@@ -139,7 +139,7 @@ async function renderCacheApp(options: {
     persistToolEvent() {},
     createStandaloneWorktree: async () => snapshot.worktree,
   } as any;
-  createRoot(setup.renderer).render(
+  flushSync(() => createRoot(setup.renderer).render(
     <App
       session={session}
       modelRuntime={{ getAvailableSnapshot: () => [] } as any}
@@ -162,17 +162,24 @@ async function renderCacheApp(options: {
       promptHistoryStore={stores.history}
       promptStashStore={stores.stash}
     />,
-  );
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  ));
   await setup.renderOnce();
   await setup.flush();
   return { setup, stores };
 }
 
 async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  flushSync();
   await setup.renderOnce();
   await setup.flush();
+}
+
+async function press(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  action: () => void,
+) {
+  flushSync(action);
+  await settle(setup);
 }
 
 describe("subagent transcript UI", () => {
@@ -202,7 +209,7 @@ describe("subagent transcript UI", () => {
       persistToolEvent() {},
       createStandaloneWorktree: async () => snapshot.worktree,
     } as any;
-    createRoot(setup.renderer).render(
+    flushSync(() => createRoot(setup.renderer).render(
       <App
         session={resumed}
         modelRuntime={{ getAvailableSnapshot: () => [] } as any}
@@ -223,7 +230,7 @@ describe("subagent transcript UI", () => {
         searchProviders={[]}
         subagentManager={manager}
       />,
-    );
+    ));
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("↑ 1.3k · ↓ 345 · ↺ 2.4k · $0.250 · 12%");
 
@@ -285,7 +292,7 @@ describe("subagent transcript UI", () => {
     } as any;
     const session = fakeSession();
     const root = createRoot(setup.renderer);
-    root.render(
+    flushSync(() => root.render(
       <App
         session={session}
         modelRuntime={{ getAvailableSnapshot: () => [] } as any}
@@ -306,8 +313,7 @@ describe("subagent transcript UI", () => {
         searchProviders={[]}
         subagentManager={manager}
       />,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    ));
     await setup.renderOnce();
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("◇ 1");
@@ -357,7 +363,7 @@ describe("subagent transcript UI", () => {
       createStandaloneWorktree: async () => snapshot.worktree,
     } as any;
     const session = fakeSession();
-    createRoot(setup.renderer).render(
+    flushSync(() => createRoot(setup.renderer).render(
       <App
         session={session}
         modelRuntime={{ getAvailableSnapshot: () => [] } as any}
@@ -378,19 +384,21 @@ describe("subagent transcript UI", () => {
         searchProviders={[]}
         subagentManager={manager}
       />,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await setup.renderOnce();
+    ));
+    await settle(setup);
 
-    setup.mockInput.pressKey("l", { ctrl: true });
-    const popup = await setup.waitForFrame((frame) => frame.includes("Agents"));
+    await press(setup, () => setup.mockInput.pressKey("l", { ctrl: true }));
+    const popup = setup.captureCharFrame();
     expect(popup).toContain("Agents");
     expect(popup.indexOf("child-worker")).toBeGreaterThan(popup.indexOf("worker-one"));
 
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressArrow("down");
-    setup.mockInput.pressArrow("right");
-    const selectedFrame = await setup.waitForFrame((frame) => frame.includes("Message child-worker…"));
+    await press(setup, () => {
+      setup.mockInput.pressArrow("down");
+      setup.mockInput.pressArrow("down");
+      setup.mockInput.pressArrow("right");
+    });
+    const selectedFrame = setup.captureCharFrame();
+    expect(selectedFrame).toContain("Message child-worker…");
     expect(selectedFrame).not.toContain("→/enter open");
     expect(markdownContent(setup.renderer.root)).toContain("Child transcript");
   });
@@ -485,7 +493,7 @@ describe("subagent transcript UI", () => {
       createStandaloneWorktree: async () => runningSnapshot.worktree,
     } as any;
     const session = fakeSession();
-    createRoot(setup.renderer).render(
+    flushSync(() => createRoot(setup.renderer).render(
       <App
         session={session}
         modelRuntime={{ getAvailableSnapshot: () => [] } as any}
@@ -506,20 +514,18 @@ describe("subagent transcript UI", () => {
         searchProviders={[]}
         subagentManager={manager}
       />,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await setup.renderOnce();
+    ));
+    await settle(setup);
 
-    setup.mockInput.pressTab({ shift: true });
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await setup.renderOnce();
-    setup.mockInput.pressEscape();
-    const armedFrame = await setup.waitForFrame((frame) => frame.includes("esc again to cancel"));
+    await press(setup, () => setup.mockInput.pressTab({ shift: true }));
+    expect(setup.captureCharFrame()).toContain("Steer worker-one…");
+
+    await press(setup, () => setup.mockInput.pressEscape());
+    const armedFrame = setup.captureCharFrame();
     expect(aborts).toBe(0);
     expect(armedFrame).toContain("esc again to cancel");
 
-    setup.mockInput.pressEscape();
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await press(setup, () => setup.mockInput.pressEscape());
     expect(aborts).toBe(1);
   });
 });
