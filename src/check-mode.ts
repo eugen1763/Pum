@@ -7,11 +7,18 @@ import { projectStorageKey } from "./platform";
 import {
   canonicalJson,
   CheckApprovalCoordinator,
+  exactApprovalKey,
   CheckApprovalStore,
   type CheckedToolName,
 } from "./check-approvals";
 import { previewMutation, type MutationPreview } from "./check-mutation";
-import { analyzeCheckPolicy, type BashAnalysis, type CheckPolicyResult } from "./check-policy";
+import {
+  analyzeCheckPolicy,
+  analyzeExecutablePolicy,
+  type BashAnalysis,
+  type CheckPolicyResult,
+  type ProcessCheckProposal,
+} from "./check-policy";
 import type { CheckModeProfile } from "./settings";
 
 export const DEFAULT_CHECK_MODEL = "deepseek/deepseek-v4-flash";
@@ -130,6 +137,8 @@ const MAX_STRUCTURED_INPUT_CHARS = 118_000;
 const MAX_UNCLEAR_REPLY_CHARS = 1_000;
 const CHECK_TIMEOUT_MS = 15_000;
 
+export type { ProcessCheckOperation, ProcessCheckProposal } from "./check-policy";
+
 export type PreparedCheck = {
   prompt: string;
   canonicalInput: string;
@@ -141,7 +150,7 @@ export type PreparedCheck = {
   preview: string;
 };
 
-type UntrustedContext = {
+export type UntrustedContext = {
   currentUserRequest?: string;
   agentRationale?: string;
   inspectedPaths?: string[];
@@ -171,7 +180,32 @@ function balancedMutationAllowed(preview: MutationPreview): boolean {
     && preview.additions + preview.removals <= 2_000;
 }
 
-async function prepareCheck(
+export function isProcessCheckProposal(value: unknown): value is ProcessCheckProposal {
+  if (!value || typeof value !== "object") return false;
+  const proposal = value as Partial<ProcessCheckProposal>;
+  return proposal.kind === "process"
+    && proposal.source === "external-trigger"
+    && typeof proposal.executable === "string"
+    && Array.isArray(proposal.args)
+    && proposal.args.every((argument) => typeof argument === "string")
+    && typeof proposal.cwd === "string"
+    && ["create", "start", "resume", "repeat", "invoke-run"].includes(proposal.operation ?? "")
+    && (proposal.triggerName === undefined || typeof proposal.triggerName === "string");
+}
+
+/** Build the exact safety identity. Display-only triggerName is intentionally omitted. */
+export function canonicalProcessCheckInput(proposal: ProcessCheckProposal): string {
+  return canonicalJson({
+    kind: proposal.kind,
+    source: proposal.source,
+    operation: proposal.operation,
+    cwd: projectStorageKey(proposal.cwd),
+    executable: proposal.executable,
+    args: [...proposal.args],
+  });
+}
+
+export async function prepareCheck(
   toolName: CheckedToolName,
   input: unknown,
   cwd: string,
@@ -180,7 +214,7 @@ async function prepareCheck(
 ): Promise<{ prepared?: PreparedCheck; block?: string; balancedAllow?: string }> {
   let canonicalInput: string;
   try {
-    canonicalInput = canonicalJson(input);
+    canonicalInput = isProcessCheckProposal(input) ? canonicalProcessCheckInput(input) : canonicalJson(input);
   } catch (error) {
     return { block: `Safety check input cannot be serialized completely: ${String(error)}` };
   }
@@ -189,9 +223,19 @@ async function prepareCheck(
   let policy: CheckPolicyResult | undefined;
   let mutation: MutationPreview | undefined;
   if (toolName === "bash") {
-    const command = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
-    if (typeof command !== "string") return { block: "Bash safety check requires a complete command string" };
-    policy = await analyzeCheckPolicy({ command, cwd, profile });
+    if (isProcessCheckProposal(input)) {
+      policy = analyzeExecutablePolicy({
+        executable: input.executable,
+        args: input.args,
+        cwd: input.cwd,
+        projectCwd: cwd,
+        profile,
+      });
+    } else {
+      const command = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
+      if (typeof command !== "string") return { block: "Bash safety check requires a complete command string or process proposal" };
+      policy = analyzeCheckPolicy({ command, cwd, profile });
+    }
     bash = policy.analysis;
     if (!bash.complete || bash.truncated || !bash.syntaxBalanced) {
       return { block: `Bash safety analysis is incomplete: ${bash.errors.join("; ") || "unbalanced or over limit"}` };
@@ -216,10 +260,15 @@ async function prepareCheck(
   }
 
   const paths = mutation?.changedPaths ?? [];
-  const summary = toolName === "bash"
-    ? `Run ${bash!.stages.length} shell stage${bash!.stages.length === 1 ? "" : "s"}`
+  const processProposal = isProcessCheckProposal(input) ? input : undefined;
+  const summary = processProposal
+    ? `${processProposal.operation} external trigger process: ${processProposal.executable}`
+    : toolName === "bash"
+      ? `Run ${bash!.stages.length} shell stage${bash!.stages.length === 1 ? "" : "s"}`
     : `Change ${paths.length} project file${paths.length === 1 ? "" : "s"} (+${mutation!.additions} −${mutation!.removals})`;
-  const preview = toolName === "bash" ? (input as { command: string }).command : mutation!.unifiedDiff;
+  const preview = processProposal
+    ? JSON.stringify({ executable: processProposal.executable, args: processProposal.args, cwd: processProposal.cwd }, null, 2)
+    : toolName === "bash" ? (input as { command: string }).command : mutation!.unifiedDiff;
   const request = {
     version: 2,
     complete: true,
@@ -231,7 +280,16 @@ async function prepareCheck(
       reason: policy.reason,
       findings: policy.findings,
     } : undefined,
-    shell: bash,
+    shell: processProposal ? undefined : bash,
+    process: processProposal ? {
+      source: processProposal.source,
+      operation: processProposal.operation,
+      executable: processProposal.executable,
+      args: processProposal.args,
+      cwd: processProposal.cwd,
+      triggerName: processProposal.triggerName,
+      analysis: bash,
+    } : undefined,
     proposedMutation: mutation ? {
       unifiedDiff: mutation.unifiedDiff,
       changedPaths: mutation.changedPaths,
@@ -345,8 +403,8 @@ export class BashSafetyCache {
   }
 }
 
-type CheckerRuntime = Pick<ModelRuntime, "getAvailableSnapshot" | "completeSimple">;
-type ToolCheck = {
+export type CheckerRuntime = Pick<ModelRuntime, "getAvailableSnapshot" | "completeSimple">;
+export type ToolCheck = {
   toolName: CheckedToolName;
   input: unknown;
   cwd: string;
@@ -356,6 +414,12 @@ type ToolCheck = {
   context?: UntrustedContext;
   isApproved?: (prepared: PreparedCheck) => boolean;
 };
+export type ProcessCheckCall = Omit<ToolCheck, "toolName" | "input" | "cwd"> & {
+  proposal: ProcessCheckProposal;
+  /** Project boundary. This value comes from the owning session, not the proposal. */
+  projectCwd: string;
+};
+
 type ToolBlock = { block: true; reason: string };
 export type ToolEvaluation = {
   decision: "allow" | "block" | "ask";
@@ -473,6 +537,20 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
   }
 }
 
+/** Evaluate an external-trigger process while preserving executable and argument boundaries. */
+export function evaluateProcessCheck(
+  runtime: CheckerRuntime,
+  cache: BashSafetyCache,
+  call: ProcessCheckCall,
+): Promise<ToolEvaluation> {
+  return evaluateToolCall(runtime, cache, {
+    ...call,
+    toolName: "bash",
+    input: call.proposal,
+    cwd: call.projectCwd,
+  });
+}
+
 export async function verifyToolCall(runtime: CheckerRuntime, cache: BashSafetyCache, call: ToolCheck): Promise<ToolBlock | undefined> {
   const evaluation = await evaluateToolCall(runtime, cache, call);
   return evaluation.decision === "allow" ? undefined : { block: true, reason: evaluation.reason };
@@ -548,7 +626,7 @@ export function createCheckModeExtension(
             inspectedPaths: inspectedPaths(ctx.sessionManager?.buildContextEntries?.() ?? []),
           },
           isApproved: (prepared) => {
-            const exactKey = `${toolName}\n${current.model}\n${projectStorageKey(ctx.cwd)}\n${prepared.canonicalInput}`;
+            const exactKey = exactApprovalKey(toolName, current.model, ctx.cwd, prepared.canonicalInput);
             return sessionApprovals.has(exactKey)
               || approvals.has(toolName, current.model, ctx.cwd, prepared.canonicalInput);
           },
@@ -556,8 +634,10 @@ export function createCheckModeExtension(
         if (evaluation.decision === "allow") return;
 
         if (evaluation.decision === "ask" && current.profile === "ask" && evaluation.prepared) {
-          const exactKey = `${toolName}\n${current.model}\n${projectStorageKey(ctx.cwd)}\n${evaluation.prepared.canonicalInput}`;
+          const exactKey = exactApprovalKey(toolName, current.model, ctx.cwd, evaluation.prepared.canonicalInput);
+          const sessionId = ctx.sessionManager?.getSessionId?.();
           const choice = await options.coordinator?.request({
+            target: typeof sessionId === "string" ? { sessionId } : undefined,
             toolName,
             model: current.model,
             cwd: ctx.cwd,

@@ -108,6 +108,27 @@ export type AnalyzeCheckPolicyOptions = {
   fileSystem?: CheckPolicyFileSystem;
 };
 
+export type ProcessCheckOperation = "create" | "start" | "resume" | "repeat" | "invoke-run";
+
+export type ProcessCheckProposal = {
+  kind: "process";
+  source: "external-trigger";
+  executable: string;
+  /** Process arguments. The executable is not included. */
+  args: readonly string[];
+  cwd: string;
+  operation: ProcessCheckOperation;
+  /** Display context only. This field is not part of the safety identity. */
+  triggerName?: string;
+};
+
+export type AnalyzeExecutablePolicyOptions = Pick<ProcessCheckProposal, "executable" | "args" | "cwd"> & {
+  projectCwd?: string;
+  profile?: CheckPolicyProfile;
+  limits?: Partial<CheckPolicyLimits>;
+  fileSystem?: CheckPolicyFileSystem;
+};
+
 export const DEFAULT_CHECK_POLICY_LIMITS: Readonly<CheckPolicyLimits> = Object.freeze({
   maxCommandChars: 64_000,
   maxStages: 256,
@@ -132,11 +153,12 @@ const MUTATION_COMMANDS = new Map<string, string>([
 ]);
 
 const SHELL_INTERPRETERS = new Set(["sh", "bash", "dash", "zsh", "ksh", "fish", "pwsh", "powershell", "cmd"]);
-const REMOTE_COMMANDS = new Set(["curl", "wget", "fetch", "Invoke-WebRequest", "iwr"]);
+const REMOTE_COMMANDS = new Set(["curl", "wget", "fetch", "invoke-webrequest", "iwr"]);
 const PATH_OPERAND_COMMANDS = new Set([
   "cat", "head", "tail", "less", "more", "stat", "file", "ls", "tree", "du", "wc", "realpath",
   "readlink", "rm", "rmdir", "unlink", "shred", "mv", "cp", "install", "mkdir", "touch", "truncate",
   "chmod", "chown", "chgrp", "setfacl", "tee", "sed", "perl",
+  "node", "bun", "deno", "python", "python3", "ruby", "perl", "php", "java",
 ]);
 const PRIVILEGE_COMMANDS = new Set(["sudo", "doas", "su", "pkexec", "runas"]);
 const PERSISTENCE_COMMANDS = new Set(["crontab", "at", "schtasks", "launchctl"]);
@@ -152,7 +174,8 @@ const SAFE_READ_COMMANDS = new Set([
 
 function commandName(argv0: string | undefined): string {
   if (!argv0) return "";
-  return argv0.replaceAll("\\", "/").split("/").at(-1) ?? argv0;
+  const basename = argv0.replaceAll("\\", "/").split("/").at(-1) ?? argv0;
+  return basename.replace(/\.(?:exe|cmd|bat)$/i, "").toLowerCase();
 }
 
 function effectiveArgv(argv: string[]): string[] {
@@ -494,11 +517,11 @@ function looksLikePath(value: string): boolean {
     || value.includes("/") || value.includes("\\");
 }
 
-function normalizedAbsolute(value: string, cwd: string): { absolute: string; root: string; inside: boolean } {
+function normalizedAbsolute(value: string, cwd: string, projectCwd = cwd): { absolute: string; root: string; inside: boolean } {
   const flavor = pathFlavor(value, cwd);
-  const root = flavor.resolve(cwd);
+  const root = flavor.resolve(projectCwd);
   const expanded = value === "~" || value.startsWith("~/") || value.startsWith("~\\") ? value : value;
-  const absolute = flavor.resolve(root, expanded);
+  const absolute = flavor.resolve(cwd, expanded);
   const relative = flavor.relative(root, absolute);
   const inside = relative === "" || (!relative.startsWith("..") && !flavor.isAbsolute(relative));
   return { absolute, root, inside };
@@ -521,11 +544,21 @@ function credentialPath(value: string): boolean {
 function pathOperands(stage: BashStage): string[] {
   const name = commandName(stage.argv[0]);
   const values = stage.redirections.flatMap((item) => item.target ? [item.target] : []);
+  const pathValueOptions = new Set(["-C", "--cwd", "--directory", "--chdir", "--git-dir", "--work-tree", "--prefix"]);
   for (let index = 1; index < stage.argv.length; index++) {
     const value = stage.argv[index]!;
     if (value === "--") {
       values.push(...stage.argv.slice(index + 1));
       break;
+    }
+    if (pathValueOptions.has(value) && stage.argv[index + 1]) {
+      values.push(stage.argv[++index]!);
+      continue;
+    }
+    const optionPath = value.match(/^(?:--cwd|--directory|--chdir|--git-dir|--work-tree|--prefix)=(.+)$/)?.[1];
+    if (optionPath) {
+      values.push(optionPath);
+      continue;
     }
     if (value.startsWith("-") || isUrl(value)) continue;
     if (PATH_OPERAND_COMMANDS.has(name) || looksLikePath(value)) values.push(value);
@@ -556,7 +589,13 @@ function addFinding(findings: CheckPolicyFinding[], finding: CheckPolicyFinding)
   if (!findings.some((item) => item.code === finding.code && item.stage === finding.stage && item.path === finding.path)) findings.push(finding);
 }
 
-function inspectHardBlocks(analysis: BashAnalysis, cwd: string, fs: CheckPolicyFileSystem, depth = 0): CheckPolicyFinding[] {
+function inspectHardBlocks(
+  analysis: BashAnalysis,
+  cwd: string,
+  fs: CheckPolicyFileSystem,
+  depth = 0,
+  projectCwd = cwd,
+): CheckPolicyFinding[] {
   const findings: CheckPolicyFinding[] = [];
   if (!analysis.complete) {
     addFinding(findings, { code: analysis.truncated ? "analysis-limit" : "unbalanced-shell", severity: "hard-block", message: analysis.errors.join("; ") || "shell analysis is incomplete" });
@@ -567,7 +606,8 @@ function inspectHardBlocks(analysis: BashAnalysis, cwd: string, fs: CheckPolicyF
     const argv = effectiveArgv(stage.argv);
     const name = commandName(argv[0]);
     const lowerArgs = argv.map((arg) => arg.toLowerCase());
-    if (PRIVILEGE_COMMANDS.has(name) || (name.toLowerCase() === "powershell" && lowerArgs.includes("runas"))) {
+    if (PRIVILEGE_COMMANDS.has(name)
+      || ((name === "powershell" || name === "start-process") && lowerArgs.includes("runas"))) {
       addFinding(findings, { code: "privilege-escalation", severity: "hard-block", message: `${name} can escalate privileges`, stage: stage.index });
     }
     const credentialVariable = /\$(?:\{)?(?:[A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY)|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)(?:\})?/i.test(stage.text);
@@ -599,7 +639,7 @@ function inspectHardBlocks(analysis: BashAnalysis, cwd: string, fs: CheckPolicyF
       const recursive = argv.slice(1).some((arg) => arg === "--recursive" || /^-[^-]*r/i.test(arg));
       const force = argv.slice(1).some((arg) => arg === "--force" || /^-[^-]*f/i.test(arg));
       const broad = operands.some((arg) => [".", "..", "*", "./*", ".\\*", "/", "\\"].includes(arg)
-        || /[*?\[]/.test(arg) || isProjectRoot(arg, cwd))
+        || /[*?\[]/.test(arg) || isProjectRoot(arg, projectCwd))
         || (recursive && force && operands.length !== 1);
       if (broad) addFinding(findings, { code: "broad-deletion", severity: "hard-block", message: "deletion target is broad or recursive across multiple paths", stage: stage.index });
     }
@@ -611,7 +651,7 @@ function inspectHardBlocks(analysis: BashAnalysis, cwd: string, fs: CheckPolicyF
         addFinding(findings, { code: "outside-project", severity: "hard-block", message: "home-relative path is outside the project boundary", stage: stage.index, path: value });
         continue;
       }
-      const resolved = normalizedAbsolute(value, cwd);
+      const resolved = normalizedAbsolute(value, cwd, projectCwd);
       if (!resolved.inside) {
         addFinding(findings, { code: "outside-project", severity: "hard-block", message: "path resolves outside the project boundary", stage: stage.index, path: value });
       } else if (symlinkEscapes(resolved.absolute, resolved.root, fs)) {
@@ -627,7 +667,7 @@ function inspectHardBlocks(analysis: BashAnalysis, cwd: string, fs: CheckPolicyF
         : SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
       if (commandFlag >= 0 && argv[commandFlag + 1]) nestedCommands.push(argv[commandFlag + 1]!);
       for (const nestedCommand of nestedCommands) {
-        const nestedFindings = inspectHardBlocks(analyzeBashCommand(nestedCommand), cwd, fs, depth + 1);
+        const nestedFindings = inspectHardBlocks(analyzeBashCommand(nestedCommand), cwd, fs, depth + 1, projectCwd);
         for (const finding of nestedFindings) {
           addFinding(findings, { ...finding, stage: stage.index, message: `nested command: ${finding.message}` });
         }
@@ -710,5 +750,95 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
   }
 
   if (!findings.length) addFinding(findings, { code: "unrecognized-command", severity: "review", message: "command is not a rigorously narrow built-in policy case" });
+  return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+}
+
+/** Analyze direct executable arguments without converting the arguments to shell text. */
+export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions): CheckPolicyResult {
+  const profile = options.profile ?? "balanced";
+  const limits = mergeLimits(options.limits);
+  const errors: string[] = [];
+  let truncated = false;
+  if (!options.executable) errors.push("executable is empty");
+  if (options.executable.length > limits.maxTokenChars) {
+    errors.push(`executable exceeds ${limits.maxTokenChars} characters`);
+    truncated = true;
+  }
+  if (options.args.length + 1 > limits.maxTokensPerStage) {
+    errors.push(`args exceeds ${limits.maxTokensPerStage - 1} arguments`);
+    truncated = true;
+  }
+  if (options.args.some((argument) => argument.length > limits.maxTokenChars)) {
+    errors.push(`argument exceeds ${limits.maxTokenChars} characters`);
+    truncated = true;
+  }
+
+  const argv = [options.executable, ...options.args];
+  const stage: BashStage = {
+    index: 0,
+    start: 0,
+    end: 0,
+    text: JSON.stringify(argv),
+    pipeline: 0,
+    argv,
+    envAssignments: {},
+    redirections: [],
+    substitutions: [],
+    mutationIntent: mutationIndicators(argv, []),
+  };
+  const analysis: BashAnalysis = {
+    complete: errors.length === 0,
+    syntaxBalanced: errors.length === 0,
+    truncated,
+    operators: [],
+    stages: errors.length === 0 ? [stage] : [],
+    redirections: [],
+    substitutions: [],
+    mutationIntent: { possible: stage.mutationIntent.length > 0, indicators: stage.mutationIntent },
+    errors,
+  };
+  const projectCwd = options.projectCwd ?? options.cwd;
+  const fs = options.fileSystem ?? nodeFileSystem;
+  const findings = inspectHardBlocks(analysis, options.cwd, fs, 0, projectCwd);
+  const executionDirectory = normalizedAbsolute(options.cwd, projectCwd, projectCwd);
+  if (!executionDirectory.inside) {
+    addFinding(findings, {
+      code: "outside-project",
+      severity: "hard-block",
+      message: "execution cwd resolves outside the project boundary",
+      path: options.cwd,
+    });
+  } else if (symlinkEscapes(executionDirectory.absolute, executionDirectory.root, fs)) {
+    addFinding(findings, {
+      code: "escaping-symlink",
+      severity: "hard-block",
+      message: "execution cwd follows a symlink outside the project boundary or cannot be verified",
+      path: options.cwd,
+    });
+  }
+  if (findings.some((item) => item.severity === "hard-block")) {
+    return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
+  }
+  if (profile === "ask") {
+    addFinding(findings, { code: "unrecognized-command", severity: "review", message: "ask profile requires review for every command" });
+    return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+  }
+  if (analysis.mutationIntent.possible) {
+    addFinding(findings, { code: "mutation", severity: "review", message: "command can mutate project state" });
+  }
+  const narrowRead = isNarrowRead(stage);
+  const narrowMutation = profile === "balanced" && isNarrowBalancedMutation(stage);
+  if (narrowRead || narrowMutation) {
+    return {
+      profile,
+      decision: "allow",
+      reason: narrowRead ? "narrow project-local inspection" : "narrow project-local mutation",
+      findings: [],
+      analysis,
+    };
+  }
+  if (!findings.length) {
+    addFinding(findings, { code: "unrecognized-command", severity: "review", message: "command is not a rigorously narrow built-in policy case" });
+  }
   return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
 }

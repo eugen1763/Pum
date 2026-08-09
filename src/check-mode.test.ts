@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   BashSafetyCache,
+  canonicalProcessCheckInput,
   createCheckModeExtension,
+  evaluateProcessCheck,
   evaluateToolCall,
   isBashCacheEligible,
   isRejectedToolResult,
@@ -13,6 +15,7 @@ import {
   setCheckModeConfig,
   verifyToolCall,
   type CheckModeConfig,
+  type ProcessCheckProposal,
 } from "./check-mode";
 import { CheckApprovalCoordinator, CheckApprovalStore } from "./check-approvals";
 
@@ -336,6 +339,59 @@ describe("bash safety cache", () => {
   });
 });
 
+describe("external-trigger process checks", () => {
+  const proposal = (overrides: Partial<ProcessCheckProposal> = {}): ProcessCheckProposal => ({
+    kind: "process",
+    source: "external-trigger",
+    operation: "start",
+    executable: "bun",
+    args: ["test", "value && rm -rf .", "two words"],
+    cwd: process.cwd(),
+    triggerName: "tests",
+    ...overrides,
+  });
+
+  test("uses a canonical identity with exact argument boundaries and no display name", () => {
+    const first = canonicalProcessCheckInput(proposal());
+    expect(first).toContain('\"args\":[\"test\",\"value && rm -rf .\",\"two words\"]');
+    expect(first).not.toContain("tests");
+    expect(canonicalProcessCheckInput(proposal({ triggerName: "renamed" }))).toBe(first);
+    expect(canonicalProcessCheckInput(proposal({ operation: "resume" }))).not.toBe(first);
+    expect(canonicalProcessCheckInput(proposal({ args: ["test value", "&&"] }))).not.toBe(first);
+  });
+
+  test("sends structured executable data to the verifier without shell flattening", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([result("SAFE")]);
+    const evaluation = await evaluateProcessCheck(verifier, cache, {
+      proposal: proposal(),
+      projectCwd: process.cwd(),
+      config,
+    });
+
+    expect(evaluation.decision).toBe("allow");
+    const prompt = verifier.contexts[0].messages[0].content as string;
+    expect(prompt).toContain('\"process\"');
+    expect(prompt).toContain('\"args\": [');
+    expect(prompt).toContain('\"value && rm -rf .\"');
+    expect(prompt).not.toContain('\"shell\": {');
+  });
+
+  test("hard-blocks a process cwd outside the owning project", async () => {
+    const { cache } = temporaryCache();
+    const verifier = runtime([]);
+    const evaluation = await evaluateProcessCheck(verifier, cache, {
+      proposal: proposal({ cwd: join(process.cwd(), "..") }),
+      projectCwd: process.cwd(),
+      config,
+    });
+
+    expect(evaluation).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(evaluation.reason).toContain("outside the project");
+    expect(verifier.calls).toBe(0);
+  });
+});
+
 describe("profile evaluation and structured verdicts", () => {
   test("parses the structured schema and legacy verdicts", () => {
     expect(safetyDecision('{"decision":"safe","category":"build","confidence":0.92,"reason":"local test"}')).toMatchObject({
@@ -454,17 +510,22 @@ describe("ask profile approvals", () => {
     const approvalPath = join(directory, "approvals.json");
     const approvals = new CheckApprovalStore(approvalPath);
     let pendingId: string | undefined;
-    const unsubscribe = coordinator.subscribe((request) => { pendingId = request?.id; });
+    let pendingSessionId: string | undefined;
+    const unsubscribe = coordinator.subscribe((request) => {
+      pendingId = request?.id;
+      pendingSessionId = request?.target?.sessionId;
+    });
     const handlers = new Map<string, Function>();
     const verifier = runtime([result("malformed"), result("still malformed"), result("malformed"), result("still malformed")]);
     const extension = createCheckModeExtension(verifier, cache, { coordinator, approvals });
     (extension as any).factory({ on: (name: string, handler: Function) => handlers.set(name, handler) });
     setCheckModeConfig({ profile: "ask", model: config.model });
     const event = { toolName: "bash", toolCallId: "one", input: { command: "bun test" } };
-    const ctx = { cwd: directory, sessionManager: { buildContextEntries: () => [] } };
+    const ctx = { cwd: directory, sessionManager: { buildContextEntries: () => [], getSessionId: () => "agent-session-one" } };
     const first = handlers.get("tool_call")!(event, ctx);
     await Bun.sleep(0);
     expect(pendingId).toBeDefined();
+    expect(pendingSessionId).toBe("agent-session-one");
     coordinator.resolve(pendingId!, "allow-session");
     expect(await first).toBeUndefined();
     expect(verifier.calls).toBe(2);
