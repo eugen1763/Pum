@@ -336,6 +336,10 @@ export class SubagentManager {
     return {
       name: `pum-subagent-${agentId}`,
       factory: (pi) => {
+        // Capture immediately because inline extensions can load after the
+        // child session_start event on some session creation paths.
+        const initialRecord = this.records.get(agentId);
+        if (initialRecord) initialRecord.api = pi;
         pi.on("session_start", (_event, ctx) => {
           const record = this.records.get(agentId);
           if (record) record.api = pi;
@@ -724,9 +728,10 @@ export class SubagentManager {
       this.emit({ type: "main-line", line });
     } else if (recipient) {
       await this.ensureRuntime(recipient);
+      if (!recipient.api) throw new Error(`Agent message API is unavailable: ${recipient.snapshot.name}`);
       this.appendLine(recipient, line);
       withSearchRoute(recipient.session!.sessionId, () => {
-        recipient.api?.sendMessage(customMessage, { deliverAs: "steer", triggerTurn: true });
+        recipient.api!.sendMessage(customMessage, { deliverAs: "steer", triggerTurn: true });
       });
       this.updateStatus(recipient, "running");
     }
