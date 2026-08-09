@@ -2,6 +2,7 @@ import type { Line } from "./transcript";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { editCounts, toolArg, type ToolCall } from "./tool-line";
 import { questionnaireDetail } from "./questionnaire";
+import { messageCacheDetail } from "./message-cache";
 import {
   WEB_SEARCH_CUSTOM_TYPE,
   type SearchCallRecord,
@@ -210,6 +211,7 @@ export function replayEntries(
         if (call.state === "rejected") call.detail = rejectedToolReason(message);
         else if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
         else if (call.name === "questionnaire") call.detail = questionnaireDetail(message);
+        else if (call.name.startsWith("message_cache_")) call.detail = messageCacheDetail(message);
       }
     }
   }

@@ -75,15 +75,15 @@ describe("prompt history and cache cleanup", () => {
     writeJson(historyPath, { [cwd]: ["sent once"] });
     writeJson(stashPath, { [cwd]: ["sent once", "cached", "sent once"] });
 
-    expect(store.loadStash(cwd)).toEqual([
-      { text: "sent once", executed: true },
-      { text: "cached", executed: false },
-      { text: "sent once", executed: false },
+    expect(store.loadStash(cwd).map(({ text, executed, owner }) => ({ text, executed, owner }))).toEqual([
+      { text: "sent once", executed: true, owner: { type: "user" } },
+      { text: "cached", executed: false, owner: { type: "user" } },
+      { text: "sent once", executed: false, owner: { type: "user" } },
     ]);
-    expect(readJson(stashPath)[cwd]).toEqual([
-      { text: "sent once", executed: true },
-      { text: "cached", executed: false },
-      { text: "sent once", executed: false },
+    expect((readJson(stashPath)[cwd] as any[]).map(({ text, executed, owner }) => ({ text, executed, owner }))).toEqual([
+      { text: "sent once", executed: true, owner: { type: "user" } },
+      { text: "cached", executed: false, owner: { type: "user" } },
+      { text: "sent once", executed: false, owner: { type: "user" } },
     ]);
   });
 
@@ -115,9 +115,9 @@ describe("prompt history and cache cleanup", () => {
     });
 
     expect(store.loadHistory(normalizedCwd)).toEqual(["old prompt", "new prompt"]);
-    expect(store.loadStash(normalizedCwd)).toEqual([
-      { text: "legacy cached", executed: false },
-      { text: "normalized cached", executed: false },
+    expect(store.loadStash(normalizedCwd).map(({ text, executed, owner }) => ({ text, executed, owner }))).toEqual([
+      { text: "legacy cached", executed: false, owner: { type: "user" } },
+      { text: "normalized cached", executed: false, owner: { type: "user" } },
     ]);
     expect(Object.keys(readJson(historyPath))).toEqual([normalizedCwd]);
     expect(Object.keys(readJson(stashPath))).toEqual([normalizedCwd]);

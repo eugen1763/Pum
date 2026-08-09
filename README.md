@@ -131,6 +131,14 @@ The `questionnaire` tool asks one or more questions inside PUM's OpenTUI interfa
 
 PUM returns structured answers to the requesting main agent or managed child agent. Custom text stays outside React labels and session data until the user explicitly submits the answer.
 
+### Agent message cache
+
+Main and managed child agents can list and read the current workspace message cache. Agent-created entries include exact ownership metadata.
+
+Agents can add entries. An agent can delete only entries created by that exact agent. User-created and legacy entries remain user-owned.
+
+The `message_cache_send` tool accepts stable entry IDs. Single entries use the selected agent delivery path. Multiple entries use main-agent worktree orchestration.
+
 ### Atomic `apply_patch`
 
 `apply_patch` supports add, update, delete, move, multiple files, and multiple hunks. PUM validates the full patch before changing files. It rejects traversal, absolute paths, escaping symlinks, path conflicts, and ambiguous context. A failed commit restores all touched files.

@@ -70,6 +70,14 @@ describe("apply_patch tool metadata", () => {
     }, "/repo")).toBe("2 questions · Scope");
   });
 
+  test("summarizes message cache actions without exposing cached text", () => {
+    expect(toolArg("message_cache_list", {}, "/repo")).toBe("list");
+    expect(toolArg("message_cache_add", { text: "large private cached task" }, "/repo")).toBe("add");
+    expect(toolArg("message_cache_delete", { id: "cache-1" }, "/repo")).toBe("delete · cache-1");
+    expect(toolArg("message_cache_send", { ids: ["cache-1", "cache-1"] }, "/repo"))
+      .toBe("send · 2 ids");
+  });
+
   test("summarizes trigger tools without exposing templates or argument vectors", () => {
     expect(toolArg("create_trigger", {
       name: "tests",

@@ -29,6 +29,11 @@ import { editCounts, toolArg, type ToolCall } from "../tool-line";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
+  MESSAGE_CACHE_TOOLS,
+  messageCacheDetail,
+  type MessageCacheController,
+} from "../message-cache";
+import {
   registerTriggerTools,
   type TriggerRuntimeManager,
   type TriggerTargetSelector,
@@ -156,6 +161,7 @@ type ManagerOptions = {
   childExtensionFactories?: InlineExtension[];
   questionnaireManager?: QuestionnaireManager;
   triggerManager?: TriggerRuntimeManager;
+  messageCacheController?: MessageCacheController;
 };
 
 const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
@@ -207,6 +213,7 @@ export class SubagentManager {
   private readonly childExtensionFactories: InlineExtension[];
   private readonly questionnaireManager?: QuestionnaireManager;
   private readonly triggerManager?: TriggerRuntimeManager;
+  private readonly messageCacheController?: MessageCacheController;
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly listeners = new Set<(event: SubagentManagerEvent) => void>();
   private mainApi?: ExtensionAPI;
@@ -225,6 +232,7 @@ export class SubagentManager {
     this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
     this.questionnaireManager = options.questionnaireManager;
     this.triggerManager = options.triggerManager;
+    this.messageCacheController = options.messageCacheController;
   }
 
   subscribe(listener: (event: SubagentManagerEvent) => void): () => void {
@@ -505,7 +513,9 @@ export class SubagentManager {
               ? editCounts(event.result)
               : event.toolName === "questionnaire"
                 ? questionnaireDetail(event.result)
-              : undefined,
+                : event.toolName.startsWith("message_cache_")
+                  ? messageCacheDetail(event.result)
+                  : undefined,
         });
         break;
       case "agent_start":
@@ -530,6 +540,7 @@ export class SubagentManager {
         break;
       }
       case "agent_settled": {
+        this.messageCacheController?.releaseRequester({ kind: "subagent", id: record.snapshot.id });
         this.updateTranscript(record, flushTranscript);
         if (record.session) {
           void this.triggerManager?.markTargetSettled(
@@ -593,6 +604,14 @@ export class SubagentManager {
             id: agentId,
             name: questionnaireRecord.snapshot.name,
           });
+        }
+        const messageCacheRecord = this.records.get(agentId);
+        if (messageCacheRecord) {
+          this.messageCacheController?.registerTools(pi, () => ({
+            kind: "subagent",
+            id: agentId,
+            name: messageCacheRecord.snapshot.name,
+          }));
         }
         if (this.triggerManager) {
           registerTriggerTools(
@@ -711,6 +730,7 @@ export class SubagentManager {
         });
         pi.on("agent_settled", () => {
           this.mainRunning = false;
+          this.messageCacheController?.releaseRequester({ kind: "main", id: this.parentSessionId });
           void this.triggerManager?.markTargetSettled(this.parentSessionId);
           this.emit({
             type: "trigger-target",
@@ -735,6 +755,12 @@ export class SubagentManager {
           await this.detachMain();
           await this.triggerManager?.invalidateSession(sessionId, "session shutdown");
         });
+
+        this.messageCacheController?.registerTools(pi, (ctx) => ({
+          kind: "main",
+          id: ctx.sessionManager.getSessionId(),
+          name: "main",
+        }));
 
         if (this.triggerManager) {
           registerTriggerTools(
@@ -962,6 +988,7 @@ export class SubagentManager {
       tools: [
         "read", "write", "edit", "apply_patch", "bash", "questionnaire",
         "spawn_subagent", "message_agent", "list_subagents", "finish_subagent", "worktree",
+        ...MESSAGE_CACHE_TOOLS,
         ...(this.triggerManager ? [
           "create_trigger", "list_triggers", "inspect_trigger", "pause_trigger",
           "resume_trigger", "cancel_trigger", "invoke_trigger",

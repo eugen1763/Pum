@@ -241,6 +241,39 @@ describe("subagent transcript replay", () => {
     });
   });
 
+  test("restores concise message cache action and result details", () => {
+    const lines = replayEntries([
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "cache-send-1",
+            name: "message_cache_send",
+            arguments: { ids: ["cache-1", "cache-2"] },
+          }],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "cache-send-1",
+          toolName: "message_cache_send",
+          content: [{ type: "text", text: "Sent cached messages" }],
+          details: { action: "send", count: 2, ids: ["cache-1", "cache-2"] },
+          isError: false,
+        },
+      },
+    ], process.cwd(), true);
+
+    expect(lines[0]).toMatchObject({
+      kind: "tool",
+      call: { name: "message_cache_send", arg: "send · 2 ids", detail: "2 sent", state: "ok" },
+    });
+  });
+
   test("restores rejected tools as a distinct state", () => {
     const lines = replayEntries([
       {
