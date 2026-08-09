@@ -9,6 +9,7 @@ import {
   isSettingsSearchShortcut,
   moveSettingSelection,
   SettingsPopup,
+  settingsPopupLayout,
   SETTINGS_ROWS,
   type SettingRowId,
 } from "./settings-popup";
@@ -63,6 +64,79 @@ describe("settings search and navigation", () => {
 });
 
 describe("settings popup layout", () => {
+  test("scales monotonically while reserving content, footer, and shadow rows", () => {
+    for (const page of ["main", "models", "checkModels"] as const) {
+      const heights = [8, 24, 60];
+      const layouts = heights.map((height) => settingsPopupLayout(80, height, page));
+
+      expect(layouts.map((layout) => layout.popupHeight)).toEqual(
+        [...layouts].map((layout) => layout.popupHeight).sort((a, b) => a - b),
+      );
+      expect(layouts.map((layout) => layout.listHeight)).toEqual(
+        [...layouts].map((layout) => layout.listHeight).sort((a, b) => a - b),
+      );
+      expect(layouts[2]!.listHeight).toBeGreaterThan(layouts[1]!.listHeight);
+      expect(layouts[1]!.listHeight).toBeGreaterThan(layouts[0]!.listHeight);
+
+      for (const [index, layout] of layouts.entries()) {
+        expect(layout.top).toBeGreaterThanOrEqual(0);
+        expect(layout.top + layout.popupHeight).toBeLessThan(heights[index]!);
+        expect(layout.searchHeight).toBe(1);
+        expect(layout.listHeight).toBeGreaterThanOrEqual(1);
+        expect(layout.footerHeight).toBe(1);
+      }
+    }
+
+    expect(settingsPopupLayout(80, 100, "main").popupHeight).toBe(32);
+    expect(settingsPopupLayout(80, 100, "models").popupHeight).toBe(28);
+  });
+
+  test("keeps the selected row, footer, and semantic shadow visible at responsive heights", async () => {
+    const theme = loadTheme("tokyonight");
+
+    for (const height of [8, 24, 60]) {
+      const setup = await createTestRenderer({ width: 80, height });
+      destroy = () => setup.renderer.destroy();
+      createRoot(setup.renderer).render(
+        <box style={{ width: 80, height, backgroundColor: theme.bg }}>
+          <SettingsPopup
+            theme={theme}
+            page="main"
+            rows={SETTINGS_ROWS}
+            selectedId="clearCheckApprovals"
+            values={values}
+            query=""
+            searchFocused={false}
+            terminalWidth={80}
+            terminalHeight={height}
+            models={[]}
+            onSearchChange={() => {}}
+            onSelectModel={() => {}}
+            onSelectCheckModel={() => {}}
+          />
+        </box>,
+      );
+      await setup.renderOnce();
+      await setup.flush();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await setup.renderOnce();
+      await setup.flush();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await setup.renderOnce();
+      await setup.flush();
+
+      const frame = setup.captureCharFrame();
+      const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+      expect(frame).toContain("Clear approvals");
+      expect(frame).toContain("/ search");
+      expect(spans.some((span) => span.fg.equals(parseColor(theme.popupShadow)))).toBe(true);
+      expect(frame.split("\n").slice(0, -1)).toHaveLength(height);
+
+      setup.renderer.destroy();
+      destroy = undefined;
+    }
+  });
+
   test("keeps search, categories, values, and controls visible in a narrow terminal", async () => {
     const setup = await createTestRenderer({ width: 48, height: 18 });
     destroy = () => setup.renderer.destroy();
