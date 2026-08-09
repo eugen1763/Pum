@@ -74,7 +74,7 @@ These were chosen deliberately. Change them only on purpose.
   background bar; everything after it indents two columns.
 - **The prompt is a wrapping multiline textarea.** Enter sends. Ctrl+Enter and
   Shift+Enter add a line. A trailing `\` plus Enter is the fallback and removes
-  the `\`. It grows to eight rows, then scrolls. Wrapping reserves two right
+  the `\`. It grows to eight rows, then scrolls. Wrapping reserves six right
   columns. The `❯` gutter follows the cursor's visible row.
 - **Animation is on by default** and turns itself off without true colour.
 - **Image markers are atomic input attachments.** Alt+V stores clipboard image

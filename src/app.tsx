@@ -279,6 +279,16 @@ export function App({
   const visibleElapsedSec = activeAgent ? agentElapsedSec : elapsedSec;
   const visibleUsage = activeAgent?.usage ?? usage;
   const agentTreeRows = buildAgentTree(agents);
+  const inputHint = cancelArmed
+    ? " esc again to cancel "
+    : quitArmed
+      ? " ctrl+c again to quit "
+      : "";
+  const promptRightColumns = width >= 12 ? 6 : Math.max(2, width - 3);
+  const promptInputColumns = Math.max(
+    1,
+    width - 2 - promptRightColumns - inputHint.length,
+  );
   const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
 
   const inputRef = useRef<TextareaRenderable>(null);
@@ -399,7 +409,9 @@ export function App({
       MAX_INPUT_ROWS,
       Math.max(1, input.editorView.getTotalVirtualLineCount()),
     );
-    const cursorRow = Math.max(0, Math.min(rows - 1, input.visualCursor.visualRow));
+    const cursorRow = input.cursorOffset >= input.plainText.length
+      ? rows - 1
+      : Math.max(0, Math.min(rows - 1, input.visualCursor.visualRow));
     setInputRows(rows);
     setInputCursorRow(cursorRow);
   };
@@ -1615,11 +1627,12 @@ export function App({
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
-            style={{ flexGrow: 1, minWidth: 0, height: inputRows }}
+            style={{ width: promptInputColumns, flexShrink: 0, minWidth: 0, height: inputRows }}
           />
-          <box style={{ width: 2, height: inputRows, flexShrink: 0 }} />
-          {cancelArmed ? <text content=" esc again to cancel " fg={theme.warn} /> : null}
-          {quitArmed ? <text content=" ctrl+c again to quit " fg={theme.warn} /> : null}
+          {/* Reserve six columns on normal terminals. This forces wrapping
+              before cursor movement can briefly overdraw the terminal edge. */}
+          <box style={{ width: promptRightColumns, height: inputRows, flexShrink: 0 }} />
+          {inputHint ? <text content={inputHint} fg={theme.warn} /> : null}
         </box>
         <InputRule
           theme={theme}
