@@ -17,6 +17,7 @@ import {
 const root = mkdtempSync(join(tmpdir(), "pum-worktree-test-"));
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+const normalizeGitCheckoutLineEndings = (content: string) => content.replaceAll("\r\n", "\n");
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -78,6 +79,24 @@ describe("worktree porcelain parsing", () => {
   });
 });
 
+describe("Git checkout line endings", () => {
+  test("normalizes LF and CRLF without hiding other content changes", () => {
+    expect([
+      "agent\n",
+      "agent\r\n",
+      "changed\r\n",
+      "agent\r",
+      "agent\r\ncorrupt",
+    ].map(normalizeGitCheckoutLineEndings)).toEqual([
+      "agent\n",
+      "agent\n",
+      "changed\n",
+      "agent\r",
+      "agent\ncorrupt",
+    ]);
+  });
+});
+
 describe("PUM worktrees", () => {
   test("create, list, merge, and remove", async () => {
     git(root, "init", "-b", "main");
@@ -106,7 +125,9 @@ describe("PUM worktrees", () => {
     git(record.path, "commit", "-m", "agent change");
 
     await mergeWorktree(root, record);
-    expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("agent\n");
+    expect(normalizeGitCheckoutLineEndings(
+      readFileSync(join(root, "file.txt"), "utf8"),
+    )).toBe("agent\n");
 
     await removeWorktree(root, record);
     expect((await listWorktrees(root)).some((item) => item.name === record.name)).toBe(false);
