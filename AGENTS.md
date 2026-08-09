@@ -22,8 +22,9 @@ bun run start    # open the TUI in the current directory
 | `src/apply-patch.ts` | Codex patch parser, validation, atomic commit, and pi tool |
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
 | `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
-| `src/history.ts` | Prompt history, one list per working directory |
-| `src/prompt-stash.ts` | Stashed prompts, one list per working directory |
+| `src/history.ts` | Prompt-history adapter for the shared prompt cache |
+| `src/prompt-stash.ts` | Prompt-stash adapter for the shared prompt cache |
+| `src/prompt-cache.ts` | Reconciliation, retention, migration, and atomic persistence |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
@@ -89,6 +90,10 @@ These were chosen deliberately. Change them only on purpose.
   stages outputs, backs up existing files, and restores all files after a
   commit failure.
 - **Sessions persist** to `<config dir>/sessions`.
+- **Prompt cleanup preserves every stash occurrence.** For each normalized
+  working-directory identity, history also retains the 100 most recent sent
+  occurrences not reserved by the stash. Duplicate text uses occurrence counts,
+  not a set. Loads and mutations reconcile legacy keys and persist atomically.
 - **Colours are never literals.** Everything reads a semantic token from
   `theme.ts`. Three presets ship; `theme.json` in the config dir overrides any
   subset of tokens. Add a token rather than a hex code.

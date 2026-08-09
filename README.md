@@ -177,6 +177,8 @@ Set `PUM_DIR` to override the complete PUM data directory.
 | `subagents/` | Persistent subagent sessions |
 | `check-mode-cache.json` | Accepted checks for eligible read-only Git commands |
 
+PUM preserves all stashed prompt occurrences. PUM also keeps the 100 most recent additional sent-history occurrences for each working directory.
+
 PUM keeps this directory separate from pi's default configuration directory.
 
 ## Development
