@@ -179,6 +179,18 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.flush();
 }
 
+async function settleUntil(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  condition: () => boolean,
+) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await settle(setup);
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("UI did not settle to the expected state");
+}
+
 async function press(
   setup: Awaited<ReturnType<typeof createTestRenderer>>,
   action: () => void,
@@ -206,6 +218,7 @@ describe("subagent transcript UI", () => {
       },
     }]);
     const fresh = fakeSession();
+    let resolveNewSession: ((session: ReturnType<typeof fakeSession>) => void) | undefined;
     const manager = {
       getAgents: () => [],
       subscribe: () => () => {},
@@ -218,7 +231,9 @@ describe("subagent transcript UI", () => {
       <App
         session={resumed}
         modelRuntime={{ getAvailableSnapshot: () => [] } as any}
-        onNewSession={async () => fresh}
+        onNewSession={() => new Promise((resolve) => {
+          resolveNewSession = resolve;
+        })}
         loadSessions={async () => []}
         onSwitchSession={async () => resumed}
         settings={{
@@ -243,6 +258,11 @@ describe("subagent transcript UI", () => {
     await setup.mockInput.typeText("/new");
     setup.mockInput.pressEnter();
     await settle(setup);
+    expect(resolveNewSession).toBeDefined();
+    expect(setup.captureCharFrame()).toContain("↑ 1.3k · ↓ 345 · ↺ 2.4k · $0.250 · 12%");
+
+    resolveNewSession!(fresh);
+    await settleUntil(setup, () => !setup.captureCharFrame().includes("↑ 1.3k"));
     expect(setup.captureCharFrame()).not.toContain("↑ 1.3k");
     expect(setup.captureCharFrame()).not.toContain("↓ 345");
     expect(setup.captureCharFrame()).not.toContain("↺ 2.4k");
