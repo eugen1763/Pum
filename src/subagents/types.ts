@@ -47,14 +47,31 @@ export type SubagentSnapshot = {
   usage: AgentUsage;
 };
 
+export type SubagentSettlement = {
+  id: string;
+  messageId: string;
+  agentId: string;
+  parentAgentId: string | null;
+  status: "idle" | "completed" | "failed";
+  summary?: string;
+  activityGeneration: number;
+  content: string;
+  createdAt: number;
+  acknowledgedAt?: number;
+};
+
 export type SubagentRegistryEvent = {
-  event: "spawned" | "status" | "usage" | "removed";
+  event: "spawned" | "status" | "usage" | "activity" | "finish" | "settlement" | "removed";
   id: string;
   at: number;
   snapshot?: Omit<SubagentSnapshot, "transcript">;
   status?: SubagentStatus;
   summary?: string;
   usage?: AgentUsage;
+  activityGeneration?: number;
+  idleNotifiedGeneration?: number;
+  finishSummary?: string | null;
+  settlement?: SubagentSettlement;
 };
 
 export type AgentMessageData = {
@@ -63,6 +80,7 @@ export type AgentMessageData = {
   recipient: string;
   text: string;
   at: number;
+  kind?: "message" | "acknowledgement" | "idle" | "completion" | "status" | "user-instruction";
 };
 
 export type TriggerEventData = {

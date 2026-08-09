@@ -160,6 +160,12 @@ These were chosen deliberately. Change them only on purpose.
   intermediate information. Never send a final summary through `message_agent`.
   The main agent must not merge after a normal `Message from <agent>` row. Merge
   only after the completion notice arrives and the agent status is `completed`.
+- **Idle notices report activity cycles, not completion.** A managed agent sends
+  one idle notice to its direct spawner after each accepted work cycle settles.
+  Durable messages and trigger steering start a cycle only after insertion.
+  Lifecycle notices, acknowledgements, failed deliveries, and duplicate settle
+  events do not start cycles. Persisted activity generations suppress duplicates
+  after resume. An idle notice never means that an agent is ready to merge.
 - **Inter-agent acknowledgements do not recurse.** Do not reply to acknowledgements,
   status-only messages, or completion notices unless they contain new work or a
   question. Stop any acknowledgement echo loop immediately.
