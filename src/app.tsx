@@ -422,6 +422,9 @@ export function App({
 
   const inputRef = useRef<TextareaRenderable>(null);
   const questionnaireInputRef = useRef<TextareaRenderable>(null);
+  const settingsOpenRef = useRef(settingsOpen);
+  const settingsPageRef = useRef(page);
+  const settingsSearchFocusedRef = useRef(settingsSearchFocused);
   const focusInputAfterSwitch = useRef(false);
   const activeAgentIdRef = useRef<string | null>(null);
   const agentSelectorCursorRef = useRef(0);
@@ -463,6 +466,11 @@ export function App({
   const setWorking = (value: boolean) => {
     busyRef.current = value;
     setBusy(value);
+  };
+  const closeSettings = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    queueMicrotask(() => inputRef.current?.focus());
   };
   // The event subscription is set up once, so it reads the toggle via a ref.
   const showThinkingRef = useRef(initial.showThinking);
@@ -716,6 +724,7 @@ export function App({
     if (!questionnaireManager) return;
     return questionnaireManager.subscribe(() => {
       if (questionnaireManager.current()) {
+        settingsOpenRef.current = false;
         setSettingsOpen(false);
         setHelpOpen(false);
         setHistoryOpen(false);
@@ -958,6 +967,7 @@ export function App({
   };
 
   const openLogin = () => {
+    settingsOpenRef.current = false;
     setSettingsOpen(false);
     setHelpOpen(false);
     setHistoryOpen(false);
@@ -982,6 +992,7 @@ export function App({
   };
 
   const selectModel = (model: Model<any>) => {
+    settingsPageRef.current = "main";
     setPage("main");
     setModelQuery("");
     setModelSearchFocused(false);
@@ -992,6 +1003,7 @@ export function App({
   };
 
   const selectCheckModel = (model: Model<any>) => {
+    settingsPageRef.current = "main";
     setPage("main");
     setModelQuery("");
     setModelSearchFocused(false);
@@ -1003,6 +1015,7 @@ export function App({
       append({ kind: "text", role: "error", text: "wait for the current turn to finish before opening history" });
       return;
     }
+    settingsOpenRef.current = false;
     setSettingsOpen(false);
     setHelpOpen(false);
     loadSessions()
@@ -1299,7 +1312,12 @@ export function App({
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
     checkMode: { step: stepCheckMode },
-    checkModel: { enter: () => { setModelQuery(""); setModelSearchFocused(false); setPage("checkModels"); } },
+    checkModel: { enter: () => {
+      setModelQuery("");
+      setModelSearchFocused(false);
+      settingsPageRef.current = "checkModels";
+      setPage("checkModels");
+    } },
     clearCheckApprovals: { enter: () => {
       const removed = checkApprovalStore?.clearProject(cwd) ?? 0;
       append({ kind: "text", role: "system", text: removed > 0
@@ -1308,7 +1326,12 @@ export function App({
     } },
     thinkingLevel: { step: stepThinking },
     showThinking: { step: () => update({ showThinking: !settings.showThinking }) },
-    model: { enter: () => { setModelQuery(""); setModelSearchFocused(false); setPage("models"); } },
+    model: { enter: () => {
+      setModelQuery("");
+      setModelSearchFocused(false);
+      settingsPageRef.current = "models";
+      setPage("models");
+    } },
   };
 
   const animationUnavailable = !settings.animations
@@ -1472,6 +1495,7 @@ export function App({
         setAgentSelectorOpen(false);
         queueMicrotask(() => inputRef.current?.focus());
       } else {
+        settingsOpenRef.current = false;
         setSettingsOpen(false);
         setHelpOpen(false);
         setHistoryOpen(false);
@@ -1547,15 +1571,18 @@ export function App({
       return;
     }
 
-    if (settingsOpen) {
+    if (settingsOpenRef.current) {
       if (key.name === "escape") {
         key.stopPropagation();
-        if (page !== "main") setPage("main");
-        else if (settingsSearchFocused) setSettingsSearchFocused(false);
-        else setSettingsOpen(false);
+        if (settingsPageRef.current !== "main") {
+          settingsPageRef.current = "main";
+          setPage("main");
+        } else {
+          closeSettings();
+        }
         return;
       }
-      if (page !== "main") {
+      if (settingsPageRef.current !== "main") {
         const isModelReturn = key.name === "return" || key.name === "enter" || key.name === "kpenter";
         if (modelSearchFocused) {
           if ((key.name === "up" || key.name === "down" || isModelReturn) && visibleModels.length > 0) {
@@ -1573,9 +1600,10 @@ export function App({
 
       const isSettingsReturn =
         key.name === "return" || key.name === "enter" || key.name === "kpenter" || key.name === "linefeed";
-      if (settingsSearchFocused) {
+      if (settingsSearchFocusedRef.current) {
         if (key.name === "down" || key.name === "up" || isSettingsReturn) {
           key.stopPropagation();
+          settingsSearchFocusedRef.current = false;
           setSettingsSearchFocused(false);
           setSelectedSettingId((current) =>
             visibleSettingRows.some((row) => row.id === current)
@@ -1588,8 +1616,9 @@ export function App({
         return; // printable keys and editing keys belong to the focused <input>
       }
 
-      if (isSettingsSearchShortcut(key, settingsSearchFocused)) {
+      if (isSettingsSearchShortcut(key, settingsSearchFocusedRef.current)) {
         key.stopPropagation();
+        settingsSearchFocusedRef.current = true;
         setSettingsSearchFocused(true);
         return;
       }
@@ -1839,8 +1868,11 @@ export function App({
       key.stopPropagation();
       setSettingsQuery("");
       setSelectedSettingId(SETTINGS_ROWS[0]!.id);
+      settingsSearchFocusedRef.current = true;
       setSettingsSearchFocused(true);
+      settingsPageRef.current = "main";
       setPage("main");
+      settingsOpenRef.current = true;
       setSettingsOpen(true);
     }
   });
