@@ -259,15 +259,19 @@ describe("subagent transcript UI", () => {
     setup.mockInput.pressEnter();
     await settle(setup);
     expect(resolveNewSession).toBeDefined();
-    expect(setup.captureCharFrame()).toContain("↑ 1.3k · ↓ 345 · 12%");
-    expect(setup.captureCharFrame()).not.toContain("↺ 2.4k");
-    expect(setup.captureCharFrame()).not.toContain("$0.250");
+    const pendingFrame = setup.captureCharFrame();
+    expect(pendingFrame).toContain("↑ 1.3k");
+    expect(pendingFrame).toContain("↓ 345");
+    expect(pendingFrame).toContain("12%");
 
     resolveNewSession!(fresh);
     await settleUntil(setup, () => !setup.captureCharFrame().includes("↑ 1.3k"));
-    expect(setup.captureCharFrame()).not.toContain("↑ 1.3k");
-    expect(setup.captureCharFrame()).not.toContain("↓ 345");
-    expect(setup.captureCharFrame()).not.toContain("↺ 2.4k");
+    const freshFrame = setup.captureCharFrame();
+    expect(freshFrame).not.toContain("↑ 1.3k");
+    expect(freshFrame).not.toContain("↓ 345");
+    expect(freshFrame).not.toContain("↺ 2.4k");
+    expect(freshFrame).not.toContain("$0.250");
+    expect(freshFrame).not.toContain("12%");
   });
 
   test("sends a direct selected-subagent prompt only through the manager", async () => {
