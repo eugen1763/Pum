@@ -47,6 +47,14 @@ const MAX_RUNNING_AGENTS = 4;
 const MAX_RETAINED_AGENTS = 8;
 const MAX_MESSAGE_LENGTH = 12_000;
 
+export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
+
+- Do not automatically reply to an acknowledgement, status-only message, or completion notice.
+- Never echo a peer message repeatedly.
+- Send one acknowledgement only when acknowledgement is necessary.
+- Reply again only when the new message contains a question, new information, or a new action.
+- If two agents start acknowledging each other, stop the exchange immediately.`;
+
 export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coordination
 
 - spawn_subagent returns after setup. The subagent continues in the background.
@@ -352,7 +360,8 @@ export class SubagentManager {
             systemPrompt: `${event.systemPrompt}\n\nYou are subagent ${record.snapshot.name} (${agentId}). ` +
               `Work only in ${record.snapshot.worktree.path} on branch ${record.snapshot.worktree.branch}. ` +
               "Use message_agent to communicate with the main agent or peers. " +
-              "Commit completed changes before finishing. Call finish_subagent with a concise summary when the task is complete.",
+              "Commit completed changes before finishing. Call finish_subagent with a concise summary when the task is complete.\n\n" +
+              SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
           };
         });
 

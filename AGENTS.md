@@ -99,6 +99,9 @@ These were chosen deliberately. Change them only on purpose.
 - **The main agent never polls background agents.** After spawning all available
   work, the main turn ends. Completion notifications restart or steer the main
   loop. Do not use `bash sleep`, shell polling, or repeated status tool calls.
+- **Inter-agent acknowledgements do not recurse.** Do not reply to acknowledgements,
+  status-only messages, or completion notices unless they contain new work or a
+  question. Stop any acknowledgement echo loop immediately.
 - **Inter-agent messages are durable.** The recipient gets a custom context
   message. The sender gets a display-only custom entry. Both render with the
   `agentMessage` and `agentMessageBg` theme tokens.

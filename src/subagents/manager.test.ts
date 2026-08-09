@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { SUBAGENT_COORDINATION_SYSTEM_PROMPT, SubagentManager } from "./manager";
+import {
+  SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
+  SUBAGENT_COORDINATION_SYSTEM_PROMPT,
+  SubagentManager,
+} from "./manager";
 
 describe("SubagentManager extension", () => {
   test("registers main coordination tools", () => {
@@ -34,6 +38,8 @@ describe("SubagentManager extension", () => {
     const result = beforeStart?.({ systemPrompt: "base prompt" });
     expect(result.systemPrompt).toContain(SUBAGENT_COORDINATION_SYSTEM_PROMPT);
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
+    expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Do not automatically reply to an acknowledgement");
+    expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("stop the exchange immediately");
   });
 
   test("binds the main session even when session_start was missed", async () => {
