@@ -2,6 +2,18 @@ import type { Theme } from "./theme";
 
 type HelpGroup = { title: string; controls: [string, string][] };
 
+export const HELP_SUMMARY_WIDE = [
+  "PUM workflow — prompt or steer · cache prompts · attach images · run managed worktree agents in parallel",
+  "switch transcripts · merge successful agents · persist sessions · use Settings and safety checks",
+] as const;
+
+export const HELP_SUMMARY = [
+  "Prompt or steer. Cache prompts. Attach images.",
+  "Run managed worktree agents in parallel.",
+  "Switch transcripts and merge successful agents.",
+  "Sessions persist. Settings include safety checks.",
+] as const;
+
 /** Shown when `?` is typed into an empty prompt. Keep this list aligned with app.tsx. */
 export const HELP_GROUPS: HelpGroup[] = [
   {
@@ -41,6 +53,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/compress", "Summarize older context"],
       ["/clear", "Start a fresh session"],
       ["/history", "Browse saved sessions"],
+      ["/login", "Add or update a provider"],
       ["/worktree", "Create a managed worktree"],
       ["Tab", "Complete a command preview"],
     ],
@@ -58,21 +71,30 @@ export const HELP_GROUPS: HelpGroup[] = [
 ];
 
 const KEY_WIDTH = 17;
-type HelpLine = { kind: "heading"; text: string } | { kind: "control"; key: string; what: string };
-const HELP_LINES: HelpLine[] = HELP_GROUPS.flatMap((group) => [
-  { kind: "heading" as const, text: group.title },
-  ...group.controls.map(([key, what]) => ({ kind: "control" as const, key, what })),
-]);
+type HelpLine = { kind: "heading"; text: string } | { kind: "control"; key: string; what: string } | { kind: "blank" };
+
+export function helpLines(terminalHeight: number): HelpLine[] {
+  const gaps = terminalHeight >= 32;
+  return HELP_GROUPS.flatMap((group, groupIndex) => [
+    { kind: "heading" as const, text: group.title },
+    ...group.controls.map(([key, what]) => ({ kind: "control" as const, key, what })),
+    ...(gaps && groupIndex < HELP_GROUPS.length - 1 ? [{ kind: "blank" as const }] : []),
+  ]);
+}
 
 export function helpPageSize(terminalHeight: number): number {
-  return Math.max(1, Math.min(terminalHeight - 2, 35) - 5);
+  return Math.max(1, Math.min(terminalHeight - 2, 39) - 10);
 }
 
 export function maxHelpScrollOffset(terminalHeight: number): number {
-  return Math.max(0, HELP_LINES.length - helpPageSize(terminalHeight));
+  const lines = helpLines(terminalHeight);
+  const raw = Math.max(0, lines.length - helpPageSize(terminalHeight));
+  const lastHeading = lines.findLastIndex((line) => line.kind === "heading");
+  return lastHeading < 0 ? raw : Math.min(raw, lastHeading);
 }
 
 function HelpLineRow({ line, theme }: { line: HelpLine; theme: Theme }) {
+  if (line.kind === "blank") return <box style={{ height: 1, flexShrink: 0 }} />;
   if (line.kind === "heading") {
     return <text content={line.text} fg={theme.dim} bg={theme.popupBg} />;
   }
@@ -92,11 +114,11 @@ function HelpLineRow({ line, theme }: { line: HelpLine; theme: Theme }) {
   );
 }
 
-function HelpColumn({ groups, theme }: { groups: HelpGroup[]; theme: Theme }) {
+function HelpColumn({ groups, theme, spaced }: { groups: HelpGroup[]; theme: Theme; spaced: boolean }) {
   return (
     <box style={{ flexDirection: "column", flexGrow: 1, minWidth: 0 }}>
-      {groups.map((group) => (
-        <box key={group.title} style={{ flexDirection: "column", flexShrink: 0 }}>
+      {groups.map((group, groupIndex) => (
+        <box key={group.title} style={{ flexDirection: "column", flexShrink: 0, marginBottom: spaced && groupIndex < groups.length - 1 ? 1 : 0 }}>
           <text content={group.title} fg={theme.dim} bg={theme.popupBg} />
           {group.controls.map(([key, what], index) => (
             <box key={`${key}:${index}`} style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
@@ -133,10 +155,14 @@ export function HelpPopup({
   const margin = terminalWidth < 64 ? 1 : Math.max(2, Math.floor(terminalWidth * 0.08));
   const popupWidth = Math.max(24, terminalWidth - margin * 2);
   // Add border, padding, and a fixed footer row to the tallest content column.
-  const desiredHeight = twoColumns ? 24 : 35;
+  const desiredHeight = twoColumns ? 28 : 39;
   const popupHeight = Math.max(8, Math.min(terminalHeight - 2, desiredHeight));
-  const contentHeight = Math.max(1, popupHeight - 5);
+  const summary = twoColumns ? HELP_SUMMARY_WIDE : HELP_SUMMARY;
+  const summaryHeight = twoColumns ? 2 : 5;
+  const contentHeight = Math.max(1, popupHeight - 5 - summaryHeight);
   const split = 3;
+  const lines = helpLines(terminalHeight);
+  const spaced = terminalHeight >= 32;
 
   return (
     <box
@@ -155,6 +181,10 @@ export function HelpPopup({
         padding: 1,
       }}
     >
+      <box style={{ height: summaryHeight, flexShrink: 0, flexDirection: "column" }}>
+        {!twoColumns ? <text content="PUM workflow" fg={theme.accent} bg={theme.popupBg} /> : null}
+        {summary.map((line) => <text key={line} content={line} fg={twoColumns ? theme.accent : theme.dim} bg={theme.popupBg} wrapMode="none" />)}
+      </box>
       <box
         style={{
           flexDirection: "row",
@@ -165,13 +195,13 @@ export function HelpPopup({
       >
         {twoColumns ? (
           <>
-            <HelpColumn groups={HELP_GROUPS.slice(0, split)} theme={theme} />
+            <HelpColumn groups={HELP_GROUPS.slice(0, split)} theme={theme} spaced={spaced} />
             <box style={{ width: 2, flexShrink: 0 }} />
-            <HelpColumn groups={HELP_GROUPS.slice(split)} theme={theme} />
+            <HelpColumn groups={HELP_GROUPS.slice(split)} theme={theme} spaced={spaced} />
           </>
         ) : (
           <box style={{ flexDirection: "column", flexGrow: 1, minWidth: 0 }}>
-            {HELP_LINES.slice(scrollOffset, scrollOffset + helpPageSize(terminalHeight)).map((line, index) => (
+            {lines.slice(scrollOffset, scrollOffset + helpPageSize(terminalHeight)).map((line, index) => (
               <HelpLineRow key={`${scrollOffset + index}:${line.kind}`} line={line} theme={theme} />
             ))}
           </box>

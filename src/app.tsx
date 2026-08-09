@@ -6,7 +6,9 @@ import type { AgentSession, ModelRuntime, SessionInfo } from "@earendil-works/pi
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimationProvider, supportsTrueColor, useWorkingRule, type WorkingRuleRole } from "./animation";
 import {
+  filterModels,
   filterSettingsRows,
+  isModelSearchShortcut,
   isSettingsSearchShortcut,
   moveSettingSelection,
   SettingsPopup,
@@ -75,6 +77,9 @@ import { CANCEL_WINDOW_MS, confirmsCancellation } from "./cancel-confirmation";
 import { buildStashBatchPrompt, selectedRange } from "./stash-batch";
 import { addTurnUsage, emptyAgentUsage } from "./agent-usage";
 import { AgentSelectorPopup, buildAgentTree, moveAgentSelection } from "./agent-selector";
+import { LoginPopup, type LoginPage } from "./login-popup";
+import { LoginController } from "./login-controller";
+import { providerLoginMethods, refreshAndSelectModel } from "./login-flow";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -83,6 +88,22 @@ const QUIT_WINDOW_MS = 2000;
 const MAX_INPUT_ROWS = 8;
 /** Keys that move around without changing the text. */
 const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
+
+export function promptPlaceholder(options: {
+  width: number;
+  activeAgentName?: string;
+  busy: boolean;
+  stashOpen: boolean;
+}): string {
+  const prefix = options.activeAgentName
+    ? options.busy ? `Steer ${options.activeAgentName}…` : `Message ${options.activeAgentName}…`
+    : options.stashOpen ? "Cache…" : options.busy ? "Steer…" : "Ask something…";
+  if (options.stashOpen || options.width < 45) return prefix;
+  const controls = options.activeAgentName || options.busy
+    ? options.width >= 70 ? "[^L] list agents" : "[^L] agents"
+    : options.width >= 70 ? "[Tab] cache list [^L] list agents" : "[Tab] cache [^L] agents";
+  return `${prefix}   ${controls}`;
+}
 
 /** A blank row. An empty <text> measures to nothing, so this needs a height. */
 const Gap = () => <box style={{ height: 1, flexShrink: 0 }} />;
@@ -228,6 +249,7 @@ export function App({
   settings: initial,
   searchProviders,
   subagentManager,
+  loginRequired = false,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -238,6 +260,7 @@ export function App({
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
   subagentManager: SubagentManager;
+  loginRequired?: boolean;
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -284,6 +307,14 @@ export function App({
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
   const [agentSelectorCursor, setAgentSelectorCursor] = useState(0);
   const [agentElapsedSec, setAgentElapsedSec] = useState(0);
+  const [loginOpen, setLoginOpen] = useState(loginRequired);
+  const [loginPage, setLoginPage] = useState<LoginPage>(() => ({
+    kind: "providers",
+    methods: providerLoginMethods((modelRuntime as any).getProviders?.() ?? []),
+    cursor: 0,
+  }));
+  const [modelQuery, setModelQuery] = useState("");
+  const [modelSearchFocused, setModelSearchFocused] = useState(false);
   const [, setAgentRevision] = useState(0);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
@@ -316,6 +347,11 @@ export function App({
   );
   const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
   const visibleSettingRows = filterSettingsRows(settingsQuery);
+  const visibleModels = useMemo(() => filterModels(
+    modelRuntime.getAvailableSnapshot(),
+    modelQuery,
+    (providerId) => (modelRuntime as any).getProvider?.(providerId)?.name ?? "",
+  ), [modelRuntime, modelId, modelQuery, loginPage]);
 
   const inputRef = useRef<TextareaRenderable>(null);
   const focusInputAfterSwitch = useRef(false);
@@ -361,6 +397,13 @@ export function App({
   };
   // The event subscription is set up once, so it reads the toggle via a ref.
   const showThinkingRef = useRef(initial.showThinking);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const loginControllerRef = useRef<LoginController | null>(null);
+
+  if (!loginControllerRef.current) {
+    loginControllerRef.current = new LoginController(modelRuntime, () => sessionRef.current, setLoginPage, (id) => id && setModelId(id), () => setLoginOpen(false));
+  }
 
   const setSelectedStashRange = (indices: Set<number>, anchor: number | null) => {
     stashSelectionRef.current = indices;
@@ -800,8 +843,34 @@ export function App({
     update({ workingRuleAnimation: next });
   };
 
+  const openLogin = () => {
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setLoginOpen(true);
+    loginControllerRef.current?.open();
+  };
+
+  const finishLogin = async (providerId: string, providerName: string) => {
+    const selected = await refreshAndSelectModel(
+      modelRuntime,
+      providerId,
+      (model) => session.setModel(model),
+      AbortSignal.timeout(15_000),
+    );
+    if (selected) {
+      setModelId(selected.id);
+      setLoginPage({ kind: "success", message: `${providerName} is ready. Selected ${selected.id}.` });
+    } else {
+      setLoginPage({ kind: "success", message: `${providerName} is configured. Open Settings to select an available model.` });
+    }
+  };
+
   const selectModel = (model: Model<any>) => {
     setPage("main");
+    setModelQuery("");
+    setModelSearchFocused(false);
     session
       .setModel(model)
       .then(() => setModelId(session.agent.state.model.id))
@@ -810,6 +879,8 @@ export function App({
 
   const selectCheckModel = (model: Model<any>) => {
     setPage("main");
+    setModelQuery("");
+    setModelSearchFocused(false);
     update({ checkModel: `${model.provider}/${model.id}` });
   };
 
@@ -907,13 +978,19 @@ export function App({
     const compress = /^\/compress(?:\s+(.*))?$/s.exec(trimmed);
     const clear = /^\/(?:clear|new)$/.test(trimmed);
     const historyCommand = trimmed === "/history";
+    const loginCommand = trimmed === "/login";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !worktreeCommand) return false;
     editingStashIndex.current = null;
 
     if (historyCommand) {
       setEditorText("");
       openHistory();
+      return true;
+    }
+    if (loginCommand) {
+      setEditorText("");
+      openLogin();
       return true;
     }
 
@@ -973,6 +1050,11 @@ export function App({
 
     setEditorText("");
     clearPendingImages();
+
+    if (attachments.length === 0 && promptText === "/login") {
+      openLogin();
+      return;
+    }
 
     if (activeAgentId) {
       void subagentManager
@@ -1078,15 +1160,16 @@ export function App({
 
   const rowActions: Record<SettingRowId, { step?: (n: number) => void; enter?: () => void }> = {
     theme: { step: stepTheme },
+    providers: { enter: openLogin },
     animations: { step: () => update({ animations: !settings.animations }) },
     workingRuleAnimation: { step: stepWorkingRuleAnimation },
     webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     checkMode: { step: () => update({ checkMode: !settings.checkMode }) },
-    checkModel: { enter: () => setPage("checkModels") },
+    checkModel: { enter: () => { setModelQuery(""); setModelSearchFocused(false); setPage("checkModels"); } },
     thinkingLevel: { step: stepThinking },
     showThinking: { step: () => update({ showThinking: !settings.showThinking }) },
-    model: { enter: () => setPage("models") },
+    model: { enter: () => { setModelQuery(""); setModelSearchFocused(false); setPage("models"); } },
   };
 
   const animationUnavailable = !settings.animations
@@ -1096,6 +1179,7 @@ export function App({
       : "";
   const rowValues: Record<SettingRowId, string> = {
     theme: `‹ ${theme.name} ›`,
+    providers: "login and custom setup ›",
     animations: `‹ ${settings.animations ? "on" : "off"} ›`,
     workingRuleAnimation: `‹ ${settings.workingRuleAnimation} ›${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
@@ -1162,6 +1246,12 @@ export function App({
       setQuitArmed(false);
     }
     if (key.name !== "escape" && lastCancelPress.current !== null) resetCancelArm();
+
+    if (loginOpen) {
+      key.stopPropagation();
+      loginControllerRef.current?.handleKey(key);
+      return;
+    }
 
     if (key.ctrl && key.name === "l") {
       key.stopPropagation();
@@ -1252,7 +1342,21 @@ export function App({
         else setSettingsOpen(false);
         return;
       }
-      if (page !== "main") return; // up/down/return belong to the <select>
+      if (page !== "main") {
+        const isModelReturn = key.name === "return" || key.name === "enter" || key.name === "kpenter";
+        if (modelSearchFocused) {
+          if ((key.name === "up" || key.name === "down" || isModelReturn) && visibleModels.length > 0) {
+            key.stopPropagation();
+            setModelSearchFocused(false);
+          }
+          return;
+        }
+        if (isModelSearchShortcut(key, modelSearchFocused)) {
+          key.stopPropagation();
+          setModelSearchFocused(true);
+        }
+        return;
+      }
 
       const isSettingsReturn =
         key.name === "return" || key.name === "enter" || key.name === "kpenter" || key.name === "linefeed";
@@ -1684,24 +1788,19 @@ export function App({
           </box>
           <textarea
             ref={inputRef}
-            placeholder={
-              activeAgent
-                ? visibleBusy
-                  ? `Steer ${activeAgent.name}…`
-                  : `Message ${activeAgent.name}…`
-                : stashOpen
-                  ? "Cache..."
-                  : busy
-                    ? "Steer…"
-                    : "Ask something…"
-            }
+            placeholder={promptPlaceholder({
+              width,
+              activeAgentName: activeAgent?.name,
+              busy: visibleBusy,
+              stashOpen,
+            })}
             placeholderColor={theme.dim}
             textColor={theme.fg}
             cursorColor={theme.accent}
             selectionBg={theme.selectionBg}
             wrapMode="char"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !loginOpen}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -1720,6 +1819,9 @@ export function App({
           mode={settings.workingRuleAnimation}
           role="inputBottom"
         />
+        {loginOpen ? (
+          <LoginPopup theme={theme} page={loginPage} terminalWidth={width} terminalHeight={height} />
+        ) : null}
         {helpOpen ? (
           <HelpPopup
             theme={theme}
@@ -1753,8 +1855,11 @@ export function App({
             searchFocused={settingsSearchFocused}
             terminalWidth={width}
             terminalHeight={height}
-            models={modelRuntime.getAvailableSnapshot()}
+            models={visibleModels}
+            modelQuery={modelQuery}
+            modelSearchFocused={modelSearchFocused}
             onSearchChange={updateSettingsQuery}
+            onModelSearchChange={setModelQuery}
             onSelectModel={selectModel}
             onSelectCheckModel={selectCheckModel}
           />

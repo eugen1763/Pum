@@ -17,6 +17,7 @@ export type SettingRowId =
   | "checkModel"
   | "thinkingLevel"
   | "showThinking"
+  | "providers"
   | "model";
 
 export type SettingRow = {
@@ -24,31 +25,41 @@ export type SettingRow = {
   label: string;
   category: "Appearance" | "Agent" | "Safety";
   keywords: string;
+  description: string;
 };
 
 export const SETTINGS_ROWS: readonly SettingRow[] = [
-  { id: "theme", label: "Theme", category: "Appearance", keywords: "color palette" },
-  { id: "animations", label: "Animations", category: "Appearance", keywords: "motion global" },
-  {
-    id: "workingRuleAnimation",
-    label: "Working animation",
-    category: "Appearance",
-    keywords: "rules input header coordinated off motion",
-  },
-  { id: "model", label: "Model", category: "Agent", keywords: "provider llm" },
-  { id: "thinkingLevel", label: "Thinking level", category: "Agent", keywords: "reasoning effort" },
-  { id: "showThinking", label: "Show thinking", category: "Agent", keywords: "reasoning visible" },
-  { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose" },
-  { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted" },
-  { id: "checkMode", label: "Check mode", category: "Safety", keywords: "verify tools safe" },
-  { id: "checkModel", label: "Check model", category: "Safety", keywords: "verifier tools" },
+  { id: "theme", label: "Theme", category: "Appearance", keywords: "color palette semantic", description: "Change the semantic color preset. theme.json overrides remain active." },
+  { id: "animations", label: "Animations", category: "Appearance", keywords: "motion global truecolor", description: "Enable interface motion. PUM disables motion when true color is unavailable." },
+  { id: "workingRuleAnimation", label: "Working animation", category: "Appearance", keywords: "rules input header coordinated off motion", description: "Choose how the header and input rules animate while an agent works." },
+  { id: "providers", label: "Providers", category: "Agent", keywords: "login oauth api key custom endpoint", description: "Open provider login or add an OpenAI-compatible custom endpoint." },
+  { id: "model", label: "Model", category: "Agent", keywords: "provider llm active search", description: "Select the model used by the main agent. Search matches provider and model names." },
+  { id: "thinkingLevel", label: "Thinking level", category: "Agent", keywords: "reasoning effort clamp capability", description: "Set reasoning effort. Pi clamps the level to the selected model capability." },
+  { id: "showThinking", label: "Show thinking", category: "Agent", keywords: "reasoning visible transcript trace", description: "Show or hide streamed reasoning traces in the transcript." },
+  { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose ste simplified technical english", description: "Add per-turn response guidance. STE requests concise Simplified Technical English." },
+  { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },
+  { id: "checkMode", label: "Check mode", category: "Safety", keywords: "verify tools safe fail closed bash edit", description: "Fail-closed safety check for every bash and edit call before execution." },
+  { id: "checkModel", label: "Check model", category: "Safety", keywords: "verifier tools safety model", description: "Select the separate verifier model used by Check mode." },
 ];
 
 export function filterSettingsRows(query: string): SettingRow[] {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [...SETTINGS_ROWS];
   return SETTINGS_ROWS.filter((row) => {
-    const haystack = `${row.label} ${row.category} ${row.keywords}`.toLocaleLowerCase();
+    const haystack = `${row.label} ${row.category} ${row.keywords} ${row.description}`.toLocaleLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+export function filterModels(
+  models: readonly Model<any>[],
+  query: string,
+  providerName: (providerId: string) => string = () => "",
+): Model<any>[] {
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [...models];
+  return models.filter((model) => {
+    const haystack = `${model.provider} ${providerName(model.provider)} ${model.id} ${model.name ?? ""}`.toLocaleLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
 }
@@ -62,6 +73,14 @@ export function moveSettingSelection(
   const current = rows.findIndex((row) => row.id === selectedId);
   const start = current < 0 ? (step > 0 ? -1 : 0) : current;
   return rows[(start + step + rows.length) % rows.length]!.id;
+}
+
+export function isModelSearchShortcut(
+  key: { name: string; sequence: string; ctrl?: boolean; meta?: boolean; option?: boolean },
+  searchFocused: boolean,
+): boolean {
+  return !searchFocused && !key.ctrl && !key.meta && !key.option &&
+    (key.name === "/" || key.sequence === "/");
 }
 
 export function isSettingsSearchShortcut(
@@ -83,7 +102,10 @@ export type PopupProps = {
   terminalWidth: number;
   terminalHeight: number;
   models: readonly Model<any>[];
+  modelQuery?: string;
+  modelSearchFocused?: boolean;
   onSearchChange: (value: string) => void;
+  onModelSearchChange?: (value: string) => void;
   onSelectModel: (model: Model<any>) => void;
   onSelectCheckModel: (model: Model<any>) => void;
 };
@@ -103,7 +125,10 @@ export function SettingsPopup({
   terminalWidth,
   terminalHeight,
   models,
+  modelQuery = "",
+  modelSearchFocused = false,
   onSearchChange,
+  onModelSearchChange = () => {},
   onSelectModel,
   onSelectCheckModel,
 }: PopupProps) {
@@ -118,6 +143,7 @@ export function SettingsPopup({
   }, [selectedId, rows.length]);
 
   let lastCategory: SettingRow["category"] | null = null;
+  const selectedRow = rows.find((row) => row.id === selectedId);
 
   return (
     <box
@@ -200,6 +226,14 @@ export function SettingsPopup({
               })}
             </box>
           </scrollbox>
+          <box style={{ minHeight: 2, maxHeight: narrow ? 3 : 2, flexShrink: 0 }}>
+            <text
+              content={selectedRow?.description ?? "Type in Search to filter settings."}
+              fg={theme.dim}
+              bg={theme.popupBg}
+              wrapMode="word"
+            />
+          </box>
           <text
             content={narrow ? "/ search  ↑↓ move  ←→ change  esc back" : "/ search   ↑↓ move   ←→ change   ⏎ open   esc back"}
             fg={theme.dim}
@@ -209,8 +243,19 @@ export function SettingsPopup({
           />
         </>
       ) : (
-        <select
-          focused
+        <>
+          <input
+            value={modelQuery}
+            placeholder="Search provider or model"
+            placeholderColor={theme.dim}
+            textColor={theme.fg}
+            cursorColor={theme.accent}
+            focused={modelSearchFocused}
+            onInput={onModelSearchChange}
+            style={{ flexShrink: 0 }}
+          />
+          {models.length === 0 ? <text content="No matching models" fg={theme.dim} bg={theme.popupBg} /> : <select
+          focused={!modelSearchFocused}
           style={{ flexGrow: 1 }}
           backgroundColor={theme.popupBg}
           focusedBackgroundColor={theme.popupBg}
@@ -227,7 +272,9 @@ export function SettingsPopup({
             if (page === "checkModels") onSelectCheckModel(model);
             else onSelectModel(model);
           }}
-        />
+        />}
+          <text content="/ search   ↑↓ move   enter select   esc back" fg={theme.dim} bg={theme.popupBg} />
+        </>
       )}
     </box>
   );

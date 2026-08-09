@@ -21,15 +21,20 @@ bun install
 
 ## Log in
 
-PUM keeps its own credentials, separate from pi's. This opens pi's login flow
-pointed at PUM's config directory:
+PUM keeps its own credentials, separate from pi's. Start PUM with no configured
+provider and PUM opens the in-app login popup automatically.
 
 ```bash
 bun run login
 ```
 
-Run `/login` inside it, pick a provider, then quit. Works with a Claude or
-ChatGPT subscription, an API key, or any of the providers pi supports.
+Use `/login` at any time to open the same popup. The popup lists every login
+method from pi's provider registry, including OAuth, device-code, browser, and
+API-key flows.
+
+The Custom Provider option accepts an endpoint and API key. PUM probes the
+OpenAI-compatible `/models` endpoint, writes `models.json` atomically, and stores
+the key only in PUM's `auth.json`. PUM keeps entered values after a failed probe.
 
 ## Use it
 
@@ -55,8 +60,12 @@ bun run start -r     # pick up the most recent session here
 | Enter | Send — or steer, if the agent is already working |
 | ↑ / ↓ | Walk back through earlier prompts, and forward to what you were typing |
 | Esc | Press twice within 2s to cancel the selected turn and restore the prompt |
-| Ctrl+P | Settings — theme, checks, writing style, thinking, models |
+| Ctrl+P | Settings — providers, models, checks, writing style, and appearance |
 | Ctrl+C | Once warns, twice quits |
+
+Model and check-model lists include a case-insensitive search field. Search
+matches provider IDs, provider names, model IDs, and model names. Press `/` from
+a model row to focus the search field.
 
 A top bar carries the model, thinking level, git branch, token count, cost, and
 how much of the context window is gone. While the agent works it grows a
@@ -194,7 +203,8 @@ Everything sits under `~/.config/pum` — set `PUM_DIR` to move it.
 
 | | |
 |---|---|
-| `auth.json` | Credentials |
+| `auth.json` | Provider credentials, including custom-provider keys |
+| `models.json` | Custom provider endpoints and discovered models; no submitted keys |
 | `settings.json` | Model and thinking level, saved as you change them |
 | `pum.json` | Theme, animations, web search, writing style, thinking traces |
 | `check-mode-cache.json` | Up to 256 accepted read-only Git `bash` checks |
