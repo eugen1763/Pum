@@ -35,25 +35,28 @@ function request(cwd: string): Omit<CheckApprovalRequest, "id"> {
 }
 
 describe("project approvals", () => {
-  test("binds exact approvals to tool, model, cwd, and canonical complete input", () => {
+  test("binds exact approvals to identity, tool, model, cwd, and canonical complete input", () => {
     const fixture = store();
+    const main = { kind: "main" } as const;
     const input = canonicalJson({ timeout: 10, command: "bun test" });
-    expect(fixture.store.add("bash", "test/check", "/repo", input)).toBe(true);
-    expect(fixture.store.has("bash", "test/check", "/repo", canonicalJson({ command: "bun test", timeout: 10 }))).toBe(true);
-    expect(fixture.store.has("edit", "test/check", "/repo", input)).toBe(false);
-    expect(fixture.store.has("bash", "test/other", "/repo", input)).toBe(false);
-    expect(fixture.store.has("bash", "test/check", "/other", input)).toBe(false);
-    expect(fixture.store.has("bash", "test/check", "/repo", canonicalJson({ command: "bun test --watch" }))).toBe(false);
+    expect(fixture.store.add(main, "bash", "test/check", "/repo", input)).toBe(true);
+    expect(fixture.store.has(main, "bash", "test/check", "/repo", canonicalJson({ command: "bun test", timeout: 10 }))).toBe(true);
+    expect(fixture.store.has({ kind: "subagent", agentId: "child-1" }, "bash", "test/check", "/repo", input)).toBe(false);
+    expect(fixture.store.has(main, "edit", "test/check", "/repo", input)).toBe(false);
+    expect(fixture.store.has(main, "bash", "test/other", "/repo", input)).toBe(false);
+    expect(fixture.store.has(main, "bash", "test/check", "/other", input)).toBe(false);
+    expect(fixture.store.has(main, "bash", "test/check", "/repo", canonicalJson({ command: "bun test --watch" }))).toBe(false);
   });
 
   test("persists with a cap and clears one project", () => {
     const fixture = store(2);
-    fixture.store.add("bash", "test/check", "/one", canonicalJson({ command: "one" }));
-    fixture.store.add("bash", "test/check", "/two", canonicalJson({ command: "two" }));
-    fixture.store.add("bash", "test/check", "/three", canonicalJson({ command: "three" }));
+    const main = { kind: "main" } as const;
+    fixture.store.add(main, "bash", "test/check", "/one", canonicalJson({ command: "one" }));
+    fixture.store.add(main, "bash", "test/check", "/two", canonicalJson({ command: "two" }));
+    fixture.store.add(main, "bash", "test/check", "/three", canonicalJson({ command: "three" }));
     expect(JSON.parse(readFileSync(fixture.path, "utf8")).entries).toHaveLength(2);
     expect(new CheckApprovalStore(fixture.path, 2).clearProject("/two")).toBe(1);
-    expect(new CheckApprovalStore(fixture.path, 2).has("bash", "test/check", "/three", canonicalJson({ command: "three" }))).toBe(true);
+    expect(new CheckApprovalStore(fixture.path, 2).has(main, "bash", "test/check", "/three", canonicalJson({ command: "three" }))).toBe(true);
   });
 });
 

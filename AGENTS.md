@@ -98,8 +98,12 @@ These were chosen deliberately. Change them only on purpose.
   file and atomic rename.
 - **Coding tools follow the active Check mode profile.** Off mode runs without
   approval. Strict and balanced apply their verifier policies. Ask mode presents
-  unresolved calls for exact approval. Hard blocks and explicit `UNSAFE`
-  decisions cannot be approved.
+  every checked call that passes hard rules for exact approval, unless an exact
+  prior approval matches. Verifier `SAFE`, unclear, error, and unavailable
+  results still require the popup. Hard blocks never open the popup. Explicit
+  `UNSAFE` decisions block without the popup, except for the exact
+  `publish-mutation` category from the authoritative main agent. That exception
+  still requires popup approval. Managed subagents cannot use the exception.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
@@ -248,11 +252,15 @@ These were chosen deliberately. Change them only on purpose.
 - **Check mode has explicit profiles and deterministic hard blocks.** `strict`
   keeps fail-closed verifier behavior. `balanced` permits only narrow recognized
   project-local operations after hard rules, then verifies ambiguous calls.
-  `ask` presents unresolved calls to the user. Every active profile blocks
-  project escape, escaping links or junctions, credential access, privilege
-  escalation, persistence, remote-script execution, dangerous destructive Git,
-  and broad deletion. Hard blocks and explicit verifier `UNSAFE` results cannot
-  be overridden.
+  `ask` presents every checked call that passes hard rules to the user, unless
+  an exact prior approval matches. A verifier `SAFE` result does not bypass the
+  popup in Ask mode. Every active profile blocks project escape, escaping links
+  or junctions, credential access, privilege escalation, persistence,
+  remote-script execution, dangerous destructive Git, and broad deletion.
+  Hard blocks never open the popup and cannot be overridden. Explicit verifier
+  `UNSAFE` results also block without the popup. The only exception is an exact
+  `publish-mutation` category for the authoritative main agent. The exception
+  still requires explicit popup approval. Managed subagents remain blocked.
 - **Check mode verifies complete structured proposals.** Bash requests include
   all stages, operators, pipelines, redirections, substitutions, environment
   assignments, mutation intent, and boundaries. `edit` and `apply_patch`
@@ -264,10 +272,12 @@ These were chosen deliberately. Change them only on purpose.
   one bounded adjudication under the shared 15-second watchdog.
 - **Ask approvals stay exact.** Ask mode can allow one exact call, one exact
   call for the session, or one canonical exact call for the project. Project
-  approvals stay outside LLM context and bind to tool, verifier model, cwd, and
-  canonical complete input. The store is capped. Settings can clear approvals
-  for the current project. PUM never stores hard-blocked or explicit `UNSAFE`
-  operations as approvals.
+  approvals stay outside LLM context and bind to authoritative main or child
+  identity, tool, verifier model, cwd, and canonical complete input. Main and
+  child identity comes from session construction, not model input or chat text.
+  The store is capped. Settings can clear approvals for the current project.
+  PUM never stores hard-blocked operations as approvals. PUM stores an explicit
+  `UNSAFE` approval only for the main-agent `publish-mutation` exception.
 - **Checked tools stay out of parallel mixed batches.** pi prepares every tool
   in a parallel assistant batch before it executes any tool. A waiting `bash`,
   `edit`, `apply_patch`, or external-trigger process check would make unrelated

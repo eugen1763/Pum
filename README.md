@@ -161,15 +161,15 @@ Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_pa
 
 - **Strict:** Run deterministic hard rules, then require a clear verifier approval.
 - **Balanced:** Permit only narrow, recognized project-local operations after hard rules. Send all other calls to the verifier.
-- **Ask:** Send ambiguous calls to the verifier. If the result stays unclear or the verifier fails, ask the user.
+- **Ask:** Show the approval popup for every checked call that passes hard rules, unless an exact session or project approval already matches. A verifier `SAFE`, unclear, error, or unavailable result still requires approval.
 
-Every active profile hard-blocks project escape, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden. An explicit verifier `UNSAFE` verdict also cannot be overridden.
+Every active profile hard-blocks project escape, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup, except for the exact main-agent `publish-mutation` category. That narrow exception still requires explicit popup approval. Managed subagents cannot use the exception.
 
 For `edit` and `apply_patch`, PUM validates the proposed change and sends a unified diff, changed paths, line counts, sensitivity flags, and project containment. PUM does not mutate files before the decision. Invalid or stale edit context blocks the call.
 
-Ask mode can allow an exact call once, for the current session, or for the current project. Project approvals match the tool, verifier model, project, and canonical complete input. Use **Clear approvals** in Settings to remove project approvals.
+Ask mode can allow an exact call once, for the current session, or for the current project. Approvals match the authoritative main or child identity, tool, verifier model, project, and canonical complete input. Chat text is not approval. Use **Clear approvals** in Settings to remove project approvals.
 
-The verifier uses a structured decision schema. One unclear response can receive one adjudication under the shared 15-second watchdog. Strict and balanced block malformed replies, errors, aborts, and timeouts. Ask can present unresolved results to the user. Check mode is off by default and is not a sandbox.
+The verifier uses a structured decision schema. One unclear response can receive one adjudication under the shared 15-second watchdog. Strict and balanced block malformed replies, errors, aborts, and timeouts. Ask requires the popup after hard rules for verifier `SAFE`, unclear, error, and unavailable results. Check mode is off by default and is not a sandbox.
 
 ### Hosted web search
 
