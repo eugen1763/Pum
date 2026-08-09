@@ -199,6 +199,12 @@ function trimRange(command: string, start: number, end: number): [number, number
 
 type Token = { value: string; start: number; end: number; redirection?: string };
 
+function backslashEscapesNext(text: string, index: number, quote: "'" | "\"" | null): boolean {
+  if (quote === "'") return false;
+  if (quote === "\"") return text[index + 1] !== undefined && "$`\"\\\n".includes(text[index + 1]!);
+  return true;
+}
+
 function tokenizeStage(text: string, absoluteStart: number, limits: CheckPolicyLimits): { tokens: Token[]; balanced: boolean; truncated: boolean } {
   const tokens: Token[] = [];
   let value = "";
@@ -228,7 +234,7 @@ function tokenizeStage(text: string, absoluteStart: number, limits: CheckPolicyL
       escaped = false;
       continue;
     }
-    if (char === "\\" && quote !== "'") {
+    if (char === "\\" && backslashEscapesNext(text, index, quote)) {
       if (tokenStart < 0) tokenStart = index;
       escaped = true;
       continue;
@@ -334,7 +340,7 @@ export function analyzeBashCommand(command: string, requestedLimits?: Partial<Ch
   for (let index = 0; index < command.length;) {
     const char = command[index]!;
     if (escaped) { escaped = false; index++; continue; }
-    if (char === "\\" && quote !== "'") { escaped = true; index++; continue; }
+    if (char === "\\" && backslashEscapesNext(command, index, quote)) { escaped = true; index++; continue; }
     if (char === "`" && quote !== "'") {
       if (backtickStart === undefined) backtickStart = index;
       else {
@@ -498,6 +504,12 @@ function normalizedAbsolute(value: string, cwd: string): { absolute: string; roo
   return { absolute, root, inside };
 }
 
+function isProjectRoot(value: string, cwd: string): boolean {
+  const flavor = pathFlavor(value, cwd);
+  const resolved = normalizedAbsolute(value, cwd);
+  return flavor.relative(resolved.root, resolved.absolute) === "";
+}
+
 function credentialPath(value: string): boolean {
   const lower = value.toLowerCase().replaceAll("\\", "/");
   const segments = lower.split("/").filter(Boolean);
@@ -587,7 +599,7 @@ function inspectHardBlocks(analysis: BashAnalysis, cwd: string, fs: CheckPolicyF
       const recursive = argv.slice(1).some((arg) => arg === "--recursive" || /^-[^-]*r/i.test(arg));
       const force = argv.slice(1).some((arg) => arg === "--force" || /^-[^-]*f/i.test(arg));
       const broad = operands.some((arg) => [".", "..", "*", "./*", ".\\*", "/", "\\"].includes(arg)
-        || /[*?\[]/.test(arg) || normalizedAbsolute(arg, cwd).absolute === normalizedAbsolute(cwd, cwd).root)
+        || /[*?\[]/.test(arg) || isProjectRoot(arg, cwd))
         || (recursive && force && operands.length !== 1);
       if (broad) addFinding(findings, { code: "broad-deletion", severity: "hard-block", message: "deletion target is broad or recursive across multiple paths", stage: stage.index });
     }

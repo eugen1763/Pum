@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { editCounts, toolArg } from "./tool-line";
+import { displayToolPath, editCounts, toolArg } from "./tool-line";
 
 describe("read tool metadata", () => {
   test("shows the path and only supplied range arguments", () => {
@@ -25,6 +25,24 @@ describe("read tool metadata", () => {
       offset: 2,
       limit: 8,
     }, "/repo")).toBe("C:\\Users\\Jane Doe\\project\\file name.ts · offset=2 · limit=8");
+  });
+
+  test("uses stable separators for project-relative Windows and UNC paths", () => {
+    expect(displayToolPath("C:\\Users\\Jane Doe\\project\\src\\file name.ts", "C:\\Users\\Jane Doe\\project"))
+      .toBe("src/file name.ts");
+    expect(displayToolPath("\\\\server\\share\\project\\src\\file name.ts", "\\\\server\\share\\project"))
+      .toBe("src/file name.ts");
+    expect(displayToolPath("src\\file name.ts", "C:\\Users\\Jane Doe\\project"))
+      .toBe("src/file name.ts");
+    expect(displayToolPath("/repo/..hidden/file.ts", "/repo"))
+      .toBe("..hidden/file.ts");
+  });
+
+  test("preserves external Windows drive and UNC syntax", () => {
+    expect(displayToolPath("D:\\Other Files\\file name.ts", "C:\\Users\\Jane Doe\\project"))
+      .toBe("D:\\Other Files\\file name.ts");
+    expect(displayToolPath("\\\\server\\other share\\file name.ts", "C:\\Users\\Jane Doe\\project"))
+      .toBe("\\\\server\\other share\\file name.ts");
   });
 });
 
