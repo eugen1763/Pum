@@ -76,7 +76,122 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+async function finishAgent(manager: SubagentManager, id: string, summary: string): Promise<void> {
+  const tools = new Map<string, any>();
+  (manager as any).childExtension(id).factory({
+    on() {},
+    registerTool(tool: any) { tools.set(tool.name, tool); },
+  });
+  await tools.get("finish_subagent").execute("finish-test", { summary });
+}
+
+async function waitUntil(predicate: () => boolean, timeout = 5_000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("Timed out waiting for subagent state");
+}
+
 describe("background subagents", () => {
+  test("finish_subagent routes a main-spawned child completion to main", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const sessionManager = SessionManager.inMemory(repo);
+    const notices: string[] = [];
+    const mainApi = {
+      appendEntry(customType: string, data: unknown) {
+        sessionManager.appendCustomEntry(customType, data);
+      },
+      sendMessage(message: { customType: string; content: string; display: boolean; details?: unknown }) {
+        notices.push(message.content);
+        sessionManager.appendCustomMessageEntry(
+          message.customType,
+          message.content,
+          message.display,
+          message.details,
+        );
+      },
+    };
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain(mainApi as any, sessionManager, repo);
+
+    const child = await manager.spawn({
+      task: "Complete the direct child task.",
+      name: "direct-completion-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    });
+    await finishAgent(manager, child.id, "Direct child integration summary.");
+    await waitUntil(() => manager.getAgent(child.id)?.status === "completed");
+
+    expect(notices.filter((notice) => notice.includes("Subagent direct-completion-child completed."))).toHaveLength(1);
+    expect(notices.find((notice) => notice.includes("Subagent direct-completion-child completed."))).toContain(
+      "summary: Direct child integration summary.",
+    );
+    await manager.detachMain();
+  });
+
+  test("finish_subagent routes a nested child completion only to its parent", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const sessionManager = SessionManager.inMemory(repo);
+    const notices: string[] = [];
+    const mainApi = {
+      appendEntry(customType: string, data: unknown) {
+        sessionManager.appendCustomEntry(customType, data);
+      },
+      sendMessage(message: { customType: string; content: string; display: boolean; details?: unknown }) {
+        notices.push(message.content);
+        sessionManager.appendCustomMessageEntry(
+          message.customType,
+          message.content,
+          message.display,
+          message.details,
+        );
+      },
+    };
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain(mainApi as any, sessionManager, repo);
+
+    const parent = await manager.spawn({
+      task: "Wait for a nested child completion.",
+      name: "nested-completion-parent",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    });
+    await waitUntil(() => manager.getAgent(parent.id)?.status === "idle");
+    notices.length = 0;
+
+    const child = await manager.spawn({
+      task: "Complete the nested child task.",
+      name: "nested-completion-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+      parentAgentId: parent.id,
+    });
+    await finishAgent(manager, child.id, "Nested child integration summary.");
+    await waitUntil(() => manager.getAgent(child.id)?.status === "completed");
+    await waitUntil(() => manager.getAgent(parent.id)?.transcript.lines.some(
+      (line) => line.kind === "agent-message"
+        && line.sender === "nested-completion-child"
+        && line.text.includes("Subagent nested-completion-child completed."),
+    ) === true);
+
+    expect(manager.getAgent(child.id)?.parentAgentId).toBe(parent.id);
+    expect(manager.getAgent(parent.id)?.transcript.lines.some(
+      (line) => line.kind === "agent-message"
+        && line.text.includes("summary: Nested child integration summary."),
+    )).toBe(true);
+    expect(notices.some((notice) => notice.includes("Subagent nested-completion-child"))).toBe(false);
+    await manager.detachMain();
+  });
+
   test("spawn returns before completion and notifies the main bridge", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),

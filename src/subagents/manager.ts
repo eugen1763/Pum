@@ -61,7 +61,7 @@ const ACTIVE_SUBAGENT_STATUSES = new Set<SubagentStatus>(["starting", "running"]
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
-- Use finish_subagent as the only final completion report. It sends the sole completion notification after the status changes.
+- Use finish_subagent as the only final completion report. It sends the sole completion notification to the direct spawner after the status changes.
 - Do not send a final summary, test report, done message, or completion status through message_agent.
 - Use message_agent for questions, blockers, coordination, or intermediate information that needs action before completion.
 - Do not automatically reply to an acknowledgement, status-only message, or completion notice.
@@ -80,7 +80,7 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Do not send unrelated work to an arbitrary subagent. If no appropriate recipient is clear, state the capacity issue and keep the work pending for deliberate routing.
 - Never wait for subagents with bash sleep, shell polling loops, repeated list_subagents calls, or repeated worktree status calls.
 - After you spawn all currently independent subagents, finish the current turn and yield the main agent loop.
-- A subagent completion notification will automatically start or steer a later main-agent turn.
+- A directly spawned subagent completion notification will automatically start or steer a later main-agent turn.
 - A normal 'Message from <agent>' is not a completion notification. Do not merge until the agent status is completed.
 - Treat "wait for every subagent" as yielding until completion notifications arrive, not as active polling.
 - Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
@@ -490,7 +490,7 @@ export class SubagentManager {
             : "idle";
         const summary = record.finishRequested || error || record.snapshot.summary;
         this.updateStatus(record, status, summary);
-        this.notifyMain(record, status, summary);
+        void this.notifySpawner(record, status, summary);
         record.finishRequested = undefined;
         break;
       }
@@ -556,8 +556,8 @@ export class SubagentManager {
             message: Type.String({ description: "Message to send" }),
           }),
           execute: async (_id, params) => {
-            if (params.target === "main" && isCompletionOnlyMessage(params.message)) {
-              throw new Error("Use finish_subagent for the final summary. message_agent does not send completion-only reports to main.");
+            if (isCompletionOnlyMessage(params.message)) {
+              throw new Error("Use finish_subagent for the final summary. message_agent does not send completion-only reports.");
             }
             await this.routeMessage(agentId, params.target, params.message);
             return textResult(`Message delivered to ${params.target}`);
@@ -575,7 +575,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "finish_subagent",
           label: "Finish Subagent",
-          description: "Mark this task complete and send the sole final summary after the agent status changes. Do not send the summary with message_agent first.",
+          description: "Mark this task complete and send the sole final summary to the direct spawner after the agent status changes. Do not send the summary with message_agent first.",
           parameters: Type.Object({
             summary: Type.String({ description: "Summary of completed work, tests, and remaining concerns" }),
           }),
@@ -782,7 +782,7 @@ export class SubagentManager {
       this.updateStatus(record, "running");
       void withSearchRoute(record.session!.sessionId, () => record.session!.prompt(options.task)).catch((error) => {
         this.updateStatus(record, "failed", String(error));
-        this.notifyMain(record, "failed", String(error));
+        void this.notifySpawner(record, "failed", String(error));
       });
       return cloneSnapshot(record);
     } catch (error) {
@@ -891,7 +891,7 @@ export class SubagentManager {
       record.userInstructionNotices?.delete(pending.id);
       this.dropPending(record, pending.id);
       this.updateStatus(record, "failed", String(error));
-      this.notifyMain(record, "failed", String(error));
+      void this.notifySpawner(record, "failed", String(error));
     });
   }
 
@@ -1035,8 +1035,11 @@ export class SubagentManager {
     if (!delivered) this.emit({ type: "main-pending-drop", id: pending.id });
   }
 
-  private notifyMain(record: RuntimeRecord, status: SubagentStatus, summary?: string): void {
-    if (!this.mainApi) return;
+  private async notifySpawner(
+    record: RuntimeRecord,
+    status: SubagentStatus,
+    summary?: string,
+  ): Promise<void> {
     const content = [
       `Subagent ${record.snapshot.name} ${status}.`,
       `id: ${record.snapshot.id}`,
@@ -1044,23 +1047,64 @@ export class SubagentManager {
       `worktree: ${record.snapshot.worktree.path}`,
       summary ? `summary: ${summary}` : "",
     ].filter(Boolean).join("\n");
-    const data: AgentMessageData = {
-      id: randomUUID().slice(0, 12),
-      sender: record.snapshot.name,
-      recipient: "main",
-      text: content,
-      at: Date.now(),
-    };
-    this.wakeMain(
-      {
-        customType: AGENT_MESSAGE_CUSTOM_TYPE,
+    const parentAgentId = record.snapshot.parentAgentId;
+
+    if (parentAgentId === null) {
+      if (!this.mainApi) return;
+      const data: AgentMessageData = {
+        id: randomUUID().slice(0, 12),
+        sender: record.snapshot.name,
+        recipient: "main",
+        text: content,
+        at: Date.now(),
+      };
+      this.wakeMain(
+        {
+          customType: AGENT_MESSAGE_CUSTOM_TYPE,
+          content,
+          display: true,
+          details: data,
+        },
         content,
-        display: true,
-        details: data,
-      },
-      content,
-    );
-    this.emit({ type: "main-line", line: this.agentMessageLine(data) });
+      );
+      this.emit({ type: "main-line", line: this.agentMessageLine(data) });
+      return;
+    }
+
+    const parent = this.records.get(parentAgentId);
+    if (!parent) return;
+    let pending: PendingLine | undefined;
+    try {
+      await this.ensureRuntime(parent);
+      if (!parent.api || !parent.session) return;
+
+      const data: AgentMessageData = {
+        id: randomUUID().slice(0, 12),
+        sender: record.snapshot.name,
+        recipient: parent.snapshot.name,
+        text: content,
+        at: Date.now(),
+      };
+      pending = { id: data.id, line: this.agentMessageLine(data) };
+      this.addPending(parent, pending);
+      withSearchRoute(parent.session.sessionId, () => {
+        parent.api!.sendMessage(
+          {
+            customType: AGENT_MESSAGE_CUSTOM_TYPE,
+            content,
+            display: true,
+            details: data,
+          },
+          {
+            deliverAs: parent.session!.isStreaming ? "steer" : "followUp",
+            triggerTurn: true,
+          },
+        );
+      });
+      this.updateStatus(parent, "running");
+    } catch {
+      if (pending) this.dropPending(parent, pending.id);
+    }
   }
 
   private formatAgentList(): string {
