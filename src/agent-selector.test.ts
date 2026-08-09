@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { buildAgentTree, moveAgentSelection } from "./agent-selector";
+import {
+  agentSelectorRowLayout,
+  buildAgentTree,
+  moveAgentSelection,
+} from "./agent-selector";
 import type { SubagentSnapshot } from "./subagents/types";
 
 function agent(id: string, parentAgentId: string | null, startedAt: number): SubagentSnapshot {
@@ -41,6 +45,75 @@ describe("agent selector tree", () => {
       ["grandchild", 3],
       ["peer", 1],
     ]);
+  });
+
+  test("uses each snapshot's branch and usage", () => {
+    const first = agent("first", null, 1);
+    first.usage = { outgoing: 1200, incoming: 45, cacheRead: 0, cost: 0.125, contextPct: 80 };
+    const second = agent("second", null, 2);
+    second.worktree.branch = "topic/second";
+    second.usage = { outgoing: 8, incoming: 900, cacheRead: 2400, cost: 2.5, contextPct: 20 };
+
+    const rows = buildAgentTree([first, second]);
+    expect(rows[1]?.metadata).toEqual({
+      branch: "pum/first",
+      outgoingTokens: 1200,
+      incomingTokens: 45,
+      cacheReadTokens: 0,
+      cost: 0.125,
+      contextPct: 80,
+    });
+    expect(rows[2]?.metadata).toEqual({
+      branch: "topic/second",
+      outgoingTokens: 8,
+      incomingTokens: 900,
+      cacheReadTokens: 2400,
+      cost: 2.5,
+      contextPct: 20,
+    });
+  });
+
+  test("normalizes legacy usage and omits zero values from row metadata", () => {
+    const legacy = agent("legacy", null, 1);
+    legacy.usage = { tokens: 700, cost: 0.2, contextPct: 35 } as any;
+    const row = buildAgentTree([legacy])[1]!;
+    const layout = agentSelectorRowLayout(row, 80);
+
+    expect(row.metadata).toEqual({
+      branch: "pum/legacy",
+      outgoingTokens: 700,
+      incomingTokens: 0,
+      cacheReadTokens: 0,
+      cost: 0.2,
+      contextPct: 35,
+    });
+    expect(layout.metadata.map((item) => item.key)).toEqual([
+      "branch",
+      "outgoing",
+      "cost",
+      "context",
+    ]);
+  });
+
+  test("preserves label space and progressively removes metadata", () => {
+    const row = buildAgentTree([agent("nested-worker", null, 1)])[1]!;
+    row.metadata = {
+      branch: "pum/nested-worker",
+      outgoingTokens: 1200,
+      incomingTokens: 345,
+      cacheReadTokens: 2400,
+      cost: 0.25,
+      contextPct: 88,
+    };
+
+    const wide = agentSelectorRowLayout(row, 100);
+    const medium = agentSelectorRowLayout(row, 45);
+    const narrow = agentSelectorRowLayout(row, 18);
+
+    expect(wide.metadata.length).toBeGreaterThan(medium.metadata.length);
+    expect(medium.metadata.length).toBeGreaterThan(narrow.metadata.length);
+    expect(narrow.metadata.map((item) => item.key)).toEqual(["context"]);
+    expect(narrow.labelWidth).toBeGreaterThan(0);
   });
 
   test("wraps navigation at both ends", () => {
