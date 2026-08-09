@@ -172,17 +172,6 @@ const SAFE_READ_COMMANDS = new Set([
   "pwd", "printf", "echo", "true", "false", "test", "[", "ls", "tree", "cat", "head", "tail",
   "wc", "stat", "file", "du", "realpath", "readlink", "grep", "rg", "git",
 ]);
-const LANGUAGE_EVAL_FLAGS = new Map<string, Set<string>>([
-  ["node", new Set(["-e", "--eval", "-p", "--print"])],
-  ["bun", new Set(["-e", "--eval", "-p", "--print"])],
-  ["deno", new Set(["eval"])],
-  ["python", new Set(["-c"])],
-  ["python3", new Set(["-c"])],
-  ["ruby", new Set(["-e"])],
-  ["perl", new Set(["-e", "-E"])],
-  ["php", new Set(["-r"])],
-]);
-
 function commandName(argv0: string | undefined): string {
   if (!argv0) return "";
   const basename = argv0.replaceAll("\\", "/").split("/").at(-1) ?? argv0;
@@ -736,7 +725,6 @@ function inspectSuspiciousExecution(analysis: BashAnalysis, depth = 0): CheckPol
     const next = analysis.stages[index + 1];
     const nextName = commandName(effectiveArgv(next?.argv ?? [])[0]);
     const commandFlag = shellCommandFlag(name, argv);
-    const evalFlags = LANGUAGE_EVAL_FLAGS.get(name);
     const dynamicCommand = argv[0] !== undefined && /(?:\$\(|`|\$\{|\$[A-Za-z_])/.test(argv[0]);
     const encodedPowerShell = (name === "powershell" || name === "pwsh")
       && lowerArgs.some((arg) => arg === "-encodedcommand" || arg === "-enc");
@@ -746,8 +734,6 @@ function inspectSuspiciousExecution(analysis: BashAnalysis, depth = 0): CheckPol
 
     let message: string | undefined;
     if (name === "eval") message = "eval executes dynamically constructed shell text";
-    else if (commandFlag >= 0) message = `${name} executes an inline shell command string`;
-    else if (evalFlags && argv.slice(1).some((arg) => evalFlags.has(arg))) message = `${name} evaluates inline program text`;
     else if (encodedPowerShell) message = `${name} executes an encoded command`;
     else if (dynamicCommand) message = "command name is constructed dynamically";
     else if (encodedShellText) message = "command contains encoded shell text";
@@ -794,10 +780,21 @@ function isNarrowRead(stage: BashStage): boolean {
   return true;
 }
 
+function balancedCompleteShellLimits(command: string): Partial<CheckPolicyLimits> {
+  return {
+    maxCommandChars: Math.max(DEFAULT_CHECK_POLICY_LIMITS.maxCommandChars, command.length),
+    maxStages: Math.max(DEFAULT_CHECK_POLICY_LIMITS.maxStages, command.length + 1),
+    maxAnnotations: Math.max(DEFAULT_CHECK_POLICY_LIMITS.maxAnnotations, command.length + 1),
+    maxTokensPerStage: Math.max(DEFAULT_CHECK_POLICY_LIMITS.maxTokensPerStage, command.length + 1),
+    maxTokenChars: Math.max(DEFAULT_CHECK_POLICY_LIMITS.maxTokenChars, command.length),
+  };
+}
+
 /** Analyze a bash tool call and return a deterministic profile decision. */
 export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPolicyResult {
   const profile = options.profile ?? "balanced";
-  const analysis = analyzeBashCommand(options.command, options.limits);
+  const limits = options.limits ?? (profile === "balanced" ? balancedCompleteShellLimits(options.command) : undefined);
+  const analysis = analyzeBashCommand(options.command, limits);
   const findings = inspectHardBlocks(analysis, options.cwd, options.fileSystem ?? nodeFileSystem);
   if (findings.some((item) => item.severity === "hard-block")) {
     return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
@@ -810,7 +807,7 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
 
   for (const finding of inspectSuspiciousExecution(analysis)) addFinding(findings, finding);
   if (profile === "balanced") {
-    if (findings.length) return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+    if (findings.length) return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
     return {
       profile,
       decision: "allow",
@@ -836,7 +833,12 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
 /** Analyze direct executable arguments without converting the arguments to shell text. */
 export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions): CheckPolicyResult {
   const profile = options.profile ?? "balanced";
-  const limits = mergeLimits(options.limits);
+  const longestProcessToken = options.args.reduce((maximum, argument) => Math.max(maximum, argument.length), options.executable.length);
+  const completeProcessLimits = profile === "balanced" && options.limits === undefined ? {
+    maxTokenChars: Math.max(DEFAULT_CHECK_POLICY_LIMITS.maxTokenChars, longestProcessToken),
+    maxTokensPerStage: Math.max(DEFAULT_CHECK_POLICY_LIMITS.maxTokensPerStage, options.args.length + 1),
+  } : undefined;
+  const limits = mergeLimits(options.limits ?? completeProcessLimits);
   const errors: string[] = [];
   let truncated = false;
   if (!options.executable) errors.push("executable is empty");
@@ -905,7 +907,7 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
   }
   for (const finding of inspectSuspiciousExecution(analysis)) addFinding(findings, finding);
   if (profile === "balanced") {
-    if (findings.length) return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+    if (findings.length) return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
     return {
       profile,
       decision: "allow",

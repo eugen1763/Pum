@@ -160,16 +160,18 @@ Trigger events target one exact main or retained child session. A missing sessio
 Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_patch`, and external-trigger process execution:
 
 - **Strict:** Run deterministic hard rules, then require a clear verifier approval.
-- **Balanced:** Permit only narrow, recognized project-local operations after hard rules. Send all other calls to the verifier.
+- **Balanced:** Block deterministic hard-rule or suspicious findings. Allow ordinary complete project-local calls. Verifier review is non-blocking unless the verifier returns explicit `UNSAFE`.
 - **Ask:** Show the approval popup for every checked call that passes hard rules, unless an exact session or project approval already matches. A verifier `SAFE`, unclear, error, or unavailable result still requires approval.
 
 Every active profile hard-blocks project escape, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup. The only exception is a deterministic match for direct main-agent `npm publish` or `npm dist-tag add`. The verifier category does not control this exception. The exception still requires explicit popup approval. Managed subagents cannot use the exception.
 
-For `edit` and `apply_patch`, PUM validates the proposed change and sends a unified diff, changed paths, line counts, sensitivity flags, and project containment. PUM does not mutate files before the decision. Invalid or stale edit context blocks the call.
+For `edit` and `apply_patch`, PUM validates the complete proposed change before any mutation. Review data includes the unified diff, changed paths, line counts, sensitivity flags, project containment, and full-content SHA-256. Invalid, stale, malformed, escaping, or incompletely analyzed input blocks the call. Patch length alone does not block a valid Balanced call.
 
 Ask mode can allow an exact call once, for the current session, or for the current project. Approvals match the authoritative main or child identity, tool, verifier model, project, and canonical complete input. Chat text is not approval. Use **Clear approvals** in Settings to remove project approvals.
 
-The verifier uses a structured decision schema. One unclear response can receive one adjudication under the shared 15-second watchdog. Strict and balanced block malformed replies, errors, aborts, and timeouts. Ask requires the popup after hard rules for verifier `SAFE`, unclear, error, and unavailable results. Check mode is off by default and is not a sandbox.
+The verifier uses a structured decision schema. One unclear response can receive one adjudication under the shared 15-second watchdog. Strict blocks malformed replies, errors, aborts, and timeouts. Balanced allows a fully validated call after an unclear, unavailable, failed, or timed-out review. Balanced still blocks explicit verifier `UNSAFE`, aborts, deterministic suspicious findings, malformed structures, and incomplete analysis. Ask requires the popup after hard rules for verifier `SAFE`, unclear, error, and unavailable results. Check mode is off by default and is not a sandbox.
+
+Verifier prompts stay bounded. For an oversized Balanced review, PUM sends complete validation metadata, counts, findings, and SHA-256 digests. PUM does not send a raw prefix or suffix as if it were complete. Strict and Ask keep their fail-closed oversized-input behavior.
 
 ### Hosted web search
 

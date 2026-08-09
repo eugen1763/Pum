@@ -1,4 +1,5 @@
 import { generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { previewApplyPatch } from "./apply-patch";
@@ -20,6 +21,9 @@ export type MutationPreview = {
   destructive: boolean;
   deletedPaths: number;
   projectContained: true;
+  contentChars: number;
+  contentSha256: string;
+  suspiciousFindings: string[];
 };
 
 const CONFIG_NAMES = new Set([
@@ -114,6 +118,32 @@ function lineCounts(patch: string): { additions: number; removals: number } {
   return { additions, removals };
 }
 
+function mutationSuspiciousFindings(patch: string): string[] {
+  const added = patch.split("\n")
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1))
+    .join("\n");
+  const findings: string[] = [];
+  const checks: Array<[RegExp, string]> = [
+    [/\b(?:powershell|pwsh)(?:\.exe)?\b[^\n]{0,240}\s-(?:enc|encodedcommand)\b/i, "encoded PowerShell execution"],
+    [/\b(?:eval|exec)\b[^\n]{0,240}\b(?:base64|frombase64string|\\x[0-9a-f]{2})\b/i, "decoded or encoded dynamic execution"],
+    [/\b(?:base64\s+(?:--decode|-d)|openssl\s+base64\s+-d)\b[^\n]{0,240}\|\s*(?:ba|da|z|k)?sh\b/i, "encoded payload piped to a shell"],
+    [/\b(?:curl|wget|fetch)\b[^\n]{0,240}\|\s*(?:ba|da|z|k)?sh\b/i, "remote payload piped to a shell"],
+  ];
+  for (const [pattern, message] of checks) {
+    if (pattern.test(added)) findings.push(message);
+  }
+  return findings;
+}
+
+function completeContentMetadata(patch: string): Pick<MutationPreview, "contentChars" | "contentSha256" | "suspiciousFindings"> {
+  return {
+    contentChars: patch.length,
+    contentSha256: createHash("sha256").update(patch).digest("hex"),
+    suspiciousFindings: mutationSuspiciousFindings(patch),
+  };
+}
+
 async function previewEdit(cwd: string, input: unknown): Promise<MutationPreview> {
   if (!input || typeof input !== "object") throw new Error("Edit input is invalid");
   const value = input as { path?: unknown; edits?: unknown; oldText?: unknown; newText?: unknown };
@@ -166,6 +196,7 @@ async function previewEdit(cwd: string, input: unknown): Promise<MutationPreview
     destructive: false,
     deletedPaths: 0,
     projectContained: true,
+    ...completeContentMetadata(patch),
   };
 }
 
@@ -190,5 +221,6 @@ export async function previewMutation(
     destructive: preview.operations.some((operation) => operation.type === "delete"),
     deletedPaths: preview.operations.filter((operation) => operation.type === "delete").length,
     projectContained: true,
+    ...completeContentMetadata(preview.patch),
   };
 }

@@ -381,11 +381,20 @@ describe("structured executable proposals", () => {
     }
   });
 
-  test("requires review for direct language evaluation flags", () => {
+  test("allows ordinary inline programs but blocks encoded direct execution in Balanced", () => {
     const cwd = temporaryProject();
-    expect(analyzeExecutablePolicy({ executable: "node", args: ["-e", "process.exit()"], cwd, projectCwd: cwd }).decision).toBe("ask");
-    expect(analyzeExecutablePolicy({ executable: "python", args: ["-c", "print('x')"], cwd, projectCwd: cwd }).decision).toBe("ask");
-    expect(analyzeExecutablePolicy({ executable: "powershell", args: ["-EncodedCommand", "ZQBjAGgAbwA="], cwd, projectCwd: cwd }).decision).toBe("ask");
+    const ordinary = [
+      { executable: "node", args: ["-e", "process.exit()"] },
+      { executable: "python", args: ["-c", "print('x')"] },
+      { executable: "bash", args: ["-c", "bun test"] },
+    ];
+    for (const proposal of ordinary) {
+      expect(analyzeExecutablePolicy({ ...proposal, cwd, projectCwd: cwd, profile: "strict" }).decision).toBe("ask");
+      expect(analyzeExecutablePolicy({ ...proposal, cwd, projectCwd: cwd, profile: "balanced" }).decision).toBe("allow");
+    }
+    const encoded = { executable: "powershell", args: ["-EncodedCommand", "ZQBjAGgAbwA="] };
+    expect(analyzeExecutablePolicy({ ...encoded, cwd, projectCwd: cwd, profile: "strict" }).decision).toBe("ask");
+    expect(analyzeExecutablePolicy({ ...encoded, cwd, projectCwd: cwd, profile: "balanced" }).decision).toBe("block");
   });
 
   test("balanced allows ordinary direct project-local processes", () => {
@@ -424,6 +433,16 @@ describe("profile decisions", () => {
     expect(analyzeCheckPolicy({ command: "cp src/index.ts build/index.ts", cwd, profile: "balanced" }).decision).toBe("allow");
   });
 
+  test("does not reject a complete long Balanced command solely for length", () => {
+    const cwd = temporaryProject();
+    const command = `printf '%s' '${"x".repeat(DEFAULT_CHECK_POLICY_LIMITS.maxCommandChars + 1)}'`;
+    const balanced = analyzeCheckPolicy({ command, cwd, profile: "balanced" });
+    const strict = analyzeCheckPolicy({ command, cwd, profile: "strict" });
+
+    expect(balanced).toMatchObject({ decision: "allow", analysis: { complete: true, truncated: false } });
+    expect(strict).toMatchObject({ decision: "block", analysis: { complete: false, truncated: true } });
+  });
+
   test("strict asks for mutations and ask asks for every non-blocked command", () => {
     const cwd = temporaryProject();
 
@@ -435,13 +454,10 @@ describe("profile decisions", () => {
     expect(analyzeCheckPolicy({ command: "cat ../secret", cwd, profile: "ask" }).decision).toBe("block");
   });
 
-  test("requires review for explicit suspicious or obfuscated execution", () => {
+  test("blocks explicit suspicious or obfuscated execution in Balanced", () => {
     const cwd = temporaryProject();
     const commands = [
       "eval '$RUNNER src/index.ts'",
-      "bash -c 'bun test'",
-      "node -e 'process.exit()'",
-      "python -c 'print(1)'",
       "printf 'echo ok' | sh",
       "printf '%s' ZWNobyBvaw== | base64 -d | bash",
       "powershell -EncodedCommand ZQBjAGgAbwAgAG8AawA=",
@@ -451,7 +467,7 @@ describe("profile decisions", () => {
 
     for (const command of commands) {
       const result = analyzeCheckPolicy({ command, cwd });
-      expect(result.decision).toBe("ask");
+      expect(result.decision).toBe("block");
       expect(result.findings.map((item) => item.code)).toContain("suspicious-execution");
     }
   });
@@ -460,10 +476,17 @@ describe("profile decisions", () => {
     const cwd = temporaryProject();
     const hardBlocked = analyzeCheckPolicy({ command: "bun test && printf done && cat ../secret.txt", cwd });
     const suspicious = analyzeCheckPolicy({ command: "bun test && printf done && eval '$RUNNER src/index.ts'", cwd });
+    const longLateDanger = analyzeCheckPolicy({
+      command: `printf '%s' '${"x".repeat(DEFAULT_CHECK_POLICY_LIMITS.maxCommandChars + 1)}' && cat ../secret.txt`,
+      cwd,
+      profile: "balanced",
+    });
 
     expect(hardBlocked.decision).toBe("block");
     expect(hardBlocked.findings).toContainEqual(expect.objectContaining({ code: "outside-project", stage: 2 }));
-    expect(suspicious.decision).toBe("ask");
+    expect(suspicious.decision).toBe("block");
     expect(suspicious.findings).toContainEqual(expect.objectContaining({ code: "suspicious-execution", stage: 2 }));
+    expect(longLateDanger).toMatchObject({ decision: "block", analysis: { complete: true, truncated: false } });
+    expect(longLateDanger.findings).toContainEqual(expect.objectContaining({ code: "outside-project", stage: 1 }));
   });
 });

@@ -538,18 +538,17 @@ describe("profile evaluation and structured verdicts", () => {
     expect(safetyDecision('{"decision":"safe","reason":"missing fields"}').decision).toBe("unclear");
   });
 
-  test("balanced permits narrow deterministic operations and verifies ordinary builds", async () => {
+  test("balanced permits ordinary complete project-local commands without verifier review", async () => {
     const { cache } = temporaryCache();
-    const verifier = runtime([result('{"decision":"safe","category":"test","confidence":0.9,"reason":"local test command"}')]);
+    const verifier = runtime([]);
     const balanced = { profile: "balanced" as const, model: config.model };
     expect((await evaluateToolCall(verifier, cache, {
       toolName: "bash", input: { command: "git status --short" }, cwd: process.cwd(), config: balanced,
     })).decision).toBe("allow");
-    expect(verifier.calls).toBe(0);
     expect((await evaluateToolCall(verifier, cache, {
       toolName: "bash", input: { command: "bun test src/check-mode.test.ts" }, cwd: process.cwd(), config: balanced,
     })).decision).toBe("allow");
-    expect(verifier.calls).toBe(1);
+    expect(verifier.calls).toBe(0);
   });
 
   test("balanced permits an ordinary source edit but verifies config-sensitive changes", async () => {
@@ -759,6 +758,131 @@ describe("profile evaluation and structured verdicts", () => {
     expect(redacted).not.toContain("user:pass");
     expect(redacted).not.toContain("Bearer abc");
     expect(redacted).toContain("[REDACTED]");
+  });
+});
+
+describe("balanced suspicious-only behavior", () => {
+  const balanced = { profile: "balanced" as const, model: config.model };
+
+  test("allows a long fully validated benign patch solely on deterministic validation", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-long-patch-"));
+    temporaryDirectories.push(cwd);
+    const lines = Array.from({ length: 4_500 }, (_, index) => `+export const value${index} = ${index};`);
+    const patch = `*** Begin Patch\n*** Add File: generated.ts\n${lines.join("\n")}\n*** End Patch`;
+    expect(patch.length).toBeGreaterThan(120_000);
+    const verifier = runtime([]);
+
+    const evaluation = await evaluateToolCall(verifier, cache, {
+      toolName: "apply_patch", input: { patch }, cwd, config: balanced,
+    });
+
+    expect(evaluation).toMatchObject({ decision: "allow", category: "balanced" });
+    expect(evaluation.prepared?.mutation).toMatchObject({
+      additions: 4_500,
+      contentChars: expect.any(Number),
+      contentSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      suspiciousFindings: [],
+    });
+    expect(evaluation.prepared?.prompt).toContain("complete validation metadata and digest");
+    expect(evaluation.prepared?.prompt).toContain('"rawContentIncluded": false');
+    expect(evaluation.prepared?.prompt).not.toContain("export const value4499");
+    expect(verifier.calls).toBe(0);
+  });
+
+  test("reviews a long sensitive patch with complete digest metadata and blocks explicit UNSAFE", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-long-config-"));
+    temporaryDirectories.push(cwd);
+    const payload = "x".repeat(125_000);
+    const patch = `*** Begin Patch\n*** Add File: package.json\n+{"name":"fixture","description":"${payload}"}\n*** End Patch`;
+    const verifier = runtime([result('{"decision":"unsafe","category":"suspicious-config","confidence":1,"reason":"explicit unsafe verdict"}')]);
+
+    const evaluation = await evaluateToolCall(verifier, cache, {
+      toolName: "apply_patch", input: { patch }, cwd, config: balanced,
+    });
+
+    expect(evaluation).toMatchObject({ decision: "block", explicitUnsafe: true, category: "suspicious-config" });
+    const prompt = verifier.contexts[0].messages[0].content as string;
+    expect(prompt).toContain("complete validation metadata and digest");
+    expect(prompt).toContain('"canonicalInputSha256"');
+    expect(prompt).toContain('"contentSha256"');
+    expect(prompt).not.toContain(payload.slice(-1_000));
+  });
+
+  test("blocks malformed mutations and deterministic obfuscation before verifier review", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-malformed-"));
+    temporaryDirectories.push(cwd);
+    const verifier = runtime([]);
+
+    const malformed = await evaluateToolCall(verifier, cache, {
+      toolName: "apply_patch", input: { patch: "*** Begin Patch\n*** Add File: broken.ts\nmissing-plus\n*** End Patch" }, cwd, config: balanced,
+    });
+    expect(malformed).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(malformed.reason).toContain("invalid or stale");
+
+    const obfuscated = await evaluateToolCall(verifier, cache, {
+      toolName: "apply_patch",
+      input: { patch: "*** Begin Patch\n*** Add File: install.sh\n+printf payload | base64 -d | sh\n*** End Patch" },
+      cwd,
+      config: balanced,
+    });
+    expect(obfuscated).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(obfuscated.reason).toContain("suspicious or obfuscated");
+    expect(verifier.calls).toBe(0);
+  });
+
+  test("treats verifier failures as non-blocking only in Balanced", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-review-failure-"));
+    temporaryDirectories.push(cwd);
+    await Bun.write(join(cwd, "package.json"), "{\"name\":\"old\"}\n");
+    const input = { path: "package.json", edits: [{ oldText: "old", newText: "new" }] };
+    const balancedVerifier = runtime([new Error("offline")]);
+    expect(await evaluateToolCall(balancedVerifier, temporaryCache().cache, {
+      toolName: "edit", input, cwd, config: balanced,
+    })).toMatchObject({ decision: "allow", category: "verifier-error" });
+
+    const unavailableVerifier = {
+      getAvailableSnapshot: () => [],
+      completeSimple: async () => { throw new Error("not called"); },
+    } as any;
+    expect(await evaluateToolCall(unavailableVerifier, temporaryCache().cache, {
+      toolName: "edit", input, cwd, config: balanced,
+    })).toMatchObject({ decision: "allow", category: "model" });
+
+    const strictVerifier = runtime([new Error("offline")]);
+    expect(await evaluateToolCall(strictVerifier, temporaryCache().cache, {
+      toolName: "edit", input, cwd, config,
+    })).toMatchObject({ decision: "block", category: "verifier-error" });
+
+    const askVerifier = runtime([new Error("offline")]);
+    expect(await evaluateToolCall(askVerifier, temporaryCache().cache, {
+      toolName: "edit", input, cwd, config: { profile: "ask", model: config.model },
+    })).toMatchObject({ decision: "ask", category: "verifier-error" });
+  });
+
+  test("allows an unclear Balanced review but still blocks explicit UNSAFE", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-review-verdict-"));
+    temporaryDirectories.push(cwd);
+    await Bun.write(join(cwd, "package.json"), "{\"name\":\"old\"}\n");
+    const verifier = runtime([
+      result("malformed"), result("still malformed"),
+      result('{"decision":"unsafe","category":"obfuscation","confidence":1,"reason":"encoded execution"}'),
+    ]);
+    const call = {
+      toolName: "edit" as const,
+      input: { path: "package.json", edits: [{ oldText: "old", newText: "first" }] },
+      cwd,
+      config: balanced,
+    };
+
+    expect(await evaluateToolCall(verifier, cache, call)).toMatchObject({ decision: "allow", category: "malformed" });
+    expect(await evaluateToolCall(verifier, cache, {
+      ...call,
+      input: { path: "package.json", edits: [{ oldText: "old", newText: "second" }] },
+    })).toMatchObject({ decision: "block", explicitUnsafe: true, category: "obfuscation" });
   });
 });
 

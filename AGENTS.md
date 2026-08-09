@@ -251,27 +251,34 @@ These were chosen deliberately. Change them only on purpose.
   `pum.json` holds only what pi does not know about, including UI preferences,
   web search, check mode, and writing style.
 - **Check mode has explicit profiles and deterministic hard blocks.** `strict`
-  keeps fail-closed verifier behavior. `balanced` permits only narrow recognized
-  project-local operations after hard rules, then verifies ambiguous calls.
-  `ask` presents every checked call that passes hard rules to the user, unless
-  an exact prior approval matches. A verifier `SAFE` result does not bypass the
-  popup in Ask mode. Every active profile blocks project escape, escaping links
-  or junctions, credential access, privilege escalation, persistence,
-  remote-script execution, dangerous destructive Git, and broad deletion.
-  Hard blocks never open the popup and cannot be overridden. Explicit verifier
-  `UNSAFE` results also block without the popup. The only exception is a narrow
-  deterministic match for direct `npm publish` or `npm dist-tag add` from the
-  authoritative main agent. The verifier category does not control the match.
-  The exception still requires explicit popup approval. Managed subagents remain blocked.
+  keeps fail-closed verifier behavior. `balanced` blocks only hard-rule,
+  explicitly suspicious, clearly dangerous, obfuscated, malformed, or
+  incompletely analyzed calls. Balanced permits ordinary complete project-local
+  calls. Balanced verifier review is non-blocking after complete deterministic
+  validation unless the verifier returns explicit `UNSAFE`. `ask` presents every
+  checked call that passes hard rules to the user, unless an exact prior approval
+  matches. A verifier `SAFE` result does not bypass the popup in Ask mode. Every
+  active profile blocks project escape, escaping links or junctions, credential
+  access, privilege escalation, persistence, remote-script execution, dangerous
+  destructive Git, and broad deletion. Hard blocks never open the popup and
+  cannot be overridden. Explicit verifier `UNSAFE` results also block without
+  the popup. The only exception is a narrow deterministic match for direct
+  `npm publish` or `npm dist-tag add` from the authoritative main agent. The
+  verifier category does not control the match. The exception still requires
+  explicit popup approval. Managed subagents remain blocked.
 - **Check mode verifies complete structured proposals.** Bash requests include
   all stages, operators, pipelines, redirections, substitutions, environment
   assignments, mutation intent, and boundaries. `edit` and `apply_patch`
   requests include the proposed unified diff, changed paths, line counts,
-  sensitivity flags, and project containment. Invalid, stale, oversized, or
-  incompletely analyzed requests block without mutation or truncation. The
-  verifier returns decision, category, confidence, and reason. Clear legacy
-  `SAFE` and `UNSAFE` replies remain compatible. One unclear reply can receive
-  one bounded adjudication under the shared 15-second watchdog.
+  sensitivity flags, project containment, complete-content findings, and a
+  SHA-256 digest. Invalid, stale, malformed, or incompletely analyzed requests
+  block without mutation. Length alone does not block a fully validated Balanced
+  call. When a Balanced verifier prompt exceeds its bound, PUM sends complete
+  validation metadata and digests. PUM never silently substitutes a truncated
+  raw prefix or suffix. Strict and Ask remain fail-closed for oversized verifier
+  input. The verifier returns decision, category, confidence, and reason. Clear
+  legacy `SAFE` and `UNSAFE` replies remain compatible. One unclear reply can
+  receive one bounded adjudication under the shared 15-second watchdog.
 - **Ask approvals stay exact.** Ask mode can allow one exact call, one exact
   call for the session, or one canonical exact call for the project. Project
   approvals stay outside LLM context and bind to authoritative main or child
