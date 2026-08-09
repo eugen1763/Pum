@@ -45,6 +45,8 @@ bun run start    # open the TUI in the current directory
 | `\` then Enter | Insert a new line fallback |
 | Alt+Enter / Ctrl+Alt+Enter | Stash the prompt without sending |
 | Alt+V | Attach an image from the graphical clipboard |
+| Ctrl+Backspace / Ctrl+W | Delete the previous word |
+| Ctrl+H | Open session history when the terminal reports it distinctly |
 | Tab | Open/close the prompt stash on an empty input |
 | Shift+Up / Shift+Down | Extend a prompt-stash selection |
 | Enter on a stash selection | Ask the main agent to coordinate and merge worktree subagents |
@@ -220,6 +222,9 @@ Each of these cost real debugging. They are not obvious from the docs.
   `key.stopPropagation()` keeps them from reaching it. Escape and Ctrl+P are
   unbound in the textarea, so they are safe as global shortcuts. All shortcuts
   live in the one handler in `app.tsx`.
+- **Raw Ctrl+H and Backspace can both be `^H`.** OpenTUI reports that byte as
+  plain Backspace. PUM keeps Backspace behavior for the ambiguous byte. Use
+  `/history` when the terminal does not report Ctrl+H distinctly.
 - **Two fast Ctrl+C presses arrive in one React batch**, so state read inside the
   handler is still stale on the second. The quit check compares timestamps held
   in a ref. Any keyboard rule that depends on "did this just happen" needs the
