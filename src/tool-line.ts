@@ -84,6 +84,12 @@ export function toolArg(name: string, args: any, cwd: string): string {
     const target = args.target ?? args.name;
     return target ? `${args.action} ${target}` : args.action;
   }
+  if (name.startsWith("message_cache_")) {
+    const action = name.slice("message_cache_".length);
+    if (Array.isArray(args.ids)) return `${action} · ${args.ids.length} id${args.ids.length === 1 ? "" : "s"}`;
+    if (typeof args.id === "string") return `${action} · ${args.id}`;
+    return action;
+  }
   if (name === "questionnaire" && Array.isArray(args.questions)) {
     const count = args.questions.length;
     const first = args.questions[0];

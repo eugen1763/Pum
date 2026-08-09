@@ -7,6 +7,7 @@ import {
   countActiveSubagents,
   isCompletionOnlyMessage,
 } from "./manager";
+import { MESSAGE_CACHE_TOOLS } from "../message-cache";
 import { TRIGGER_EVENT_CUSTOM_TYPE, type SubagentStatus } from "./types";
 
 function addTestAgent(
@@ -98,6 +99,40 @@ describe("SubagentManager extension", () => {
       },
     });
     expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
+  });
+
+  test("binds message cache tools to exact main and child requesters", () => {
+    const requesters: any[] = [];
+    const messageCacheController = {
+      registerTools(pi: any, requesterFactory: (ctx: any) => any) {
+        for (const name of MESSAGE_CACHE_TOOLS) pi.registerTool({ name });
+        requesters.push(requesterFactory({ sessionManager: { getSessionId: () => "main-session" } }));
+      },
+      releaseRequester() {},
+    };
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      messageCacheController: messageCacheController as any,
+    });
+    addTestAgent(manager, "child-1", "idle");
+    const tools: string[] = [];
+    const pi = {
+      on() {},
+      registerTool(tool: { name: string }) { tools.push(tool.name); },
+    };
+
+    (manager.mainExtension() as any).factory(pi);
+    ((manager as any).childExtension("child-1") as any).factory(pi);
+
+    expect(tools.filter((name) => name.startsWith("message_cache_"))).toEqual([
+      ...MESSAGE_CACHE_TOOLS,
+      ...MESSAGE_CACHE_TOOLS,
+    ]);
+    expect(requesters).toEqual([
+      { kind: "main", id: "main-session", name: "main" },
+      { kind: "subagent", id: "child-1", name: "child-1" },
+    ]);
   });
 
   test("routes typed trigger events to the exact main and child sessions", async () => {

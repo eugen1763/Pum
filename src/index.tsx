@@ -26,6 +26,7 @@ import { shutdownSignals } from "./platform";
 import { createShutdown } from "./shutdown";
 import { applyPatchExtension } from "./apply-patch";
 import { QuestionnaireManager } from "./questionnaire";
+import { MESSAGE_CACHE_TOOLS, MessageCacheController } from "./message-cache";
 
 mkdirSync(AGENT_DIR, { recursive: true });
 
@@ -39,6 +40,7 @@ const settings = loadSettings();
 setWritingStyle(settings.writingStyle);
 setExplanationStrength(settings.explanationStrength);
 const questionnaireManager = new QuestionnaireManager();
+const messageCacheController = new MessageCacheController(process.cwd());
 setCheckModeConfig({ profile: settings.checkMode, model: settings.checkModel });
 const checkApprovalCoordinator = new CheckApprovalCoordinator();
 const checkApprovalStore = new CheckApprovalStore();
@@ -51,6 +53,7 @@ const subagentManager = new SubagentManager({
   agentDir: AGENT_DIR,
   maxActiveSubagents: settings.maxActiveSubagents,
   questionnaireManager,
+  messageCacheController,
   childExtensionFactories: [
     writingStyleExtension,
     explanationStrengthExtension,
@@ -92,6 +95,7 @@ const sessionRuntime = await createAgentSessionRuntime(
         tools: [
           "read", "write", "edit", "apply_patch", "bash", "questionnaire",
           "spawn_subagent", "message_agent", "list_subagents", "stop_subagent", "worktree",
+          ...MESSAGE_CACHE_TOOLS,
         ],
       })),
       services,
@@ -139,6 +143,7 @@ root.render(
     searchProviders={searchProviders}
     subagentManager={subagentManager}
     questionnaireManager={questionnaireManager}
+    messageCacheController={messageCacheController}
     loginRequired={loginRequired}
     checkApprovalCoordinator={checkApprovalCoordinator}
     checkApprovalStore={checkApprovalStore}

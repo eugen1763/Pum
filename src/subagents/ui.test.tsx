@@ -3,6 +3,7 @@ import { MarkdownRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot, flushSync } from "@opentui/react";
 import { App } from "../app";
+import { MessageCacheController } from "../message-cache";
 import type { SubagentSnapshot } from "./types";
 
 let destroy: (() => void) | undefined;
@@ -66,6 +67,7 @@ function fakeSession(entries: any[] = []) {
       getEntries: () => entries,
     },
     sessionFile: undefined,
+    sessionId: "main-session",
     subscribe: () => () => {},
     setThinkingLevel() {},
     setModel: async () => {},
@@ -124,6 +126,7 @@ async function renderCacheApp(options: {
   initialStash?: Array<{ text: string; executed: boolean }>;
   onMainPrompt?: (prompt: string) => void;
   onSubagentMessage?: (prompt: string) => void;
+  messageCacheController?: MessageCacheController;
 }) {
   const setup = await createTestRenderer({ width: 80, height: 24, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
@@ -162,6 +165,7 @@ async function renderCacheApp(options: {
       subagentManager={manager}
       promptHistoryStore={stores.history}
       promptStashStore={stores.stash}
+      messageCacheController={options.messageCacheController}
     />,
   ));
   await setup.renderOnce();
@@ -480,6 +484,58 @@ describe("subagent transcript UI", () => {
     expect(mainPrompts[0]).toContain("<task 2>\ntask two\n</task 2>");
     expect(subagentMessages).toEqual([]);
     expect(stores.getStash().every((prompt) => prompt.executed)).toBe(true);
+  });
+
+  test("routes model cache sends through the same main batch and child paths", async () => {
+    const entries = [
+      { id: "cache-1", text: "task one", executed: false, owner: { type: "user" as const } },
+      { id: "cache-2", text: "task two", executed: false, owner: { type: "user" as const } },
+    ];
+    let history: string[] = [];
+    const store = {
+      loadStash: () => entries,
+      addAgentStash: () => { throw new Error("not used"); },
+      removeStashById: () => { throw new Error("not used"); },
+      executeStashByIds: (_cwd: string, ids: string[]) => {
+        const selected = ids.map((id) => entries.find((entry) => entry.id === id)!);
+        history = [...history, ...selected.map((entry) => entry.text)];
+        for (const entry of entries) {
+          if (ids.includes(entry.id)) entry.executed = true;
+        }
+        return { entries: selected, state: { history, stash: entries } };
+      },
+    } as any;
+    const controller = new MessageCacheController("/tmp/project", store);
+    const mainPrompts: string[] = [];
+    const subagentMessages: string[] = [];
+    const { setup } = await renderCacheApp({
+      messageCacheController: controller,
+      onMainPrompt: (prompt) => mainPrompts.push(prompt),
+      onSubagentMessage: (prompt) => subagentMessages.push(prompt),
+    });
+    await setup.mockInput.typeText("keep main draft");
+
+    await controller.send(
+      { kind: "subagent", id: "agent-1", name: "worker-one" },
+      ["cache-2", "cache-1", "cache-2"],
+    );
+    await settle(setup);
+
+    expect(mainPrompts).toHaveLength(1);
+    expect(mainPrompts[0]).toContain("<task 1>\ntask two\n</task 1>");
+    expect(mainPrompts[0]).toContain("<task 2>\ntask one\n</task 2>");
+    expect(mainPrompts[0]).toContain("<task 3>\ntask two\n</task 3>");
+    expect(subagentMessages).toEqual([]);
+    expect(setup.captureCharFrame()).toContain("keep main draft");
+    controller.releaseRequester({ kind: "subagent", id: "agent-1" });
+    controller.releaseRequester({ kind: "main", id: "main-session" });
+
+    await controller.send(
+      { kind: "subagent", id: "agent-1", name: "worker-one" },
+      ["cache-1"],
+    );
+    await settle(setup);
+    expect(subagentMessages).toEqual(["task one"]);
   });
 
   test("requires two Escape presses before aborting the selected subagent", async () => {

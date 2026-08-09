@@ -82,6 +82,12 @@ import type { SubagentManager } from "./subagents/manager";
 import { runWorktreeCommand } from "./worktree-command";
 import { CANCEL_WINDOW_MS, confirmsCancellation } from "./cancel-confirmation";
 import { buildStashBatchPrompt, selectedRange } from "./stash-batch";
+import {
+  messageCacheDetail,
+  MessageCacheController,
+  type MessageCacheSendRequest,
+  type MessageCacheSendResult,
+} from "./message-cache";
 import { addTurnUsage, usageFromEntries } from "./agent-usage";
 import { AgentSelectorPopup, buildAgentTree, moveAgentSelection } from "./agent-selector";
 import { LoginPopup, type LoginPage } from "./login-popup";
@@ -157,6 +163,8 @@ function WorkingRule({
   return <text ref={ref} style={{ flexShrink: 0 }} />;
 }
 
+type StashedPromptView = Pick<StashedPrompt, "text" | "executed">;
+
 export function PromptStashRow({
   theme,
   prompt,
@@ -164,7 +172,7 @@ export function PromptStashRow({
   selected,
 }: {
   theme: Theme;
-  prompt: StashedPrompt;
+  prompt: StashedPromptView;
   index: number;
   selected: boolean;
 }) {
@@ -201,7 +209,7 @@ export function PromptStash({
   height,
 }: {
   theme: Theme;
-  prompts: StashedPrompt[];
+  prompts: StashedPromptView[];
   cursor: number;
   selectedIndices: ReadonlySet<number>;
   height: number;
@@ -275,12 +283,12 @@ const DEFAULT_PROMPT_HISTORY_STORE: PromptHistoryStore = {
 };
 
 export type PromptStashStore = {
-  load: (cwd: string) => StashedPrompt[];
-  append: (cwd: string, prompt: string, executed?: boolean) => StashedPrompt[];
-  markExecuted: (cwd: string, index: number) => StashedPrompt[];
-  markExecutedMany: (cwd: string, indices: Iterable<number>) => StashedPrompt[];
-  replace: (cwd: string, index: number, prompt: string, executed: boolean) => StashedPrompt[];
-  remove: (cwd: string, index: number) => StashedPrompt[];
+  load: (cwd: string) => StashedPromptView[];
+  append: (cwd: string, prompt: string, executed?: boolean) => StashedPromptView[];
+  markExecuted: (cwd: string, index: number) => StashedPromptView[];
+  markExecutedMany: (cwd: string, indices: Iterable<number>) => StashedPromptView[];
+  replace: (cwd: string, index: number, prompt: string, executed: boolean) => StashedPromptView[];
+  remove: (cwd: string, index: number) => StashedPromptView[];
 };
 
 const DEFAULT_PROMPT_STASH_STORE: PromptStashStore = {
@@ -318,6 +326,7 @@ export function App({
   checkApprovalCoordinator,
   checkApprovalStore,
   triggerManager,
+  messageCacheController,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -336,6 +345,7 @@ export function App({
   checkApprovalCoordinator?: CheckApprovalCoordinator;
   checkApprovalStore?: CheckApprovalStore;
   triggerManager?: TriggerManagerLike;
+  messageCacheController?: MessageCacheController;
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -369,7 +379,7 @@ export function App({
   const [branch, setBranch] = useState<string | null>(null);
   const [usage, setUsage] = useState(() => sessionUsage(initialSession));
   const [elapsedSec, setElapsedSec] = useState(0);
-  const [stash, setStash] = useState<StashedPrompt[]>(() => promptStashStore.load(cwd));
+  const [stash, setStash] = useState<StashedPromptView[]>(() => promptStashStore.load(cwd));
   /** -1 means the input is selected; non-negative values select stash rows. */
   const [stashCursor, setStashCursor] = useState(-1);
   const [stashSelection, setStashSelection] = useState<Set<number>>(() => new Set());
@@ -862,7 +872,9 @@ export function App({
                 ? editCounts(event.result)
                 : event.toolName === "questionnaire"
                   ? questionnaireDetail(event.result)
-                : undefined,
+                  : event.toolName.startsWith("message_cache_")
+                    ? messageCacheDetail(event.result)
+                    : undefined,
           });
           break;
         case "agent_start":
@@ -1213,6 +1225,42 @@ export function App({
     return true;
   };
 
+  const deliverMainPrompt = (
+    promptText: string,
+    displayText: string,
+    images: ReturnType<typeof imageContent>[] = [],
+  ) => {
+    const userLine: Extract<Line, { kind: "text" }> = {
+      kind: "text",
+      role: "user",
+      text: displayText.trim(),
+    };
+
+    // Working already: keep the steering message pending at the transcript
+    // bottom until pi emits message_start for its actual insertion.
+    if (busyRef.current) {
+      const pending: PendingLine = {
+        id: randomUUID().slice(0, 12),
+        line: userLine,
+        deliveryText: promptText,
+      };
+      addPending(pending);
+      withSearchRoute(session.sessionId, () => session.steer(promptText, images)).catch((error) => {
+        dropPending(pending.id);
+        append({ kind: "text", role: "error", text: String(error) });
+      });
+      return;
+    }
+
+    append(userLine);
+    inFlight.current = promptText;
+    setWorking(true);
+    withSearchRoute(session.sessionId, () => session.prompt(promptText, { images })).catch((error) => {
+      append({ kind: "text", role: "error", text: String(error) });
+      setWorking(false);
+    });
+  };
+
   const submitPrompt = (value?: string, stashIndex?: number) => {
     const displayText = value ?? inputRef.current?.plainText ?? "";
     const attachments = value === undefined ? [...pendingImages.current] : [];
@@ -1257,35 +1305,24 @@ export function App({
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
-    const userLine: Extract<Line, { kind: "text" }> = {
-      kind: "text",
-      role: "user",
-      text: displayText.trim(),
-    };
+    deliverMainPrompt(promptText, displayText, images);
+  };
 
-    // Working already: keep the steering message pending at the transcript
-    // bottom until pi emits message_start for its actual insertion.
-    if (busyRef.current) {
-      const pending: PendingLine = {
-        id: randomUUID().slice(0, 12),
-        line: userLine,
-        deliveryText: promptText,
-      };
-      addPending(pending);
-      withSearchRoute(session.sessionId, () => session.steer(promptText, images)).catch((err) => {
-        dropPending(pending.id);
-        append({ kind: "text", role: "error", text: String(err) });
-      });
-      return;
-    }
+  const cachedBatchDisplay = (prompts: readonly string[]): string => [
+    `Run ${prompts.length} cached tasks with worktree subagents:`,
+    ...prompts.map((prompt, index) => `${index + 1}. ${prompt}`),
+  ].join("\n");
 
-    append(userLine);
-    inFlight.current = promptText;
-    setWorking(true);
-    withSearchRoute(session.sessionId, () => session.prompt(promptText, { images })).catch((err) => {
-      append({ kind: "text", role: "error", text: String(err) });
-      setWorking(false);
-    });
+  const resetAfterCacheExecution = (targetAgentId = activeAgentIdRef.current) => {
+    const targetKey = targetAgentId ?? "main";
+    viewDrafts.current.set(targetKey, "");
+    viewEditingStashIndices.current.set(targetKey, null);
+    if ((activeAgentIdRef.current ?? "main") !== targetKey) return;
+    editingStashIndex.current = null;
+    histCursor.current = null;
+    draft.current = "";
+    setStashMode(false);
+    setEditorText("");
   };
 
   const runSelectedStashBatch = () => {
@@ -1296,50 +1333,54 @@ export function App({
     });
     if (prompts.length === 0) return;
 
-    const orchestrationPrompt = buildStashBatchPrompt(prompts);
-    const displayText = [
-      `Run ${prompts.length} cached tasks with worktree subagents:`,
-      ...prompts.map((prompt, index) => `${index + 1}. ${prompt}`),
-    ].join("\n");
-
     for (const prompt of prompts) history.current = promptHistoryStore.append(cwd, prompt);
     const next = promptStashStore.markExecutedMany(cwd, indices);
     stashRef.current = next;
     setStash(next);
     refreshHistoryAfterStashMutation();
-    editingStashIndex.current = null;
-    histCursor.current = null;
-    draft.current = "";
-    setStashMode(false);
-    setEditorText("");
-    const userLine: Extract<Line, { kind: "text" }> = {
-      kind: "text",
-      role: "user",
-      text: displayText,
-    };
-
-    if (busyRef.current) {
-      const pending: PendingLine = {
-        id: randomUUID().slice(0, 12),
-        line: userLine,
-        deliveryText: orchestrationPrompt,
-      };
-      addPending(pending);
-      withSearchRoute(session.sessionId, () => session.steer(orchestrationPrompt)).catch((error) => {
-        dropPending(pending.id);
-        append({ kind: "text", role: "error", text: String(error) });
-      });
-      return;
-    }
-
-    append(userLine);
-    inFlight.current = orchestrationPrompt;
-    setWorking(true);
-    withSearchRoute(session.sessionId, () => session.prompt(orchestrationPrompt)).catch((error) => {
-      append({ kind: "text", role: "error", text: String(error) });
-      setWorking(false);
-    });
+    resetAfterCacheExecution();
+    deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts));
   };
+
+  useEffect(() => {
+    if (!messageCacheController) return;
+    const refresh = () => {
+      const next = messageCacheController.list();
+      stashRef.current = next;
+      setStash(next);
+      history.current = promptHistoryStore.load(cwd);
+      histCursor.current = null;
+    };
+    const unsubscribe = messageCacheController.subscribe(refresh);
+    const detach = messageCacheController.bindExecutor(
+      session.sessionId,
+      async (request: MessageCacheSendRequest): Promise<MessageCacheSendResult> => {
+        const { entries, state } = messageCacheController.execute(request.ids);
+        stashRef.current = state.stash;
+        setStash(state.stash);
+        history.current = state.history;
+        resetAfterCacheExecution(
+          request.requester.kind === "subagent" ? request.requester.id : null,
+        );
+        const prompts = entries.map((entry) => entry.text);
+        if (prompts.length > 1) {
+          deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts));
+          return { count: prompts.length, route: "main" };
+        }
+        const prompt = prompts[0]!;
+        if (request.requester.kind === "subagent") {
+          await subagentManager.sendUserMessage(request.requester.id, prompt, [], prompt);
+          return { count: 1, route: "subagent" };
+        }
+        deliverMainPrompt(prompt, prompt);
+        return { count: 1, route: "main" };
+      },
+    );
+    return () => {
+      unsubscribe();
+      detach();
+    };
+  }, [messageCacheController, session]);
 
   const performTriggerAction = (action: TriggerAction) => {
     const trigger = triggers[triggerCursorRef.current];

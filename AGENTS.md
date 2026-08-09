@@ -98,6 +98,10 @@ These were chosen deliberately. Change them only on purpose.
   working-directory identity, history also retains the 100 most recent sent
   occurrences not reserved by the stash. Duplicate text uses occurrence counts,
   not a set. Loads and mutations reconcile legacy keys and persist atomically.
+- **Message-cache tools bind ownership and routing outside model input.** Legacy
+  rows are user-owned. Agent rows store the exact creator identity and display
+  name. An agent deletes only its own rows. Sends accept stable IDs and use the
+  App user-execution bridge. Multi-entry sends use main-agent orchestration.
 - **Colours are never literals.** Everything reads a semantic token from
   `theme.ts`. Three presets ship; `theme.json` in the config dir overrides any
   subset of tokens. Add a token rather than a hex code.
