@@ -17,6 +17,18 @@ export function toolArg(name: string, args: any, cwd: string): string {
   if (name === "bash" && typeof args.command === "string") {
     return args.command.split("\n")[0]!.trim();
   }
+  if (name === "read" && typeof args.path === "string") {
+    const rel = relative(cwd, args.path);
+    const path = rel && !rel.startsWith("..") ? rel : args.path;
+    const range: string[] = [];
+    if (typeof args.offset === "number" && Number.isFinite(args.offset)) {
+      range.push(`offset=${args.offset}`);
+    }
+    if (typeof args.limit === "number" && Number.isFinite(args.limit)) {
+      range.push(`limit=${args.limit}`);
+    }
+    return [path, ...range].join(" · ");
+  }
   if (name === "apply_patch" && typeof args.patch === "string") {
     const paths: string[] = [];
     let updateIndex = -1;
