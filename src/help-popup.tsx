@@ -11,6 +11,7 @@ export const CONTROLS: [string, string][] = [
   ["Tab", "Open cache, or move its selected item to input"],
   ["Shift+Tab", "Next agent transcript"],
   ["Ctrl+Shift+Tab", "Previous agent transcript"],
+  ["Ctrl+L", "Open the agent transcript selector"],
   ["Delete", "Remove the selected cache item and prompt history"],
   ["↑ / ↓", "Earlier prompts, and back again"],
   ["Shift+↑ / ↓", "Select cached prompts for subagents"],

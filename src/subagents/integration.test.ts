@@ -123,6 +123,8 @@ describe("background subagents", () => {
     expect(manager.getAgent(spawned.id)?.transcript.lines.some(
       (line) => line.kind === "text" && line.role === "assistant" && line.text.includes("Task complete"),
     )).toBe(true);
+    expect(manager.getAgent(spawned.id)?.usage.tokens).toBe(13);
+    expect(manager.getAgent(spawned.id)?.usage.contextPct).toBe(0);
 
     const peer = await manager.spawn({
       task: "Wait for messages.",
