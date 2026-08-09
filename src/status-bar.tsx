@@ -129,8 +129,8 @@ export function StatusBar(props: StatusProps) {
   );
 
   return (
-    // flexShrink 0: an auto-sized box shrinks by default, and when stacked this
-    // is three rows tall — without it the rule gets squashed and overdrawn.
+    // flexShrink 0: an auto-sized box shrinks by default, and when stacked its
+    // two rows must remain between the explicit header rules in App.
     <box style={{ flexDirection: "column", flexShrink: 0 }}>
       {stacked ? (
         <>
@@ -145,7 +145,6 @@ export function StatusBar(props: StatusProps) {
           {rightRow}
         </box>
       )}
-      <text content={"─".repeat(Math.max(0, width))} fg={theme.border} />
     </box>
   );
 }

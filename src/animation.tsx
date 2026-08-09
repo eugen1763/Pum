@@ -47,19 +47,36 @@ const CARET_PERIOD_MS = 900;
 const RULE_CHARS_PER_MS = 0.08;
 const RULE_HIGHLIGHT_WIDTH = 10;
 
-export type WorkingRuleRole = "header" | "inputTop" | "inputBottom";
+export type WorkingRuleRole = "headerTop" | "headerBottom" | "inputTop" | "inputBottom";
 export type CoordinatedRuleState = {
   head: number;
-  direction: 1;
+  direction: 1 | -1;
+  pair: "input" | "header";
 };
 
-/** Shared elapsed time gives every coordinated rule the same sweep frame. */
-export function coordinatedRuleState(width: number, elapsedMs: number): CoordinatedRuleState {
+const isInputRule = (role: WorkingRuleRole) => role === "inputTop" || role === "inputBottom";
+
+/**
+ * Route one wave around the two rule pairs. Each half-cycle has enough time for
+ * the head to traverse the full terminal width at the original rule speed.
+ */
+export function coordinatedRuleState(
+  width: number,
+  elapsedMs: number,
+  cycleWidth = width,
+): CoordinatedRuleState {
   const safeWidth = Math.max(1, width);
-  return {
-    head: (elapsedMs * RULE_CHARS_PER_MS) % safeWidth,
-    direction: 1,
-  };
+  const safeCycleWidth = Math.max(1, cycleWidth);
+  const halfCycleMs = Math.max(1, safeCycleWidth - 1) / RULE_CHARS_PER_MS;
+  const cycleElapsed = ((elapsedMs % (halfCycleMs * 2)) + halfCycleMs * 2) % (halfCycleMs * 2);
+  const headerPhase = cycleElapsed >= halfCycleMs;
+  const halfElapsed = headerPhase ? cycleElapsed - halfCycleMs : cycleElapsed;
+  const progress = Math.min(1, halfElapsed / halfCycleMs);
+  const distance = (safeWidth - 1) * progress;
+
+  return headerPhase
+    ? { head: safeWidth - 1 - distance, direction: -1, pair: "header" }
+    : { head: distance, direction: 1, pair: "input" };
 }
 
 /** Return the frame state for a visible rule, or null when that rule is static. */
@@ -68,16 +85,37 @@ export function workingRuleFrameState(
   role: WorkingRuleRole,
   width: number,
   elapsedMs: number,
+  cycleWidth = width,
 ): CoordinatedRuleState | null {
-  if (mode === "off" || width <= 0 || (mode === "input-only" && role === "header")) return null;
-  return coordinatedRuleState(width, elapsedMs);
+  if (mode === "off" || width <= 0) return null;
+  if (mode === "input-only") {
+    if (!isInputRule(role)) return null;
+    return {
+      head: (elapsedMs * RULE_CHARS_PER_MS) % Math.max(1, width),
+      direction: 1,
+      pair: "input",
+    };
+  }
+
+  const state = coordinatedRuleState(width, elapsedMs, cycleWidth);
+  return (state.pair === "input") === isInputRule(role) ? state : null;
 }
 
 type Subscriber = (elapsedMs: number) => void;
 
-type Clock = { subscribe: (cb: Subscriber) => () => void; enabled: boolean };
+type Clock = {
+  subscribe: (cb: Subscriber) => () => void;
+  workingElapsed: () => number;
+  workingRuleCycleWidth: () => number;
+  enabled: boolean;
+};
 
-const ClockContext = createContext<Clock>({ subscribe: () => () => {}, enabled: false });
+const ClockContext = createContext<Clock>({
+  subscribe: () => () => {},
+  workingElapsed: () => 0,
+  workingRuleCycleWidth: () => 1,
+  enabled: false,
+});
 
 export const useClock = () => useContext(ClockContext);
 
@@ -86,11 +124,30 @@ export const useClock = () => useContext(ClockContext);
  * their own renderable, so no React render happens per frame. The renderer is
  * on-demand, so the clock holds it live only while something is animating.
  */
-export function AnimationProvider({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+export function AnimationProvider({
+  enabled,
+  working = false,
+  workingRuleWidth = 1,
+  children,
+}: {
+  enabled: boolean;
+  working?: boolean;
+  workingRuleWidth?: number;
+  children: ReactNode;
+}) {
   const renderer = useRenderer();
   const subs = useRef(new Set<Subscriber>());
   const elapsed = useRef(0);
+  const workingStartedAt = useRef(0);
+  const workingCycleWidth = useRef(1);
   const live = useRef(false);
+
+  useEffect(() => {
+    if (working) {
+      workingStartedAt.current = elapsed.current;
+      workingCycleWidth.current = Math.max(1, workingRuleWidth);
+    }
+  }, [working]);
 
   useEffect(() => {
     const onFrame = async (dt: number) => {
@@ -120,7 +177,19 @@ export function AnimationProvider({ enabled, children }: { enabled: boolean; chi
     [renderer],
   );
 
-  return <ClockContext.Provider value={{ subscribe, enabled }}>{children}</ClockContext.Provider>;
+  const workingElapsed = useCallback(
+    () => Math.max(0, elapsed.current - workingStartedAt.current),
+    [],
+  );
+  const workingRuleCycleWidth = useCallback(() => workingCycleWidth.current, []);
+
+  return (
+    <ClockContext.Provider
+      value={{ subscribe, workingElapsed, workingRuleCycleWidth, enabled }}
+    >
+      {children}
+    </ClockContext.Provider>
+  );
 }
 
 function shimmer(text: string, base: RGBA, hi: RGBA, elapsedMs: number): StyledText {
@@ -331,24 +400,30 @@ export function useWorkingRule(opts: {
 }): RefObject<TextRenderable | null> {
   const { width, color, highlight, active, mode, role } = opts;
   const ref = useRef<TextRenderable>(null);
-  const { subscribe, enabled } = useClock();
+  const { subscribe, workingElapsed, workingRuleCycleWidth, enabled } = useClock();
 
   const plain = useCallback(() => {
     if (ref.current) ref.current.content = new StyledText([fg(color)("─".repeat(width))]);
   }, [color, width]);
 
   useEffect(() => {
-    const frameState = workingRuleFrameState(mode, role, width, 0);
-    if (!active || !enabled || !frameState) {
+    const canAnimate = mode === "coordinated" || (mode === "input-only" && isInputRule(role));
+    if (!active || !enabled || width <= 0 || !canAnimate) {
       plain();
       return;
     }
 
     const base = rgba(color);
     const hi = rgba(highlight);
-    return subscribe((elapsedMs) => {
+    return subscribe(() => {
       if (!ref.current) return;
-      const state = workingRuleFrameState(mode, role, width, elapsedMs);
+      const state = workingRuleFrameState(
+        mode,
+        role,
+        width,
+        workingElapsed(),
+        workingRuleCycleWidth(),
+      );
       if (!state) {
         ref.current.content = new StyledText([fg(color)("─".repeat(width))]);
         return;
@@ -357,7 +432,19 @@ export function useWorkingRule(opts: {
         ? inputRuleText(width, base, hi, state.head)
         : ruleText(width, base, hi, state.head);
     });
-  }, [active, enabled, mode, role, width, color, highlight, plain, subscribe]);
+  }, [
+    active,
+    enabled,
+    mode,
+    role,
+    width,
+    color,
+    highlight,
+    plain,
+    subscribe,
+    workingElapsed,
+    workingRuleCycleWidth,
+  ]);
 
   useEffect(() => {
     if (!active || !enabled || mode === "off") plain();

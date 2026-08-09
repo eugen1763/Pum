@@ -79,6 +79,16 @@ async function settle(setup: Awaited<ReturnType<typeof renderApp>>) {
 }
 
 describe("prompt input layout", () => {
+  test("renders the header-bottom rule directly below StatusBar", async () => {
+    const setup = await renderApp(70, 16);
+    await settle(setup);
+    const lines = setup.captureCharFrame().split("\n");
+
+    expect(lines[0]).toBe("─".repeat(70));
+    expect(lines[1]).toContain("pum");
+    expect(lines[2]).toBe("─".repeat(70));
+  });
+
   test("uses concise contextual placeholders without control hints", () => {
     const placeholders = [
       promptPlaceholder({ busy: false, stashOpen: false }),
