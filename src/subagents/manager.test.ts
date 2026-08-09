@@ -10,7 +10,12 @@ import {
 } from "./manager";
 import type { SubagentStatus } from "./types";
 
-function addTestAgent(manager: SubagentManager, id: string, status: SubagentStatus): void {
+function addTestAgent(
+  manager: SubagentManager,
+  id: string,
+  status: SubagentStatus,
+  parentAgentId: string | null = null,
+): void {
   (manager as any).records.set(id, {
     snapshot: {
       id,
@@ -24,7 +29,7 @@ function addTestAgent(manager: SubagentManager, id: string, status: SubagentStat
         baseBranch: "main",
         baseCommit: "abc",
       },
-      parentAgentId: null,
+      parentAgentId,
       modelId: "mock/model",
       thinkingLevel: "off",
       transcript: { lines: [], stream: null, pending: [] },
@@ -123,6 +128,88 @@ describe("SubagentManager extension", () => {
       target: "main",
       message: "Completed and committed the implementation. All tests pass.",
     })).rejects.toThrow("Use finish_subagent for the final summary");
+    await expect(messageTool.execute("call-2", {
+      target: "parent",
+      message: "Completed and committed the nested implementation. All tests pass.",
+    })).rejects.toThrow("Use finish_subagent for the final summary");
+  });
+
+  test("finish_subagent notifies main for a main-spawned child", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "child", "running");
+    const deliveries: any[] = [];
+    const events: any[] = [];
+    manager.subscribe((event) => events.push(event));
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any, options: any) {
+        deliveries.push({ message, options });
+      },
+    };
+    (manager as any).parentSessionId = "main-session";
+
+    const tools = new Map<string, any>();
+    (manager as any).childExtension("child").factory({
+      on() {},
+      registerTool(tool: any) { tools.set(tool.name, tool); },
+    });
+    await tools.get("finish_subagent").execute("finish-1", { summary: "Child work passed." });
+    (manager as any).processSessionEvent((manager as any).records.get("child"), {
+      type: "agent_settled",
+    });
+    await Promise.resolve();
+
+    expect(manager.getAgent("child")?.status).toBe("completed");
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].message.content).toContain("Subagent child completed.");
+    expect(deliveries[0].message.content).toContain("summary: Child work passed.");
+    expect(deliveries[0].message.details.recipient).toBe("main");
+    expect(events.filter((event) => event.type === "main-line")).toHaveLength(1);
+  });
+
+  test("finish_subagent notifies only the direct subagent spawner", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "idle");
+    addTestAgent(manager, "child", "running", "parent");
+    const mainDeliveries: any[] = [];
+    const parentDeliveries: any[] = [];
+    const events: any[] = [];
+    manager.subscribe((event) => events.push(event));
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any) { mainDeliveries.push(message); },
+    };
+    const parent = (manager as any).records.get("parent");
+    parent.session = {
+      sessionId: "parent-session",
+      isStreaming: false,
+    };
+    parent.api = {
+      sendMessage(message: any, options: any) {
+        parentDeliveries.push({ message, options });
+      },
+    };
+
+    const tools = new Map<string, any>();
+    (manager as any).childExtension("child").factory({
+      on() {},
+      registerTool(tool: any) { tools.set(tool.name, tool); },
+    });
+    await tools.get("finish_subagent").execute("finish-1", { summary: "Nested child passed." });
+    (manager as any).processSessionEvent((manager as any).records.get("child"), {
+      type: "agent_settled",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(manager.getAgent("child")?.status).toBe("completed");
+    expect(parentDeliveries).toHaveLength(1);
+    expect(parentDeliveries[0].message.content).toContain("Subagent child completed.");
+    expect(parentDeliveries[0].message.details.recipient).toBe("parent");
+    expect(parentDeliveries[0].options).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    expect(manager.getAgent("parent")?.transcript.pending).toHaveLength(1);
+    expect(mainDeliveries).toEqual([]);
+    expect(events.some((event) => event.type === "main-line")).toBe(false);
   });
 
   test("counts only starting and running subagents as active", () => {
