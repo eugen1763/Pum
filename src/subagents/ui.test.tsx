@@ -34,10 +34,10 @@ const snapshot: SubagentSnapshot = {
   },
   startedAt: 1,
   updatedAt: 1,
-  usage: { tokens: 1200, cost: 0.25, contextPct: 40 },
+  usage: { outgoing: 1200, incoming: 345, cacheRead: 2400, cost: 0.25, contextPct: 40 },
 };
 
-function fakeSession() {
+function fakeSession(entries: any[] = []) {
   return {
     agent: {
       state: {
@@ -50,7 +50,10 @@ function fakeSession() {
         thinkingLevel: "off",
       },
     },
-    sessionManager: { buildContextEntries: () => [] },
+    sessionManager: {
+      buildContextEntries: () => entries,
+      getEntries: () => entries,
+    },
     sessionFile: undefined,
     subscribe: () => () => {},
     setThinkingLevel() {},
@@ -162,6 +165,101 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
 }
 
 describe("subagent transcript UI", () => {
+  test("restores main usage and resets it for a new session", async () => {
+    const setup = await createTestRenderer({ width: 100, height: 24, kittyKeyboard: true });
+    destroy = () => setup.renderer.destroy();
+    const resumed = fakeSession([{
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "resumed" }],
+        usage: {
+          input: 1200,
+          output: 345,
+          cacheRead: 2400,
+          cacheWrite: 100,
+          cost: { total: 0.25 },
+        },
+      },
+    }]);
+    const fresh = fakeSession();
+    const manager = {
+      getAgents: () => [],
+      subscribe: () => () => {},
+      bindMainSession: async () => {},
+      abortAgent: async () => {},
+      persistToolEvent() {},
+      createStandaloneWorktree: async () => snapshot.worktree,
+    } as any;
+    createRoot(setup.renderer).render(
+      <App
+        session={resumed}
+        modelRuntime={{ getAvailableSnapshot: () => [] } as any}
+        onNewSession={async () => fresh}
+        loadSessions={async () => []}
+        onSwitchSession={async () => resumed}
+        settings={{
+          showThinking: false,
+          theme: "tokyonight",
+          animations: false,
+          workingRuleAnimation: "off",
+          webSearch: false,
+          writingStyle: "none",
+          explanationStrength: "simple",
+          checkMode: false,
+          checkModel: "mock/check",
+        }}
+        searchProviders={[]}
+        subagentManager={manager}
+      />,
+    );
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("↑1.3k · ↓345 · ○2.4k · $0.250 · 12%");
+
+    await setup.mockInput.typeText("/new");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("↑1.3k");
+    expect(setup.captureCharFrame()).not.toContain("↓345");
+    expect(setup.captureCharFrame()).not.toContain("○2.4k");
+  });
+
+  test("sends a direct selected-subagent prompt only through the manager", async () => {
+    const mainPrompts: string[] = [];
+    const subagentMessages: string[] = [];
+    const { setup } = await renderCacheApp({
+      onMainPrompt: (prompt) => mainPrompts.push(prompt),
+      onSubagentMessage: (prompt) => subagentMessages.push(prompt),
+    });
+
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    await setup.mockInput.typeText("Inspect the retry path.");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(subagentMessages).toEqual(["Inspect the retry path."]);
+    expect(mainPrompts).toEqual([]);
+  });
+
+  test("does not route empty or main-transcript prompts to a subagent", async () => {
+    const mainPrompts: string[] = [];
+    const subagentMessages: string[] = [];
+    const { setup } = await renderCacheApp({
+      onMainPrompt: (prompt) => mainPrompts.push(prompt),
+      onSubagentMessage: (prompt) => subagentMessages.push(prompt),
+    });
+
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    await setup.mockInput.typeText("Coordinate from main.");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(mainPrompts).toEqual(["Coordinate from main."]);
+    expect(subagentMessages).toEqual([]);
+  });
+
   test("cycles forward and backward with header notice", async () => {
     const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
     destroy = () => setup.renderer.destroy();
@@ -209,7 +307,7 @@ describe("subagent transcript UI", () => {
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("worker-one");
     expect(setup.captureCharFrame()).toContain("Subagent transcript");
-    expect(setup.captureCharFrame()).toContain("1.2k · $0.250 · 40%");
+    expect(setup.captureCharFrame()).toContain("↑1.2k · ↓345 · ○2.4k · $0.250 · 40%");
 
     setup.mockInput.pressTab({ shift: true, ctrl: true });
     await new Promise((resolve) => setTimeout(resolve, 10));

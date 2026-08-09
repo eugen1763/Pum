@@ -18,7 +18,9 @@ async function renderStatus(width: number, agentCount: number, runningAgentCount
         modelId="mock-model"
         thinkingLevel="off"
         branch="main"
-        tokens={1200}
+        outgoingTokens={1200}
+        incomingTokens={345}
+        cacheReadTokens={2400}
         cost={0}
         contextPct={20}
         busy={false}
@@ -35,7 +37,11 @@ async function renderStatus(width: number, agentCount: number, runningAgentCount
   return setup.captureCharFrame();
 }
 
-describe("StatusBar subagent counts", () => {
+describe("StatusBar usage and subagent counts", () => {
+  test("shows separate compact token metrics in a wide layout", async () => {
+    const frame = await renderStatus(100, 0, 0);
+    expect(frame).toContain("main · ↑1.2k · ↓345 · ○2.4k · 20%");
+  });
   test("shows separate idle and static working counts in a wide layout", async () => {
     const frame = await renderStatus(100, 5, 2);
     expect(frame).toContain("◇ 3 • 2");
@@ -45,7 +51,7 @@ describe("StatusBar subagent counts", () => {
   test("preserves both counts in the narrow stacked layout", async () => {
     const frame = await renderStatus(34, 5, 2);
     expect(frame).toContain("◇ 3 • 2");
-    expect(frame).toContain("main · 1.2k · 20%");
+    expect(frame).toContain("main · ↑1.2k · ↓345 · ○2.4k · 20%");
   });
 
   test("omits zero-count indicators", async () => {

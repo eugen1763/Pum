@@ -123,8 +123,12 @@ describe("background subagents", () => {
     expect(manager.getAgent(spawned.id)?.transcript.lines.some(
       (line) => line.kind === "text" && line.role === "assistant" && line.text.includes("Task complete"),
     )).toBe(true);
-    expect(manager.getAgent(spawned.id)?.usage.tokens).toBe(13);
-    expect(manager.getAgent(spawned.id)?.usage.contextPct).toBe(0);
+    expect(manager.getAgent(spawned.id)?.usage).toMatchObject({
+      outgoing: 10,
+      incoming: 3,
+      cacheRead: 0,
+      contextPct: 0,
+    });
 
     const peer = await manager.spawn({
       task: "Wait for messages.",
@@ -169,6 +173,12 @@ describe("background subagents", () => {
     expect(manager.getAgent(spawned.id)).toBeUndefined();
     expect(existsSync(spawned.worktree.path)).toBe(false);
 
+    const peerUsage = manager.getAgent(peer.id)?.usage;
     await manager.detachMain();
+
+    const restoredManager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await restoredManager.attachMain(mainApi as any, parent, repo);
+    expect(restoredManager.getAgent(peer.id)?.usage).toEqual(peerUsage);
+    await restoredManager.detachMain();
   });
 });
