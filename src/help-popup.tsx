@@ -82,8 +82,60 @@ export function helpLines(terminalHeight: number): HelpLine[] {
   ]);
 }
 
+type HelpLayout = {
+  twoColumns: boolean;
+  popupHeight: number;
+  summaryLines: readonly string[];
+  summaryHeight: number;
+  topGap: number;
+  contentHeight: number;
+  bottomGap: number;
+  footerHeight: number;
+};
+
+const POPUP_FRAME_ROWS = 4;
+
+export function helpLayout(terminalWidth: number, terminalHeight: number): HelpLayout {
+  const twoColumns = terminalWidth >= 82;
+  const categorySpacing = terminalHeight >= 32;
+  const desiredHeight = twoColumns ? (categorySpacing ? 30 : 28) : 39;
+  const popupHeight = Math.max(1, Math.min(terminalHeight, desiredHeight));
+  const innerHeight = Math.max(0, popupHeight - POPUP_FRAME_ROWS);
+  const allSummaryLines = twoColumns
+    ? HELP_SUMMARY_WIDE
+    : ["PUM workflow", ...HELP_SUMMARY];
+  const footerHeight = innerHeight >= 1 ? 1 : 0;
+  const minimumContentHeight = innerHeight >= 2 ? 1 : 0;
+  const summaryHeight = Math.min(
+    allSummaryLines.length,
+    Math.max(0, innerHeight - footerHeight - minimumContentHeight),
+  );
+  const fullSummaryFits = summaryHeight === allSummaryLines.length;
+  const gapCapacity = fullSummaryFits
+    ? Math.max(0, innerHeight - summaryHeight - footerHeight - minimumContentHeight)
+    : 0;
+  // Keep the footer separate first when only one compact-layout gap fits.
+  const bottomGap = gapCapacity >= 1 ? 1 : 0;
+  const topGap = gapCapacity >= 2 ? 1 : 0;
+  const contentHeight = Math.max(
+    0,
+    innerHeight - summaryHeight - topGap - bottomGap - footerHeight,
+  );
+
+  return {
+    twoColumns,
+    popupHeight,
+    summaryLines: allSummaryLines.slice(0, summaryHeight),
+    summaryHeight,
+    topGap,
+    contentHeight,
+    bottomGap,
+    footerHeight,
+  };
+}
+
 export function helpPageSize(terminalHeight: number): number {
-  return Math.max(1, Math.min(terminalHeight - 2, 39) - 10);
+  return Math.max(1, helpLayout(0, terminalHeight).contentHeight);
 }
 
 export function maxHelpScrollOffset(terminalHeight: number): number {
@@ -151,15 +203,11 @@ export function HelpPopup({
   terminalHeight: number;
   scrollOffset: number;
 }) {
-  const twoColumns = terminalWidth >= 82;
-  const margin = terminalWidth < 64 ? 1 : Math.max(2, Math.floor(terminalWidth * 0.08));
-  const popupWidth = Math.max(24, terminalWidth - margin * 2);
-  // Add border, padding, and a fixed footer row to the tallest content column.
-  const desiredHeight = twoColumns ? 28 : 39;
-  const popupHeight = Math.max(8, Math.min(terminalHeight - 2, desiredHeight));
-  const summary = twoColumns ? HELP_SUMMARY_WIDE : HELP_SUMMARY;
-  const summaryHeight = twoColumns ? 2 : 5;
-  const contentHeight = Math.max(1, popupHeight - 5 - summaryHeight);
+  const layout = helpLayout(terminalWidth, terminalHeight);
+  const margin = terminalWidth < 3
+    ? 0
+    : terminalWidth < 64 ? 1 : Math.max(2, Math.floor(terminalWidth * 0.08));
+  const popupWidth = Math.max(1, terminalWidth - margin * 2);
   const split = 3;
   const lines = helpLines(terminalHeight);
   const spaced = terminalHeight >= 32;
@@ -169,10 +217,10 @@ export function HelpPopup({
       title=" Controls "
       style={{
         position: "absolute",
-        top: Math.max(1, Math.floor((terminalHeight - popupHeight) / 2)),
+        top: Math.max(0, Math.floor((terminalHeight - layout.popupHeight) / 2)),
         left: margin,
         width: popupWidth,
-        height: popupHeight,
+        height: layout.popupHeight,
         zIndex: 100,
         border: true,
         borderColor: theme.border,
@@ -181,19 +229,27 @@ export function HelpPopup({
         padding: 1,
       }}
     >
-      <box style={{ height: summaryHeight, flexShrink: 0, flexDirection: "column" }}>
-        {!twoColumns ? <text content="PUM workflow" fg={theme.accent} bg={theme.popupBg} /> : null}
-        {summary.map((line) => <text key={line} content={line} fg={twoColumns ? theme.accent : theme.dim} bg={theme.popupBg} wrapMode="none" />)}
+      <box style={{ height: layout.summaryHeight, flexShrink: 0, flexDirection: "column" }}>
+        {layout.summaryLines.map((line, index) => (
+          <text
+            key={line}
+            content={line}
+            fg={layout.twoColumns || index === 0 ? theme.accent : theme.dim}
+            bg={theme.popupBg}
+            wrapMode="none"
+          />
+        ))}
       </box>
+      {layout.topGap ? <box style={{ height: 1, flexShrink: 0 }} /> : null}
       <box
         style={{
           flexDirection: "row",
-          height: contentHeight,
+          height: layout.contentHeight,
           flexShrink: 0,
           overflow: "hidden",
         }}
       >
-        {twoColumns ? (
+        {layout.twoColumns ? (
           <>
             <HelpColumn groups={HELP_GROUPS.slice(0, split)} theme={theme} spaced={spaced} />
             <box style={{ width: 2, flexShrink: 0 }} />
@@ -207,14 +263,17 @@ export function HelpPopup({
           </box>
         )}
       </box>
-      <box style={{ height: 1, flexShrink: 0 }}>
-        <text
-          content={twoColumns ? "esc or ? close" : "↑↓ scroll   esc or ? close"}
-          fg={theme.dim}
-          bg={theme.popupBg}
-          wrapMode="none"
-        />
-      </box>
+      {layout.bottomGap ? <box style={{ height: 1, flexShrink: 0 }} /> : null}
+      {layout.footerHeight ? (
+        <box style={{ height: 1, flexShrink: 0 }}>
+          <text
+            content={layout.twoColumns ? "esc or ? close" : "↑↓ scroll   esc or ? close"}
+            fg={theme.dim}
+            bg={theme.popupBg}
+            wrapMode="none"
+          />
+        </box>
+      ) : null}
     </box>
   );
 }

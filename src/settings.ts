@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { AGENT_DIR } from "./config";
 import { DEFAULT_CHECK_MODEL } from "./check-mode";
 import { isWritingStyle, type WritingStyle } from "./writing-style";
+import {
+  isExplanationStrength,
+  type ExplanationStrength,
+} from "./explanation-strength";
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
@@ -24,6 +28,7 @@ export type PumSettings = {
   workingRuleAnimation: WorkingRuleAnimationMode;
   webSearch: boolean;
   writingStyle: WritingStyle;
+  explanationStrength: ExplanationStrength;
   checkMode: boolean;
   checkModel: string;
 };
@@ -37,6 +42,7 @@ const DEFAULTS: PumSettings = {
   workingRuleAnimation: "input-only",
   webSearch: true,
   writingStyle: "none",
+  explanationStrength: "simple",
   checkMode: false,
   checkModel: DEFAULT_CHECK_MODEL,
 };
@@ -51,6 +57,9 @@ export function normalizeSettings(parsed: unknown): PumSettings {
       ? merged.workingRuleAnimation
       : DEFAULTS.workingRuleAnimation,
     writingStyle: isWritingStyle(merged.writingStyle) ? merged.writingStyle : DEFAULTS.writingStyle,
+    explanationStrength: isExplanationStrength(merged.explanationStrength)
+      ? merged.explanationStrength
+      : DEFAULTS.explanationStrength,
     checkMode: typeof merged.checkMode === "boolean" ? merged.checkMode : DEFAULTS.checkMode,
     checkModel:
       typeof merged.checkModel === "string" && merged.checkModel.includes("/")

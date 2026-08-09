@@ -1,0 +1,47 @@
+import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+
+export const EXPLANATION_STRENGTHS = ["none", "simple", "detailed"] as const;
+export type ExplanationStrength = (typeof EXPLANATION_STRENGTHS)[number];
+
+let currentStrength: ExplanationStrength = "simple";
+
+export const EXPLANATION_PROMPTS: Record<Exclude<ExplanationStrength, "none">, string> = {
+  simple: `## Explanation strength: simple
+
+Use regular assistant output to state briefly what you are doing and why.
+Give concise progress updates before important actions.
+Summarize the result when the work is complete.
+Do not put these explanations only in hidden reasoning.`,
+  detailed: `## Explanation strength: detailed
+
+Use regular assistant output to explain what you are doing and why.
+Explain the plan before implementation.
+Report important actions, decisions, tradeoffs, and validation as the work proceeds.
+Summarize the result and any remaining concerns when the work is complete.
+Do not put these explanations only in hidden reasoning.
+Do not reveal private chain-of-thought. Give useful rationale summaries instead.`,
+};
+
+export function isExplanationStrength(value: unknown): value is ExplanationStrength {
+  return EXPLANATION_STRENGTHS.includes(value as ExplanationStrength);
+}
+
+export function setExplanationStrength(strength: ExplanationStrength): void {
+  currentStrength = strength;
+}
+
+export function getExplanationStrength(): ExplanationStrength {
+  return currentStrength;
+}
+
+export const explanationStrengthExtension: InlineExtension = {
+  name: "pum-explanation-strength",
+  factory(pi) {
+    pi.on("before_agent_start", (event) => {
+      if (currentStrength === "none") return;
+      return {
+        systemPrompt: `${event.systemPrompt}\n\n${EXPLANATION_PROMPTS[currentStrength]}`,
+      };
+    });
+  },
+};

@@ -32,61 +32,105 @@ function fakeSession() {
   } as any;
 }
 
+async function renderApp(width: number, height: number) {
+  const setup = await createTestRenderer({ width, height, kittyKeyboard: true });
+  destroy = () => setup.renderer.destroy();
+  const session = fakeSession();
+  const manager = {
+    getAgents: () => [],
+    subscribe: () => () => {},
+    bindMainSession: async () => {},
+    persistToolEvent() {},
+    createStandaloneWorktree: async () => ({}),
+  } as any;
+  createRoot(setup.renderer).render(
+    <App
+      session={session}
+      modelRuntime={{ getAvailableSnapshot: () => [] } as any}
+      onNewSession={async () => session}
+      loadSessions={async () => []}
+      onSwitchSession={async () => session}
+      settings={{
+        showThinking: false,
+        theme: "tokyonight",
+        animations: false,
+        workingRuleAnimation: "off",
+        webSearch: false,
+        writingStyle: "none",
+        explanationStrength: "simple",
+        checkMode: false,
+        checkModel: "mock/check",
+      }}
+      searchProviders={[]}
+      subagentManager={manager}
+    />,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await setup.renderOnce();
+  return setup;
+}
+
+async function settle(setup: Awaited<ReturnType<typeof renderApp>>) {
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await setup.renderOnce();
+  await setup.flush();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await setup.renderOnce();
+}
+
 describe("prompt input layout", () => {
-  test("shows responsive controls only when they are valid", () => {
-    expect(promptPlaceholder({ width: 100, busy: false, stashOpen: false }))
-      .toBe("Ask something…   [Tab] cache list [^L] list agents");
-    expect(promptPlaceholder({ width: 55, busy: false, stashOpen: false }))
-      .toBe("Ask something…   [Tab] cache [^L] agents");
-    expect(promptPlaceholder({ width: 40, busy: false, stashOpen: false })).toBe("Ask something…");
-    expect(promptPlaceholder({ width: 100, activeAgentName: "worker", busy: false, stashOpen: false }))
-      .toBe("Message worker…   [^L] list agents");
-    expect(promptPlaceholder({ width: 100, activeAgentName: "worker", busy: true, stashOpen: false }))
-      .toBe("Steer worker…   [^L] list agents");
-    expect(promptPlaceholder({ width: 100, busy: false, stashOpen: true })).toBe("Cache…");
+  test("uses concise contextual placeholders without control hints", () => {
+    const placeholders = [
+      promptPlaceholder({ busy: false, stashOpen: false }),
+      promptPlaceholder({ activeAgentName: "worker", busy: false, stashOpen: false }),
+      promptPlaceholder({ activeAgentName: "worker", busy: true, stashOpen: false }),
+      promptPlaceholder({ busy: true, stashOpen: false }),
+      promptPlaceholder({ busy: false, stashOpen: true }),
+    ];
+
+    expect(placeholders).toEqual([
+      "Ask something…",
+      "Message worker…",
+      "Steer worker…",
+      "Steer…",
+      "Cache…",
+    ]);
+    expect(placeholders.every((placeholder) => !placeholder.includes("[") && !placeholder.includes("Ctrl")))
+      .toBe(true);
+  });
+
+  test("moves the only prompt glyph through command suggestions", async () => {
+    const setup = await renderApp(70, 20);
+
+    await setup.mockInput.typeText("/");
+    await settle(setup);
+    let frame = setup.captureCharFrame();
+
+    expect(frame).toContain("❯ /compress");
+    expect(frame).not.toContain("> /compress");
+    expect(frame.match(/❯/gu)).toHaveLength(1);
+
+    setup.mockInput.pressArrow("down");
+    await settle(setup);
+    frame = setup.captureCharFrame();
+
+    expect(frame).toContain("❯ /clear");
+    expect(frame).not.toContain("❯ /compress");
+    expect(frame.match(/❯/gu)).toHaveLength(1);
+
+    await setup.mockInput.typeText(" ");
+    await settle(setup);
+    frame = setup.captureCharFrame();
+
+    expect(frame).toContain("❯ / ");
+    expect(frame.match(/❯/gu)).toHaveLength(1);
   });
 
   test("wraps four columns before the former terminal-edge boundary", async () => {
-    const setup = await createTestRenderer({ width: 40, height: 16, kittyKeyboard: true });
-    destroy = () => setup.renderer.destroy();
-    const session = fakeSession();
-    const manager = {
-      getAgents: () => [],
-      subscribe: () => () => {},
-      bindMainSession: async () => {},
-      persistToolEvent() {},
-      createStandaloneWorktree: async () => ({}),
-    } as any;
-    createRoot(setup.renderer).render(
-      <App
-        session={session}
-        modelRuntime={{ getAvailableSnapshot: () => [] } as any}
-        onNewSession={async () => session}
-        loadSessions={async () => []}
-        onSwitchSession={async () => session}
-        settings={{
-          showThinking: false,
-          theme: "tokyonight",
-          animations: false,
-          workingRuleAnimation: "off",
-          webSearch: false,
-          writingStyle: "none",
-          checkMode: false,
-          checkModel: "mock/check",
-        }}
-        searchProviders={[]}
-        subagentManager={manager}
-      />,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await setup.renderOnce();
+    const setup = await renderApp(40, 16);
 
     await setup.mockInput.typeText("123456789012345678901234567890ABCD");
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await setup.renderOnce();
-    await setup.flush();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await setup.renderOnce();
+    await settle(setup);
     const frame = setup.captureCharFrame();
 
     expect(frame).toContain("  123456789012345678901234567890AB");
