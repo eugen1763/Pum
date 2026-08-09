@@ -1,6 +1,4 @@
-import type { ScrollBoxRenderable } from "@opentui/core";
 import type { Model } from "@earendil-works/pi-ai";
-import { useEffect, useRef } from "react";
 import type { Theme } from "./theme";
 import { PopupFrame } from "./popup-frame";
 
@@ -98,6 +96,88 @@ export function isSettingsSearchShortcut(
     (key.name === "/" || key.sequence === "/");
 }
 
+export type SettingsPopupLayout = {
+  narrow: boolean;
+  margin: number;
+  popupWidth: number;
+  popupHeight: number;
+  top: number;
+  searchHeight: number;
+  separatorHeight: number;
+  listHeight: number;
+  descriptionHeight: number;
+  footerHeight: number;
+};
+
+const SETTINGS_POPUP_FRAME_ROWS = 4;
+const SETTINGS_POPUP_MIN_HEIGHT = 10;
+const SETTINGS_MODEL_POPUP_MIN_HEIGHT = 8;
+const SETTINGS_POPUP_MAX_HEIGHT = 32;
+const SETTINGS_MODEL_POPUP_MAX_HEIGHT = 28;
+const SETTINGS_POPUP_HEIGHT_RATIO = 0.8;
+
+export function settingsPopupLayout(
+  terminalWidth: number,
+  terminalHeight: number,
+  page: "main" | "models" | "checkModels",
+): SettingsPopupLayout {
+  const narrow = terminalWidth < 64;
+  const margin = terminalWidth < 4 ? 0 : narrow ? 1 : Math.max(2, Math.floor(terminalWidth * 0.1));
+  const popupWidth = Math.max(1, terminalWidth - margin * 2);
+  const minimumHeight = page === "main" ? SETTINGS_POPUP_MIN_HEIGHT : SETTINGS_MODEL_POPUP_MIN_HEIGHT;
+  const maximumHeight = page === "main" ? SETTINGS_POPUP_MAX_HEIGHT : SETTINGS_MODEL_POPUP_MAX_HEIGHT;
+  const scaledHeight = Math.floor(terminalHeight * SETTINGS_POPUP_HEIGHT_RATIO);
+  const desiredHeight = Math.max(minimumHeight, Math.min(maximumHeight, scaledHeight));
+  // Reserve the final terminal row for PopupFrame's semantic bottom shadow.
+  const availableHeight = Math.max(1, terminalHeight - (terminalHeight > 1 ? 1 : 0));
+  const popupHeight = Math.min(availableHeight, desiredHeight);
+  const top = Math.max(0, Math.floor((terminalHeight - popupHeight) / 2));
+  const innerHeight = Math.max(0, popupHeight - SETTINGS_POPUP_FRAME_ROWS);
+
+  const searchHeight = innerHeight >= 1 ? 1 : 0;
+  const footerHeight = innerHeight >= 3 ? 1 : 0;
+  const minimumListHeight = innerHeight >= 2 ? 1 : 0;
+  const optionalRows = Math.max(0, innerHeight - searchHeight - footerHeight - minimumListHeight);
+
+  if (page !== "main") {
+    return {
+      narrow,
+      margin,
+      popupWidth,
+      popupHeight,
+      top,
+      searchHeight,
+      separatorHeight: 0,
+      listHeight: Math.max(0, innerHeight - searchHeight - footerHeight),
+      descriptionHeight: 0,
+      footerHeight,
+    };
+  }
+
+  const separatorHeight = optionalRows >= 2 ? 1 : 0;
+  const descriptionHeight = Math.min(
+    narrow ? 3 : 2,
+    Math.max(0, optionalRows - separatorHeight),
+  );
+  const listHeight = Math.max(
+    0,
+    innerHeight - searchHeight - separatorHeight - descriptionHeight - footerHeight,
+  );
+
+  return {
+    narrow,
+    margin,
+    popupWidth,
+    popupHeight,
+    top,
+    searchHeight,
+    separatorHeight,
+    listHeight,
+    descriptionHeight,
+    footerHeight,
+  };
+}
+
 export type PopupProps = {
   theme: Theme;
   page: "main" | "models" | "checkModels";
@@ -139,17 +219,29 @@ export function SettingsPopup({
   onSelectModel,
   onSelectCheckModel,
 }: PopupProps) {
-  const listRef = useRef<ScrollBoxRenderable>(null);
-  const narrow = terminalWidth < 64;
-  const margin = terminalWidth < 4 ? 0 : narrow ? 1 : Math.max(2, Math.floor(terminalWidth * 0.1));
-  const popupWidth = Math.max(1, terminalWidth - margin * 2);
-  const popupHeight = Math.max(1, Math.min(terminalHeight, Math.max(8, terminalHeight - 2), page === "main" ? 20 : 18));
-
-  useEffect(() => {
-    if (selectedId) listRef.current?.scrollChildIntoView(`setting-${selectedId}`);
-  }, [selectedId, rows.length]);
-
-  let lastCategory: SettingRow["category"] | null = null;
+  const layout = settingsPopupLayout(terminalWidth, terminalHeight, page);
+  const listItems: Array<
+    | { kind: "category"; category: SettingRow["category"] }
+    | { kind: "row"; row: SettingRow }
+  > = [];
+  let category: SettingRow["category"] | null = null;
+  for (const row of rows) {
+    if (row.category !== category) {
+      category = row.category;
+      listItems.push({ kind: "category", category });
+    }
+    listItems.push({ kind: "row", row });
+  }
+  const selectedItemIndex = listItems.findIndex(
+    (item) => item.kind === "row" && item.row.id === selectedId,
+  );
+  const listWindowStart = selectedItemIndex < 0
+    ? 0
+    : Math.min(
+      Math.max(0, selectedItemIndex - layout.listHeight + 1),
+      Math.max(0, listItems.length - layout.listHeight),
+    );
+  const visibleListItems = listItems.slice(listWindowStart, listWindowStart + layout.listHeight);
   const selectedRow = rows.find((row) => row.id === selectedId);
 
   return (
@@ -158,18 +250,18 @@ export function SettingsPopup({
       terminalWidth={terminalWidth}
       terminalHeight={terminalHeight}
       geometry={{
-        top: Math.max(0, Math.floor((terminalHeight - popupHeight) / 2)),
-        left: margin,
-        width: popupWidth,
-        height: popupHeight,
+        top: layout.top,
+        left: layout.margin,
+        width: layout.popupWidth,
+        height: layout.popupHeight,
       }}
       zIndex={100}
       title={page === "main" ? " Settings " : page === "models" ? " Model " : " Check model "}
     >
       {page === "main" ? (
         <>
-          <box style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
-            <box style={{ width: narrow ? 7 : 9, flexShrink: 0 }}>
+          {layout.searchHeight ? <box style={{ height: layout.searchHeight, flexShrink: 0, flexDirection: "row" }}>
+            <box style={{ width: layout.narrow ? 7 : 9, flexShrink: 0 }}>
               <text content="Search" fg={searchFocused ? theme.accent : theme.dim} bg={theme.popupBg} />
             </box>
             <input
@@ -182,73 +274,67 @@ export function SettingsPopup({
               onInput={onSearchChange}
               style={{ flexGrow: 1, minWidth: 0 }}
             />
-          </box>
-          <box style={{ height: 1, flexShrink: 0 }}>
-            <text content={"─".repeat(Math.max(0, popupWidth - 4))} fg={theme.border} bg={theme.popupBg} />
-          </box>
-          <scrollbox
-            ref={listRef}
-            style={{ flexGrow: 1, minHeight: 1 }}
-            verticalScrollbarOptions={{ visible: true }}
+          </box> : null}
+          {layout.separatorHeight ? <box style={{ height: layout.separatorHeight, flexShrink: 0 }}>
+            <text content={"─".repeat(Math.max(0, layout.popupWidth - 4))} fg={theme.border} bg={theme.popupBg} />
+          </box> : null}
+          {layout.listHeight ? <box
+            style={{ height: layout.listHeight, flexShrink: 0, flexDirection: "column", overflow: "hidden" }}
           >
-            <box style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}>
-              {rows.length === 0 ? (
-                <text content="No matching settings" fg={theme.dim} bg={theme.popupBg} />
-              ) : rows.map((row) => {
-                const showCategory = row.category !== lastCategory;
-                lastCategory = row.category;
-                const selected = selectedId === row.id && !searchFocused;
-                return (
-                  <box key={row.id} style={{ flexDirection: "column", flexShrink: 0 }}>
-                    {showCategory ? (
-                      <text content={row.category} fg={theme.dim} bg={theme.popupBg} />
-                    ) : null}
-                    <box
-                      id={`setting-${row.id}`}
-                      style={{ height: 1, flexShrink: 0, flexDirection: "row" }}
-                    >
-                      <box style={{ width: 2, flexShrink: 0 }}>
-                        {selected ? <text content="› " fg={theme.accent} bg={theme.popupBg} /> : null}
-                      </box>
-                      <text
-                        content={row.label}
-                        fg={selected ? theme.accent : theme.fg}
-                        bg={theme.popupBg}
-                        wrapMode="none"
-                        style={{ width: 18, flexShrink: 0 }}
-                      />
-                      <text
-                        content={values[row.id]}
-                        fg={selected ? theme.accent : theme.fg}
-                        bg={theme.popupBg}
-                        wrapMode="none"
-                        style={{ flexGrow: 1, minWidth: 0 }}
-                      />
-                    </box>
+            {rows.length === 0 ? (
+              <text content="No matching settings" fg={theme.dim} bg={theme.popupBg} />
+            ) : visibleListItems.map((item) => {
+              if (item.kind === "category") {
+                return <text key={`category-${item.category}`} content={item.category} fg={theme.dim} bg={theme.popupBg} />;
+              }
+              const row = item.row;
+              const selected = selectedId === row.id && !searchFocused;
+              return (
+                <box
+                  key={row.id}
+                  id={`setting-${row.id}`}
+                  style={{ height: 1, flexShrink: 0, flexDirection: "row" }}
+                >
+                  <box style={{ width: 2, flexShrink: 0 }}>
+                    {selected ? <text content="› " fg={theme.accent} bg={theme.popupBg} /> : null}
                   </box>
-                );
-              })}
-            </box>
-          </scrollbox>
-          <box style={{ minHeight: 2, maxHeight: narrow ? 3 : 2, flexShrink: 0 }}>
+                  <text
+                    content={row.label}
+                    fg={selected ? theme.accent : theme.fg}
+                    bg={theme.popupBg}
+                    wrapMode="none"
+                    style={{ width: 18, flexShrink: 0 }}
+                  />
+                  <text
+                    content={values[row.id]}
+                    fg={selected ? theme.accent : theme.fg}
+                    bg={theme.popupBg}
+                    wrapMode="none"
+                    style={{ flexGrow: 1, minWidth: 0 }}
+                  />
+                </box>
+              );
+            })}
+          </box> : null}
+          {layout.descriptionHeight ? <box style={{ height: layout.descriptionHeight, flexShrink: 0 }}>
             <text
               content={selectedRow?.description ?? "Type in Search to filter settings."}
               fg={theme.dim}
               bg={theme.popupBg}
               wrapMode="word"
             />
-          </box>
-          <text
-            content={narrow ? "/ search  ↑↓ move  ←→ change  esc back" : "/ search   ↑↓ move   ←→ change   ⏎ open   esc back"}
+          </box> : null}
+          {layout.footerHeight ? <text
+            content={layout.narrow ? "/ search  ↑↓ move  ←→ change  esc back" : "/ search   ↑↓ move   ←→ change   ⏎ open   esc back"}
             fg={theme.dim}
             bg={theme.popupBg}
             wrapMode="none"
-            style={{ flexShrink: 0 }}
-          />
+            style={{ height: layout.footerHeight, flexShrink: 0 }}
+          /> : null}
         </>
       ) : (
         <>
-          <input
+          {layout.searchHeight ? <input
             value={modelQuery}
             placeholder="Search provider or model"
             placeholderColor={theme.dim}
@@ -257,27 +343,35 @@ export function SettingsPopup({
             focused={modelSearchFocused}
             onInput={onModelSearchChange}
             style={{ flexShrink: 0 }}
-          />
-          {models.length === 0 ? <text content="No matching models" fg={theme.dim} bg={theme.popupBg} /> : <select
-          focused={!modelSearchFocused}
-          style={{ flexGrow: 1 }}
-          backgroundColor={theme.popupBg}
-          focusedBackgroundColor={theme.popupBg}
-          textColor={theme.fg}
-          focusedTextColor={theme.fg}
-          selectedBackgroundColor={theme.selectionBg}
-          selectedTextColor={theme.accent}
-          descriptionColor={theme.dim}
-          selectedDescriptionColor={theme.fg}
-          options={models.map((m) => ({ name: m.id, description: m.provider, value: m }))}
-          onSelect={(_index, option) => {
-            if (!option) return;
-            const model = option.value as Model<any>;
-            if (page === "checkModels") onSelectCheckModel(model);
-            else onSelectModel(model);
-          }}
-        />}
-          <text content="/ search   ↑↓ move   enter select   esc back" fg={theme.dim} bg={theme.popupBg} />
+          /> : null}
+          {layout.listHeight ? <box style={{ height: layout.listHeight, flexShrink: 0 }}>
+            {models.length === 0 ? <text content="No matching models" fg={theme.dim} bg={theme.popupBg} /> : <select
+              focused={!modelSearchFocused}
+              style={{ flexGrow: 1, minHeight: 1 }}
+              backgroundColor={theme.popupBg}
+              focusedBackgroundColor={theme.popupBg}
+              textColor={theme.fg}
+              focusedTextColor={theme.fg}
+              selectedBackgroundColor={theme.selectionBg}
+              selectedTextColor={theme.accent}
+              descriptionColor={theme.dim}
+              selectedDescriptionColor={theme.fg}
+              options={models.map((m) => ({ name: m.id, description: m.provider, value: m }))}
+              onSelect={(_index, option) => {
+                if (!option) return;
+                const model = option.value as Model<any>;
+                if (page === "checkModels") onSelectCheckModel(model);
+                else onSelectModel(model);
+              }}
+            />}
+          </box> : null}
+          {layout.footerHeight ? <text
+            content="/ search   ↑↓ move   enter select   esc back"
+            fg={theme.dim}
+            bg={theme.popupBg}
+            wrapMode="none"
+            style={{ height: layout.footerHeight, flexShrink: 0 }}
+          /> : null}
         </>
       )}
     </PopupFrame>
