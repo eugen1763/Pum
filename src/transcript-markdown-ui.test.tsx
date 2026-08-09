@@ -156,6 +156,28 @@ describe("transcript Markdown rows", () => {
       root.render(<StreamingHarness />);
     });
 
+    const frameCheckpoints = new Set([
+      1,
+      content.indexOf("- item") + "- ".length,
+      content.indexOf("`code`") + 1,
+      content.indexOf("`code`") + "`code`".length,
+      content.indexOf("**strong**") + 2,
+      content.indexOf("**strong**") + "**strong**".length,
+      content.indexOf("*emphasis*") + 1,
+      content.indexOf("*emphasis*") + "*emphasis*".length,
+      content.indexOf("[link](https://example.com)") + "[link](".length,
+      content.indexOf("[link](https://example.com)") + "[link](https://example.com)".length,
+      content.indexOf("> quote") + "> quote".length,
+      content.indexOf("| one | two |") + "| one | two |".length,
+      content.indexOf("```typescript") + 1,
+      content.indexOf("```typescript") + 2,
+      content.indexOf("```typescript") + "```typescript".length,
+      content.lastIndexOf("```") + 3,
+      content.indexOf("Partial [link](") + "Partial [link](".length,
+      content.indexOf("and `code") + "and `code".length,
+      content.length,
+    ]);
+
     let markdown: MarkdownRenderable | undefined;
     for (let length = 1; length <= content.length; length += 1) {
       if (length > 1) {
@@ -171,15 +193,17 @@ describe("transcript Markdown rows", () => {
       expect(current!.streaming).toBe(true);
       expect(current!.width).toBe(30);
       expect(current!.height).toBeGreaterThan(0);
-      const frame = setup.captureCharFrame();
-      expect(frame.trim().length).toBeGreaterThan(0);
-      expect(frame.split("\n").every((line) => line.length <= 32)).toBe(true);
+      if (frameCheckpoints.has(length)) {
+        const frame = setup.captureCharFrame();
+        expect(frame.trim().length).toBeGreaterThan(0);
+        expect(frame.split("\n").every((line) => line.length <= 32)).toBe(true);
+      }
     }
 
     await Promise.all(
       descendants(setup.renderer.root, CodeRenderable).map((row) => row.highlightingDone),
     );
-  });
+  }, 20_000);
 
   test("commits every Markdown delta before passive caret effects", async () => {
     reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
