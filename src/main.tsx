@@ -30,6 +30,7 @@ import { shutdownSignals } from "./platform";
 import { createShutdown } from "./shutdown";
 import { applyPatchExtension } from "./apply-patch";
 import { QuestionnaireManager } from "./questionnaire";
+import { SpawnPreviewManager } from "./subagents/spawn-preview";
 import { SessionHistoryIndex } from "./session-history-metadata";
 import { MESSAGE_CACHE_TOOLS, MessageCacheController } from "./message-cache";
 import { TriggerManager } from "./triggers/manager";
@@ -53,6 +54,7 @@ export async function start(options: StartupOptions): Promise<void> {
   setWritingStyle(settings.writingStyle);
   setExplanationStrength(settings.explanationStrength);
   const questionnaireManager = new QuestionnaireManager();
+  const spawnPreviewManager = new SpawnPreviewManager();
   const sessionHistoryIndex = new SessionHistoryIndex();
   const messageCacheController = new MessageCacheController(process.cwd());
   setCheckModeConfig({ profile: settings.checkMode, model: settings.checkModel });
@@ -115,6 +117,7 @@ export async function start(options: StartupOptions): Promise<void> {
     agentDir: AGENT_DIR,
     maxActiveSubagents: settings.maxActiveSubagents,
     questionnaireManager,
+    spawnPreviewManager,
     messageCacheController,
     triggerManager,
     childExtensionFactories: [
@@ -212,6 +215,7 @@ export async function start(options: StartupOptions): Promise<void> {
       searchProviders={searchProviders}
       subagentManager={subagentManager}
       questionnaireManager={questionnaireManager}
+      spawnPreviewManager={spawnPreviewManager}
       messageCacheController={messageCacheController}
       loginRequired={loginRequired}
       checkApprovalCoordinator={checkApprovalCoordinator}

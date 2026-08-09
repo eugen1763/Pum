@@ -29,6 +29,10 @@ import { editCounts, toolArg, type ToolCall } from "../tool-line";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
+  recallNewestQueuedUserMessage,
+  type RecalledQueuedMessage,
+} from "../queue-recall";
+import {
   MESSAGE_CACHE_TOOLS,
   messageCacheDetail,
   type MessageCacheController,
@@ -72,6 +76,7 @@ import {
   type SubagentSnapshot,
   type SubagentStatus,
 } from "./types";
+import type { SpawnPreviewManager, SpawnPreviewRequester } from "./spawn-preview";
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
@@ -169,6 +174,7 @@ type ManagerOptions = {
   childExtensionFactories?: InlineExtension[];
   childExtensionFactoriesForAgent?: Array<(agentId: string) => InlineExtension>;
   questionnaireManager?: QuestionnaireManager;
+  spawnPreviewManager?: SpawnPreviewManager;
   triggerManager?: TriggerRuntimeManager;
   messageCacheController?: MessageCacheController;
 };
@@ -222,6 +228,7 @@ export class SubagentManager {
   private readonly childExtensionFactories: InlineExtension[];
   private readonly childExtensionFactoriesForAgent: Array<(agentId: string) => InlineExtension>;
   private readonly questionnaireManager?: QuestionnaireManager;
+  private readonly spawnPreviewManager?: SpawnPreviewManager;
   private readonly triggerManager?: TriggerRuntimeManager;
   private readonly messageCacheController?: MessageCacheController;
   private readonly records = new Map<string, RuntimeRecord>();
@@ -244,6 +251,7 @@ export class SubagentManager {
     this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
     this.childExtensionFactoriesForAgent = options.childExtensionFactoriesForAgent ?? [];
     this.questionnaireManager = options.questionnaireManager;
+    this.spawnPreviewManager = options.spawnPreviewManager;
     this.triggerManager = options.triggerManager;
     this.messageCacheController = options.messageCacheController;
   }
@@ -289,6 +297,7 @@ export class SubagentManager {
   ): Promise<void> {
     const sessionId = sessionManager.getSessionId();
     if (this.mainApi === pi && this.parentSessionId === sessionId && this.mainSessionManager) return;
+    if (this.parentSessionId !== "detached") this.spawnPreviewManager?.cancelRequester(this.parentSessionId);
     await this.stopAll("interrupted", false);
     this.records.clear();
     this.messageTimes.clear();
@@ -410,6 +419,7 @@ export class SubagentManager {
 
   async detachMain(): Promise<void> {
     const sessionId = this.parentSessionId;
+    this.spawnPreviewManager?.cancelRequester(sessionId);
     await this.stopAll("interrupted", true);
     this.emit({
       type: "trigger-target",
@@ -697,6 +707,9 @@ export class SubagentManager {
           if (record) record.api = pi;
           void ctx;
         });
+        pi.on("session_shutdown", (_event, ctx) => {
+          this.spawnPreviewManager?.cancelRequester(ctx.sessionManager.getSessionId(), agentId);
+        });
         pi.on("before_agent_start", (event) => {
           const record = this.records.get(agentId);
           if (!record) return;
@@ -749,17 +762,30 @@ export class SubagentManager {
           parameters: Type.Object({
             task: Type.String({ description: "Complete task for the child subagent" }),
             name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
+            preview: Type.Optional(Type.Boolean({ description: "Ask the user to approve before spawning" })),
           }),
-          execute: async (_id, params) => {
+          execute: async (_id, params, signal, _update, ctx) => {
             const parent = this.records.get(agentId);
             if (!parent) throw new Error("Spawner subagent no longer exists");
-            const snapshot = await this.spawn({
+            const options: SpawnSubagentOptions = {
               task: params.task,
               name: params.name,
               modelId: parent.snapshot.modelId,
               thinkingLevel: parent.snapshot.thinkingLevel,
               parentAgentId: agentId,
-            });
+            };
+            if (params.preview) {
+              const preview = await this.requestSpawnPreview({
+                sessionId: ctx.sessionManager.getSessionId(),
+                agentId,
+                name: parent.snapshot.name,
+              }, options, signal);
+              if (!preview.approved) return textResult(`Spawn cancelled (${preview.reason ?? "cancelled"}).`, preview);
+              const snapshot = await this.spawn(options);
+              if (preview.note) await this.sendUserMessage(snapshot.id, preview.note);
+              return textResult(`Spawned ${snapshot.name}\nid: ${snapshot.id}`, snapshot);
+            }
+            const snapshot = await this.spawn(options);
             return textResult(`Spawned ${snapshot.name}\nid: ${snapshot.id}`, snapshot);
           },
         });
@@ -920,16 +946,33 @@ export class SubagentManager {
           parameters: Type.Object({
             task: Type.String({ description: "Complete task for the subagent" }),
             name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
+            preview: Type.Optional(Type.Boolean({ description: "Ask the user to approve before spawning" })),
           }),
-          execute: async (_id, params, _signal, _update, ctx) => {
+          execute: async (_id, params, signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
             if (!ctx.model) throw new Error("No model is selected");
-            const snapshot = await this.spawn({
+            const options: SpawnSubagentOptions = {
               task: params.task,
               name: params.name,
               modelId: `${ctx.model.provider}/${ctx.model.id}`,
               thinkingLevel: ctx.thinkingLevel ?? "off",
-            });
+            };
+            if (params.preview) {
+              const preview = await this.requestSpawnPreview({
+                sessionId: ctx.sessionManager.getSessionId(),
+                agentId: null,
+                name: "main",
+              }, options, signal);
+              if (!preview.approved) return textResult(`Spawn cancelled (${preview.reason ?? "cancelled"}).`, preview);
+              const snapshot = await this.spawn(options);
+              if (preview.note) await this.sendUserMessage(snapshot.id, preview.note);
+              return textResult(
+                `Spawned ${snapshot.name}\n` +
+                  `id: ${snapshot.id}\nbranch: ${snapshot.worktree.branch}\nworktree: ${snapshot.worktree.path}`,
+                snapshot,
+              );
+            }
+            const snapshot = await this.spawn(options);
             return textResult(
               `Spawned ${snapshot.name}\n` +
                 `id: ${snapshot.id}\nbranch: ${snapshot.worktree.branch}\nworktree: ${snapshot.worktree.path}`,
@@ -1034,6 +1077,15 @@ export class SubagentManager {
 
   setMaxActiveSubagents(value: number): void {
     this.maxActiveSubagents = normalizeMaxActiveSubagents(value);
+  }
+
+  private requestSpawnPreview(
+    requester: SpawnPreviewRequester,
+    options: SpawnSubagentOptions,
+    signal?: AbortSignal,
+  ) {
+    if (!this.spawnPreviewManager) throw new Error("The PUM spawn preview UI is unavailable");
+    return this.spawnPreviewManager.request(requester, options, signal);
   }
 
   async spawn(options: SpawnSubagentOptions): Promise<SubagentSnapshot> {
@@ -1296,6 +1348,7 @@ export class SubagentManager {
     text: string,
     images: ImageContent[] = [],
     displayText = text,
+    recallable = images.length === 0,
   ): Promise<void> {
     const record = this.findRecord(id);
     if (!record) throw new Error(`Unknown subagent: ${id}`);
@@ -1304,6 +1357,7 @@ export class SubagentManager {
       id: randomUUID().slice(0, 12),
       line: { kind: "text", role: "user", text: displayText },
       deliveryText: text,
+      recallable,
     };
     this.addPending(record, pending);
     record.userInstructionNotices ??= new Map();
@@ -1326,6 +1380,19 @@ export class SubagentManager {
       this.updateStatus(record, "failed", String(error));
       void this.recordSettlement(record, "failed", String(error));
     });
+  }
+
+  async recallQueuedUserMessage(id: string): Promise<RecalledQueuedMessage | null> {
+    const record = this.findRecord(id);
+    if (!record?.session) return null;
+    const recalled = await recallNewestQueuedUserMessage(
+      record.session,
+      record.snapshot.transcript.pending,
+    );
+    if (!recalled) return null;
+    record.userInstructionNotices?.delete(recalled.id);
+    this.dropPending(record, recalled.id);
+    return recalled;
   }
 
   async abortAgent(id: string): Promise<void> {
