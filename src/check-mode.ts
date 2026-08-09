@@ -265,7 +265,7 @@ export async function prepareCheck(
     ? `${processProposal.operation} external trigger process: ${processProposal.executable}`
     : toolName === "bash"
       ? `Run ${bash!.stages.length} shell stage${bash!.stages.length === 1 ? "" : "s"}`
-    : `Change ${paths.length} project file${paths.length === 1 ? "" : "s"} (+${mutation!.additions} −${mutation!.removals})`;
+      : `Change ${paths.length} project file${paths.length === 1 ? "" : "s"} (+${mutation!.additions} −${mutation!.removals})`;
   const preview = processProposal
     ? JSON.stringify({ executable: processProposal.executable, args: processProposal.args, cwd: processProposal.cwd }, null, 2)
     : toolName === "bash" ? (input as { command: string }).command : mutation!.unifiedDiff;
@@ -551,6 +551,94 @@ export function evaluateProcessCheck(
   });
 }
 
+export type ExternalTriggerSafetyRequester =
+  | { kind: "main"; sessionId: string; cwd: string }
+  | { kind: "subagent"; sessionId: string; agentId: string; cwd: string };
+
+export type ExternalTriggerSafetyOptions = {
+  coordinator?: CheckApprovalCoordinator;
+  approvals?: CheckApprovalStore;
+  cache?: BashSafetyCache;
+};
+
+export type ExternalTriggerSafetyChecker = (
+  proposal: ProcessCheckProposal,
+  requester: ExternalTriggerSafetyRequester,
+  signal?: AbortSignal,
+) => Promise<void>;
+
+function externalTriggerSessionApprovalKey(
+  requester: ExternalTriggerSafetyRequester,
+  model: string,
+  prepared: PreparedCheck,
+): string {
+  const target = requester.kind === "subagent" ? requester.agentId : "main";
+  return `${requester.sessionId}\n${target}\n${exactApprovalKey(
+    "bash",
+    model,
+    requester.cwd,
+    prepared.canonicalInput,
+  )}`;
+}
+
+/** Create the process safety callback used by TriggerManager. */
+export function createExternalTriggerSafetyChecker(
+  runtime: CheckerRuntime,
+  options: ExternalTriggerSafetyOptions = {},
+): ExternalTriggerSafetyChecker {
+  const cache = options.cache ?? new BashSafetyCache();
+  const approvals = options.approvals ?? new CheckApprovalStore();
+  const sessionApprovals = new Set<string>();
+
+  return async (proposal, requester, signal) => {
+    const config = getCheckModeConfig();
+    const evaluation = await evaluateProcessCheck(runtime, cache, {
+      proposal,
+      projectCwd: requester.cwd,
+      config,
+      signal,
+      isApproved: (prepared) => sessionApprovals.has(
+        externalTriggerSessionApprovalKey(requester, config.model, prepared),
+      ) || approvals.has("bash", config.model, requester.cwd, prepared.canonicalInput),
+    });
+    if (evaluation.decision === "allow") return;
+
+    if (evaluation.decision === "ask"
+      && config.profile === "ask"
+      && evaluation.prepared
+      && !evaluation.explicitUnsafe) {
+      const prepared = evaluation.prepared;
+      const choice = await options.coordinator?.request({
+        target: {
+          sessionId: requester.sessionId,
+          ...(requester.kind === "subagent" ? { agentId: requester.agentId } : {}),
+        },
+        toolName: "bash",
+        model: config.model,
+        cwd: requester.cwd,
+        canonicalInput: prepared.canonicalInput,
+        summary: prepared.summary,
+        reason: evaluation.reason,
+        paths: prepared.paths,
+        preview: redactApprovalPreview(prepared.preview),
+        taskContext: proposal.triggerName,
+      }, signal) ?? "deny";
+      if (choice === "allow-once") return;
+      if (choice === "allow-session") {
+        sessionApprovals.add(externalTriggerSessionApprovalKey(requester, config.model, prepared));
+        return;
+      }
+      if (choice === "allow-project"
+        && approvals.add("bash", config.model, requester.cwd, prepared.canonicalInput)) return;
+      evaluation.reason = choice === "allow-project"
+        ? "Check mode could not persist the exact project approval"
+        : "Check mode approval was denied or cancelled";
+    }
+
+    throw new Error(redactApprovalPreview(evaluation.reason));
+  };
+}
+
 export async function verifyToolCall(runtime: CheckerRuntime, cache: BashSafetyCache, call: ToolCheck): Promise<ToolBlock | undefined> {
   const evaluation = await evaluateToolCall(runtime, cache, call);
   return evaluation.decision === "allow" ? undefined : { block: true, reason: evaluation.reason };
@@ -603,7 +691,8 @@ export function createCheckModeExtension(
         currentUserRequest = event.prompt;
         if (current.profile === "off") return;
         return { systemPrompt: `${event.systemPrompt}\n\n## Check mode tool batching\n\n`
-          + "- Check mode evaluates every bash, edit, and apply_patch call before execution.\n"
+          + "- Check mode evaluates every bash, edit, apply_patch, and external-trigger process proposal before execution.\n"
+          + "- Run create_trigger, resume_trigger, and invoke_trigger in separate tool steps because they can start a checked process.\n"
           + "- Do not put a checked tool in the same parallel tool batch as read, write, or another checked call.\n"
           + "- Run inspection reads first. Run each checked tool in a later assistant step.\n"
           + "- Do not retry a blocked or timed-out tool in a loop." };

@@ -11,7 +11,9 @@ import {
   AGENT_MESSAGE_DISPLAY_TYPE,
   SUBAGENT_WAKE_PREFIX,
   TOOL_EVENT_CUSTOM_TYPE,
+  TRIGGER_EVENT_CUSTOM_TYPE,
   type AgentMessageData,
+  type TriggerEventData,
 } from "./subagents/types";
 
 const textOf = (content: unknown): string => {
@@ -43,6 +45,20 @@ function agentMessageOf(entry: any): AgentMessageData | undefined {
     text: typeof data.text === "string" ? data.text : textOf(entry.content),
     at: typeof data.at === "number" ? data.at : 0,
   };
+}
+
+function triggerEventOf(entry: any): TriggerEventData | undefined {
+  if (entry?.type !== "custom" || entry.customType !== TRIGGER_EVENT_CUSTOM_TYPE) return undefined;
+  const data = entry.data;
+  if (!data || typeof data !== "object") return undefined;
+  if (typeof data.id !== "string"
+    || typeof data.triggerId !== "string"
+    || typeof data.triggerName !== "string"
+    || typeof data.sessionId !== "string"
+    || (data.agentId !== null && typeof data.agentId !== "string")
+    || typeof data.text !== "string"
+    || typeof data.at !== "number") return undefined;
+  return data as TriggerEventData;
 }
 
 function toolEventOf(entry: any): ToolCall | undefined {
@@ -101,6 +117,20 @@ export function replayEntries(
           sender: agentMessage.sender,
           recipient: agentMessage.recipient,
           text: agentMessage.text,
+        });
+      }
+      continue;
+    }
+
+    const triggerEvent = triggerEventOf(entry);
+    if (triggerEvent) {
+      if (!agentMessages.has(triggerEvent.id)) {
+        agentMessages.add(triggerEvent.id);
+        lines.push({
+          kind: "agent-message",
+          sender: `trigger:${triggerEvent.triggerName}`,
+          recipient: triggerEvent.agentId ?? "main",
+          text: triggerEvent.text,
         });
       }
       continue;

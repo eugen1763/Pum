@@ -6,6 +6,7 @@ import {
   AGENT_MESSAGE_DISPLAY_TYPE,
   SUBAGENT_WAKE_PREFIX,
   TOOL_EVENT_CUSTOM_TYPE,
+  TRIGGER_EVENT_CUSTOM_TYPE,
 } from "./subagents/types";
 
 describe("subagent transcript replay", () => {
@@ -75,6 +76,29 @@ describe("subagent transcript replay", () => {
         detail: "pum/test",
       },
     });
+  });
+
+  test("restores typed trigger deliveries", () => {
+    const lines = replayEntries([{
+      type: "custom",
+      customType: TRIGGER_EVENT_CUSTOM_TYPE,
+      data: {
+        id: "event-1",
+        triggerId: "trigger-1",
+        triggerName: "tests",
+        sessionId: "session-1",
+        agentId: "child-1",
+        text: "Tests completed.",
+        at: 1,
+      },
+    }], process.cwd(), true);
+
+    expect(lines).toEqual([{
+      kind: "agent-message",
+      sender: "trigger:tests",
+      recipient: "child-1",
+      text: "Tests completed.",
+    }]);
   });
 
   test("restores apply_patch arguments and changed-line details", () => {
