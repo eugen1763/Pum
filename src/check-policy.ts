@@ -541,6 +541,10 @@ function credentialPath(value: string): boolean {
     || lower.includes("secrets/") || lower.endsWith("/shadow") || lower.endsWith("/passwd");
 }
 
+function isExactPosixNullDevice(value: string, cwd: string): boolean {
+  return value === "/dev/null" && pathFlavor(value, cwd) === posix;
+}
+
 function pathOperands(stage: BashStage): string[] {
   const name = commandName(stage.argv[0]);
   const values = stage.redirections.flatMap((item) => item.target ? [item.target] : []);
@@ -647,6 +651,7 @@ function inspectHardBlocks(
     const effectiveStage = argv === stage.argv ? stage : { ...stage, argv };
     for (const value of pathOperands(effectiveStage)) {
       if (credentialPath(value)) addFinding(findings, { code: "credential-access", severity: "hard-block", message: "command accesses a credential or secret path", stage: stage.index, path: value });
+      if (isExactPosixNullDevice(value, cwd)) continue;
       if (value.startsWith("~")) {
         addFinding(findings, { code: "outside-project", severity: "hard-block", message: "home-relative path is outside the project boundary", stage: stage.index, path: value });
         continue;

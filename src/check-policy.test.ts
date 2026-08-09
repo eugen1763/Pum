@@ -123,6 +123,49 @@ describe("deterministic hard blocks", () => {
     expect(result.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path: "../secret.txt" }));
   });
 
+  test("allows only the exact POSIX null device through project-boundary hard rules", () => {
+    const cwd = temporaryProject();
+    const read = analyzeCheckPolicy({ command: "cat /dev/null", cwd });
+    const redirection = analyzeCheckPolicy({ command: "printf x > /dev/null", cwd });
+
+    expect(read.decision).toBe("allow");
+    expect(read.findings).toEqual([]);
+    expect(redirection.decision).toBe("ask");
+    expect(redirection.findings.map((finding) => finding.code)).not.toContain("outside-project");
+
+    const blocked = [
+      "/dev/zero",
+      "/dev/null/child",
+      "/dev/../dev/null",
+      "/dev//null",
+      "//dev/null",
+      "/dev/nuII",
+      "/tmp/out",
+    ];
+    for (const path of blocked) {
+      const operandResult = analyzeCheckPolicy({ command: `cat ${shellQuote(path)}`, cwd });
+      expect(operandResult.decision).toBe("block");
+      expect(operandResult.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path }));
+
+      const redirectionResult = analyzeCheckPolicy({ command: `printf x > ${shellQuote(path)}`, cwd });
+      expect(redirectionResult.decision).toBe("block");
+      expect(redirectionResult.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path }));
+    }
+
+    const credential = analyzeCheckPolicy({ command: "cat .env > /dev/null", cwd });
+    expect(credential.decision).toBe("block");
+    expect(credential.findings.map((finding) => finding.code)).toContain("credential-access");
+  });
+
+  test("does not extend the null-device exception to a project symlink", () => {
+    const cwd = temporaryProject();
+    symlinkSync("/dev/null", join(cwd, "null-link"));
+
+    const result = analyzeCheckPolicy({ command: "cat null-link", cwd });
+    expect(result.decision).toBe("block");
+    expect(result.findings).toContainEqual(expect.objectContaining({ code: "escaping-symlink", path: "null-link" }));
+  });
+
   test("blocks Windows drive and UNC paths outside the project", () => {
     const fs: CheckPolicyFileSystem = { exists: () => false, isSymbolicLink: () => false, realpath: (path) => path };
     const drive = analyzeCheckPolicy({ command: "cat 'D:\\secrets\\token.txt'", cwd: "C:\\work\\repo", fileSystem: fs });
@@ -132,6 +175,10 @@ describe("deterministic hard blocks", () => {
     expect(drive.findings.map((item) => item.code)).toContain("outside-project");
     expect(unc.decision).toBe("block");
     expect(unc.findings.map((item) => item.code)).toContain("outside-project");
+
+    const posixSpelling = analyzeCheckPolicy({ command: "cat /dev/null", cwd: "C:\\work\\repo", fileSystem: fs });
+    expect(posixSpelling.decision).toBe("block");
+    expect(posixSpelling.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path: "/dev/null" }));
   });
 
   test("accepts a Windows project-local absolute path for boundary analysis", () => {
@@ -289,6 +336,31 @@ describe("structured executable proposals", () => {
     expect(analyzeExecutablePolicy({
       executable: "cat", args: ["src/index.ts"], cwd: join(cwd, ".."), projectCwd: cwd,
     }).findings.map((finding) => finding.code)).toContain("outside-project");
+  });
+
+  test("allows only the exact POSIX null device in direct argv", () => {
+    const cwd = temporaryProject();
+    const allowed = analyzeExecutablePolicy({
+      executable: "cat", args: ["/dev/null"], cwd, projectCwd: cwd,
+    });
+
+    expect(allowed.decision).toBe("allow");
+    expect(allowed.findings).toEqual([]);
+
+    for (const path of ["/dev/zero", "/dev/null/child", "/dev/../dev/null", "/dev//null", "//dev/null", "/tmp/out"]) {
+      const result = analyzeExecutablePolicy({
+        executable: "cat", args: [path], cwd, projectCwd: cwd,
+      });
+      expect(result.decision).toBe("block");
+      expect(result.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path }));
+    }
+
+    const fs: CheckPolicyFileSystem = { exists: () => false, isSymbolicLink: () => false, realpath: (path) => path };
+    const windows = analyzeExecutablePolicy({
+      executable: "cat", args: ["/dev/null"], cwd: "C:\\work\\repo", projectCwd: "C:\\work\\repo", fileSystem: fs,
+    });
+    expect(windows.decision).toBe("block");
+    expect(windows.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path: "/dev/null" }));
   });
 
   test("applies hard rules to direct argv and embedded interpreter programs", () => {
