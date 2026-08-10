@@ -58,6 +58,7 @@ bun run start    # open the TUI in the current directory
 | `src/triggers/popup.tsx` | Responsive Ctrl+T trigger management popup |
 | `src/writing-style.ts` | Configurable per-turn system-prompt writing guidance |
 | `src/platform.ts` | Cross-platform path identities, containment, config paths, and signals |
+| `src/terminal-title.ts` | Pure title formatting and best-effort deduplicated terminal updates |
 | `src/config.ts` | Where the config dir lives |
 
 ## Keys
@@ -155,6 +156,10 @@ These were chosen deliberately. Change them only on purpose.
   cost, cache-read tokens, outgoing tokens, incoming tokens, then the PUM title.
   Remaining metadata follows explicit operational priorities and Unicode column
   measurements. The status bar never wraps or switches to a stacked layout.
+- **The terminal title reflects overall activity.** PUM uses OpenTUI's title API,
+  writes only changed values, and counts only starting and running subagents.
+  Inside tmux, the application title becomes the pane title. The outer title
+  still depends on tmux `set-titles` and `set-titles-string` configuration.
 - **Compact by default.** No borders around the input, no blank rows between
   turns, no padding that does not earn its place. A user turn is a full-width
   background bar; everything after it indents two columns.

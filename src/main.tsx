@@ -42,6 +42,7 @@ import {
 } from "./triggers/process";
 import type { StartupOptions } from "./cli";
 import { installSelectionClipboard } from "./clipboard";
+import { TerminalTitleController } from "./terminal-title";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -189,6 +190,7 @@ export async function start(options: StartupOptions): Promise<void> {
   if (sessionRuntime.modelFallbackMessage) console.error(sessionRuntime.modelFallbackMessage);
 
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  const terminalTitle = new TerminalTitleController((title) => renderer.setTerminalTitle(title));
   const selectionClipboard = installSelectionClipboard(renderer);
   const root = createRoot(renderer);
   const shutdown = createShutdown({
@@ -197,6 +199,7 @@ export async function start(options: StartupOptions): Promise<void> {
       root.unmount();
     },
     cleanup: () => {
+      terminalTitle.clear();
       selectionClipboard.dispose();
       cleanupPendingImages();
     },
@@ -233,6 +236,7 @@ export async function start(options: StartupOptions): Promise<void> {
       questionnaireManager={questionnaireManager}
       spawnPreviewManager={spawnPreviewManager}
       messageCacheController={messageCacheController}
+      terminalTitle={terminalTitle}
       loginRequired={loginRequired}
       checkApprovalCoordinator={checkApprovalCoordinator}
       checkApprovalStore={checkApprovalStore}
