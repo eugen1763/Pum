@@ -2,6 +2,12 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.4-beta.1] - 2026-08-10
+
+### Fixed
+- Made direct selected-subagent delivery coverage await the durable manager path instead of renderer settlement, removing a Windows-only tag-CI timing race.
+- Replaced `0.2.3-beta.1` after its package and GitHub Release published successfully but Windows tag CI failed on the flaky UI assertion.
+
 ## [0.2.3-beta.1] - 2026-08-10
 
 ### Added
