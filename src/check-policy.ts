@@ -617,11 +617,16 @@ function additionalRootProblem(
 ): "missing" | "link" | undefined {
   try {
     if (!fs.exists(root)) return "missing";
-    if (fs.isSymbolicLink(root)) return "link";
     const flavor = pathFlavor(root, root);
-    return flavor.relative(flavor.resolve(root), flavor.resolve(fs.realpath(root))) === ""
-      ? undefined
-      : "link";
+    const resolved = flavor.resolve(root);
+    const parsed = flavor.parse(resolved);
+    let component = parsed.root;
+    for (const part of resolved.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean)) {
+      component = flavor.join(component, part);
+      if (fs.isSymbolicLink(component)) return "link";
+    }
+    fs.realpath(root);
+    return undefined;
   } catch {
     return "link";
   }

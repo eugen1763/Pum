@@ -200,6 +200,29 @@ describe("deterministic hard blocks", () => {
     expect(result.findings).toEqual([]);
   });
 
+  test("accepts a Windows short-name additional root but still rejects junction components", () => {
+    const shortRoot = "C:\\Users\\RUNNER~1\\shared";
+    const fs: CheckPolicyFileSystem = {
+      exists: () => true,
+      isSymbolicLink: (path) => path.toLowerCase().endsWith("\\linked"),
+      realpath: (path) => path.toLowerCase().includes("\\linked\\")
+        ? "D:\\outside\\secret.txt"
+        : path.replace(/RUNNER~1/i, "runneradmin"),
+    };
+    expect(analyzeCheckPolicy({
+      command: `cat '${shortRoot}\\data.txt'`,
+      cwd: "C:\\work\\repo",
+      allowedPaths: [shortRoot],
+      fileSystem: fs,
+    }).decision).toBe("allow");
+    expect(analyzeCheckPolicy({
+      command: `cat '${shortRoot}\\linked\\secret.txt'`,
+      cwd: "C:\\work\\repo",
+      allowedPaths: [shortRoot],
+      fileSystem: fs,
+    }).findings.map((finding) => finding.code)).toContain("escaping-symlink");
+  });
+
   test("blocks a project symlink that escapes the project", () => {
     const cwd = temporaryProject();
     const outside = mkdtempSync(join(tmpdir(), "pum-check-policy-outside-"));

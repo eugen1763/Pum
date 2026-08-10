@@ -64,6 +64,23 @@ export function isPathInside(
   return relative !== "" && relative !== ".." && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative);
 }
 
+export function pathIdentity(
+  path: string,
+  platform: RuntimePlatform = process.platform,
+): string {
+  const canonical = pathApi(platform).resolve(path);
+  return platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+export function isPathInsideOrSame(
+  parent: string,
+  candidate: string,
+  platform: RuntimePlatform = process.platform,
+): boolean {
+  return pathIdentity(parent, platform) === pathIdentity(candidate, platform)
+    || isPathInside(parent, candidate, platform);
+}
+
 export async function canonicalPathIdentity(
   path: string,
   platform: RuntimePlatform = process.platform,
@@ -72,6 +89,28 @@ export async function canonicalPathIdentity(
   const paths = pathApi(platform);
   const canonical = paths.resolve(await resolvePath(path));
   return platform === "win32" ? canonical.toLowerCase() : canonical;
+}
+
+export async function canonicalPathIdentityAllowMissing(
+  path: string,
+  platform: RuntimePlatform = process.platform,
+  resolvePath: (path: string) => Promise<string> = realpath,
+): Promise<string> {
+  const paths = pathApi(platform);
+  const absolute = paths.resolve(path);
+  const missing: string[] = [];
+  let existing = absolute;
+  while (true) {
+    try {
+      const canonical = await resolvePath(existing);
+      return pathIdentity(paths.resolve(canonical, ...missing.reverse()), platform);
+    } catch (error) {
+      const parent = paths.dirname(existing);
+      if (parent === existing || existing === paths.parse(existing).root) throw error;
+      missing.push(paths.basename(existing));
+      existing = parent;
+    }
+  }
 }
 
 export async function pathsHaveSameIdentity(

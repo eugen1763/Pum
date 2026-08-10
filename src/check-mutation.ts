@@ -1,9 +1,10 @@
 import { generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 import { previewApplyPatch } from "./apply-patch";
 import type { CheckedToolName } from "./check-approvals";
+import { isPathInsideOrSame, pathsHaveSameIdentity } from "./platform";
 
 export type MutationSensitivity = {
   executable: boolean;
@@ -66,11 +67,6 @@ function windowsAbsolute(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path) || /^\/\//.test(path);
 }
 
-function insideRoot(root: string, path: string): boolean {
-  const rel = relative(root, path);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-}
-
 async function validateEditPath(
   cwd: string,
   inputPath: string,
@@ -83,23 +79,26 @@ async function validateEditPath(
   const projectRoot = await realpath(cwd);
   const roots = await Promise.all([projectRoot, ...allowedPaths].map((path) => realpath(path)));
   const absolute = resolve(projectRoot, inputPath);
-  const root = roots.sort((first, second) => second.length - first.length)
-    .find((candidate) => candidate === absolute || insideRoot(candidate, absolute));
+  const canonical = await realpath(absolute);
+  const sortedRoots = roots.sort((first, second) => second.length - first.length);
+  const root = sortedRoots.find((candidate) => isPathInsideOrSame(candidate, canonical))
+    ?? sortedRoots.find((candidate) => isPathInsideOrSame(candidate, absolute));
   if (!root) throw new Error(`Edit path is outside the allowed Check mode paths: ${inputPath}`);
 
-  let component = root;
-  const rel = relative(root, absolute);
-  for (const part of rel.split(sep).filter(Boolean)) {
-    component = resolve(component, part);
+  let component = absolute;
+  while (true) {
     const metadata = await lstat(component);
     if (metadata.isSymbolicLink()) throw new Error(`Edit path contains an escaping link or junction: ${inputPath}`);
+    if (await pathsHaveSameIdentity(component, root)) break;
+    const parent = dirname(component);
+    if (parent === component) throw new Error(`Edit path is outside the allowed Check mode paths: ${inputPath}`);
+    component = parent;
   }
-  const canonical = await realpath(absolute);
-  if (!insideRoot(root, canonical)) throw new Error(`Edit path resolves outside the project: ${inputPath}`);
+  if (!isPathInsideOrSame(root, canonical)) throw new Error(`Edit path resolves outside the project: ${inputPath}`);
   const metadata = await lstat(absolute);
   if (!metadata.isFile()) throw new Error(`Edit path is not a file: ${inputPath}`);
-  const display = projectRoot === absolute || insideRoot(projectRoot, absolute)
-    ? relative(projectRoot, absolute).split(sep).join("/")
+  const display = isPathInsideOrSame(projectRoot, canonical)
+    ? relative(projectRoot, canonical).split(sep).join("/")
     : absolute;
   return { root, absolute, display, mode: metadata.mode };
 }

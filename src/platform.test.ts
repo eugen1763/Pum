@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { win32 } from "node:path";
 import {
   canonicalPathIdentity,
+  canonicalPathIdentityAllowMissing,
   defaultAgentDir,
   isPathInside,
+  isPathInsideOrSame,
   pathsHaveSameIdentity,
   projectStorageKey,
   sessionDirectoryName,
@@ -59,6 +61,20 @@ describe("Windows platform paths", () => {
       "win32",
       resolvePath,
     )).toBe(true);
+    expect(isPathInsideOrSame("C:\\Users\\runneradmin", "c:\\USERS\\RUNNERADMIN\\project", "win32"))
+      .toBe(true);
+  });
+
+  test("reconstructs a missing path from its nearest canonical Windows ancestor", async () => {
+    const resolvePath = async (path: string) => {
+      if (path.toLowerCase().endsWith("\\shared")) throw new Error("missing");
+      return path.replace("RUNNER~1", "runneradmin");
+    };
+    expect(await canonicalPathIdentityAllowMissing(
+      "C:\\Users\\RUNNER~1\\shared",
+      "win32",
+      resolvePath,
+    )).toBe("c:\\users\\runneradmin\\shared");
   });
 
   test("uses only signals supported by normal Windows console processes", () => {

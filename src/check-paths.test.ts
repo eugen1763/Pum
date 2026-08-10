@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join, parse } from "node:path";
 import { tmpdir } from "node:os";
 import { applyCheckPathCommand, parseCheckPathCommand } from "./check-paths";
+import { pathsHaveSameIdentity } from "./platform";
 import { checkPathsForProject, normalizeSettings } from "./settings";
 
 const directories: string[] = [];
@@ -43,11 +44,13 @@ describe("Check mode path commands", () => {
 
     const added = await applyCheckPathCommand(settings, project, { action: "add", path: "../shared" });
     settings = added.settings;
-    expect(checkPathsForProject(settings, project)).toEqual([shared]);
-    expect(added.message).toContain(shared);
+    const configured = checkPathsForProject(settings, project);
+    expect(configured).toHaveLength(1);
+    expect(await pathsHaveSameIdentity(configured[0]!, shared)).toBe(true);
+    expect(added.message).toContain(configured[0]!);
 
     const listed = await applyCheckPathCommand(settings, project, { action: "list" });
-    expect(listed.message).toContain(`- ${shared}`);
+    expect(listed.message).toContain(`- ${configured[0]}`);
 
     rmSync(shared, { recursive: true });
     const removed = await applyCheckPathCommand(settings, project, { action: "remove", path: "../shared" });
