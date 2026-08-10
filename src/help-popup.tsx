@@ -55,6 +55,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/clear", "Start a fresh session"],
       ["/history", "Browse saved sessions"],
       ["/login", "Add or update a provider"],
+      ["/check-path", "Manage extra Check mode paths"],
       ["/triggers", "Manage external triggers"],
       ["/worktree", "Create a managed worktree"],
       ["Tab", "Complete a command preview"],

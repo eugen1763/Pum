@@ -51,6 +51,21 @@ describe("mutation previews", () => {
     })).rejects.toThrow("link or junction");
   });
 
+  test("previews edits in an explicit additional root", async () => {
+    const cwd = project();
+    const shared = project();
+    const path = join(shared, "shared.ts");
+    writeFileSync(path, "export const value = 1;\n");
+
+    const preview = await previewMutation("edit", cwd, {
+      path,
+      edits: [{ oldText: "value = 1", newText: "value = 2" }],
+    }, [shared]);
+    expect(preview?.changedPaths).toEqual([path]);
+    expect(preview?.unifiedDiff).toContain("value = 2");
+    expect(await Bun.file(path).text()).toContain("value = 1");
+  });
+
   test("previews apply_patch without weakening atomic validation", async () => {
     const cwd = project();
     writeFileSync(join(cwd, "a.txt"), "old\n");

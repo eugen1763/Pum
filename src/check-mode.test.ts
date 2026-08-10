@@ -571,6 +571,25 @@ describe("profile evaluation and structured verdicts", () => {
     expect(verifier.calls).toBe(0);
   });
 
+  test("includes additional roots in complete verifier requests", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-check-root-project-"));
+    const shared = mkdtempSync(join(tmpdir(), "pum-check-root-shared-"));
+    temporaryDirectories.push(cwd, shared);
+    const verifier = runtime([result("SAFE")]);
+
+    const evaluation = await evaluateToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command: `bun --cwd ${shared} test` },
+      cwd,
+      config: { ...config, additionalPaths: [shared] },
+    });
+    expect(evaluation.decision).toBe("allow");
+    expect(verifier.contexts[0].messages[0].content).toContain(
+      `"allowedDirectoryRoots": [\n    "${cwd}",\n    "${shared}"`,
+    );
+  });
+
   test("balanced permits an ordinary source edit but verifies config-sensitive changes", async () => {
     const { cache } = temporaryCache();
     const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-edit-"));

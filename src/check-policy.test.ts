@@ -212,6 +212,82 @@ describe("deterministic hard blocks", () => {
     expect(result.findings).toContainEqual(expect.objectContaining({ code: "escaping-symlink", path: "linked/secret.txt" }));
   });
 
+  test("allows explicit additional roots without weakening hard blocks", () => {
+    const cwd = temporaryProject();
+    const shared = mkdtempSync(join(tmpdir(), "pum-check-policy-shared-"));
+    temporaryDirectories.push(shared);
+    writeFileSync(join(shared, "data.txt"), "data\n");
+    writeFileSync(join(shared, ".env"), "SECRET=value\n");
+
+    expect(analyzeCheckPolicy({
+      command: `cat ${shellQuote(join(shared, "data.txt"))}`,
+      cwd,
+      allowedPaths: [shared],
+    }).decision).toBe("allow");
+    expect(analyzeCheckPolicy({
+      command: `cat ${shellQuote(join(shared, ".env"))}`,
+      cwd,
+      allowedPaths: [shared],
+    }).findings.map((finding) => finding.code)).toContain("credential-access");
+    expect(analyzeCheckPolicy({
+      command: `rm -rf ${shellQuote(shared)}`,
+      cwd,
+      allowedPaths: [shared],
+    }).findings.map((finding) => finding.code)).toContain("broad-deletion");
+  });
+
+  test("rejects symlink escapes and stale additional roots", () => {
+    if (process.platform === "win32") return;
+    const cwd = temporaryProject();
+    const shared = mkdtempSync(join(tmpdir(), "pum-check-policy-shared-"));
+    const outside = mkdtempSync(join(tmpdir(), "pum-check-policy-secret-"));
+    temporaryDirectories.push(shared, outside);
+    writeFileSync(join(outside, "secret.txt"), "secret\n");
+    symlinkSync(outside, join(shared, "linked"), "dir");
+
+    const escaped = analyzeCheckPolicy({
+      command: `cat ${shellQuote(join(shared, "linked", "secret.txt"))}`,
+      cwd,
+      allowedPaths: [shared],
+    });
+    expect(escaped.findings.map((finding) => finding.code)).toContain("escaping-symlink");
+
+    rmSync(shared, { recursive: true, force: true });
+    const stale = analyzeCheckPolicy({
+      command: `cat ${shellQuote(join(shared, "gone.txt"))}`,
+      cwd,
+      allowedPaths: [shared],
+    });
+    expect(stale.findings.map((finding) => finding.code)).toContain("outside-project");
+  });
+
+  test("checks relative paths after a safe directory transition", () => {
+    if (process.platform === "win32") return;
+    const cwd = temporaryProject();
+    const shared = mkdtempSync(join(tmpdir(), "pum-check-policy-cd-"));
+    const outside = mkdtempSync(join(tmpdir(), "pum-check-policy-cd-secret-"));
+    temporaryDirectories.push(shared, outside);
+    writeFileSync(join(shared, "data.txt"), "data\n");
+    writeFileSync(join(outside, "secret.txt"), "secret\n");
+    symlinkSync(outside, join(shared, "linked"), "dir");
+
+    expect(analyzeCheckPolicy({
+      command: `cd ${shellQuote(shared)} && cat data.txt`,
+      cwd,
+      allowedPaths: [shared],
+    }).decision).toBe("allow");
+    expect(analyzeCheckPolicy({
+      command: `cd ${shellQuote(shared)} && cat linked/secret.txt`,
+      cwd,
+      allowedPaths: [shared],
+    }).findings.map((finding) => finding.code)).toContain("escaping-symlink");
+    expect(analyzeCheckPolicy({
+      command: `cd ${shellQuote(shared)}; cat data.txt`,
+      cwd,
+      allowedPaths: [shared],
+    }).decision).toBe("block");
+  });
+
   test("blocks credential file, store, and environment access", () => {
     const cwd = temporaryProject();
 
@@ -347,6 +423,22 @@ describe("structured executable proposals", () => {
     expect(analyzeExecutablePolicy({
       executable: "cat", args: ["src/index.ts"], cwd: join(cwd, ".."), projectCwd: cwd,
     }).findings.map((finding) => finding.code)).toContain("outside-project");
+  });
+
+  test("allows an external-trigger cwd under an additional root", () => {
+    const cwd = temporaryProject();
+    const shared = mkdtempSync(join(tmpdir(), "pum-check-process-shared-"));
+    temporaryDirectories.push(shared);
+    writeFileSync(join(shared, "data.txt"), "data\n");
+
+    const result = analyzeExecutablePolicy({
+      executable: "cat",
+      args: ["data.txt"],
+      cwd: shared,
+      projectCwd: cwd,
+      allowedPaths: [shared],
+    });
+    expect(result.decision).toBe("allow");
   });
 
   test("allows only the exact POSIX null device in direct argv", () => {

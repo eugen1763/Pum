@@ -120,6 +120,14 @@ These were chosen deliberately. Change them only on purpose.
   direct npm publish mutations from the authoritative main agent. The exception
   does not depend on the verifier category. It still requires popup approval.
   Managed subagents cannot use the exception.
+- **Additional Check mode paths are explicit and project-scoped.** `/check-path`
+  lists, adds, removes, or clears up to 16 canonical directory roots for the
+  launch project. Added roots must exist. PUM rejects filesystem roots, paths
+  inside the current project, credential-sensitive directories, the home
+  boundary, and PUM's configuration boundary. Bash, edit, and external-trigger
+  checks use the extra roots. `apply_patch` remains project-local. Every active
+  profile still blocks credential access, escaping links, broad deletion, and
+  other hard-rule violations.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
