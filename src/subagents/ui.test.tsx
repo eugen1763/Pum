@@ -125,7 +125,7 @@ function memoryStores(initial: Array<{ text: string; executed: boolean }> = []) 
 async function renderCacheApp(options: {
   initialStash?: Array<{ text: string; executed: boolean }>;
   onMainPrompt?: (prompt: string) => unknown | Promise<unknown>;
-  onSubagentMessage?: (prompt: string) => unknown | Promise<unknown>;
+  onSubagentMessage?: (id: string, prompt: string) => unknown | Promise<unknown>;
   messageCacheController?: MessageCacheController;
 }) {
   const setup = await createTestRenderer({ width: 80, height: 24, kittyKeyboard: true });
@@ -137,7 +137,7 @@ async function renderCacheApp(options: {
     getAgents: () => [snapshot],
     subscribe: () => () => {},
     bindMainSession: async () => {},
-    sendUserMessage: async (_id: string, prompt: string) => { await options.onSubagentMessage?.(prompt); },
+    sendUserMessage: async (id: string, prompt: string) => { await options.onSubagentMessage?.(id, prompt); },
     abortAgent: async () => {},
     persistToolEvent() {},
     createStandaloneWorktree: async () => snapshot.worktree,
@@ -276,19 +276,32 @@ describe("subagent transcript UI", () => {
 
   test("sends a direct selected-subagent prompt only through the manager", async () => {
     const mainPrompts: string[] = [];
-    const subagentMessages: string[] = [];
+    const subagentMessages: Array<{ id: string; prompt: string }> = [];
+    let resolveSubagentDelivery!: () => void;
+    const subagentDelivery = new Promise<void>((resolve) => {
+      resolveSubagentDelivery = resolve;
+    });
     const { setup } = await renderCacheApp({
       onMainPrompt: (prompt) => mainPrompts.push(prompt),
-      onSubagentMessage: (prompt) => subagentMessages.push(prompt),
+      onSubagentMessage: (id, prompt) => {
+        subagentMessages.push({ id, prompt });
+        resolveSubagentDelivery();
+      },
     });
 
     setup.mockInput.pressTab({ shift: true });
     await settle(setup);
+    expect(setup.captureCharFrame()).toContain("Message worker-one…");
+
     await setup.mockInput.typeText("Inspect the retry path.");
     setup.mockInput.pressEnter();
+    await subagentDelivery;
     await settle(setup);
 
-    expect(subagentMessages).toEqual(["Inspect the retry path."]);
+    expect(subagentMessages).toEqual([{
+      id: "agent-1",
+      prompt: "Inspect the retry path.",
+    }]);
     expect(mainPrompts).toEqual([]);
   });
 
@@ -297,7 +310,7 @@ describe("subagent transcript UI", () => {
     const subagentMessages: string[] = [];
     const { setup } = await renderCacheApp({
       onMainPrompt: (prompt) => mainPrompts.push(prompt),
-      onSubagentMessage: (prompt) => subagentMessages.push(prompt),
+      onSubagentMessage: (_id, prompt) => subagentMessages.push(prompt),
     });
 
     setup.mockInput.pressEnter();
@@ -493,7 +506,7 @@ describe("subagent transcript UI", () => {
         { text: "task two", executed: false },
       ],
       onMainPrompt: (prompt) => mainPrompts.push(prompt),
-      onSubagentMessage: (prompt) => subagentMessages.push(prompt),
+      onSubagentMessage: (_id, prompt) => subagentMessages.push(prompt),
     });
 
     setup.mockInput.pressTab({ shift: true });
@@ -537,7 +550,7 @@ describe("subagent transcript UI", () => {
     const { setup } = await renderCacheApp({
       messageCacheController: controller,
       onMainPrompt: (prompt) => mainPrompts.push(prompt),
-      onSubagentMessage: (prompt) => subagentMessages.push(prompt),
+      onSubagentMessage: (_id, prompt) => subagentMessages.push(prompt),
     });
     await setup.mockInput.typeText("keep main draft");
 
