@@ -19,9 +19,11 @@ A release is complete only when all of these are true:
 5. `CHANGELOG.md` contains a dated entry for the exact release version.
 6. `package.json` contains the exact release version and `bun.lock` is regenerated and consistent. Bun does not store the root workspace version in this lockfile format.
 7. Local validation passes.
-8. The release commit and matching annotated tag are pushed.
-9. Ubuntu and Windows CI pass for the release commit/tag.
-10. npm and the GitHub Release both contain the exact version. Prereleases have both `beta` and `latest` npm tags.
+8. The release commit is pushed to `main`.
+9. The exact `main` CI run for that commit completes successfully on Ubuntu and Windows.
+10. Only then is the matching annotated tag created and pushed.
+11. Tag CI and Release workflows complete successfully for that exact commit and tag.
+12. npm and the GitHub Release both contain the exact version. Prereleases have both `beta` and `latest` npm tags.
 
 Do not move or reuse a published tag. If a tagged release fails after publication or the release contents change, prepare a newer version.
 
@@ -190,7 +192,7 @@ Also inspect the packed file list. Confirm it contains runtime source, README/pa
 
 If any check fails, fix it before committing and rerun the affected focused checks plus the full required sequence.
 
-## 8. Commit and tag
+## 8. Commit, push, and pass main CI
 
 Review the complete release diff. It should include:
 
@@ -205,7 +207,6 @@ Create one release commit:
 ```bash
 git add CHANGELOG.md README.md AGENTS.md package.json bun.lock
 git commit -m "Release <VERSION>"
-git tag -a "v<VERSION>" -m "PUM <VERSION>"
 ```
 
 Include other intentional release files in `git add` when necessary. Never stage unrelated temporary files.
@@ -215,21 +216,66 @@ Verify:
 ```bash
 git status --short --branch
 git show --stat --oneline HEAD
-git show "v<VERSION>" --no-patch
 ```
 
-## 9. Push and observe workflows
-
-Push the release commit first, then the tag:
+Push the release commit without creating the tag:
 
 ```bash
+release_sha="$(git rev-parse HEAD)"
 git push origin main
+```
+
+Do not create or push `v<VERSION>` while the exact `main` CI run is queued or running. A local tag is also prohibited during this gate.
+
+Find the `CI` workflow run whose event is `push`, branch is `main`, and `headSha` equals `$release_sha`. Do not select a run only because it is the latest run. Record its `databaseId`, then watch that exact run once:
+
+```bash
+gh run list --workflow .github/workflows/ci.yml --event push --branch main --commit "$release_sha" \
+  --json databaseId,headSha,headBranch,event,status,conclusion
+gh run watch <main-ci-run-id> --exit-status
+```
+
+After the watch succeeds, inspect the exact run:
+
+```bash
+gh run view <main-ci-run-id> --json headSha,headBranch,event,status,conclusion,jobs
+```
+
+Confirm that both `test (ubuntu-latest)` and `test (windows-latest)` completed successfully. A queued, running, missing, skipped, cancelled, or failed job does not pass the gate.
+
+If the watch fails, inspect that run's failed log exactly once:
+
+```bash
+gh run view <main-ci-run-id> --log-failed
+```
+
+Fix the failure in a new commit. Run local validation, push `main` again, and repeat this gate for the new commit SHA and its exact CI run. Use one `gh run watch <run-id> --exit-status` for each exact run. Never tag the failed commit or reuse its run as evidence for the new commit.
+
+## 9. Create the tag and observe tag workflows
+
+Only after the exact `main` CI run passes on Ubuntu and Windows, create and push the annotated tag at `$release_sha`:
+
+```bash
+test "$(git rev-parse HEAD)" = "$release_sha"
+git tag -a "v<VERSION>" -m "PUM <VERSION>" "$release_sha"
+git show "v<VERSION>" --no-patch
 git push origin "v<VERSION>"
 ```
 
 Do not bypass Check mode or rewrite the command to evade a rejection. If a hard safety policy blocks the push, report the exact blocked operation and ask the user to run it or change the active policy deliberately.
 
-Identify the CI and Release workflow runs for the exact commit/tag. Use `gh run watch <run-id>` for each run rather than shell sleep loops or repeated polling. Inspect failed logs once when a run fails.
+Find the tag-triggered `CI` and `Release` runs whose branch is `v<VERSION>` and whose `headSha` equals `$release_sha`. Record each `databaseId`. Watch each exact run once with `--exit-status`:
+
+```bash
+gh run list --workflow .github/workflows/ci.yml --event push --branch "v<VERSION>" --commit "$release_sha" \
+  --json databaseId,headSha,headBranch,event,status,conclusion
+gh run list --workflow .github/workflows/release.yml --event push --branch "v<VERSION>" --commit "$release_sha" \
+  --json databaseId,headSha,headBranch,event,status,conclusion
+gh run watch <tag-ci-run-id> --exit-status
+gh run watch <release-run-id> --exit-status
+```
+
+Do not use shell sleep loops or repeated status polling. If either run fails, inspect that run's failed log once. Do not move or reuse the published tag.
 
 The release workflow must reject mismatched tags. Never change a release tag to point at a later fix.
 
