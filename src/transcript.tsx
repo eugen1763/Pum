@@ -1,4 +1,4 @@
-import { StyledText, fg, type MarkdownRenderable, type SyntaxStyle } from "@opentui/core";
+import { StyledText, bold, fg, type MarkdownRenderable, type SyntaxStyle } from "@opentui/core";
 import type { MarkdownProps } from "@opentui/react";
 import {
   useBlinkingText,
@@ -353,6 +353,18 @@ export function toolStateGlyph(state: ToolCall["state"]): string {
   return "✗";
 }
 
+const CHECK_MODE_HARD_BLOCK_PREFIX = "Check mode hard block:";
+
+function rejectedDetail(theme: Theme, detail: string): StyledText {
+  if (!detail.startsWith(CHECK_MODE_HARD_BLOCK_PREFIX)) {
+    return new StyledText([fg(theme.rejection)(detail)]);
+  }
+  return new StyledText([
+    bold(fg(theme.rejection)(CHECK_MODE_HARD_BLOCK_PREFIX)),
+    fg(theme.rejection)(detail.slice(CHECK_MODE_HARD_BLOCK_PREFIX.length)),
+  ]);
+}
+
 export function ToolLine({
   theme,
   call,
@@ -420,8 +432,7 @@ export function ToolLine({
       {rejected && call.detail ? (
         <Row glyph={GUTTER} glyphColor={theme.rejection} background={theme.rejectionBg}>
           <text
-            content={call.detail}
-            fg={theme.rejection}
+            content={rejectedDetail(theme, call.detail)}
             selectable
             wrapMode="word"
             style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}

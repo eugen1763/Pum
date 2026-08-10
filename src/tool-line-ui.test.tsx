@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { parseColor } from "@opentui/core";
+import { TextAttributes, parseColor } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { rejectedToolDetails } from "./check-mode";
@@ -38,7 +38,7 @@ function rejectedReplayCall(): ToolCall {
         toolCallId: "replayed",
         toolName: "bash",
         content: [{ type: "text", text: "blocked" }],
-        details: rejectedToolDetails({}, "Check mode approval was denied or cancelled"),
+        details: rejectedToolDetails({}, "Check mode hard block: command writes outside the project"),
         isError: true,
       },
     },
@@ -107,12 +107,13 @@ describe("tool line state", () => {
     expect(frame).toContain("replayed command");
     const frameLines = frame.split("\n");
     const commandRow = frameLines.findIndex((line) => line.includes("replayed command"));
-    const reasonRow = frameLines.findIndex((line) => line.includes("approval was denied"));
+    const reasonRow = frameLines.findIndex((line) => line.includes("Check mode hard block:"));
     expect(reasonRow).toBe(commandRow + 1);
 
     const rejection = parseColor(theme.rejection);
     const rejectionBg = parseColor(theme.rejectionBg);
-    const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+    const capturedLines = setup.captureSpans().lines;
+    const spans = capturedLines.flatMap((line) => line.spans);
     const styledText = spans.filter((span) =>
       ["live command", "settled.ts", "wrapped command", "replayed command"].some((text) => span.text.includes(text))
     );
@@ -125,9 +126,16 @@ describe("tool line state", () => {
     expect(markers.every((span) => span.fg.equals(rejection))).toBe(true);
     expect(markers.every((span) => span.bg.equals(rejectionBg))).toBe(true);
 
-    const reason = spans.find((span) => span.text.includes("approval was denied"));
-    expect(reason?.fg.equals(rejection)).toBe(true);
-    expect(reason?.bg.equals(rejectionBg)).toBe(true);
+    const reasonPrefix = spans.find((span) => span.text === "Check mode hard block:");
+    expect(reasonPrefix?.fg.equals(rejection)).toBe(true);
+    expect(reasonPrefix?.bg.equals(rejectionBg)).toBe(true);
+    expect(reasonPrefix?.attributes).toBe(TextAttributes.BOLD);
+
+    const reasonSpans = capturedLines.slice(reasonRow).flatMap((line) => line.spans)
+      .filter((span) => span.text.trim());
+    expect(reasonSpans.map((span) => span.text).join("")).toContain("command writes outside the project");
+    expect(reasonSpans.every((span) => span.fg.equals(rejection))).toBe(true);
+    expect(reasonSpans.every((span) => span.bg.equals(rejectionBg))).toBe(true);
   });
 
   test("preserves failure and success styles", async () => {

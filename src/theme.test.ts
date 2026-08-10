@@ -17,6 +17,7 @@ describe("rejection theme tokens", () => {
     for (const theme of Object.values(PRESETS)) {
       expect(theme.rejection).toBeTruthy();
       expect(theme.rejectionBg).toBeTruthy();
+      expect(theme.rejection).toBe(theme.warn);
       expect(theme.rejection).not.toBe(theme.error);
       expect(theme.rejectionBg).not.toBe(theme.bg);
       expect(theme.popupShadow).toBeTruthy();
