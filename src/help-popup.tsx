@@ -66,6 +66,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     controls: [
       ["Ctrl+P", "Open Settings"],
       ["Ctrl+T", "Open external triggers"],
+      ["Ctrl+End", "Scroll transcript to the end"],
       ["/ in Settings", "Focus settings search"],
       ["Esc", "Close; twice to cancel work"],
       ["Ctrl+C", "Clear; twice quits"],
@@ -154,8 +155,12 @@ export function helpPageSize(terminalHeight: number): number {
 export function maxHelpScrollOffset(terminalHeight: number): number {
   const lines = helpLines(terminalHeight);
   const raw = Math.max(0, lines.length - helpPageSize(terminalHeight));
+  const headingBeforeFirstControl =
+    raw > 0 && lines[raw]?.kind === "control" && lines[raw - 1]?.kind === "heading"
+      ? raw - 1
+      : raw;
   const lastHeading = lines.findLastIndex((line) => line.kind === "heading");
-  return lastHeading < 0 ? raw : Math.min(raw, lastHeading);
+  return lastHeading < 0 ? headingBeforeFirstControl : Math.min(headingBeforeFirstControl, lastHeading);
 }
 
 function HelpLineRow({ line, theme }: { line: HelpLine; theme: Theme }) {

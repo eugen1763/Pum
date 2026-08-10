@@ -78,6 +78,7 @@ bun run start    # open the TUI in the current directory
 | Alt+V | Attach an image from the graphical clipboard |
 | Ctrl+Backspace / Ctrl+W | Delete the previous word |
 | Ctrl+H | Open session history when the terminal reports it distinctly |
+| Ctrl+End | Scroll to the end of the selected transcript |
 | Tab | Open/close the prompt stash on an empty input |
 | Shift+Up / Shift+Down | Extend a prompt-stash selection |
 | Enter on a stash selection | Ask the main agent to coordinate and merge worktree subagents |
