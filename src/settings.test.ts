@@ -5,6 +5,7 @@ import {
   MAX_ACTIVE_SUBAGENTS,
   MIN_ACTIVE_SUBAGENTS,
   normalizeSettings,
+  SANDBOX_MODES,
   WORKING_RULE_ANIMATION_MODES,
 } from "./settings";
 
@@ -16,6 +17,7 @@ describe("PUM settings migration", () => {
     expect(settings.animations).toBe(true);
     expect(settings.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
     expect(settings.checkPaths).toEqual({});
+    expect(settings.sandboxMode).toBe("auto");
   });
 
   test("normalizes bounded additional Check mode paths", () => {
@@ -70,5 +72,13 @@ describe("PUM settings migration", () => {
       expect(normalizeSettings({ checkMode }).checkMode).toBe(checkMode);
     }
     expect(normalizeSettings({ checkMode: "permissive" } as any).checkMode).toBe("off");
+  });
+
+  test("migrates and validates the sandbox mode", () => {
+    expect(SANDBOX_MODES).toEqual(["auto", "require", "off"]);
+    for (const sandboxMode of SANDBOX_MODES) {
+      expect(normalizeSettings({ sandboxMode }).sandboxMode).toBe(sandboxMode);
+    }
+    expect(normalizeSettings({ sandboxMode: "on" } as any).sandboxMode).toBe("auto");
   });
 });
