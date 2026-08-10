@@ -1362,12 +1362,12 @@ export function App({
     return true;
   };
 
-  const deliverMainPrompt = (
+  const deliverMainPrompt = async (
     promptText: string,
     displayText: string,
     images: ReturnType<typeof imageContent>[] = [],
     recallable = images.length === 0,
-  ) => {
+  ): Promise<void> => {
     const userLine: Extract<Line, { kind: "text" }> = {
       kind: "text",
       role: "user",
@@ -1384,20 +1384,26 @@ export function App({
         recallable,
       };
       addPending(pending);
-      withSearchRoute(session.sessionId, () => session.steer(promptText, images)).catch((error) => {
+      try {
+        await withSearchRoute(session.sessionId, () => session.steer(promptText, images));
+      } catch (error) {
         dropPending(pending.id);
         append({ kind: "text", role: "error", text: String(error) });
-      });
+        throw error;
+      }
       return;
     }
 
     append(userLine);
     inFlight.current = promptText;
     setWorking(true);
-    withSearchRoute(session.sessionId, () => session.prompt(promptText, { images })).catch((error) => {
+    try {
+      await withSearchRoute(session.sessionId, () => session.prompt(promptText, { images }));
+    } catch (error) {
       append({ kind: "text", role: "error", text: String(error) });
       setWorking(false);
-    });
+      throw error;
+    }
   };
 
   const submitPrompt = (value?: string, stashIndex?: number) => {
@@ -1444,7 +1450,7 @@ export function App({
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
-    deliverMainPrompt(promptText, displayText, images);
+    void deliverMainPrompt(promptText, displayText, images).catch(() => {});
   };
 
   const cachedBatchDisplay = (prompts: readonly string[]): string => [
@@ -1478,7 +1484,7 @@ export function App({
     setStash(next);
     refreshHistoryAfterStashMutation();
     resetAfterCacheExecution();
-    deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts), [], false);
+    void deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts), [], false).catch(() => {});
   };
 
   useEffect(() => {
@@ -1494,24 +1500,22 @@ export function App({
     const detach = messageCacheController.bindExecutor(
       session.sessionId,
       async (request: MessageCacheSendRequest): Promise<MessageCacheSendResult> => {
-        const { entries, state } = messageCacheController.execute(request.ids);
-        stashRef.current = state.stash;
-        setStash(state.stash);
-        history.current = state.history;
-        resetAfterCacheExecution(
-          request.requester.kind === "subagent" ? request.requester.id : null,
-        );
-        const prompts = entries.map((entry) => entry.text);
+        const prompts = request.entries.map((entry) => entry.text);
         if (prompts.length > 1) {
-          deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts), [], false);
+          await deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts), [], false);
+          resetAfterCacheExecution(
+            request.requester.kind === "subagent" ? request.requester.id : null,
+          );
           return { count: prompts.length, route: "main" };
         }
         const prompt = prompts[0]!;
         if (request.requester.kind === "subagent") {
           await subagentManager.sendUserMessage(request.requester.id, prompt, [], prompt, false);
+          resetAfterCacheExecution(request.requester.id);
           return { count: 1, route: "subagent" };
         }
-        deliverMainPrompt(prompt, prompt, [], false);
+        await deliverMainPrompt(prompt, prompt, [], false);
+        resetAfterCacheExecution(null);
         return { count: 1, route: "main" };
       },
     );
