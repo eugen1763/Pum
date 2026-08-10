@@ -262,12 +262,13 @@ export async function prepareCheck(
         cwd: input.cwd,
         projectCwd: cwd,
         allowedPaths: additionalPaths,
+        protectedPaths: [AGENT_DIR],
         profile,
       });
     } else {
       const command = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
       if (typeof command !== "string") return { block: "Bash safety check requires a complete command string or process proposal" };
-      policy = analyzeCheckPolicy({ command, cwd, profile, allowedPaths: additionalPaths });
+      policy = analyzeCheckPolicy({ command, cwd, profile, allowedPaths: additionalPaths, protectedPaths: [AGENT_DIR] });
     }
     bash = policy.analysis;
     if (!bash.complete || bash.truncated || !bash.syntaxBalanced) {
@@ -316,6 +317,7 @@ export async function prepareCheck(
       decision: policy.decision,
       reason: policy.reason,
       findings: policy.findings,
+      accesses: policy.accesses,
     } : undefined,
     shell: processProposal ? undefined : bash,
     process: processProposal ? {
@@ -379,6 +381,7 @@ export async function prepareCheck(
         substitutionCount: bash.substitutions.length,
         mutationIntent: bash.mutationIntent,
         errors: bash.errors,
+        accesses: policy?.accesses,
       } : undefined,
       process: processProposal ? {
         source: processProposal.source,

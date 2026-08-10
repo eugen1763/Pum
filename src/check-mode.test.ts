@@ -137,6 +137,8 @@ describe("bash safety cache", () => {
     expect(prompt).toContain('"operator": "2>>"');
     expect(prompt).toContain("output redirection");
     expect(prompt).toContain("file output");
+    expect(prompt).toContain('"accesses"');
+    expect(prompt).toContain('"mode": "write"');
   });
 
   test("preserves dangerous segments hidden late in a long command", async () => {

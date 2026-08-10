@@ -14,11 +14,13 @@ export type CheckPolicyFindingCode =
   | "privilege-escalation"
   | "persistence"
   | "remote-script-execution"
+  | "external-read-exfiltration"
   | "destructive-git"
   | "broad-deletion"
   | "suspicious-execution"
   | "shell-complexity"
   | "mutation"
+  | "unknown-path-access"
   | "unrecognized-command";
 
 export type CheckPolicyFinding = {
@@ -27,6 +29,16 @@ export type CheckPolicyFinding = {
   message: string;
   stage?: number;
   path?: string;
+};
+
+export type CheckPathAccessMode = "read" | "write" | "execute" | "location" | "unknown";
+
+export type CheckPathAccess = {
+  path: string;
+  mode: CheckPathAccessMode;
+  source: "operand" | "redirection" | "executable";
+  stage: number;
+  external: boolean;
 };
 
 export type BashOperator = {
@@ -84,6 +96,7 @@ export type CheckPolicyResult = {
   decision: CheckPolicyDecision;
   reason: string;
   findings: CheckPolicyFinding[];
+  accesses: CheckPathAccess[];
   analysis: BashAnalysis;
 };
 
@@ -109,6 +122,8 @@ export type AnalyzeCheckPolicyOptions = {
   profile?: CheckPolicyProfile;
   limits?: Partial<CheckPolicyLimits>;
   fileSystem?: CheckPolicyFileSystem;
+  /** Canonical sensitive roots that no checked command may access. */
+  protectedPaths?: readonly string[];
 };
 
 export type ProcessCheckOperation = "create" | "start" | "resume" | "repeat" | "invoke-run";
@@ -132,6 +147,8 @@ export type AnalyzeExecutablePolicyOptions = Pick<ProcessCheckProposal, "executa
   profile?: CheckPolicyProfile;
   limits?: Partial<CheckPolicyLimits>;
   fileSystem?: CheckPolicyFileSystem;
+  /** Canonical sensitive roots that no checked process may access. */
+  protectedPaths?: readonly string[];
 };
 
 export const DEFAULT_CHECK_POLICY_LIMITS: Readonly<CheckPolicyLimits> = Object.freeze({
@@ -159,6 +176,7 @@ const MUTATION_COMMANDS = new Map<string, string>([
 
 const SHELL_INTERPRETERS = new Set(["sh", "bash", "dash", "zsh", "ksh", "fish", "pwsh", "powershell", "cmd"]);
 const REMOTE_COMMANDS = new Set(["curl", "wget", "fetch", "invoke-webrequest", "iwr"]);
+const STDIN_NETWORK_COMMANDS = new Set(["nc", "ncat", "netcat", "socat", "ssh"]);
 const PATH_OPERAND_COMMANDS = new Set([
   "cat", "head", "tail", "less", "more", "stat", "file", "ls", "tree", "du", "wc", "realpath",
   "readlink", "rm", "rmdir", "unlink", "shred", "mv", "cp", "install", "mkdir", "touch", "truncate",
@@ -176,6 +194,9 @@ const CREDENTIAL_SEGMENTS = new Set([
 const SAFE_READ_COMMANDS = new Set([
   "pwd", "printf", "echo", "true", "false", "test", "[", "ls", "tree", "cat", "head", "tail",
   "wc", "stat", "file", "du", "realpath", "readlink", "grep", "rg", "git",
+]);
+const EXPLICIT_READ_COMMANDS = new Set([
+  "cat", "head", "tail", "less", "more", "stat", "file", "ls", "tree", "du", "wc", "realpath", "readlink",
 ]);
 const DATA_OPERAND_COMMANDS = new Set(["printf", "echo"]);
 function commandName(argv0: string | undefined): string {
@@ -594,6 +615,220 @@ function pathOperands(stage: BashStage): string[] {
   return [...new Set(values)];
 }
 
+type ClassifiedAccess = Omit<CheckPathAccess, "stage" | "external">;
+
+function positionalOperands(argv: string[]): string[] {
+  const values: string[] = [];
+  for (let index = 1; index < argv.length; index++) {
+    const value = argv[index]!;
+    if (value === "--") return [...values, ...argv.slice(index + 1)];
+    if (!value.startsWith("-") || value === "-") values.push(value);
+  }
+  return values;
+}
+
+function grepReadOperands(argv: string[]): ClassifiedAccess[] {
+  const accesses: ClassifiedAccess[] = [];
+  let hasExplicitPattern = false;
+  let consumedPattern = false;
+  const valueOptions = new Set(["-A", "-B", "-C", "-m", "--after-context", "--before-context", "--context", "--max-count", "--type", "-t", "-T", "-g", "--glob"]);
+  for (let index = 1; index < argv.length; index++) {
+    const value = argv[index]!;
+    if (value === "--") {
+      const remaining = argv.slice(index + 1);
+      if (!hasExplicitPattern && !consumedPattern) remaining.shift();
+      accesses.push(...remaining.map((path) => ({ path, mode: "read" as const, source: "operand" as const })));
+      break;
+    }
+    if (["-e", "--regexp"].includes(value)) {
+      hasExplicitPattern = true;
+      index++;
+      continue;
+    }
+    if (["-f", "--file"].includes(value) && argv[index + 1]) {
+      hasExplicitPattern = true;
+      accesses.push({ path: argv[++index]!, mode: "read", source: "operand" });
+      continue;
+    }
+    const fileOption = value.match(/^(?:--file|-f)=(.+)$/)?.[1];
+    if (fileOption) {
+      hasExplicitPattern = true;
+      accesses.push({ path: fileOption, mode: "read", source: "operand" });
+      continue;
+    }
+    if (["--pre"].includes(value) && argv[index + 1]) {
+      accesses.push({ path: argv[++index]!, mode: "execute", source: "operand" });
+      continue;
+    }
+    const preProgram = value.match(/^--pre=(.+)$/)?.[1];
+    if (preProgram) {
+      accesses.push({ path: preProgram, mode: "execute", source: "operand" });
+      continue;
+    }
+    if (valueOptions.has(value)) {
+      index++;
+      continue;
+    }
+    if (value.startsWith("-")) continue;
+    if (!hasExplicitPattern && !consumedPattern) {
+      consumedPattern = true;
+      continue;
+    }
+    accesses.push({ path: value, mode: "read", source: "operand" });
+  }
+  return accesses;
+}
+
+function interpreterAccesses(name: string, argv: string[]): ClassifiedAccess[] {
+  const accesses: ClassifiedAccess[] = [];
+  const inlineFlags = name === "cmd" ? new Set(["/c", "/k"])
+    : name === "powershell" || name === "pwsh" ? new Set(["-c", "-command", "-encodedcommand", "-enc"])
+    : new Set(["-c", "-e", "-E", "--eval", "--print", "-p"]);
+  const executionOptions = new Set(["-r", "--require", "--import", "--loader", "--preload", "--import-map", "--rcfile", "--init-file", "-file"]);
+  let inline = false;
+  for (let index = 1; index < argv.length; index++) {
+    const value = argv[index]!;
+    const lower = value.toLowerCase();
+    if (inlineFlags.has(lower)) {
+      inline = true;
+      index++;
+      continue;
+    }
+    if (executionOptions.has(lower) && argv[index + 1]) {
+      accesses.push({ path: argv[++index]!, mode: "execute", source: "operand" });
+      continue;
+    }
+    const executionOption = value.match(/^(?:--require|--import|--loader|--preload|--import-map|--rcfile|--init-file)=(.+)$/i)?.[1]
+      ?? value.match(/^-I(.+)$/)?.[1];
+    if (executionOption) {
+      accesses.push({ path: executionOption, mode: "execute", source: "operand" });
+      continue;
+    }
+    if (value.startsWith("-")) continue;
+    if (!inline) accesses.push({ path: value, mode: "execute", source: "operand" });
+    break;
+  }
+  return accesses;
+}
+
+function classifyStageAccesses(stage: BashStage): ClassifiedAccess[] {
+  const argv = effectiveArgv(stage.argv);
+  const name = commandName(argv[0]);
+  const accesses: ClassifiedAccess[] = [];
+  if (argv[0] && looksLikePath(argv[0])) accesses.push({ path: argv[0], mode: "execute", source: "executable" });
+
+  for (const redirection of stage.redirections) {
+    if (!redirection.target) continue;
+    const operator = redirection.operator.replace(/^\d+/, "");
+    if (["<<", "<<-", "<<<", "<&"].includes(operator)) continue;
+    if (operator === ">&" && (/^\d+$/.test(redirection.target) || redirection.target === "-")) continue;
+    const interpreterInput = operator === "<"
+      && (SHELL_INTERPRETERS.has(name) || ["node", "bun", "deno", "python", "python3", "ruby", "perl", "php", "java"].includes(name));
+    accesses.push({
+      path: redirection.target,
+      mode: operator === "<" ? (interpreterInput ? "execute" : "read") : "write",
+      source: "redirection",
+    });
+  }
+
+  if (DATA_OPERAND_COMMANDS.has(name)) return accesses;
+  if (["cd", "chdir", "set-location"].includes(name)) {
+    return [...accesses, ...positionalOperands(argv).map((path) => ({ path, mode: "location" as const, source: "operand" as const }))];
+  }
+  if (EXPLICIT_READ_COMMANDS.has(name)) {
+    return [...accesses, ...positionalOperands(argv).map((path) => ({ path, mode: "read" as const, source: "operand" as const }))];
+  }
+  if (name === "grep" || name === "rg") return [...accesses, ...grepReadOperands(argv)];
+  if (REMOTE_COMMANDS.has(name)) {
+    const uploadOptions = new Set(["-d", "--data", "--data-binary", "--data-raw", "--data-urlencode", "-F", "--form", "-T", "--upload-file", "--post-file"]);
+    for (let index = 1; index < argv.length; index++) {
+      const value = argv[index]!;
+      if (uploadOptions.has(value) && argv[index + 1]) {
+        const operand = argv[++index]!;
+        const atPath = operand.match(/@(.+)$/)?.[1];
+        const path = atPath ?? (value === "-T" || value === "--upload-file" || value === "--post-file" ? operand : undefined);
+        if (path && path !== "-") accesses.push({ path, mode: "read", source: "operand" });
+        continue;
+      }
+      if (["-InFile", "-Body"].includes(value) && argv[index + 1]) {
+        const operand = argv[++index]!;
+        const path = operand.startsWith("@") ? operand.slice(1) : operand;
+        if (path !== "-") accesses.push({ path, mode: "read", source: "operand" });
+        continue;
+      }
+      const attached = value.match(/^(?:--data|--data-binary|--data-raw|--data-urlencode|--form|--upload-file|--post-file)=(.+)$/)?.[1];
+      if (attached) {
+        const atPath = attached.match(/@(.+)$/)?.[1];
+        const path = atPath ?? (/^--(?:upload-file|post-file)=/.test(value) ? attached : undefined);
+        if (path && path !== "-") accesses.push({ path, mode: "read", source: "operand" });
+      }
+      const configPath = value.match(/^--config=(.+)$/)?.[1];
+      if (configPath) accesses.push({ path: configPath, mode: "execute", source: "operand" });
+      else if (value === "--config" && argv[index + 1]) accesses.push({ path: argv[++index]!, mode: "execute", source: "operand" });
+    }
+    return accesses;
+  }
+
+  const operands = positionalOperands(argv);
+  if (name === "cp" || name === "install") {
+    const targetOption = argv.find((arg) => arg.startsWith("--target-directory="))?.slice("--target-directory=".length);
+    const targetIndex = argv.findIndex((arg) => arg === "-t" || arg === "--target-directory");
+    const target = targetOption ?? (targetIndex >= 0 ? argv[targetIndex + 1] : undefined) ?? operands.at(-1);
+    const sources = targetIndex >= 0 || targetOption ? operands.filter((path) => path !== target) : operands.slice(0, -1);
+    accesses.push(...sources.map((path) => ({ path, mode: "read" as const, source: "operand" as const })));
+    if (target) accesses.push({ path: target, mode: "write", source: "operand" });
+    return accesses;
+  }
+  if (name === "mv") return [...accesses, ...operands.map((path) => ({ path, mode: "write" as const, source: "operand" as const }))];
+  if (["rm", "rmdir", "unlink", "shred", "mkdir", "touch", "truncate", "chmod", "chown", "chgrp", "setfacl", "tee"].includes(name)) {
+    return [...accesses, ...operands.map((path) => ({ path, mode: "write" as const, source: "operand" as const }))];
+  }
+  if (name === "dd") {
+    for (const value of argv.slice(1)) {
+      const match = /^(if|of)=(.+)$/.exec(value);
+      if (match) accesses.push({ path: match[2]!, mode: match[1] === "if" ? "read" : "write", source: "operand" });
+    }
+    return accesses;
+  }
+  if (name === "sed") {
+    const inPlace = argv.slice(1).some((arg) => arg === "--in-place" || arg.startsWith("--in-place=") || /^-[^-]*i/.test(arg));
+    const programFiles: string[] = [];
+    for (let index = 1; index < argv.length; index++) {
+      if ((argv[index] === "-f" || argv[index] === "--file") && argv[index + 1]) programFiles.push(argv[++index]!);
+      else {
+        const program = argv[index]!.match(/^(?:--file|-f)=(.+)$/)?.[1] ?? argv[index]!.match(/^-f(.+)$/)?.[1];
+        if (program) programFiles.push(program);
+      }
+    }
+    accesses.push(...programFiles.map((path) => ({ path, mode: "execute" as const, source: "operand" as const })));
+    const files = operands.slice(argv.slice(1).some((arg) => arg === "-e" || arg === "--expression" || arg === "-f" || arg === "--file") ? 0 : 1)
+      .filter((path) => !programFiles.includes(path));
+    accesses.push(...files.map((path) => ({ path, mode: inPlace ? "write" as const : "read" as const, source: "operand" as const })));
+    return accesses;
+  }
+  if (name === "perl") {
+    const inPlace = argv.slice(1).some((arg) => arg === "--in-place" || arg.startsWith("--in-place=") || /^-[^-]*i/.test(arg));
+    const inline = argv.slice(1).some((arg) => arg === "-e" || arg === "-E");
+    if (!inline) return [...accesses, ...interpreterAccesses(name, argv)];
+    return [...accesses, ...operands.map((path) => ({ path, mode: inPlace ? "write" as const : "read" as const, source: "operand" as const }))];
+  }
+  if (name === "bun" && ["test", "run"].includes(argv[1] ?? "")) {
+    return [...accesses, ...argv.slice(2).filter(looksLikePath).map((path) => ({ path, mode: "execute" as const, source: "operand" as const }))];
+  }
+  if (SHELL_INTERPRETERS.has(name) || ["node", "bun", "deno", "python", "python3", "ruby", "php", "java"].includes(name)) {
+    return [...accesses, ...interpreterAccesses(name, argv)];
+  }
+  const optionPaths = argv.slice(1).flatMap((argument) => {
+    const value = argument.includes("=") ? argument.slice(argument.indexOf("=") + 1) : undefined;
+    return value && looksLikePath(value) ? [value] : [];
+  });
+  const possiblePaths = [...pathOperands(stage), ...optionPaths].filter((path) => looksLikePath(path) && !/[\s$`]/.test(path));
+  if (PATH_OPERAND_COMMANDS.has(name) || possiblePaths.length > 0) {
+    accesses.push(...possiblePaths.map((path) => ({ path, mode: "unknown" as const, source: "operand" as const })));
+  }
+  return accesses;
+}
+
 function symlinkEscapes(path: string, root: string, fs: CheckPolicyFileSystem): boolean {
   const flavor = pathFlavor(path, root);
   let current = path;
@@ -638,18 +873,46 @@ function addFinding(findings: CheckPolicyFinding[], finding: CheckPolicyFinding)
   if (!findings.some((item) => item.code === finding.code && item.stage === finding.stage && item.path === finding.path)) findings.push(finding);
 }
 
+function insideProtectedPath(path: string, protectedPaths: readonly string[]): boolean {
+  return protectedPaths.some((protectedPath) => {
+    const flavor = pathFlavor(path, protectedPath);
+    const relative = flavor.relative(flavor.resolve(protectedPath), flavor.resolve(path));
+    return relative === "" || (!relative.startsWith("..") && !flavor.isAbsolute(relative));
+  });
+}
+
+function externalPathUsesLink(path: string, fs: CheckPolicyFileSystem): boolean {
+  const flavor = pathFlavor(path, path);
+  const resolved = flavor.resolve(path);
+  const parsed = flavor.parse(resolved);
+  let component = parsed.root;
+  try {
+    for (const part of resolved.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean)) {
+      component = flavor.join(component, part);
+      if (!fs.exists(component)) return false;
+      if (fs.isSymbolicLink(component)) return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function inspectHardBlocks(
   analysis: BashAnalysis,
   cwd: string,
   fs: CheckPolicyFileSystem,
+  profile: CheckPolicyProfile,
   depth = 0,
   projectCwd = cwd,
   allowedPaths: readonly string[] = [],
-): CheckPolicyFinding[] {
+  protectedPaths: readonly string[] = [],
+): { findings: CheckPolicyFinding[]; accesses: CheckPathAccess[] } {
   const findings: CheckPolicyFinding[] = [];
+  const accesses: CheckPathAccess[] = [];
   if (!analysis.complete) {
     addFinding(findings, { code: analysis.truncated ? "analysis-limit" : "unbalanced-shell", severity: "hard-block", message: analysis.errors.join("; ") || "shell analysis is incomplete" });
-    return findings;
+    return { findings, accesses };
   }
 
   let activeCwd = cwd;
@@ -696,17 +959,44 @@ function inspectHardBlocks(
     }
 
     const effectiveStage = argv === stage.argv ? stage : { ...stage, argv };
-    for (const value of pathOperands(effectiveStage)) {
-      if (isCredentialSensitivePath(value)) addFinding(findings, { code: "credential-access", severity: "hard-block", message: "command accesses a credential or secret path", stage: stage.index, path: value });
-      if (isExactPosixNullDevice(value, activeCwd)) continue;
-      if (value.startsWith("~")) {
-        addFinding(findings, { code: "outside-project", severity: "hard-block", message: "home-relative path is outside the project boundary", stage: stage.index, path: value });
+    for (const redirection of stage.redirections) {
+      if (!redirection.target) {
+        addFinding(findings, { code: "unknown-path-access", severity: "hard-block", message: "redirection target is missing", stage: stage.index });
+      }
+    }
+    for (const classified of classifyStageAccesses(effectiveStage)) {
+      const value = classified.path;
+      const dynamic = /(?:\$\(|`|\$\{|\$[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%)/.test(value);
+      const resolved = normalizedAbsolute(value, activeCwd, projectCwd, allowedPaths);
+      accesses.push({ ...classified, stage: stage.index, external: !resolved.inside });
+      if (dynamic) {
+        addFinding(findings, { code: "unknown-path-access", severity: "hard-block", message: "path access is dynamic or ambiguous", stage: stage.index, path: value });
         continue;
       }
-      const resolved = normalizedAbsolute(value, activeCwd, projectCwd, allowedPaths);
+      if (isCredentialSensitivePath(value) || insideProtectedPath(resolved.absolute, protectedPaths)) {
+        addFinding(findings, { code: "credential-access", severity: "hard-block", message: "command accesses a credential, secret, or PUM configuration path", stage: stage.index, path: value });
+      }
+      if (isExactPosixNullDevice(value, activeCwd)) continue;
+      if (value.startsWith("~")) {
+        addFinding(findings, { code: "outside-project", severity: "hard-block", message: "home-relative path cannot be resolved safely", stage: stage.index, path: value });
+        continue;
+      }
       const rootProblem = resolved.additional ? additionalRootProblem(resolved.root, fs) : undefined;
       if (!resolved.inside) {
-        addFinding(findings, { code: "outside-project", severity: "hard-block", message: "path resolves outside the project boundary", stage: stage.index, path: value });
+        if (profile !== "balanced" || classified.mode !== "read") {
+          const message = classified.mode === "write"
+            ? "write access resolves outside the project and approved roots"
+            : classified.mode === "execute"
+              ? "execution operand resolves outside the project and approved roots"
+              : classified.mode === "location"
+                ? "directory change resolves outside the project and approved roots"
+                : classified.mode === "unknown"
+                  ? "unknown path access resolves outside the project and approved roots"
+                  : "path resolves outside the project boundary";
+          addFinding(findings, { code: classified.mode === "unknown" ? "unknown-path-access" : "outside-project", severity: "hard-block", message, stage: stage.index, path: value });
+        } else if (externalPathUsesLink(resolved.absolute, fs)) {
+          addFinding(findings, { code: "escaping-symlink", severity: "hard-block", message: "external read traverses a symlink or junction", stage: stage.index, path: value });
+        }
       } else if (rootProblem === "missing") {
         addFinding(findings, { code: "outside-project", severity: "hard-block", message: "additional Check mode path no longer exists", stage: stage.index, path: value });
       } else if (rootProblem === "link") {
@@ -743,8 +1033,9 @@ function inspectHardBlocks(
         : SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
       if (commandFlag >= 0 && argv[commandFlag + 1]) nestedCommands.push(argv[commandFlag + 1]!);
       for (const nestedCommand of nestedCommands) {
-        const nestedFindings = inspectHardBlocks(analyzeBashCommand(nestedCommand), cwd, fs, depth + 1, projectCwd, allowedPaths);
-        for (const finding of nestedFindings) {
+        const nested = inspectHardBlocks(analyzeBashCommand(nestedCommand), activeCwd, fs, profile, depth + 1, projectCwd, allowedPaths, protectedPaths);
+        for (const access of nested.accesses) accesses.push({ ...access, stage: stage.index });
+        for (const finding of nested.findings) {
           addFinding(findings, { ...finding, stage: stage.index, message: `nested command: ${finding.message}` });
         }
       }
@@ -764,7 +1055,24 @@ function inspectHardBlocks(
       addFinding(findings, { code: "remote-script-execution", severity: "hard-block", message: "command executes code received from a remote source", stage: stage.index });
     }
   }
-  return findings;
+
+  const externalReadStages = new Set(accesses.filter((access) => access.external && access.mode === "read").map((access) => access.stage));
+  for (let index = 0; index < analysis.stages.length; index++) {
+    const stage = analysis.stages[index]!;
+    const argv = effectiveArgv(stage.argv);
+    const name = commandName(argv[0]);
+    if (!REMOTE_COMMANDS.has(name) && !STDIN_NETWORK_COMMANDS.has(name)) continue;
+    const hasUpload = STDIN_NETWORK_COMMANDS.has(name)
+      || argv.slice(1).some((arg) => /^(?:-d|-F|-T|--data(?:-binary|-raw|-urlencode)?|--form|--upload-file|--post-file|-InFile|-Body)(?:=|$)/i.test(arg));
+    const directlyReadsExternal = accesses.some((access) => access.stage === stage.index && access.external && access.mode === "read");
+    const pipedExternalRead = hasUpload && index > 0
+      && (analysis.stages[index - 1]?.operatorAfter === "|" || analysis.stages[index - 1]?.operatorAfter === "|&")
+      && externalReadStages.has(index - 1);
+    if (directlyReadsExternal || pipedExternalRead) {
+      addFinding(findings, { code: "external-read-exfiltration", severity: "hard-block", message: "network command can upload data read outside the approved project roots", stage: stage.index });
+    }
+  }
+  return { findings, accesses };
 }
 
 function shellCommandFlag(name: string, argv: string[]): number {
@@ -866,31 +1174,36 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
   const profile = options.profile ?? "balanced";
   const limits = options.limits ?? (profile === "balanced" ? balancedCompleteShellLimits(options.command) : undefined);
   const analysis = analyzeBashCommand(options.command, limits);
-  const findings = inspectHardBlocks(
+  const { findings, accesses } = inspectHardBlocks(
     analysis,
     options.cwd,
     options.fileSystem ?? nodeFileSystem,
+    profile,
     0,
     options.cwd,
     options.allowedPaths,
+    options.protectedPaths,
   );
   if (findings.some((item) => item.severity === "hard-block")) {
-    return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
+    return { profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis };
   }
 
   if (profile === "ask") {
     addFinding(findings, { code: "unrecognized-command", severity: "review", message: "ask profile requires review for every command" });
-    return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+    return { profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis };
   }
 
   for (const finding of inspectSuspiciousExecution(analysis)) addFinding(findings, finding);
   if (profile === "balanced") {
-    if (findings.length) return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
+    if (findings.length) return { profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis };
     return {
       profile,
       decision: "allow",
-      reason: "complete project-local command passed deterministic hard rules",
+      reason: accesses.some((access) => access.external)
+        ? "complete command uses only deterministically classified external reads"
+        : "complete project-local command passed deterministic hard rules",
       findings: [],
+      accesses,
       analysis,
     };
   }
@@ -901,11 +1214,11 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
 
   const allNarrowReads = !hasComplexShell && analysis.stages.length === 1 && analysis.stages.every(isNarrowRead);
   if (allNarrowReads) {
-    return { profile, decision: "allow", reason: "narrow project-local inspection", findings: [], analysis };
+    return { profile, decision: "allow", reason: "narrow project-local inspection", findings: [], accesses, analysis };
   }
 
   if (!findings.length) addFinding(findings, { code: "unrecognized-command", severity: "review", message: "command is not a rigorously narrow built-in policy case" });
-  return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+  return { profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis };
 }
 
 /** Analyze direct executable arguments without converting the arguments to shell text. */
@@ -959,7 +1272,16 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
   };
   const projectCwd = options.projectCwd ?? options.cwd;
   const fs = options.fileSystem ?? nodeFileSystem;
-  const findings = inspectHardBlocks(analysis, options.cwd, fs, 0, projectCwd, options.allowedPaths);
+  const { findings, accesses } = inspectHardBlocks(
+    analysis,
+    options.cwd,
+    fs,
+    profile,
+    0,
+    projectCwd,
+    options.allowedPaths,
+    options.protectedPaths,
+  );
   const executionDirectory = normalizedAbsolute(options.cwd, projectCwd, projectCwd, options.allowedPaths);
   const executionRootProblem = executionDirectory.additional
     ? additionalRootProblem(executionDirectory.root, fs)
@@ -994,20 +1316,23 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
     });
   }
   if (findings.some((item) => item.severity === "hard-block")) {
-    return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
+    return { profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis };
   }
   if (profile === "ask") {
     addFinding(findings, { code: "unrecognized-command", severity: "review", message: "ask profile requires review for every command" });
-    return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+    return { profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis };
   }
   for (const finding of inspectSuspiciousExecution(analysis)) addFinding(findings, finding);
   if (profile === "balanced") {
-    if (findings.length) return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
+    if (findings.length) return { profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis };
     return {
       profile,
       decision: "allow",
-      reason: "complete project-local process passed deterministic hard rules",
+      reason: accesses.some((access) => access.external)
+        ? "complete process uses only deterministically classified external reads"
+        : "complete project-local process passed deterministic hard rules",
       findings: [],
+      accesses,
       analysis,
     };
   }
@@ -1021,11 +1346,12 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
       decision: "allow",
       reason: "narrow project-local inspection",
       findings: [],
+      accesses,
       analysis,
     };
   }
   if (!findings.length) {
     addFinding(findings, { code: "unrecognized-command", severity: "review", message: "command is not a rigorously narrow built-in policy case" });
   }
-  return { profile, decision: "ask", reason: findings[0]!.message, findings, analysis };
+  return { profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis };
 }
