@@ -8,6 +8,9 @@ describe("stash batch selection", () => {
 
   test("asks the main agent to group, run, and merge worktree tasks", () => {
     const prompt = buildStashBatchPrompt(["Fix parser", "Add parser tests"]);
+    expect(prompt).toContain("authoritative execution path created by message_cache_send");
+    expect(prompt).toContain("Reuse agents already assigned to these tasks");
+    expect(prompt).toContain("Never create duplicate assignments");
     expect(prompt).toContain("Count only starting and running subagents as active");
     expect(prompt).toContain("configured capacity from the system prompt");
     expect(prompt).toContain("while capacity is available");

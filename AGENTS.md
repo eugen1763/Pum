@@ -174,6 +174,11 @@ These were chosen deliberately. Change them only on purpose.
   rows are user-owned. Agent rows store the exact creator identity and display
   name. An agent deletes only its own rows. Sends accept stable IDs and use the
   App user-execution bridge. Multi-entry sends use main-agent orchestration.
+  When a user asks to run open or pending cached tasks, the main agent must call
+  `message_cache_send` with stable IDs before it spawns or assigns work. Listing
+  or reading cache previews is not execution. The send marks entries executed
+  and creates the authoritative main-agent coordination prompt. When that prompt
+  arrives, reuse already assigned agents and never create duplicate assignments.
 - **Colours are never literals.** Everything reads a semantic token from
   `theme.ts`. Nine presets ship; `theme.json` in the config dir overrides any
   subset of tokens. Add a token rather than a hex code.
@@ -222,7 +227,9 @@ These were chosen deliberately. Change them only on purpose.
   worktree agents in parallel. Merge each successful agent after its completion
   notice arrives and its status is `completed`, unless a concrete dependency,
   conflict risk, or integration order requires waiting. Idle settlement is not
-  completion.
+  completion. The generated prompt is authoritative execution after
+  `message_cache_send`; reuse agents already assigned to its tasks and never
+  create duplicate assignments.
 - **Follow-up implementation work uses available parallel capacity.** Count only
   `starting` and `running` subagents toward the configured active limit. The PUM
   setting defaults to 10 and accepts values from 1 through 25. When a slot is

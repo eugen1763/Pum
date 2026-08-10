@@ -9,6 +9,8 @@ export function buildStashBatchPrompt(prompts: string[]): string {
   return `Coordinate the following cached tasks with managed worktree subagents.
 
 Rules:
+- This prompt is the authoritative execution path created by message_cache_send or the cache selection UI.
+- Reuse agents already assigned to these tasks. Never create duplicate assignments.
 - Count only starting and running subagents as active. Use the configured capacity from the system prompt.
 - Use spawn_subagent for implementation work while capacity is available.
 - At capacity, queue related work to an appropriate running subagent with message_agent.
