@@ -61,8 +61,21 @@ jobs:
             exit 1
           }
           npm dist-tag add "pum-agent@$version" latest
-          test "$(npm view pum-agent dist-tags.beta)" = "$version"
-          test "$(npm view pum-agent dist-tags.latest)" = "$version"
+          for attempt in 1 2 3 4 5; do
+            if tags="$(npm dist-tag ls pum-agent)"; then
+              beta="$(printf '%s\n' "$tags" | awk '$1 == "beta:" { print $2 }')"
+              latest="$(printf '%s\n' "$tags" | awk '$1 == "latest:" { print $2 }')"
+              if [[ "$beta" == "$version" && "$latest" == "$version" ]]; then
+                exit 0
+              fi
+            fi
+            if [[ "$attempt" -lt 5 ]]; then
+              sleep 2
+            fi
+          done
+          echo "npm dist-tags did not settle on $version." >&2
+          npm dist-tag ls pum-agent >&2 || true
+          exit 1
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
