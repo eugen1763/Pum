@@ -77,6 +77,32 @@ function expectOneMeasuredLine(frame: string, width: number) {
   expect(lines.slice(1).every((line) => line.trim().length === 0)).toBe(true);
 }
 
+function expectAgentCounts(
+  frame: string,
+  width: number,
+  agentCount: number,
+  runningAgentCount: number,
+  expected: { idle: number | null; active: number | null },
+) {
+  const layout = statusBarLayout({
+    ...thresholdInput,
+    width,
+    agentCount,
+    runningAgentCount,
+  });
+  const idleAgentCount = Math.max(0, agentCount - runningAgentCount);
+  const visible = {
+    idle: layout.showIdleAgents && idleAgentCount > 0 ? idleAgentCount : null,
+    active: layout.showRunningAgents && runningAgentCount > 0 ? runningAgentCount : null,
+  };
+
+  expect(visible).toEqual(expected);
+  if (expected.idle !== null) expect(frame).toContain(`◇ ${expected.idle}`);
+  else expect(frame).not.toContain("◇");
+  if (expected.active !== null) expect(frame).toContain(` ${expected.active}/10`);
+  else expect(frame).not.toContain("/10");
+}
+
 describe("StatusBar usage and subagent counts", () => {
   test("shows separate compact token metrics in a wide layout", async () => {
     const frame = await renderStatus(100, 0, 0);
@@ -86,14 +112,14 @@ describe("StatusBar usage and subagent counts", () => {
 
   test("shows separate idle and capacity-aware working counts", async () => {
     const frame = await renderStatus(100, 5, 2);
-    expect(frame).toContain("◇ 3 • 2/10");
+    expectAgentCounts(frame, 100, 5, 2, { idle: 3, active: 2 });
     expect(frame).not.toContain("◇ 5");
     expectOneMeasuredLine(frame, 100);
   });
 
   test("keeps one line and removes usage fields before agent state", async () => {
     const frame = await renderStatus(48, 5, 2);
-    expect(frame).toContain("◇ 3 • 2/10");
+    expectAgentCounts(frame, 48, 5, 2, { idle: 3, active: 2 });
     expect(frame).toContain("main · 20%");
     expect(frame).not.toContain("↑");
     expect(frame).not.toContain("↓");
@@ -103,15 +129,13 @@ describe("StatusBar usage and subagent counts", () => {
 
   test("omits zero-count indicators", async () => {
     const idle = await renderStatus(80, 3, 0);
-    expect(idle).toContain("◇ 3");
-    expect(idle).not.toContain("• 0");
+    expectAgentCounts(idle, 80, 3, 0, { idle: 3, active: null });
 
     destroy?.();
     destroy = undefined;
 
     const active = await renderStatus(80, 2, 2);
-    expect(active).toContain("• 2/10");
-    expect(active).not.toContain("◇ 0");
+    expectAgentCounts(active, 80, 2, 2, { idle: null, active: 2 });
   });
 
   test("removes optional fields in the exact required threshold order", () => {
