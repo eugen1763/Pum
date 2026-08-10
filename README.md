@@ -138,6 +138,7 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `
 | `Ctrl+L` | Open the agent transcript selector |
 | `Shift+Tab` / `Ctrl+Shift+Tab` | Cycle through agent transcripts |
 | `Ctrl+H` | Open session history when the terminal reports the key distinctly |
+| `Ctrl+End` | Scroll to the end of the selected transcript |
 | `Ctrl+P` | Open settings |
 | `Ctrl+T` | Open supervised external triggers |
 | `Esc` twice | Cancel the selected working agent |
@@ -177,7 +178,7 @@ PUM runs up to 10 active subagents by default. Configure a limit from 1 through 
 - Its own transcript, draft, usage data, and cancellation state
 - Tools for progress messages and a single final completion report
 
-Select a range of stashed prompts and press `Enter`. The main agent can group related work and run independent groups in parallel. Successful managed merges remove the completed worktree and branch. A parent cannot finish, merge, or be removed until every retained descendant closes deepest-first.
+Select a range of stashed prompts and press `Enter`. The main agent can group related work and run independent groups in parallel. A managed merge requires both authoritative `completed` status and a persisted completion notice. Idle settlement is not completion. Successful managed merges remove the completed worktree and branch. A parent cannot finish, merge, or be removed until every retained descendant closes deepest-first.
 
 Use `Ctrl+L` to select an agent transcript. Input then goes to that agent. Finished or interrupted agents remain available until PUM merges or removes them.
 
@@ -185,7 +186,7 @@ The public `spawn_subagent` tool accepts `preview: true`. PUM then shows the exa
 
 Press `↑` on an empty single-line prompt to recall the newest queued user-authored message for the selected transcript. PUM removes the message from the authoritative queue before restoring its text. PUM does not recall inter-agent, trigger, lifecycle, cache, delivered, or image-bearing messages.
 
-Idle notices report settled work cycles to the direct spawner. They are not completion notices. PUM persists completion intent and delivery state so interrupted notification delivery can resume without duplicate completion messages.
+Idle notices report settled work cycles to the direct spawner. They are not completion notices. PUM acknowledges completion delivery only after the notice enters the parent session. Persisted completion intent and stable message identifiers let interrupted delivery resume without duplicate completion messages.
 
 ## Tools and safeguards
 
@@ -201,7 +202,7 @@ Main and managed child agents can list and read the current workspace message ca
 
 Agents can add entries. An agent can delete only entries created by that exact agent. User-created and legacy entries remain user-owned.
 
-The `message_cache_send` tool accepts stable entry IDs. Single entries use the selected agent delivery path. Multiple entries use main-agent worktree orchestration.
+The `message_cache_send` tool accepts stable entry IDs. Single entries use the selected agent delivery path. Multiple entries use main-agent worktree orchestration. PUM reserves selected entries during delivery and marks them executed only after delivery succeeds. Failed main or child delivery leaves the entries pending.
 
 ### External triggers
 

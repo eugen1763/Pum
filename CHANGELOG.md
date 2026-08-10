@@ -2,6 +2,26 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.3-beta.1] - 2026-08-10
+
+### Added
+- Added `Ctrl+End` to scroll the selected transcript to the bottom and restore sticky scrolling.
+
+### Changed
+- Made prompt input wrap at word boundaries with character fallback for long tokens, matching transcript alignment.
+- Rendered Check mode rejection text in orange without changing its background and made the `Check mode hard block:` prefix bold.
+- Upgraded official GitHub Actions to Node 24-based releases.
+
+### Fixed
+- Made cached-task sends transactional so failed main or child delivery leaves entries pending, while successful delivery commits executed state without duplicate assignment races.
+- Persisted subagent completion acknowledgements only after the notice enters the parent session, including crash-window retry and replay coverage.
+- Stabilized Windows mutation previews by rejecting unmatched drive and UNC roots before remote filesystem identity probing.
+- Forced MXC capability probing to select native Windows `whoami` even when Git or MSYS tools appear first in `PATH`.
+
+### Security
+- Required managed agents to have authoritative `completed` status and a persisted matching completion notice before merge; idle or other retained states cannot merge.
+- Required open cached tasks to execute through `message_cache_send` before assignment and prevented duplicate agents when the authoritative coordination prompt arrives.
+
 ## [0.2.2-beta.1] - 2026-08-10
 
 ### Added

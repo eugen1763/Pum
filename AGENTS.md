@@ -177,9 +177,11 @@ These were chosen deliberately. Change them only on purpose.
   App user-execution bridge. Multi-entry sends use main-agent orchestration.
   When a user asks to run open or pending cached tasks, the main agent must call
   `message_cache_send` with stable IDs before it spawns or assigns work. Listing
-  or reading cache previews is not execution. The send marks entries executed
-  and creates the authoritative main-agent coordination prompt. When that prompt
-  arrives, reuse already assigned agents and never create duplicate assignments.
+  or reading cache previews is not execution. A send reserves its IDs, commits
+  executed state only after successful delivery, and releases the reservation
+  after failure. Multi-entry delivery creates the authoritative main-agent
+  coordination prompt. When that prompt arrives, reuse already assigned agents
+  and never create duplicate assignments.
 - **Colours are never literals.** Everything reads a semantic token from
   `theme.ts`. Nine presets ship; `theme.json` in the config dir overrides any
   subset of tokens. Add a token rather than a hex code.
@@ -196,8 +198,9 @@ These were chosen deliberately. Change them only on purpose.
   background bar; everything after it indents two columns.
 - **The prompt is a wrapping multiline textarea.** Enter sends. Ctrl+Enter and
   Shift+Enter add a line. A trailing `\` plus Enter is the fallback and removes
-  the `\`. It grows to eight rows, then scrolls. Wrapping reserves six right
-  columns. The `❯` gutter follows the cursor's visible row.
+  the `\`. It grows to eight rows, then scrolls. Word wrapping uses character
+  fallback for long tokens and reserves six right columns. The `❯` gutter
+  follows the cursor's visible row.
 - **Animation is on by default** and turns itself off without true colour.
 - **Image markers are atomic input attachments.** Alt+V stores clipboard image
   bytes under the system temp directory and inserts `[Image #n]`. Any marker
@@ -266,6 +269,10 @@ These were chosen deliberately. Change them only on purpose.
   intermediate information. Never send a final summary through `message_agent`.
   The main agent must not merge after a normal `Message from <agent>` row. Merge
   only after the completion notice arrives and the agent status is `completed`.
+  Delivery acceptance is not acknowledgement. PUM acknowledges the stable
+  settlement only after `message_start` or session inspection confirms that the
+  completion notice is persisted. Managed merge authorization requires that
+  acknowledged settlement and rejects every non-completed status.
 - **Idle notices report activity cycles, not completion.** A managed agent sends
   one idle notice to its direct spawner after each accepted work cycle settles.
   Durable messages and trigger steering start a cycle only after insertion.
@@ -493,6 +500,10 @@ Each of these cost real debugging. They are not obvious from the docs.
   optional SDK or receiving its AppContainer+DACL tier does not mean enforcement
   is available. Auto must warn and fall back; Require must block. Never accept
   the DACL tier because it can persist host ACL changes.
+- **MXC imports must select native Windows tools before module evaluation.** MXC
+  0.7 runs `whoami /user` while loading. Bun can cache the child-process
+  environment before a PATH guard applies, so PUM loads the SDK while the current
+  directory is Windows `System32`, then restores the authoritative directory.
 
 ## Testing a TUI
 
