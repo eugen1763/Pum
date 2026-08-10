@@ -29,13 +29,42 @@ describe("mutation previews", () => {
     expect(await Bun.file(path).text()).toContain("const two = 2;");
   });
 
-  test("fails closed on stale, ambiguous, overlapping, and outside edit context", async () => {
+  test("fails closed on stale edit context", async () => {
     const cwd = project();
     writeFileSync(join(cwd, "a.txt"), "same same\n");
     await expect(previewMutation("edit", cwd, { path: "a.txt", edits: [{ oldText: "missing", newText: "x" }] })).rejects.toThrow("stale");
+  });
+
+  test("fails closed on ambiguous edit context", async () => {
+    const cwd = project();
+    writeFileSync(join(cwd, "a.txt"), "same same\n");
     await expect(previewMutation("edit", cwd, { path: "a.txt", edits: [{ oldText: "same", newText: "x" }] })).rejects.toThrow("ambiguous");
+  });
+
+  test("fails closed on overlapping edit context", async () => {
+    const cwd = project();
+    writeFileSync(join(cwd, "a.txt"), "abcdef\n");
+    await expect(previewMutation("edit", cwd, {
+      path: "a.txt",
+      edits: [
+        { oldText: "abcde", newText: "x" },
+        { oldText: "cdef", newText: "y" },
+      ],
+    })).rejects.toThrow("overlap");
+  });
+
+  test("fails closed on a relative path outside the project", async () => {
+    const cwd = project();
     await expect(previewMutation("edit", cwd, { path: "../outside", edits: [{ oldText: "a", newText: "b" }] })).rejects.toThrow("outside");
+  });
+
+  test("fails closed on a Windows drive path outside the project", async () => {
+    const cwd = project();
     await expect(previewMutation("edit", cwd, { path: "C:\\outside\\secret", edits: [{ oldText: "a", newText: "b" }] })).rejects.toThrow("outside");
+  });
+
+  test("fails closed on a UNC path outside the project without probing the share", async () => {
+    const cwd = project();
     await expect(previewMutation("edit", cwd, { path: "\\\\server\\share\\secret", edits: [{ oldText: "a", newText: "b" }] })).rejects.toThrow("outside");
   });
 
