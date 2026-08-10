@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  CARET_PLACEHOLDER,
   coordinatedRuleState,
   markdownCaretContent,
   workingRuleFrameState,
@@ -88,14 +87,10 @@ describe("coordinated working rules", () => {
 });
 
 describe("Markdown streaming caret", () => {
-  test("keeps both blink frames non-whitespace after a partial heading marker", () => {
-    const visible = markdownCaretContent("#", true);
-    const hidden = markdownCaretContent("#", false);
+  test("appends one stable non-whitespace caret after a partial heading marker", () => {
+    const content = markdownCaretContent("#");
 
-    expect(visible).toBe("#▊");
-    expect(hidden).toBe(`#${CARET_PLACEHOLDER}`);
-    expect(/\s/u.test(visible.at(-1)!)).toBe(false);
-    expect(/\s/u.test(hidden.at(-1)!)).toBe(false);
-    expect([...visible]).toHaveLength([...hidden].length);
+    expect(content).toBe("#▊");
+    expect(/\s/u.test(content.at(-1)!)).toBe(false);
   });
 });

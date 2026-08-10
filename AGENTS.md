@@ -234,9 +234,10 @@ These were chosen deliberately. Change them only on purpose.
   text in the line it is an ordinary character. `help-popup.tsx` holds the
   list — keep it in step with the keyboard dispatch in `app.tsx`.
 - **Assistant Markdown renders while streaming.** OpenTUI's `<markdown>` has a
-  streaming mode for unstable trailing blocks. `useMarkdownCaret()` owns its
-  content and appends the blinking caret. Thinking traces remain plain text so
-  shimmer can write a `StyledText` directly onto one `<text>` renderable.
+  streaming mode for unstable trailing blocks. `useMarkdownCaret()` appends a
+  stable caret because blinking would reparse and re-highlight the Markdown
+  source. Thinking traces remain plain text so shimmer can write a `StyledText`
+  directly onto one `<text>` renderable.
 - **`<markdown>` and `<code>` require a `syntaxStyle` and OpenTUI ships no
   default.** `syntax.ts` builds one from the theme; it is rebuilt whenever the
   theme changes, which is what makes markdown recolour on a theme switch.

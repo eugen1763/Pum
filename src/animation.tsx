@@ -313,9 +313,9 @@ export function useBlinkingText(opts: {
   return ref;
 }
 
-/** Keep both caret frames equivalent to the Markdown parser. */
-export function markdownCaretContent(text: string, visible: boolean): string {
-  return text + (visible ? CARET : CARET_PLACEHOLDER);
+/** Append a stable caret without scheduling Markdown-only source changes. */
+export function markdownCaretContent(text: string): string {
+  return text + CARET;
 }
 
 export type MarkdownCaretBinding = {
@@ -323,52 +323,19 @@ export type MarkdownCaretBinding = {
   content: string;
 };
 
-/** Keep a blinking caret at the end of incrementally rendered Markdown. */
+/** Keep a stable caret at the end of incrementally rendered Markdown. */
 export function useMarkdownCaret(
   text: string,
   active: boolean,
 ): MarkdownCaretBinding {
   const ref = useRef<MarkdownRenderable>(null);
-  const { subscribe, enabled } = useClock();
-  const latest = useRef(text);
-  const caretVisible = useRef(true);
-  latest.current = text;
 
-  const paint = useCallback(() => {
-    if (ref.current) {
-      ref.current.content = markdownCaretContent(latest.current, caretVisible.current);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!active) return;
-    if (!enabled) {
-      caretVisible.current = true;
-      paint();
-      return;
-    }
-
-    let lastVisible = caretVisible.current;
-    const stop = subscribe((elapsedMs) => {
-      const nextVisible = elapsedMs % CARET_PERIOD_MS < CARET_PERIOD_MS * 0.6;
-      if (nextVisible === lastVisible) return;
-      lastVisible = nextVisible;
-      caretVisible.current = nextVisible;
-      paint();
-    });
-    paint();
-    return stop;
-  }, [active, enabled, paint, subscribe]);
-
-  useEffect(() => {
-    if (active) paint();
-  }, [text, active, paint]);
-
-  // React applies this value in the same commit as each transcript delta.
-  // The direct frame writes only change the width-stable caret glyph.
+  // A blink would assign MarkdownRenderable.content twice per period. Each
+  // assignment starts another incremental parse and asynchronous highlight.
+  // Slow terminals can draw the source markers between those highlight passes.
   return {
     ref,
-    content: active ? markdownCaretContent(text, caretVisible.current) : text,
+    content: active ? markdownCaretContent(text) : text,
   };
 }
 
