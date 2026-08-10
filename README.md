@@ -129,7 +129,7 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `
 | `Ctrl+C` | Clear the selected non-empty draft; on an empty draft, press twice to quit |
 | `?` | Show all controls when the prompt is empty |
 
-Useful commands include `/login`, `/history`, `/triggers`, `/clear`, `/compress`, and `/worktree`.
+Useful commands include `/login`, `/history`, `/triggers`, `/check-path`, `/clear`, `/compress`, and `/worktree`.
 
 ### Copy transcript text
 
@@ -209,6 +209,8 @@ Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_pa
 - **Ask:** Show the approval popup for every checked call that passes hard rules, unless an exact session or project approval already matches. A verifier `SAFE`, unclear, error, or unavailable result still requires approval.
 
 Every active profile hard-blocks project escape, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup. The only exception is a deterministic match for direct main-agent `npm publish` or `npm dist-tag add`. The verifier category does not control this exception. The exception still requires explicit popup approval. Managed subagents cannot use the exception.
+
+Use `/check-path list`, `/check-path add <directory>`, `/check-path remove <directory>`, or `/check-path clear` to manage up to 16 additional directory roots for the current launch project. Bash, edit, and external-trigger checks can use these roots; `apply_patch` remains project-local. Added roots are canonicalized and remain subject to credential, traversal, symlink or junction, broad-deletion, and other hard blocks.
 
 For `edit` and `apply_patch`, PUM validates the complete proposed change before any mutation. Review data includes the unified diff, changed paths, line counts, sensitivity flags, project containment, and full-content SHA-256. Invalid, stale, malformed, escaping, or incompletely analyzed input blocks the call. Patch length alone does not block a valid Balanced call.
 

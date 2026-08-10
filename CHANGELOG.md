@@ -2,6 +2,26 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.1-beta.1] - 2026-08-10
+
+### Fixed
+- Canonicalized Windows short-name, long-name, case, and missing-leaf path identities for additional Check mode roots, edit previews, and containment checks without weakening symlink or junction protections.
+
+### Changed
+- Gated release tagging on successful Ubuntu and Windows CI for the exact release commit, with failed candidates fixed in a new commit and revalidated before any tag is created.
+
+## [0.2.0-beta.4] - 2026-08-10
+
+### Added
+- Added `/check-path list|add <directory>|remove <directory>|clear` for up to 16 project-scoped additional Check mode roots used by bash, edit, and external-trigger checks.
+
+### Fixed
+- Rendered denied tool calls with warning colors, a `!` marker, and the denial reason on the following line, including persisted session replay.
+- Stopped caret-only Markdown updates from reparsing streamed headings and briefly exposing their raw marker prefixes.
+
+### Security
+- Kept additional Check mode roots subject to canonical validation, credential boundaries, traversal and escaping-link checks, broad-deletion blocks, and the existing hard-rule policy; `apply_patch` remains project-local.
+
 ## [0.2.0-beta.3] - 2026-08-10
 
 ### Fixed
@@ -91,6 +111,8 @@ All notable changes to PUM are documented in this file.
 - Added deterministic blocks for project escape, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion.
 - Added sanitized trigger environments, inert templates, strict argument-boundary checks, private bounded output files, and non-overridable hard-block or explicit `UNSAFE` decisions.
 
+[0.2.1-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.4...v0.2.1-beta.1
+[0.2.0-beta.4]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.3...v0.2.0-beta.4
 [0.2.0-beta.3]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.2...v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.1...v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.3-beta.2...v0.2.0-beta.1

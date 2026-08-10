@@ -48,6 +48,7 @@ bun run start    # open the TUI in the current directory
 | `src/browser-launch.ts` | Validated direct-argv OAuth browser launch with visible fallback |
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/check-mode.ts` | Safety profiles for commands, mutations, and trigger processes |
+| `src/check-paths.ts` | Project-scoped additional Check mode root validation and commands |
 | `src/check-policy.ts` | Deterministic shell and structured-process hard rules |
 | `src/check-mutation.ts` | Pre-execution edit and patch diff proposals |
 | `src/check-approvals.ts` | Exact once, session, and project approval state |
@@ -56,6 +57,7 @@ bun run start    # open the TUI in the current directory
 | `src/triggers/tools.ts` | Main/child trigger model tools and target authorization |
 | `src/triggers/popup.tsx` | Responsive Ctrl+T trigger management popup |
 | `src/writing-style.ts` | Configurable per-turn system-prompt writing guidance |
+| `src/platform.ts` | Cross-platform path identities, containment, config paths, and signals |
 | `src/config.ts` | Where the config dir lives |
 
 ## Keys
@@ -125,9 +127,11 @@ These were chosen deliberately. Change them only on purpose.
   launch project. Added roots must exist. PUM rejects filesystem roots, paths
   inside the current project, credential-sensitive directories, the home
   boundary, and PUM's configuration boundary. Bash, edit, and external-trigger
-  checks use the extra roots. `apply_patch` remains project-local. Every active
-  profile still blocks credential access, escaping links, broad deletion, and
-  other hard-rule violations.
+  checks use the extra roots. Windows containment compares canonical identities,
+  so short and long path spellings cannot disagree about authorization.
+  `apply_patch` remains project-local. Every active profile still blocks
+  credential access, escaping links or junctions, broad deletion, and other
+  hard-rule violations.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
@@ -434,6 +438,11 @@ Each of these cost real debugging. They are not obvious from the docs.
   runs off a single `renderer.setFrameCallback` instead, writing `content`
   straight onto renderables so React never re-renders per frame. The clock
   holds `requestLive()` only while something animates, so idle costs nothing.
+- **Windows path spelling is not identity.** A single directory can appear as a
+  long path, an 8.3 short path, or with different case. Additional Check mode
+  roots and mutation targets must use the shared canonical identity and
+  containment helpers in `platform.ts`; raw string or `realpath()` spelling
+  comparisons can reject valid roots or authorize the wrong boundary.
 
 ## Testing a TUI
 

@@ -29,9 +29,14 @@ For prereleases, the workflow publishes with `beta`, then assigns the exact vers
 6. Run `npm pack --dry-run`.
 7. Run `bun run pack:check`.
 8. Commit the version and release changes.
-9. Create a signed or annotated tag named `v<package version>`.
-10. Push the commit and tag.
+9. Push the release commit to `main` without creating or pushing a tag.
+10. Identify the exact CI run for that commit and use `gh run watch <run-id> --exit-status` until both Ubuntu and Windows jobs succeed.
+11. If CI fails, inspect its failed log once, fix the failure in a new commit, push it, and repeat the exact-commit CI gate. Never tag a queued, running, or failed commit.
+12. After green `main` CI, create and push a signed or annotated tag named `v<package version>`.
+13. Watch the exact tag CI and Release workflow runs to completion.
 
 The workflow rejects a tag that differs from `package.json`. The workflow never changes the package version.
+
+Do not move or reuse a published tag. If a tagged candidate needs changes, prepare a newer version.
 
 Versions with a hyphen publish under the npm `beta` tag and are then promoted to `latest`. Other versions publish directly under `latest`.
