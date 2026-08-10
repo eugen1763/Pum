@@ -200,6 +200,41 @@ describe("deterministic hard blocks", () => {
     expect(result.findings).toEqual([]);
   });
 
+  test("does not parse printf data as a Windows path but still checks its redirection", () => {
+    const cwd = "D:/dev/TimeLineE4";
+    const allowed = analyzeCheckPolicy({ command: String.raw`printf -- "\\n--- report ---\\n"; git status`, cwd, fileSystem: virtualFileSystem });
+    const blocked = analyzeCheckPolicy({ command: String.raw`printf x > "D:\\outside.txt"`, cwd, fileSystem: virtualFileSystem });
+
+    expect(allowed.decision).toBe("allow");
+    expect(allowed.findings.map((finding) => finding.code)).not.toContain("outside-project");
+    expect(blocked.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path: "D:\\outside.txt" }));
+  });
+
+  test("allows compound Git inspection with quoted wildcard pathspecs on Windows", () => {
+    const command = String.raw`git status --short --branch; git log --since="6 months ago" --date=short --pretty=format:"%h%x09%ad%x09%an%x09%s" --all --regexp-ignore-case --grep="auth\\|login\\|jwt\\|token\\|password\\|sign.in\\|sign-in\\|logout"; printf "\\n--- matching changed paths ---\\n"; git log --since="6 months ago" --all --date=short --pretty=format:"COMMIT %h %ad %an %s" --name-only -- "*Auth*" "*auth*" "*Login*" "*login*" "*Jwt*" "*jwt*" "*Token*" "*token*" "*Password*" "*password*" | awk 'NF'`;
+    const result = analyzeCheckPolicy({ command, cwd: "D:/dev/TimeLineE4", fileSystem: virtualFileSystem });
+
+    expect(result.decision).toBe("allow");
+    expect(result.findings.map((finding) => finding.code)).not.toContain("outside-project");
+    expect(result.analysis.stages[3]?.argv.slice(-10)).toEqual([
+      "*Auth*", "*auth*", "*Login*", "*login*", "*Jwt*", "*jwt*", "*Token*", "*token*", "*Password*", "*password*",
+    ]);
+  });
+
+  test("allows multiple Git commits and repository-relative paths after -- on Windows", () => {
+    const command = String.raw`git show --stat --oneline --decorate --no-renames 22d81e782 4e3f0992e dd1d5fcae d081052e8 9fd10e686 966123121; printf "\\n--- focused diffs ---\\n"; git show --format="COMMIT %h %ad %an %s" --date=short --no-ext-diff --unified=35 4e3f0992e dd1d5fcae d081052e8 9fd10e686 966123121 -- src/TimeLineE4.Web src/TimeLineE4.Framework src/TimeLineE4.Shared`;
+    const result = analyzeCheckPolicy({ command, cwd: "D:/dev/TimeLineE4", fileSystem: virtualFileSystem });
+
+    expect(result.decision).toBe("allow");
+    expect(result.findings.map((finding) => finding.code)).not.toContain("outside-project");
+    expect(result.analysis.stages[0]?.argv.slice(-6)).toEqual([
+      "22d81e782", "4e3f0992e", "dd1d5fcae", "d081052e8", "9fd10e686", "966123121",
+    ]);
+    expect(result.analysis.stages[2]?.argv.slice(-4)).toEqual([
+      "--", "src/TimeLineE4.Web", "src/TimeLineE4.Framework", "src/TimeLineE4.Shared",
+    ]);
+  });
+
   test("accepts a Windows short-name additional root but still rejects junction components", () => {
     const shortRoot = "C:\\Users\\RUNNER~1\\shared";
     const fs: CheckPolicyFileSystem = {

@@ -85,8 +85,9 @@ describe("login controller", () => {
     expect(pages.at(-1)?.kind).toBe("success");
   });
 
-  test("shows device details and cancels an OAuth flow", async () => {
+  test("shows device details and cancels an OAuth flow without starting a browser process", async () => {
     const pages: LoginPage[] = [];
+    const launched: string[] = [];
     let aborted = false;
     const runtime = {
       getProviders: () => [{ id: "oauth", name: "OAuth", auth: { oauth: {
@@ -100,11 +101,19 @@ describe("login controller", () => {
         }));
       },
     } as any;
-    const controller = new LoginController(runtime, () => ({}) as any, (page) => pages.push(page), () => {}, () => {});
+    const controller = new LoginController(
+      runtime,
+      () => ({}) as any,
+      (page) => pages.push(page),
+      () => {},
+      () => {},
+      async (url) => { launched.push(url); return true; },
+    );
     controller.open();
     controller.handleKey({ name: "down" });
     controller.handleKey({ name: "enter" });
     await settle();
+    expect(launched).toEqual(["https://device.test/"]);
     expect(pages.at(-1)).toMatchObject({ kind: "working", event: { type: "device_code", userCode: "ABCD" } });
     controller.handleKey({ name: "escape" });
     await settle();

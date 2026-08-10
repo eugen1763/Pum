@@ -177,6 +177,7 @@ const SAFE_READ_COMMANDS = new Set([
   "pwd", "printf", "echo", "true", "false", "test", "[", "ls", "tree", "cat", "head", "tail",
   "wc", "stat", "file", "du", "realpath", "readlink", "grep", "rg", "git",
 ]);
+const DATA_OPERAND_COMMANDS = new Set(["printf", "echo"]);
 function commandName(argv0: string | undefined): string {
   if (!argv0) return "";
   const basename = argv0.replaceAll("\\", "/").split("/").at(-1) ?? argv0;
@@ -570,6 +571,7 @@ function isExactPosixNullDevice(value: string, cwd: string): boolean {
 function pathOperands(stage: BashStage): string[] {
   const name = commandName(stage.argv[0]);
   const values = stage.redirections.flatMap((item) => item.target ? [item.target] : []);
+  if (DATA_OPERAND_COMMANDS.has(name)) return [...new Set(values)];
   const pathValueOptions = new Set(["-C", "--cwd", "--directory", "--chdir", "--git-dir", "--work-tree", "--prefix"]);
   for (let index = 1; index < stage.argv.length; index++) {
     const value = stage.argv[index]!;
