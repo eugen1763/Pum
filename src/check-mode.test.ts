@@ -585,9 +585,9 @@ describe("profile evaluation and structured verdicts", () => {
       config: { ...config, additionalPaths: [shared] },
     });
     expect(evaluation.decision).toBe("allow");
-    expect(verifier.contexts[0].messages[0].content).toContain(
-      `"allowedDirectoryRoots": [\n    "${cwd}",\n    "${shared}"`,
-    );
+    const prompt = verifier.contexts[0].messages[0].content as string;
+    const request = JSON.parse(prompt.slice(prompt.indexOf("{"))) as { allowedDirectoryRoots: string[] };
+    expect(request.allowedDirectoryRoots).toEqual([cwd, shared]);
   });
 
   test("balanced permits an ordinary source edit but verifies config-sensitive changes", async () => {

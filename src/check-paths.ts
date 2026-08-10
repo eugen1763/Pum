@@ -1,8 +1,13 @@
 import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 import { AGENT_DIR } from "./config";
 import { isCredentialSensitivePath } from "./check-policy";
+import {
+  canonicalPathIdentityAllowMissing,
+  isPathInsideOrSame,
+  pathIdentity,
+} from "./platform";
 import {
   checkPathsForProject,
   MAX_CHECK_PATHS_PER_PROJECT,
@@ -39,11 +44,6 @@ export function parseCheckPathCommand(input: string): CheckPathCommand | undefin
   return { action: action[1] as "add" | "remove", path };
 }
 
-function insideOrSame(parent: string, candidate: string): boolean {
-  const rel = relative(parent, candidate);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-}
-
 async function canonicalDirectory(input: string, cwd: string): Promise<string> {
   const absolute = resolve(cwd, input);
   const canonical = await realpath(absolute);
@@ -57,10 +57,10 @@ async function canonicalDirectory(input: string, cwd: string): Promise<string> {
     realpath(AGENT_DIR).catch(() => resolve(AGENT_DIR)),
     realpath(homedir()).catch(() => resolve(homedir())),
   ]);
-  if (insideOrSame(canonical, agentDirectory) || insideOrSame(agentDirectory, canonical)) {
+  if (isPathInsideOrSame(canonical, agentDirectory) || isPathInsideOrSame(agentDirectory, canonical)) {
     throw new Error("Check path cannot contain or enter PUM's configuration directory");
   }
-  if (insideOrSame(canonical, homeDirectory)) {
+  if (isPathInsideOrSame(canonical, homeDirectory)) {
     throw new Error("Check path cannot contain the home directory");
   }
   return canonical;
@@ -68,7 +68,7 @@ async function canonicalDirectory(input: string, cwd: string): Promise<string> {
 
 async function removalIdentity(input: string, cwd: string): Promise<string> {
   const absolute = resolve(cwd, input);
-  return realpath(absolute).catch(() => absolute);
+  return canonicalPathIdentityAllowMissing(absolute);
 }
 
 export async function applyCheckPathCommand(
@@ -102,10 +102,13 @@ export async function applyCheckPathCommand(
     : await removalIdentity(command.path, cwd);
   const project = await realpath(cwd);
   if (command.action === "add") {
-    if (canonical === project || insideOrSame(project, canonical)) {
+    if (isPathInsideOrSame(project, canonical)) {
       throw new Error("The directory is already inside the project boundary");
     }
-    if (paths.includes(canonical)) throw new Error(`Check path is already allowed: ${canonical}`);
+    const identity = pathIdentity(canonical);
+    if (paths.some((path) => pathIdentity(path) === identity)) {
+      throw new Error(`Check path is already allowed: ${canonical}`);
+    }
     if (paths.length >= MAX_CHECK_PATHS_PER_PROJECT) {
       throw new Error(`Check mode allows at most ${MAX_CHECK_PATHS_PER_PROJECT} additional paths per project`);
     }
@@ -117,7 +120,8 @@ export async function applyCheckPathCommand(
     };
   }
 
-  const index = paths.indexOf(canonical);
+  const identity = pathIdentity(canonical);
+  const index = paths.findIndex((path) => pathIdentity(path) === identity);
   if (index < 0) throw new Error(`Check path is not configured: ${canonical}`);
   const nextPaths = paths.filter((_path, candidate) => candidate !== index);
   return {
