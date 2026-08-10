@@ -2,6 +2,13 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.0-beta.3] - 2026-08-10
+
+### Fixed
+- Made prerelease dist-tag verification tolerate npm registry propagation after publication, allowing the workflow to proceed to GitHub Release creation.
+- Gave the real Git worktree integration test enough time on slower Windows runners and retried transient Windows `EBUSY` cleanup failures without weakening lifecycle assertions.
+- Replaced `0.2.0-beta.2` after its package and provenance published successfully but its post-publication verification exited before creating the GitHub Release.
+
 ## [0.2.0-beta.2] - 2026-08-10
 
 ### Fixed
@@ -84,6 +91,7 @@ All notable changes to PUM are documented in this file.
 - Added deterministic blocks for project escape, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion.
 - Added sanitized trigger environments, inert templates, strict argument-boundary checks, private bounded output files, and non-overridable hard-block or explicit `UNSAFE` decisions.
 
+[0.2.0-beta.3]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.2...v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.1...v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/eugen1763/Pum/compare/v0.1.3-beta.2...v0.2.0-beta.1
 [0.1.3-beta.2]: https://github.com/eugen1763/Pum/compare/v0.1.3-beta.1...v0.1.3-beta.2
