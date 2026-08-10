@@ -145,6 +145,45 @@ async function waitUntil(predicate: () => boolean, timeout = 5_000): Promise<voi
   throw new Error("Timed out waiting for subagent state");
 }
 
+function createMainBridge(manager: SubagentManager, sessionManager: SessionManager) {
+  const deliveries: any[] = [];
+  const userMessages: string[] = [];
+  const handlers = new Map<string, Array<(event: any) => unknown>>();
+  const api = {
+    on(name: string, handler: (event: any) => unknown) {
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+    },
+    registerTool() {},
+    appendEntry(customType: string, data: unknown) {
+      sessionManager.appendCustomEntry(customType, data);
+    },
+    sendMessage(message: any) {
+      deliveries.push(message);
+    },
+    sendUserMessage(content: string) {
+      userMessages.push(content);
+    },
+  };
+  (manager.mainExtension() as { factory: (pi: any) => void }).factory(api);
+
+  return {
+    api,
+    deliveries,
+    userMessages,
+    async insert(message: any): Promise<void> {
+      sessionManager.appendCustomMessageEntry(
+        message.customType,
+        message.content,
+        message.display,
+        message.details,
+      );
+      for (const handler of handlers.get("message_start") ?? []) {
+        await handler({ message: { role: "custom", ...message } });
+      }
+    },
+  };
+}
+
 describe("background subagents", () => {
   test("runs questionnaire tools through main and child pi sessions", async () => {
     const runtime = await ModelRuntime.create({
@@ -401,28 +440,10 @@ describe("background subagents", () => {
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
     });
-    const parent = SessionManager.inMemory(repo);
-    const notices: string[] = [];
-    const wakeMessages: string[] = [];
-    const mainApi = {
-      appendEntry(customType: string, data: unknown) {
-        parent.appendCustomEntry(customType, data);
-      },
-      sendMessage(message: { customType: string; content: string; display: boolean; details?: unknown }) {
-        notices.push(message.content);
-        parent.appendCustomMessageEntry(
-          message.customType,
-          message.content,
-          message.display,
-          message.details,
-        );
-      },
-      sendUserMessage(content: string) {
-        wakeMessages.push(content);
-      },
-    };
     const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
-    await manager.attachMain(mainApi as any, parent, repo);
+    const parent = SessionManager.inMemory(repo);
+    const mainBridge = createMainBridge(manager, parent);
+    await manager.attachMain(mainBridge.api as any, parent, repo);
 
     const started = Date.now();
     const spawned = await manager.spawn({
@@ -435,10 +456,10 @@ describe("background subagents", () => {
     expect(["starting", "running", "idle"]).toContain(spawned.status);
 
     const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline && notices.length === 0) {
+    while (Date.now() < deadline && mainBridge.deliveries.length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    expect(notices[0]).toContain("Subagent integration-agent idle.");
+    expect(mainBridge.deliveries[0].content).toContain("Subagent integration-agent idle.");
     expect(manager.getAgent(spawned.id)?.transcript.lines.some(
       (line) => line.kind === "text" && line.role === "assistant" && line.text.includes("Task complete"),
     )).toBe(true);
@@ -483,14 +504,20 @@ describe("background subagents", () => {
     )).toBe(true);
 
     await manager.routeMessage(spawned.id, "main", "The peer review has started.");
-    expect(notices.some((notice) => notice.includes("Message from integration-agent"))).toBe(true);
+    expect(mainBridge.deliveries.some((message) => message.content.includes("Message from integration-agent"))).toBe(true);
 
-    expect(wakeMessages).toEqual([]);
+    expect(mainBridge.userMessages).toEqual([]);
 
     await manager.sendUserMessage(spawned.id, "Prepare the final completion report.");
     await finishAgent(manager, spawned.id, "Integration agent completed successfully.");
     await waitUntil(() => manager.getAgent(spawned.id)?.status === "completed");
-    expect(notices.some((notice) => notice.includes("Subagent integration-agent completed."))).toBe(true);
+    const completion = mainBridge.deliveries.find(
+      (message) => message.details?.kind === "completion" && message.details?.sender === "integration-agent",
+    );
+    expect(completion?.content).toContain("Subagent integration-agent completed.");
+    await expect((manager as any).worktreeAction(repo, "merge", spawned.id))
+      .rejects.toThrow("before its completion notice arrives");
+    await mainBridge.insert(completion);
     const merged = await (manager as any).worktreeAction(repo, "merge", spawned.id);
     expect(merged.content[0].text).toContain("Closed integration-agent and removed its worktree");
     expect(manager.getAgent(spawned.id)).toBeUndefined();
@@ -500,7 +527,8 @@ describe("background subagents", () => {
     await manager.detachMain();
 
     const restoredManager = new SubagentManager({ modelRuntime: runtime, agentDir });
-    await restoredManager.attachMain(mainApi as any, parent, repo);
+    const restoredBridge = createMainBridge(restoredManager, parent);
+    await restoredManager.attachMain(restoredBridge.api as any, parent, repo);
     expect(restoredManager.getAgent(peer.id)?.usage).toEqual(peerUsage);
     await restoredManager.detachMain();
   });
@@ -698,7 +726,9 @@ describe("background subagents", () => {
       modelsPath: join(agentDir, "models.json"),
     });
     const manager = new SubagentManager({ modelRuntime: runtime, agentDir, maxActiveSubagents: 1 });
-    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const parent = SessionManager.inMemory(repo);
+    const mainBridge = createMainBridge(manager, parent);
+    await manager.attachMain(mainBridge.api as any, parent, repo);
     const attempts = await Promise.allSettled([
       manager.spawn({ task: "First race task.", name: "capacity-race-first", modelId: "mock/mock-model", thinkingLevel: "off" }),
       manager.spawn({ task: "Second race task.", name: "capacity-race-second", modelId: "mock/mock-model", thinkingLevel: "off" }),
@@ -713,6 +743,13 @@ describe("background subagents", () => {
     await manager.sendUserMessage(retained.id, "Prepare the final completion report.");
     await finishAgent(manager, retained.id, "Capacity race winner completed.");
     await waitUntil(() => manager.getAgent(retained.id)?.status === "completed");
+    const completion = mainBridge.deliveries.find(
+      (message) => message.details?.kind === "completion" && message.details?.sender === retained.name,
+    );
+    expect(completion).toBeDefined();
+    await expect((manager as any).worktreeAction(repo, "merge", retained.id))
+      .rejects.toThrow("before its completion notice arrives");
+    await mainBridge.insert(completion);
     await (manager as any).worktreeAction(repo, "merge", retained.id);
     await manager.detachMain();
   });
