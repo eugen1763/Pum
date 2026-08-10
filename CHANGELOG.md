@@ -6,6 +6,7 @@ All notable changes to PUM are documented in this file.
 
 ### Fixed
 - Canonicalized Windows short-name, long-name, case, and missing-leaf path identities for additional Check mode roots, edit previews, and containment checks without weakening symlink or junction protections.
+- Rejected unapproved Windows UNC edit targets before filesystem probing and made sequential transcript-selection coverage deterministic across CI runners.
 
 ### Changed
 - Gated release tagging on successful Ubuntu and Windows CI for the exact release commit, with failed candidates fixed in a new commit and revalidated before any tag is created.

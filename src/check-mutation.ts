@@ -4,7 +4,12 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { previewApplyPatch } from "./apply-patch";
 import type { CheckedToolName } from "./check-approvals";
-import { isPathInsideOrSame, pathsHaveSameIdentity } from "./platform";
+import {
+  canonicalPathIdentityAllowMissing,
+  isPathInsideOrSame,
+  pathIdentity,
+  pathsHaveSameIdentity,
+} from "./platform";
 
 export type MutationSensitivity = {
   executable: boolean;
@@ -79,11 +84,19 @@ async function validateEditPath(
   const projectRoot = await realpath(cwd);
   const roots = await Promise.all([projectRoot, ...allowedPaths].map((path) => realpath(path)));
   const absolute = resolve(projectRoot, inputPath);
-  const canonical = await realpath(absolute);
   const sortedRoots = roots.sort((first, second) => second.length - first.length);
-  const root = sortedRoots.find((candidate) => isPathInsideOrSame(candidate, canonical))
-    ?? sortedRoots.find((candidate) => isPathInsideOrSame(candidate, absolute));
+  let root = sortedRoots.find((candidate) => isPathInsideOrSame(candidate, absolute));
+  if (!root) {
+    let targetIdentity: string;
+    try {
+      targetIdentity = await canonicalPathIdentityAllowMissing(absolute);
+    } catch {
+      throw new Error(`Edit path is outside the allowed Check mode paths: ${inputPath}`);
+    }
+    root = sortedRoots.find((candidate) => isPathInsideOrSame(pathIdentity(candidate), targetIdentity));
+  }
   if (!root) throw new Error(`Edit path is outside the allowed Check mode paths: ${inputPath}`);
+  const canonical = await realpath(absolute);
 
   let component = absolute;
   while (true) {

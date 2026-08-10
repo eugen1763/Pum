@@ -199,6 +199,7 @@ describe("transcript selection", () => {
     expect(body?.selectable).toBe(true);
 
     completeSelection(setup, prefix!);
+    await binding.flush();
     completeSelection(setup, body!);
     await binding.flush();
 
