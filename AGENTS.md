@@ -130,9 +130,11 @@ These were chosen deliberately. Change them only on purpose.
   boundary, and PUM's configuration boundary. Bash, edit, and external-trigger
   checks use the extra roots. Windows containment compares canonical identities,
   so short and long path spellings cannot disagree about authorization.
-  `apply_patch` remains project-local. Every active profile still blocks
-  credential access, escaping links or junctions, broad deletion, and other
-  hard-rule violations.
+  `apply_patch` remains project-local. Balanced Bash and process checks can read
+  explicit external filesystem operands without adding a root. Strict and Ask
+  keep the approved-root boundary. Every active profile still blocks external
+  location changes, writes, execution operands, ambiguous access, credential
+  access, escaping links or junctions, broad deletion, and other hard rules.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
@@ -309,12 +311,16 @@ These were chosen deliberately. Change them only on purpose.
   keeps fail-closed verifier behavior. `balanced` blocks only hard-rule,
   explicitly suspicious, clearly dangerous, obfuscated, malformed, or
   incompletely analyzed calls. Balanced permits ordinary complete project-local
-  calls. Balanced verifier review is non-blocking after complete deterministic
+  calls. Balanced also permits explicit, deterministically classified external
+  reads. The policy classifies operands as read, write, execute, location, or
+  unknown. External writes, execution operands, location changes, and unknown
+  access remain hard blocks. Direct external-read uploads also remain hard
+  blocks. Balanced verifier review is non-blocking after complete deterministic
   validation unless the verifier returns explicit `UNSAFE`. `ask` presents every
   checked call that passes hard rules to the user, unless an exact prior approval
   matches. A verifier `SAFE` result does not bypass the popup in Ask mode. Every
-  active profile blocks project escape, escaping links or junctions, credential
-  access, privilege escalation, persistence, remote-script execution, dangerous
+  active profile blocks escaping links or junctions, credential access,
+  privilege escalation, persistence, remote-script execution, dangerous
   destructive Git, and broad deletion. Hard blocks never open the popup and
   cannot be overridden. Explicit verifier `UNSAFE` results also block without
   the popup. The only exception is a narrow deterministic match for direct
