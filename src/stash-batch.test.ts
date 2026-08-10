@@ -19,8 +19,10 @@ describe("stash batch selection", () => {
     expect(prompt).toContain("Keep it pending when no appropriate recipient is clear");
     expect(prompt).toContain("You may group related tasks into one subagent");
     expect(prompt).toContain("Run independent task groups in parallel");
-    expect(prompt).toContain("Merge each successful subagent");
-    expect(prompt).toContain("as soon as it settles");
+    expect(prompt).toContain(
+      "Merge each successful subagent only after a completion notice arrives and authoritative status is `completed`; idle settlement is not completion",
+    );
+    expect(prompt).not.toContain("as soon as it settles");
     expect(prompt).toContain("recursively merge or resolve every retained descendant");
     expect(prompt).toContain("deepest descendants first");
     expect(prompt).toContain("concrete dependency");
