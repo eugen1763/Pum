@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { basename, delimiter, dirname, join } from "node:path";
+import { delimiter, join, win32 } from "node:path";
 import type {
 	ContainerConfig,
 	PlatformSupport,
@@ -127,9 +127,9 @@ function uniqueWindowsPaths(paths: readonly string[]): string[] {
 }
 
 function windowsRuntimePaths(executable: string): string[] {
-	const executableDirectory = dirname(executable);
-	return basename(executableDirectory).toLowerCase() === "bin"
-		? [dirname(executableDirectory)]
+	const executableDirectory = win32.dirname(executable);
+	return win32.basename(executableDirectory).toLowerCase() === "bin"
+		? [win32.dirname(executableDirectory)]
 		: [executableDirectory];
 }
 
