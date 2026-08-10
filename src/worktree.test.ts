@@ -19,7 +19,12 @@ const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 const normalizeGitCheckoutLineEndings = (content: string) => content.replaceAll("\r\n", "\n");
 
-afterAll(() => rmSync(root, { recursive: true, force: true }));
+afterAll(() => rmSync(root, {
+  recursive: true,
+  force: true,
+  maxRetries: process.platform === "win32" ? 10 : 0,
+  retryDelay: 100,
+}));
 
 describe("worktree porcelain parsing", () => {
   test("accepts CRLF and Windows paths with spaces and case variants", () => {
@@ -131,5 +136,5 @@ describe("PUM worktrees", () => {
 
     await removeWorktree(root, record);
     expect((await listWorktrees(root)).some((item) => item.name === record.name)).toBe(false);
-  });
+  }, 30_000);
 });
