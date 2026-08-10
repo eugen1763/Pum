@@ -18,9 +18,13 @@ function context(cwd: string) {
 
 function backend(capability: SandboxCapability) {
   const policies: SandboxPolicy[] = [];
+  let probes = 0;
   const value: SandboxBackend = {
     id: capability.backend,
-    probe: async () => capability,
+    probe: async () => {
+      probes += 1;
+      return capability;
+    },
     spawn(policy, options) {
       policies.push(policy);
       queueMicrotask(() => options.onStdout(Buffer.from("sandboxed output")));
@@ -30,7 +34,7 @@ function backend(capability: SandboxCapability) {
       };
     },
   };
-  return { value, policies };
+  return { value, policies, probeCount: () => probes };
 }
 
 function registeredBash(controller: SandboxController) {
@@ -103,10 +107,17 @@ describe("sandbox Bash override", () => {
   test("uses one concise automatic fallback warning", async () => {
     const mock = backend({ state: "unavailable", backend: "bubblewrap", reason: "bwrap was not found" });
     const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: "linux" });
-    const first = await controller.startupWarning();
-    const second = await controller.startupWarning();
+    const first = await controller.startupWarning("balanced");
+    const second = await controller.startupWarning("balanced");
     expect(first).toBe(second);
     expect(first).toContain("deterministic Check mode only");
     expect(first).toContain("bwrap was not found");
+  });
+
+  test("does not probe or warn at startup while Check mode is off", async () => {
+    const mock = backend({ state: "unavailable", backend: "bubblewrap", reason: "bwrap was not found" });
+    const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: "linux" });
+    expect(await controller.startupWarning("off")).toBeUndefined();
+    expect(mock.probeCount()).toBe(0);
   });
 });

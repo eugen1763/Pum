@@ -59,7 +59,7 @@ export async function start(options: StartupOptions): Promise<void> {
     mode: settings.sandboxMode ?? "auto",
     agentDir: AGENT_DIR,
   });
-  const sandboxWarning = await sandboxController.startupWarning();
+  const sandboxWarning = await sandboxController.startupWarning(settings.checkMode);
   const sandboxExtension = sandboxController.extension();
   setWritingStyle(settings.writingStyle);
   setExplanationStrength(settings.explanationStrength);

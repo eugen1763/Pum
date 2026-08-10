@@ -13,6 +13,7 @@ import { AGENT_DIR } from "../config";
 import { analyzeCheckPolicy } from "../check-policy";
 import { getCheckModeConfig } from "../check-mode";
 import { buildSandboxPolicy, decideSandboxMode } from "../sandbox-policy";
+import type { CheckModeProfile } from "../settings";
 import type { SandboxBackend, SandboxCapability, SandboxMode } from "./types";
 import { createBubblewrapBackend } from "./linux";
 import { createWindowsSandboxBackend } from "./windows";
@@ -94,7 +95,8 @@ export class SandboxController {
       ?? Promise.resolve(unsupportedCapability(this.#platform));
   }
 
-  async startupWarning(): Promise<string | undefined> {
+  async startupWarning(checkMode: CheckModeProfile): Promise<string | undefined> {
+    if (checkMode === "off") return undefined;
     if (this.#mode === "off") return undefined;
     const capability = await this.probe();
     const decision = decideSandboxMode(this.#mode, capability);
