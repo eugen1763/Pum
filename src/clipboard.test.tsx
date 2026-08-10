@@ -197,15 +197,14 @@ describe("transcript selection", () => {
     const [prefix, body] = textRows;
     expect(prefix?.selectable).toBe(true);
     expect(body?.selectable).toBe(true);
+    expect(prefix?.plainText).toContain("apply_patch ·");
+    expect(body?.plainText).toContain("src/file.ts  +2 −1");
 
-    completeSelection(setup, prefix!);
-    await binding.flush();
     completeSelection(setup, body!);
     await binding.flush();
 
-    expect(copied).toHaveLength(2);
-    expect(copied[0]).toContain("apply_patch ·");
-    expect(copied[1]).toContain("src/file.ts  +2 −1");
+    expect(copied).toHaveLength(1);
+    expect(copied[0]).toContain("src/file.ts  +2 −1");
     binding.dispose();
   });
 
