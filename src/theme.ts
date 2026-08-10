@@ -23,7 +23,7 @@ export type Theme = {
   success: string;
   error: string;
   warn: string;
-  /** Foreground and background for tool calls blocked before execution. */
+  /** Orange foreground and existing background for tool calls blocked before execution. */
   rejection: string;
   rejectionBg: string;
   selectionBg: string;
@@ -59,7 +59,7 @@ const tokyonight: Theme = {
   success: "#9ece6a",
   error: "#f7768e",
   warn: "#ff9e64",
-  rejection: "#e0af68",
+  rejection: "#ff9e64",
   rejectionBg: "#332b24",
   selectionBg: "#33467c",
   popupBg: "#1f2335",
@@ -91,7 +91,7 @@ const gruvbox: Theme = {
   success: "#b8bb26",
   error: "#fb4934",
   warn: "#fe8019",
-  rejection: "#fabd2f",
+  rejection: "#fe8019",
   rejectionBg: "#3c3836",
   selectionBg: "#504945",
   popupBg: "#32302f",
@@ -123,7 +123,7 @@ const catppuccin: Theme = {
   success: "#a6e3a1",
   error: "#f38ba8",
   warn: "#fab387",
-  rejection: "#f9e2af",
+  rejection: "#fab387",
   rejectionBg: "#3b342f",
   selectionBg: "#45475a",
   popupBg: "#181825",
@@ -155,7 +155,7 @@ const nord: Theme = {
   success: "#a3be8c",
   error: "#bf616a",
   warn: "#d08770",
-  rejection: "#ebcb8b",
+  rejection: "#d08770",
   rejectionBg: "#3b3b3b",
   selectionBg: "#4c566a",
   popupBg: "#3b4252",
@@ -187,7 +187,7 @@ const dracula: Theme = {
   success: "#50fa7b",
   error: "#ff5555",
   warn: "#ffb86c",
-  rejection: "#f1fa8c",
+  rejection: "#ffb86c",
   rejectionBg: "#3d3f36",
   selectionBg: "#44475a",
   popupBg: "#21222c",
@@ -251,7 +251,7 @@ const solarized: Theme = {
   success: "#859900",
   error: "#dc322f",
   warn: "#cb4b16",
-  rejection: "#b58900",
+  rejection: "#cb4b16",
   rejectionBg: "#343b35",
   selectionBg: "#0b4b59",
   popupBg: "#073642",
@@ -283,7 +283,7 @@ const kanagawa: Theme = {
   success: "#98bb6c",
   error: "#e46876",
   warn: "#ffa066",
-  rejection: "#e6c384",
+  rejection: "#ffa066",
   rejectionBg: "#39352d",
   selectionBg: "#2d4f67",
   popupBg: "#16161d",
@@ -315,7 +315,7 @@ const githubLight: Theme = {
   success: "#1a7f37",
   error: "#cf222e",
   warn: "#bc4c00",
-  rejection: "#9a6700",
+  rejection: "#bc4c00",
   rejectionBg: "#fff1c2",
   selectionBg: "#b6d7ff",
   popupBg: "#f6f8fa",
