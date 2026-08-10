@@ -486,6 +486,7 @@ export function App({
   ), [modelRuntime, modelId, modelQuery, loginPage]);
 
   const inputRef = useRef<TextareaRenderable>(null);
+  const transcriptScrollRef = useRef<ScrollBoxRenderable>(null);
   const questionnaireInputRef = useRef<TextareaRenderable>(null);
   const spawnPreviewInputRef = useRef<TextareaRenderable>(null);
   const settingsOpenRef = useRef(settingsOpen);
@@ -1989,6 +1990,13 @@ export function App({
       return;
     }
 
+    if (key.ctrl && key.name === "end") {
+      key.stopPropagation();
+      const transcriptScroll = transcriptScrollRef.current;
+      if (transcriptScroll) transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
+      return;
+    }
+
     const isAgentCycle =
       (key.name === "tab" && key.shift) ||
       key.name === "backtab" ||
@@ -2290,6 +2298,8 @@ export function App({
         />
         <scrollbox
           key={activeAgentId ?? "main"}
+          ref={transcriptScrollRef}
+          id="transcript-scrollbox"
           style={{ flexGrow: 1, paddingLeft: 1, paddingRight: 1 }}
           stickyScroll
           stickyStart="bottom"
