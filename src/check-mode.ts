@@ -33,6 +33,28 @@ export type CheckModeConfig = {
 };
 
 const REJECTED_TOOL_DETAIL = "pumRejected";
+const pendingRejectedTools = new Map<string, string>();
+
+function toolResultText(result: unknown): string | undefined {
+  const content = (result as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content
+    .filter((block): block is { type: "text"; text: string } => (
+      Boolean(block) && typeof block === "object"
+      && (block as { type?: unknown }).type === "text"
+      && typeof (block as { text?: unknown }).text === "string"
+    ))
+    .map((block) => block.text)
+    .join("")
+    .trim();
+  return text || undefined;
+}
+
+function pendingRejectedToolReason(toolCallId: string | undefined, result: unknown): string | undefined {
+  if (!toolCallId) return undefined;
+  const reason = pendingRejectedTools.get(toolCallId);
+  return reason && toolResultText(result) === reason ? reason : undefined;
+}
 
 export function rejectedToolDetails(details: unknown, reason?: string): unknown {
   const marker = { [REJECTED_TOOL_DETAIL]: true, ...(reason ? { pumRejectionReason: reason } : {}) };
@@ -40,17 +62,20 @@ export function rejectedToolDetails(details: unknown, reason?: string): unknown 
   return marker;
 }
 
-export function isRejectedToolResult(result: unknown): boolean {
+export function isRejectedToolResult(result: unknown, toolCallId?: string): boolean {
   const details = (result as { details?: unknown } | null)?.details;
-  return Boolean(details && typeof details === "object"
-    && (details as Record<string, unknown>)[REJECTED_TOOL_DETAIL] === true);
+  if (details && typeof details === "object"
+    && (details as Record<string, unknown>)[REJECTED_TOOL_DETAIL] === true) return true;
+  return pendingRejectedToolReason(toolCallId, result) !== undefined;
 }
 
-export function rejectedToolReason(result: unknown): string | undefined {
+export function rejectedToolReason(result: unknown, toolCallId?: string): string | undefined {
   const details = (result as { details?: unknown } | null)?.details;
-  if (!details || typeof details !== "object") return undefined;
-  const reason = (details as Record<string, unknown>).pumRejectionReason;
-  return typeof reason === "string" && reason.trim() ? reason : undefined;
+  if (details && typeof details === "object") {
+    const reason = (details as Record<string, unknown>).pumRejectionReason;
+    if (typeof reason === "string" && reason.trim()) return reason;
+  }
+  return pendingRejectedToolReason(toolCallId, result);
 }
 
 let current: CheckModeConfig = { profile: "off", model: DEFAULT_CHECK_MODEL };
@@ -936,14 +961,31 @@ export function createCheckModeExtension(
 
         const visibleReason = redactApprovalPreview(evaluation.reason);
         rejected.set(event.toolCallId, visibleReason);
+        pendingRejectedTools.set(event.toolCallId, visibleReason);
         return { block: true, reason: visibleReason };
       });
 
       pi.on("tool_result", (event) => {
         const reason = rejected.get(event.toolCallId);
         if (!reason) return;
-        rejected.delete(event.toolCallId);
         return { details: rejectedToolDetails(event.details, reason) };
+      });
+
+      // pi 0.84 does not call tool_result for calls blocked by beforeToolCall.
+      // Mark the finalized message so session replay keeps the rejected state.
+      pi.on("message_end", (event) => {
+        const message = event.message as any;
+        if (message?.role !== "toolResult" || typeof message.toolCallId !== "string") return;
+        const reason = rejected.get(message.toolCallId);
+        if (!reason) return;
+        rejected.delete(message.toolCallId);
+        pendingRejectedTools.delete(message.toolCallId);
+        return {
+          message: {
+            ...message,
+            details: rejectedToolDetails(message.details, reason),
+          },
+        };
       });
     },
   };

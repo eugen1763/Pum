@@ -908,13 +908,13 @@ export function App({
           break;
         case "tool_execution_end":
           patchTool(event.toolCallId, {
-            state: isRejectedToolResult(event.result)
+            state: isRejectedToolResult(event.result, event.toolCallId)
               ? "rejected"
               : event.isError
                 ? "error"
                 : "ok",
-            detail: isRejectedToolResult(event.result)
-              ? rejectedToolReason(event.result)
+            detail: isRejectedToolResult(event.result, event.toolCallId)
+              ? rejectedToolReason(event.result, event.toolCallId)
               : event.toolName === "edit" || event.toolName === "apply_patch"
                 ? editCounts(event.result)
                 : event.toolName === "questionnaire"

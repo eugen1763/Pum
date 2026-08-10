@@ -375,7 +375,7 @@ export function ToolLine({
   const bodyChunks = call.arg
     ? [fg(argColor)(call.arg)]
     : [fg(toolColor)(call.name)];
-  if (call.detail) bodyChunks.push(fg(detailColor)(`  ${call.detail}`));
+  if (call.detail && !rejected) bodyChunks.push(fg(detailColor)(`  ${call.detail}`));
 
   const caret = useBlinkingText({
     chunks: bodyChunks,
@@ -385,36 +385,49 @@ export function ToolLine({
   });
 
   return (
-    <Row
-      glyph={GUTTER}
-      glyphColor={toolColor}
-      background={rejected ? theme.rejectionBg : undefined}
-    >
-      <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-        {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
-        <text
-          ref={workingCaret ? caret : undefined}
-          content={workingCaret ? undefined : new StyledText(bodyChunks)}
-          selectable
-          wrapMode="word"
-          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
-        />
-      </box>
-      {/* The transcript scrollbox uses two padding columns and one pinned
-          scrollbar column. The row then uses a two-column gutter and a
-          one-column state marker. Bash reserves one additional column before
-          the marker so commands wrap before the terminal-edge boundary. */}
-      <box style={{ width: call.name === "bash" ? 2 : 1, flexShrink: 0 }} />
-      <box style={{ width: 1, flexShrink: 0 }}>
-        {call.state === "running" ? (
-          <text ref={spinner} fg={theme.accent} />
-        ) : (
+    <box style={{ flexDirection: "column", width: "100%" }}>
+      <Row
+        glyph={GUTTER}
+        glyphColor={toolColor}
+        background={rejected ? theme.rejectionBg : undefined}
+      >
+        <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+          {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
           <text
-            content={toolStateGlyph(call.state)}
-            fg={call.state === "ok" ? theme.success : rejected ? theme.rejection : theme.error}
+            ref={workingCaret ? caret : undefined}
+            content={workingCaret ? undefined : new StyledText(bodyChunks)}
+            selectable
+            wrapMode="word"
+            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
           />
-        )}
-      </box>
-    </Row>
+        </box>
+        {/* The transcript scrollbox uses two padding columns and one pinned
+            scrollbar column. The row then uses a two-column gutter and a
+            one-column state marker. Bash reserves one additional column before
+            the marker so commands wrap before the terminal-edge boundary. */}
+        <box style={{ width: call.name === "bash" ? 2 : 1, flexShrink: 0 }} />
+        <box style={{ width: 1, flexShrink: 0 }}>
+          {call.state === "running" ? (
+            <text ref={spinner} fg={theme.accent} />
+          ) : (
+            <text
+              content={toolStateGlyph(call.state)}
+              fg={call.state === "ok" ? theme.success : rejected ? theme.rejection : theme.error}
+            />
+          )}
+        </box>
+      </Row>
+      {rejected && call.detail ? (
+        <Row glyph={GUTTER} glyphColor={theme.rejection} background={theme.rejectionBg}>
+          <text
+            content={call.detail}
+            fg={theme.rejection}
+            selectable
+            wrapMode="word"
+            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+          />
+        </Row>
+      ) : null}
+    </box>
   );
 }
