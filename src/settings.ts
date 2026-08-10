@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_DIR } from "./config";
 import { DEFAULT_CHECK_MODEL } from "./check-mode";
+import { projectStorageKey } from "./platform";
 import { isWritingStyle, type WritingStyle } from "./writing-style";
 import {
   isExplanationStrength,
@@ -15,6 +16,39 @@ export type CheckModeProfile = (typeof CHECK_MODE_PROFILES)[number];
 export const MIN_ACTIVE_SUBAGENTS = 1;
 export const MAX_ACTIVE_SUBAGENTS = 25;
 export const DEFAULT_MAX_ACTIVE_SUBAGENTS = 10;
+export const MAX_CHECK_PATHS_PER_PROJECT = 16;
+
+export type CheckPathsByProject = Record<string, string[]>;
+
+export function normalizeCheckPathsByProject(value: unknown): CheckPathsByProject {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const normalized: CheckPathsByProject = {};
+  for (const [project, paths] of Object.entries(value)) {
+    if (!project || !Array.isArray(paths)) continue;
+    const entries = [...new Set(paths.filter((path): path is string =>
+      typeof path === "string" && path.length > 0 && !path.includes("\0"),
+    ))].slice(0, MAX_CHECK_PATHS_PER_PROJECT);
+    if (entries.length > 0) normalized[project] = entries;
+  }
+  return normalized;
+}
+
+export function checkPathsForProject(settings: Pick<PumSettings, "checkPaths">, cwd: string): string[] {
+  return [...(settings.checkPaths?.[projectStorageKey(cwd)] ?? [])];
+}
+
+export function withCheckPathsForProject(
+  settings: PumSettings,
+  cwd: string,
+  paths: readonly string[],
+): PumSettings {
+  const key = projectStorageKey(cwd);
+  const checkPaths = { ...(settings.checkPaths ?? {}) };
+  const normalized = [...new Set(paths)].slice(0, MAX_CHECK_PATHS_PER_PROJECT);
+  if (normalized.length > 0) checkPaths[key] = normalized;
+  else delete checkPaths[key];
+  return { ...settings, checkPaths };
+}
 
 export function normalizeMaxActiveSubagents(value: unknown): number {
   return typeof value === "number"
@@ -49,6 +83,8 @@ export type PumSettings = {
   explanationStrength: ExplanationStrength;
   checkMode: CheckModeProfile;
   checkModel: string;
+  /** Additional canonical directory roots allowed by Check mode, keyed by launch project. */
+  checkPaths?: CheckPathsByProject;
   maxActiveSubagents: number;
 };
 
@@ -64,6 +100,7 @@ const DEFAULTS: PumSettings = {
   explanationStrength: "simple",
   checkMode: "off",
   checkModel: DEFAULT_CHECK_MODEL,
+  checkPaths: {},
   maxActiveSubagents: DEFAULT_MAX_ACTIVE_SUBAGENTS,
 };
 
@@ -91,6 +128,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
       typeof merged.checkModel === "string" && merged.checkModel.includes("/")
         ? merged.checkModel
         : DEFAULTS.checkModel,
+    checkPaths: normalizeCheckPathsByProject(merged.checkPaths),
     maxActiveSubagents: normalizeMaxActiveSubagents(merged.maxActiveSubagents),
   };
 }

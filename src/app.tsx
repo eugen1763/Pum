@@ -19,6 +19,7 @@ import {
 } from "./settings-popup";
 import {
   CHECK_MODE_PROFILES,
+  checkPathsForProject,
   MAX_ACTIVE_SUBAGENTS,
   MIN_ACTIVE_SUBAGENTS,
   saveSettings,
@@ -72,6 +73,7 @@ import {
   setExplanationStrength,
 } from "./explanation-strength";
 import { setCheckModeConfig } from "./check-mode";
+import { applyCheckPathCommand, parseCheckPathCommand } from "./check-paths";
 import {
   captureClipboardImage,
   cleanupPendingImages,
@@ -1027,8 +1029,12 @@ export function App({
     if (patch.explanationStrength !== undefined) {
       setExplanationStrength(patch.explanationStrength);
     }
-    if (patch.checkMode !== undefined || patch.checkModel !== undefined) {
-      setCheckModeConfig({ profile: next.checkMode, model: next.checkModel });
+    if (patch.checkMode !== undefined || patch.checkModel !== undefined || patch.checkPaths !== undefined) {
+      setCheckModeConfig({
+        profile: next.checkMode,
+        model: next.checkModel,
+        additionalPaths: checkPathsForProject(next, cwd),
+      });
     }
     if (patch.showThinking !== undefined) showThinkingRef.current = patch.showThinking;
     if (patch.maxActiveSubagents !== undefined) {
@@ -1248,9 +1254,10 @@ export function App({
     const clear = /^\/(?:clear|new)$/.test(trimmed);
     const historyCommand = trimmed === "/history";
     const loginCommand = trimmed === "/login";
+    const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !triggersCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !worktreeCommand) return false;
     editingStashIndex.current = null;
 
     if (historyCommand) {
@@ -1279,7 +1286,20 @@ export function App({
     }
 
     setWorking(true);
-    if (worktreeCommand) {
+    if (checkPathCommand) {
+      Promise.resolve()
+        .then(() => parseCheckPathCommand(trimmed))
+        .then((command) => {
+          if (!command) throw new Error("invalid /check-path command");
+          return applyCheckPathCommand(settings, cwd, command);
+        })
+        .then((result) => {
+          update({ checkPaths: result.settings.checkPaths });
+          append({ kind: "text", role: "system", text: result.message });
+        })
+        .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
+        .finally(() => setWorking(false));
+    } else if (worktreeCommand) {
       runWorktreeCommand({
         name: worktreeCommand[1],
         manager: subagentManager,
@@ -1514,6 +1534,11 @@ export function App({
       settingsPageRef.current = "checkModels";
       setPage("checkModels");
     } },
+    checkPaths: { enter: () => append({
+      kind: "text",
+      role: "system",
+      text: "use /check-path [list|add <directory>|remove <directory>|clear]",
+    }) },
     clearCheckApprovals: { enter: () => {
       const removed = checkApprovalStore?.clearProject(cwd) ?? 0;
       append({ kind: "text", role: "system", text: removed > 0
@@ -1551,6 +1576,7 @@ export function App({
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
     checkMode: `‹ ${settings.checkMode} ›`,
     checkModel: `${settings.checkModel} ›`,
+    checkPaths: `${checkPathsForProject(settings, cwd).length} additional · /check-path ›`,
     clearCheckApprovals: "clear ›",
     thinkingLevel: `‹ ${thinkingLevel} ›`,
     showThinking: `‹ ${settings.showThinking ? "on" : "off"} ›`,

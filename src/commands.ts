@@ -26,6 +26,10 @@ export const COMMANDS: Command[] = [
     description: "Add or update a provider login",
   },
   {
+    name: "/check-path",
+    description: "Manage additional Check mode directory roots",
+  },
+  {
     name: "/triggers",
     description: "Manage external triggers",
   },

@@ -15,6 +15,7 @@ export type SettingRowId =
   | "explanationStrength"
   | "checkMode"
   | "checkModel"
+  | "checkPaths"
   | "clearCheckApprovals"
   | "thinkingLevel"
   | "showThinking"
@@ -44,6 +45,7 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },
   { id: "checkMode", label: "Check mode", category: "Safety", keywords: "profile strict balanced ask verify tools hard block approval bash edit patch", description: "Choose off, strict, balanced, or ask. Hard security rules apply to every active profile." },
   { id: "checkModel", label: "Check model", category: "Safety", keywords: "verifier tools safety structured verdict model", description: "Select the separate verifier model used for ambiguous Check mode calls." },
+  { id: "checkPaths", label: "Allowed paths", category: "Safety", keywords: "additional directories roots boundary command", description: "Use /check-path to manage extra directory roots allowed by Check mode for this project." },
   { id: "clearCheckApprovals", label: "Clear approvals", category: "Safety", keywords: "remove reset exact project approvals ask", description: "Remove exact Check mode approvals stored for this project." },
 ];
 

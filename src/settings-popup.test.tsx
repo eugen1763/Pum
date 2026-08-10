@@ -25,7 +25,9 @@ const values = Object.fromEntries(
 describe("settings search and navigation", () => {
   test("filters labels, categories, and useful keywords", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
-    expect(filterSettingsRows("safety").map((row) => row.id)).toEqual(["checkMode", "checkModel", "clearCheckApprovals"]);
+    expect(filterSettingsRows("safety").map((row) => row.id)).toEqual([
+      "checkMode", "checkModel", "checkPaths", "clearCheckApprovals",
+    ]);
     expect(filterSettingsRows("reasoning visible").map((row) => row.id)).toEqual(["showThinking"]);
     expect(filterSettingsRows("progress detailed").map((row) => row.id)).toEqual(["explanationStrength"]);
     expect(filterSettingsRows("parallel capacity").map((row) => row.id)).toEqual(["maxActiveSubagents"]);
@@ -48,7 +50,8 @@ describe("settings search and navigation", () => {
   test("moves only through filtered rows and wraps", () => {
     const rows = filterSettingsRows("check");
     expect(moveSettingSelection(rows, "checkMode", 1)).toBe("checkModel");
-    expect(moveSettingSelection(rows, "checkModel", 1)).toBe("clearCheckApprovals");
+    expect(moveSettingSelection(rows, "checkModel", 1)).toBe("checkPaths");
+    expect(moveSettingSelection(rows, "checkPaths", 1)).toBe("clearCheckApprovals");
     expect(moveSettingSelection(rows, "clearCheckApprovals", 1)).toBe("checkMode");
     expect(moveSettingSelection([], "checkMode", 1)).toBeNull();
   });

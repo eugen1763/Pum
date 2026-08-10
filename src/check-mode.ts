@@ -30,6 +30,7 @@ export const CHECK_MODE_CACHE_LIMIT = 256;
 export type CheckModeConfig = {
   profile: CheckModeProfile;
   model: string;
+  additionalPaths?: readonly string[];
 };
 
 const REJECTED_TOOL_DETAIL = "pumRejected";
@@ -53,16 +54,16 @@ export function rejectedToolReason(result: unknown): string | undefined {
   return typeof reason === "string" && reason.trim() ? reason : undefined;
 }
 
-let current: CheckModeConfig = { profile: "off", model: DEFAULT_CHECK_MODEL };
+let current: Required<CheckModeConfig> = { profile: "off", model: DEFAULT_CHECK_MODEL, additionalPaths: [] };
 
 export function setCheckModeConfig(config: CheckModeConfig | { enabled: boolean; model: string }): void {
   current = "profile" in config
-    ? { ...config }
-    : { profile: config.enabled ? "strict" : "off", model: config.model };
+    ? { ...config, additionalPaths: [...(config.additionalPaths ?? [])] }
+    : { profile: config.enabled ? "strict" : "off", model: config.model, additionalPaths: [] };
 }
 
 export function getCheckModeConfig(): CheckModeConfig {
-  return { ...current };
+  return { ...current, additionalPaths: [...current.additionalPaths] };
 }
 
 function modelRef(model: Model<any>): string {
@@ -216,6 +217,7 @@ export async function prepareCheck(
   cwd: string,
   profile: Exclude<CheckModeProfile, "off">,
   context: UntrustedContext = {},
+  additionalPaths: readonly string[] = [],
 ): Promise<{ prepared?: PreparedCheck; block?: string; balancedAllow?: string }> {
   let canonicalInput: string;
   try {
@@ -234,12 +236,13 @@ export async function prepareCheck(
         args: input.args,
         cwd: input.cwd,
         projectCwd: cwd,
+        allowedPaths: additionalPaths,
         profile,
       });
     } else {
       const command = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
       if (typeof command !== "string") return { block: "Bash safety check requires a complete command string or process proposal" };
-      policy = analyzeCheckPolicy({ command, cwd, profile });
+      policy = analyzeCheckPolicy({ command, cwd, profile, allowedPaths: additionalPaths });
     }
     bash = policy.analysis;
     if (!bash.complete || bash.truncated || !bash.syntaxBalanced) {
@@ -248,7 +251,7 @@ export async function prepareCheck(
     if (policy.decision === "block") return { block: `Check mode hard block: ${policy.reason}` };
   } else {
     try {
-      mutation = await previewMutation(toolName, cwd, input);
+      mutation = await previewMutation(toolName, cwd, input, additionalPaths);
     } catch (error) {
       return { block: `Check mode blocked invalid or stale ${toolName} input: ${error instanceof Error ? error.message : String(error)}` };
     }
@@ -281,6 +284,7 @@ export async function prepareCheck(
     version: 2,
     complete: true,
     cwd,
+    allowedDirectoryRoots: [cwd, ...additionalPaths],
     tool: toolName,
     input,
     deterministicPolicy: policy ? {
@@ -330,6 +334,7 @@ export async function prepareCheck(
       version: 2,
       complete: true,
       cwd,
+      allowedDirectoryRoots: [cwd, ...additionalPaths],
       tool: toolName,
       reviewCoverage: {
         mode: "complete-metadata-digest",
@@ -526,8 +531,10 @@ async function withHardTimeout<T>(operation: (signal: AbortSignal) => Promise<T>
   }
 }
 
-function normalizeConfig(config: ToolCheck["config"]): CheckModeConfig {
-  return "profile" in config ? config : { profile: config.enabled ? "strict" : "off", model: config.model };
+function normalizeConfig(config: ToolCheck["config"]): Required<CheckModeConfig> {
+  return "profile" in config
+    ? { ...config, additionalPaths: [...(config.additionalPaths ?? [])] }
+    : { profile: config.enabled ? "strict" : "off", model: config.model, additionalPaths: [] };
 }
 
 const NPM_BOOLEAN_RELEASE_FLAGS = new Set([
@@ -619,7 +626,14 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
   if (config.profile === "off") return { decision: "allow", reason: "Check mode is off", category: "off" };
   if (call.signal?.aborted) return { decision: "block", reason: "Safety check aborted", category: "abort" };
   const profile = config.profile as Exclude<CheckModeProfile, "off">;
-  const preparedResult = await prepareCheck(call.toolName, call.input, call.cwd, profile, call.context);
+  const preparedResult = await prepareCheck(
+    call.toolName,
+    call.input,
+    call.cwd,
+    profile,
+    call.context,
+    config.additionalPaths,
+  );
   if (!preparedResult.prepared) return { decision: "block", reason: preparedResult.block ?? "Safety preparation failed", category: "hard-block" };
   const prepared = preparedResult.prepared;
   if (profile === "ask" && call.isApproved?.(prepared)) {

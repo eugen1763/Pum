@@ -15,6 +15,17 @@ describe("PUM settings migration", () => {
     expect(settings.explanationStrength).toBe("simple");
     expect(settings.animations).toBe(true);
     expect(settings.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
+    expect(settings.checkPaths).toEqual({});
+  });
+
+  test("normalizes bounded additional Check mode paths", () => {
+    const settings = normalizeSettings({
+      checkPaths: {
+        "/project": ["/shared", "/shared", "", 42],
+        invalid: "not-an-array",
+      },
+    } as any);
+    expect(settings.checkPaths).toEqual({ "/project": ["/shared"] });
   });
 
   test("accepts every working-rule mode including explicit off", () => {

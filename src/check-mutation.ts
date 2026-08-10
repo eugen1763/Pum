@@ -71,14 +71,21 @@ function insideRoot(root: string, path: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-async function validateEditPath(cwd: string, inputPath: string): Promise<{ root: string; absolute: string; display: string; mode: number }> {
+async function validateEditPath(
+  cwd: string,
+  inputPath: string,
+  allowedPaths: readonly string[],
+): Promise<{ root: string; absolute: string; display: string; mode: number }> {
   if (!inputPath || inputPath.includes("\0")) throw new Error("Edit path is invalid");
   if (windowsAbsolute(inputPath) && process.platform !== "win32") {
     throw new Error(`Edit path is outside the project: ${inputPath}`);
   }
-  const root = await realpath(cwd);
-  const absolute = resolve(root, inputPath);
-  if (!insideRoot(root, absolute)) throw new Error(`Edit path is outside the project: ${inputPath}`);
+  const projectRoot = await realpath(cwd);
+  const roots = await Promise.all([projectRoot, ...allowedPaths].map((path) => realpath(path)));
+  const absolute = resolve(projectRoot, inputPath);
+  const root = roots.sort((first, second) => second.length - first.length)
+    .find((candidate) => candidate === absolute || insideRoot(candidate, absolute));
+  if (!root) throw new Error(`Edit path is outside the allowed Check mode paths: ${inputPath}`);
 
   let component = root;
   const rel = relative(root, absolute);
@@ -91,7 +98,10 @@ async function validateEditPath(cwd: string, inputPath: string): Promise<{ root:
   if (!insideRoot(root, canonical)) throw new Error(`Edit path resolves outside the project: ${inputPath}`);
   const metadata = await lstat(absolute);
   if (!metadata.isFile()) throw new Error(`Edit path is not a file: ${inputPath}`);
-  return { root, absolute, display: relative(root, absolute).split(sep).join("/"), mode: metadata.mode };
+  const display = projectRoot === absolute || insideRoot(projectRoot, absolute)
+    ? relative(projectRoot, absolute).split(sep).join("/")
+    : absolute;
+  return { root, absolute, display, mode: metadata.mode };
 }
 
 function occurrences(content: string, needle: string): number[] {
@@ -144,7 +154,7 @@ function completeContentMetadata(patch: string): Pick<MutationPreview, "contentC
   };
 }
 
-async function previewEdit(cwd: string, input: unknown): Promise<MutationPreview> {
+async function previewEdit(cwd: string, input: unknown, allowedPaths: readonly string[]): Promise<MutationPreview> {
   if (!input || typeof input !== "object") throw new Error("Edit input is invalid");
   const value = input as { path?: unknown; edits?: unknown; oldText?: unknown; newText?: unknown };
   if (typeof value.path !== "string") throw new Error("Edit path is invalid");
@@ -162,7 +172,7 @@ async function previewEdit(cwd: string, input: unknown): Promise<MutationPreview
     && typeof (edit as any).newText === "string",
   )) throw new Error("Edit replacements are invalid");
 
-  const validated = await validateEditPath(cwd, value.path);
+  const validated = await validateEditPath(cwd, value.path, allowedPaths);
   const buffer = await readFile(validated.absolute);
   let content: string;
   try {
@@ -204,8 +214,9 @@ export async function previewMutation(
   toolName: CheckedToolName,
   cwd: string,
   input: unknown,
+  allowedPaths: readonly string[] = [],
 ): Promise<MutationPreview | undefined> {
-  if (toolName === "edit") return previewEdit(cwd, input);
+  if (toolName === "edit") return previewEdit(cwd, input, allowedPaths);
   if (toolName !== "apply_patch") return undefined;
   if (!input || typeof input !== "object" || typeof (input as { patch?: unknown }).patch !== "string") {
     throw new Error("Apply patch input is invalid");

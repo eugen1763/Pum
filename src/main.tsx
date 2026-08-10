@@ -11,7 +11,7 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
-import { loadSettings } from "./settings";
+import { checkPathsForProject, loadSettings } from "./settings";
 import { installWebSearch, webSearch } from "./web-search";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
 import {
@@ -59,7 +59,11 @@ export async function start(options: StartupOptions): Promise<void> {
   const spawnPreviewManager = new SpawnPreviewManager();
   const sessionHistoryIndex = new SessionHistoryIndex();
   const messageCacheController = new MessageCacheController(process.cwd());
-  setCheckModeConfig({ profile: settings.checkMode, model: settings.checkModel });
+  setCheckModeConfig({
+    profile: settings.checkMode,
+    model: settings.checkModel,
+    additionalPaths: checkPathsForProject(settings, process.cwd()),
+  });
   const checkApprovalCoordinator = new CheckApprovalCoordinator();
   const checkApprovalStore = new CheckApprovalStore();
   const mainCheckModeExtension = createCheckModeExtension(modelRuntime, undefined, {

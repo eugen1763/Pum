@@ -104,6 +104,8 @@ export type CheckPolicyFileSystem = {
 export type AnalyzeCheckPolicyOptions = {
   command: string;
   cwd: string;
+  /** Canonical directory roots explicitly added for this launch project. */
+  allowedPaths?: readonly string[];
   profile?: CheckPolicyProfile;
   limits?: Partial<CheckPolicyLimits>;
   fileSystem?: CheckPolicyFileSystem;
@@ -125,6 +127,8 @@ export type ProcessCheckProposal = {
 
 export type AnalyzeExecutablePolicyOptions = Pick<ProcessCheckProposal, "executable" | "args" | "cwd"> & {
   projectCwd?: string;
+  /** Canonical directory roots explicitly added for this launch project. */
+  allowedPaths?: readonly string[];
   profile?: CheckPolicyProfile;
   limits?: Partial<CheckPolicyLimits>;
   fileSystem?: CheckPolicyFileSystem;
@@ -160,6 +164,7 @@ const PATH_OPERAND_COMMANDS = new Set([
   "readlink", "rm", "rmdir", "unlink", "shred", "mv", "cp", "install", "mkdir", "touch", "truncate",
   "chmod", "chown", "chgrp", "setfacl", "tee", "sed", "perl",
   "node", "bun", "deno", "python", "python3", "ruby", "perl", "php", "java",
+  "cd", "chdir", "set-location",
 ]);
 const PRIVILEGE_COMMANDS = new Set(["sudo", "doas", "su", "pkexec", "runas"]);
 const PERSISTENCE_COMMANDS = new Set(["crontab", "at", "schtasks", "launchctl"]);
@@ -517,23 +522,40 @@ function looksLikePath(value: string): boolean {
     || value.includes("/") || value.includes("\\");
 }
 
-function normalizedAbsolute(value: string, cwd: string, projectCwd = cwd): { absolute: string; root: string; inside: boolean } {
+function normalizedAbsolute(
+  value: string,
+  cwd: string,
+  projectCwd = cwd,
+  allowedPaths: readonly string[] = [],
+): { absolute: string; root: string; inside: boolean; additional: boolean } {
   const flavor = pathFlavor(value, cwd);
-  const root = flavor.resolve(projectCwd);
+  const roots = [projectCwd, ...allowedPaths]
+    .map((root) => flavor.resolve(root))
+    .sort((first, second) => second.length - first.length);
   const expanded = value === "~" || value.startsWith("~/") || value.startsWith("~\\") ? value : value;
   const absolute = flavor.resolve(cwd, expanded);
+  const root = roots.find((candidate) => {
+    const relative = flavor.relative(candidate, absolute);
+    return relative === "" || (!relative.startsWith("..") && !flavor.isAbsolute(relative));
+  }) ?? flavor.resolve(projectCwd);
   const relative = flavor.relative(root, absolute);
   const inside = relative === "" || (!relative.startsWith("..") && !flavor.isAbsolute(relative));
-  return { absolute, root, inside };
+  return {
+    absolute,
+    root,
+    inside,
+    additional: flavor.relative(flavor.resolve(projectCwd), root) !== "",
+  };
 }
 
-function isProjectRoot(value: string, cwd: string): boolean {
+function isAllowedRoot(value: string, cwd: string, projectCwd: string, allowedPaths: readonly string[]): boolean {
   const flavor = pathFlavor(value, cwd);
-  const resolved = normalizedAbsolute(value, cwd);
-  return flavor.relative(resolved.root, resolved.absolute) === "";
+  const absolute = flavor.resolve(cwd, value);
+  return [projectCwd, ...allowedPaths]
+    .some((root) => flavor.relative(flavor.resolve(root), absolute) === "");
 }
 
-function credentialPath(value: string): boolean {
+export function isCredentialSensitivePath(value: string): boolean {
   const lower = value.toLowerCase().replaceAll("\\", "/");
   const segments = lower.split("/").filter(Boolean);
   if (segments.some((segment) => CREDENTIAL_SEGMENTS.has(segment))) return true;
@@ -589,6 +611,22 @@ function symlinkEscapes(path: string, root: string, fs: CheckPolicyFileSystem): 
   }
 }
 
+function additionalRootProblem(
+  root: string,
+  fs: CheckPolicyFileSystem,
+): "missing" | "link" | undefined {
+  try {
+    if (!fs.exists(root)) return "missing";
+    if (fs.isSymbolicLink(root)) return "link";
+    const flavor = pathFlavor(root, root);
+    return flavor.relative(flavor.resolve(root), flavor.resolve(fs.realpath(root))) === ""
+      ? undefined
+      : "link";
+  } catch {
+    return "link";
+  }
+}
+
 function addFinding(findings: CheckPolicyFinding[], finding: CheckPolicyFinding): void {
   if (!findings.some((item) => item.code === finding.code && item.stage === finding.stage && item.path === finding.path)) findings.push(finding);
 }
@@ -599,6 +637,7 @@ function inspectHardBlocks(
   fs: CheckPolicyFileSystem,
   depth = 0,
   projectCwd = cwd,
+  allowedPaths: readonly string[] = [],
 ): CheckPolicyFinding[] {
   const findings: CheckPolicyFinding[] = [];
   if (!analysis.complete) {
@@ -606,6 +645,7 @@ function inspectHardBlocks(
     return findings;
   }
 
+  let activeCwd = cwd;
   for (const stage of analysis.stages) {
     const argv = effectiveArgv(stage.argv);
     const name = commandName(argv[0]);
@@ -643,24 +683,48 @@ function inspectHardBlocks(
       const recursive = argv.slice(1).some((arg) => arg === "--recursive" || /^-[^-]*r/i.test(arg));
       const force = argv.slice(1).some((arg) => arg === "--force" || /^-[^-]*f/i.test(arg));
       const broad = operands.some((arg) => [".", "..", "*", "./*", ".\\*", "/", "\\"].includes(arg)
-        || /[*?\[]/.test(arg) || isProjectRoot(arg, projectCwd))
+        || /[*?\[]/.test(arg) || isAllowedRoot(arg, activeCwd, projectCwd, allowedPaths))
         || (recursive && force && operands.length !== 1);
       if (broad) addFinding(findings, { code: "broad-deletion", severity: "hard-block", message: "deletion target is broad or recursive across multiple paths", stage: stage.index });
     }
 
     const effectiveStage = argv === stage.argv ? stage : { ...stage, argv };
     for (const value of pathOperands(effectiveStage)) {
-      if (credentialPath(value)) addFinding(findings, { code: "credential-access", severity: "hard-block", message: "command accesses a credential or secret path", stage: stage.index, path: value });
-      if (isExactPosixNullDevice(value, cwd)) continue;
+      if (isCredentialSensitivePath(value)) addFinding(findings, { code: "credential-access", severity: "hard-block", message: "command accesses a credential or secret path", stage: stage.index, path: value });
+      if (isExactPosixNullDevice(value, activeCwd)) continue;
       if (value.startsWith("~")) {
         addFinding(findings, { code: "outside-project", severity: "hard-block", message: "home-relative path is outside the project boundary", stage: stage.index, path: value });
         continue;
       }
-      const resolved = normalizedAbsolute(value, cwd, projectCwd);
+      const resolved = normalizedAbsolute(value, activeCwd, projectCwd, allowedPaths);
+      const rootProblem = resolved.additional ? additionalRootProblem(resolved.root, fs) : undefined;
       if (!resolved.inside) {
         addFinding(findings, { code: "outside-project", severity: "hard-block", message: "path resolves outside the project boundary", stage: stage.index, path: value });
+      } else if (rootProblem === "missing") {
+        addFinding(findings, { code: "outside-project", severity: "hard-block", message: "additional Check mode path no longer exists", stage: stage.index, path: value });
+      } else if (rootProblem === "link") {
+        addFinding(findings, { code: "escaping-symlink", severity: "hard-block", message: "additional Check mode path became a symlink or junction", stage: stage.index, path: value });
       } else if (symlinkEscapes(resolved.absolute, resolved.root, fs)) {
         addFinding(findings, { code: "escaping-symlink", severity: "hard-block", message: "path follows a symlink outside the project boundary or cannot be verified", stage: stage.index, path: value });
+      }
+    }
+
+    if (["cd", "chdir", "set-location"].includes(name)) {
+      const targets = pathOperands(effectiveStage);
+      const target = targets.length === 1
+        ? normalizedAbsolute(targets[0]!, activeCwd, projectCwd, allowedPaths)
+        : undefined;
+      if ((stage.operatorAfter === ";" || stage.operatorAfter === "newline")
+        && stage.index < analysis.stages.length - 1) {
+        addFinding(findings, {
+          code: "outside-project",
+          severity: "hard-block",
+          message: "an unconditional directory change before another command cannot be bounded safely",
+          stage: stage.index,
+          path: targets[0],
+        });
+      } else if (stage.operatorAfter === "&&" && target?.inside) {
+        activeCwd = target.absolute;
       }
     }
 
@@ -672,7 +736,7 @@ function inspectHardBlocks(
         : SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
       if (commandFlag >= 0 && argv[commandFlag + 1]) nestedCommands.push(argv[commandFlag + 1]!);
       for (const nestedCommand of nestedCommands) {
-        const nestedFindings = inspectHardBlocks(analyzeBashCommand(nestedCommand), cwd, fs, depth + 1, projectCwd);
+        const nestedFindings = inspectHardBlocks(analyzeBashCommand(nestedCommand), cwd, fs, depth + 1, projectCwd, allowedPaths);
         for (const finding of nestedFindings) {
           addFinding(findings, { ...finding, stage: stage.index, message: `nested command: ${finding.message}` });
         }
@@ -795,7 +859,14 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
   const profile = options.profile ?? "balanced";
   const limits = options.limits ?? (profile === "balanced" ? balancedCompleteShellLimits(options.command) : undefined);
   const analysis = analyzeBashCommand(options.command, limits);
-  const findings = inspectHardBlocks(analysis, options.cwd, options.fileSystem ?? nodeFileSystem);
+  const findings = inspectHardBlocks(
+    analysis,
+    options.cwd,
+    options.fileSystem ?? nodeFileSystem,
+    0,
+    options.cwd,
+    options.allowedPaths,
+  );
   if (findings.some((item) => item.severity === "hard-block")) {
     return { profile, decision: "block", reason: findings[0]!.message, findings, analysis };
   }
@@ -881,13 +952,30 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
   };
   const projectCwd = options.projectCwd ?? options.cwd;
   const fs = options.fileSystem ?? nodeFileSystem;
-  const findings = inspectHardBlocks(analysis, options.cwd, fs, 0, projectCwd);
-  const executionDirectory = normalizedAbsolute(options.cwd, projectCwd, projectCwd);
+  const findings = inspectHardBlocks(analysis, options.cwd, fs, 0, projectCwd, options.allowedPaths);
+  const executionDirectory = normalizedAbsolute(options.cwd, projectCwd, projectCwd, options.allowedPaths);
+  const executionRootProblem = executionDirectory.additional
+    ? additionalRootProblem(executionDirectory.root, fs)
+    : undefined;
   if (!executionDirectory.inside) {
     addFinding(findings, {
       code: "outside-project",
       severity: "hard-block",
       message: "execution cwd resolves outside the project boundary",
+      path: options.cwd,
+    });
+  } else if (executionRootProblem === "missing") {
+    addFinding(findings, {
+      code: "outside-project",
+      severity: "hard-block",
+      message: "additional Check mode path no longer exists",
+      path: options.cwd,
+    });
+  } else if (executionRootProblem === "link") {
+    addFinding(findings, {
+      code: "escaping-symlink",
+      severity: "hard-block",
+      message: "additional Check mode path became a symlink or junction",
       path: options.cwd,
     });
   } else if (symlinkEscapes(executionDirectory.absolute, executionDirectory.root, fs)) {
