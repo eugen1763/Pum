@@ -41,6 +41,23 @@ afterEach(() => {
 });
 
 describe("message cache ownership and tools", () => {
+  test("requires send before cached task assignment through exact tool metadata", () => {
+    const { controller } = fixture();
+    const tools = register(controller, () => ({ kind: "main", id: "session-1", name: "main" }));
+    const send = tools.get("message_cache_send");
+
+    expect(send.description).toBe(
+      "Execute cached messages by stable ID through PUM's authoritative user execution path. This marks entries executed and produces the main-agent coordination path. Order and duplicates are preserved.",
+    );
+    expect(send.promptGuidelines).toEqual([
+      "Use stable IDs from message_cache_list or message_cache_read.",
+      "When the user asks to do, run, or execute open or pending cached tasks, call message_cache_send before spawning or assigning work.",
+      "Listing entries or reading previews is not execution and does not replace message_cache_send.",
+      "After the generated coordination prompt arrives, reuse agents already assigned to those tasks and never create duplicate assignments.",
+      "Do not retry a send while the requester or target is still processing a prior cache send.",
+    ]);
+  });
+
   test("migrates legacy object rows as stable user-owned entries", () => {
     const { cwd, stashPath, store } = fixture();
     writeFileSync(stashPath, JSON.stringify({ [cwd]: [{ text: "legacy", executed: false }] }));

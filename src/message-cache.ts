@@ -226,10 +226,13 @@ export class MessageCacheController {
     pi.registerTool({
       name: "message_cache_send",
       label: "Message Cache Send",
-      description: "Send cached messages by stable ID through PUM's authoritative user execution path. Order and duplicates are preserved.",
+      description: "Execute cached messages by stable ID through PUM's authoritative user execution path. This marks entries executed and produces the main-agent coordination path. Order and duplicates are preserved.",
       promptSnippet: "Send one or more cached messages through PUM coordination",
       promptGuidelines: [
         "Use stable IDs from message_cache_list or message_cache_read.",
+        "When the user asks to do, run, or execute open or pending cached tasks, call message_cache_send before spawning or assigning work.",
+        "Listing entries or reading previews is not execution and does not replace message_cache_send.",
+        "After the generated coordination prompt arrives, reuse agents already assigned to those tasks and never create duplicate assignments.",
         "Do not retry a send while the requester or target is still processing a prior cache send.",
       ],
       parameters: Type.Object({ ids: IdsSchema }, { additionalProperties: false }),
