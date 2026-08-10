@@ -17,7 +17,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { useMarkdownCaret } from "./animation";
+import { AnimationProvider, useMarkdownCaret } from "./animation";
 import { replayEntries } from "./replay";
 import { buildSyntaxStyle } from "./syntax";
 import {
@@ -241,6 +241,37 @@ describe("transcript Markdown rows", () => {
       await act(async () => setText(text));
       expect(commits.at(-1)).toBe(`${text}▊`);
     }
+  });
+
+  test("does not schedule caret-only Markdown source updates", async () => {
+    reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    const setup = await createTestRenderer({ width: 32, height: 12 });
+    destroy = () => setup.renderer.destroy();
+    const root = createRoot(setup.renderer);
+    const theme = loadTheme("tokyonight");
+    const syntaxStyle = buildSyntaxStyle(theme);
+    const originalRequestLive = setup.renderer.requestLive.bind(setup.renderer);
+    let liveRequests = 0;
+    setup.renderer.requestLive = () => {
+      liveRequests += 1;
+      originalRequestLive();
+    };
+
+    await act(async () => root.render(
+      <AnimationProvider enabled>
+        <StreamLine
+          theme={theme}
+          syntaxStyle={syntaxStyle}
+          role="assistant"
+          text="### Heading"
+        />
+      </AnimationProvider>,
+    ));
+
+    const markdown = descendants(setup.renderer.root, MarkdownRenderable)[0]!;
+    expect(markdown.content).toBe("### Heading▊");
+    expect(markdown._parseState?.tokens[0]?.type).toBe("heading");
+    expect(liveRequests).toBe(0);
   });
 
   test("uses static Markdown for user, agent, and pending message bodies", async () => {
