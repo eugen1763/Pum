@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { TextareaRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App, promptPlaceholder } from "./app";
@@ -79,6 +80,15 @@ async function settle(setup: Awaited<ReturnType<typeof renderApp>>) {
   await setup.renderOnce();
 }
 
+function textarea(root: BaseRenderable): TextareaRenderable | undefined {
+  if (root instanceof TextareaRenderable) return root;
+  for (const child of root.getChildren()) {
+    const found = textarea(child);
+    if (found) return found;
+  }
+  return undefined;
+}
+
 describe("prompt input layout", () => {
   test("renders the header-bottom rule directly below StatusBar", async () => {
     const setup = await renderApp(70, 16);
@@ -147,5 +157,25 @@ describe("prompt input layout", () => {
     expect(frame).toContain("  123456789012345678901234567890AB");
     expect(frame).toContain("❯ CD");
     expect(frame.split("\n").every((line) => line.length <= 40)).toBe(true);
+  });
+
+  test("wraps prompt words without shifting continuation text", async () => {
+    const setup = await renderApp(40, 16);
+
+    await setup.mockInput.typeText("alpha beta gamma delta epsilon zeta");
+    await settle(setup);
+    const frame = setup.captureCharFrame();
+    const lines = frame.split("\n");
+    const first = lines.find((line) => line.includes("alpha beta"));
+    const second = lines.find((line) => line.includes("zeta"));
+    const input = textarea(setup.renderer.root);
+
+    expect(input?.wrapMode).toBe("word");
+    expect(input?.width).toBe(32);
+    expect(first).toContain("  alpha beta gamma delta epsilon");
+    expect(second).toContain("❯ zeta");
+    expect(first?.indexOf("alpha")).toBe(2);
+    expect(second?.indexOf("zeta")).toBe(2);
+    expect(frame).not.toContain("epsil\non");
   });
 });
