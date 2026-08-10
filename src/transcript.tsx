@@ -1,4 +1,10 @@
-import { StyledText, bold, fg, type MarkdownRenderable, type SyntaxStyle } from "@opentui/core";
+import {
+  StyledText,
+  TextAttributes,
+  fg,
+  type MarkdownRenderable,
+  type SyntaxStyle,
+} from "@opentui/core";
 import type { MarkdownProps } from "@opentui/react";
 import {
   useBlinkingText,
@@ -360,7 +366,10 @@ function rejectedDetail(theme: Theme, detail: string): StyledText {
     return new StyledText([fg(theme.rejection)(detail)]);
   }
   return new StyledText([
-    bold(fg(theme.rejection)(CHECK_MODE_HARD_BLOCK_PREFIX)),
+    {
+      ...fg(theme.rejection)(CHECK_MODE_HARD_BLOCK_PREFIX),
+      attributes: TextAttributes.BOLD,
+    },
     fg(theme.rejection)(detail.slice(CHECK_MODE_HARD_BLOCK_PREFIX.length)),
   ]);
 }
@@ -398,11 +407,7 @@ export function ToolLine({
 
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
-      <Row
-        glyph={GUTTER}
-        glyphColor={toolColor}
-        background={rejected ? theme.rejectionBg : undefined}
-      >
+      <Row glyph={GUTTER} glyphColor={toolColor}>
         <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
           {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
           <text
@@ -430,7 +435,7 @@ export function ToolLine({
         </box>
       </Row>
       {rejected && call.detail ? (
-        <Row glyph={GUTTER} glyphColor={theme.rejection} background={theme.rejectionBg}>
+        <Row glyph={GUTTER} glyphColor={theme.rejection}>
           <text
             content={rejectedDetail(theme, call.detail)}
             selectable
