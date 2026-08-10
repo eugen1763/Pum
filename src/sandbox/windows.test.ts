@@ -91,7 +91,7 @@ test("buildWindowsMxcConfig maps the complete restrictive policy", () => {
 	expect(receivedPolicy).toEqual({
 		version: "0.7.0-alpha",
 		filesystem: {
-			readonlyPaths: ["C:\\tools"],
+			readonlyPaths: ["C:\\tools", "C:\\Program Files\\Tool"],
 			readwritePaths: ["C:\\work", "C:\\temp\\pum"],
 			deniedPaths: ["C:\\work\\.env"],
 			clearPolicyOnExit: true,
@@ -135,6 +135,15 @@ test("probe requires a successful native tier and UI capability probe", async ()
 	);
 	expect(result.state).toBe("unavailable");
 	expect(result.reason).toContain("isolation tier");
+});
+
+test("probe rejects the AppContainer DACL fallback to avoid host ACL changes", async () => {
+	const result = await probeWindowsSandbox(
+		async () => ({ getPlatformSupport: () => ({ ...supported, isolationTier: "appcontainer-dacl" }) }) as never,
+		"win32",
+	);
+	expect(result.state).toBe("unavailable");
+	expect(result.reason).toContain("does not use the AppContainer DACL fallback");
 });
 
 test("probe reports an enforced native ProcessContainer", async () => {

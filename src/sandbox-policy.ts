@@ -13,6 +13,8 @@ import type {
 export type BuildSandboxPolicyOptions = {
   /** Exact command accepted by Check mode and any required user approval. */
   command: string;
+  /** Authoritative configured prefix plus command actually passed to the shell. */
+  executionCommand?: string;
   /** Authoritative project working directory. */
   cwd: string;
   /** Canonical Check mode roots for the launch project. */
@@ -21,8 +23,10 @@ export type BuildSandboxPolicyOptions = {
   result: CheckPolicyResult;
   /** Resolved shell executable. A backend must not select a shell. */
   executable: string;
-  /** Complete shell arguments, including the exact command argument. */
+  /** Complete shell arguments. For stdin-transport shells the command is supplied separately. */
   args: readonly string[];
+  /** The resolved shell receives the exact command on stdin instead of argv. */
+  stdin?: boolean;
   /** Private temporary directory prepared by the controller. */
   privateTemp: string;
   environment?: Readonly<Record<string, string | undefined>>;
@@ -98,6 +102,9 @@ function deniedCredentialPaths(roots: readonly string[], home: string, platform:
     denied.push(...directoryNames.map((name) => paths.join(root, name)));
     denied.push(...fileNames.map((name) => paths.join(root, name)));
   }
+  if (platform !== "win32") {
+    denied.push("/root", "/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/sudoers.d", "/etc/ssh");
+  }
   return uniquePaths(denied, platform);
 }
 
@@ -119,11 +126,14 @@ function canonicalAccesses(
 export function buildSandboxPolicy(options: BuildSandboxPolicyOptions): SandboxPolicy {
   const platform = options.platform ?? process.platform;
   if (!options.command || options.command.includes("\0")) throw new Error("Sandbox command is invalid");
-  if (options.result.exactCommand !== options.command) throw new Error("Sandbox command does not match the Check mode analysis");
+  const executionCommand = options.executionCommand ?? options.command;
+  if (options.result.exactCommand !== executionCommand) throw new Error("Sandbox command does not match the Check mode analysis");
   if (!options.executable || options.executable.includes("\0")) throw new Error("Sandbox executable is invalid");
   if (!pathApi(options.cwd, platform).isAbsolute(options.executable)) throw new Error("Sandbox executable must be resolved");
   if (options.args.some((argument) => argument.includes("\0"))) throw new Error("Sandbox arguments are invalid");
-  if (!options.args.includes(options.command)) throw new Error("Sandbox arguments must contain the exact command");
+  if (!options.stdin && !options.args.includes(executionCommand)) {
+    throw new Error("Sandbox arguments must contain the exact command");
+  }
   if (!options.result.analysis.complete || options.result.analysis.truncated || !options.result.analysis.syntaxBalanced) {
     throw new Error("Sandbox policy requires complete Check mode analysis");
   }
@@ -146,6 +156,12 @@ export function buildSandboxPolicy(options: BuildSandboxPolicyOptions): SandboxP
     ...deniedCredentialPaths(readWritePaths, options.home ?? homedir(), platform),
   ], platform);
 
+  const privateTemp = canonicalPath(options.privateTemp, cwd, platform);
+  const environment = sanitizeSandboxEnvironment(options.environment ?? process.env);
+  environment.TEMP = privateTemp;
+  environment.TMP = privateTemp;
+  if (platform !== "win32") environment.TMPDIR = privateTemp;
+
   return {
     version: 1,
     exactCommand: options.command,
@@ -153,8 +169,8 @@ export function buildSandboxPolicy(options: BuildSandboxPolicyOptions): SandboxP
     readOnlyPaths,
     readWritePaths,
     deniedPaths,
-    privateTemp: canonicalPath(options.privateTemp, cwd, platform),
-    environment: sanitizeSandboxEnvironment(options.environment ?? process.env),
+    privateTemp,
+    environment,
     executable: canonicalPath(options.executable, cwd, platform),
     args: [...options.args],
     network: options.result.network.access === "host" ? "host" : "deny",

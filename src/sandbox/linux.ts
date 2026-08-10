@@ -183,7 +183,7 @@ function deniedPathArgs(
     seen.add(path);
     const kind = pathKind(path);
     if (kind === "directory") args.push("--tmpfs", path);
-    else if (kind === "file") args.push("--ro-bind", "/dev/null", path);
+    else args.push("--ro-bind", "/dev/null", path);
   }
   return args;
 }

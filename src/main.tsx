@@ -43,6 +43,7 @@ import {
 import type { StartupOptions } from "./cli";
 import { installSelectionClipboard } from "./clipboard";
 import { TerminalTitleController } from "./terminal-title";
+import { SandboxController } from "./sandbox";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -54,6 +55,12 @@ export async function start(options: StartupOptions): Promise<void> {
   const loginRequired = options.login || (await modelRuntime.getAvailable()).length === 0;
 
   const settings = loadSettings();
+  const sandboxController = new SandboxController({
+    mode: settings.sandboxMode ?? "auto",
+    agentDir: AGENT_DIR,
+  });
+  const sandboxWarning = await sandboxController.startupWarning(settings.checkMode);
+  const sandboxExtension = sandboxController.extension();
   setWritingStyle(settings.writingStyle);
   setExplanationStrength(settings.explanationStrength);
   const questionnaireManager = new QuestionnaireManager();
@@ -130,6 +137,7 @@ export async function start(options: StartupOptions): Promise<void> {
     childExtensionFactories: [
       writingStyleExtension,
       explanationStrengthExtension,
+      sandboxExtension,
     ],
     childExtensionFactoriesForAgent: [(agentId) => createCheckModeExtension(modelRuntime, undefined, {
       coordinator: checkApprovalCoordinator,
@@ -155,6 +163,7 @@ export async function start(options: StartupOptions): Promise<void> {
             writingStyleExtension,
             explanationStrengthExtension,
             mainCheckModeExtension,
+            sandboxExtension,
             applyPatchExtension,
             questionnaireManager.extension({ id: "main", name: "main" }),
             subagentExtension,
@@ -237,6 +246,9 @@ export async function start(options: StartupOptions): Promise<void> {
       spawnPreviewManager={spawnPreviewManager}
       messageCacheController={messageCacheController}
       terminalTitle={terminalTitle}
+      startupWarnings={sandboxWarning ? [sandboxWarning] : []}
+      onSandboxModeChange={(mode) => sandboxController.setMode(mode)}
+      sandboxWarningSource={sandboxController}
       loginRequired={loginRequired}
       checkApprovalCoordinator={checkApprovalCoordinator}
       checkApprovalStore={checkApprovalStore}

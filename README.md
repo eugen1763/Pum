@@ -23,7 +23,7 @@ pum
 PUM opens the login panel automatically on the first start.
 
 > [!WARNING]
-> PUM can read, write, and delete files. PUM can also run commands and supervised trigger processes. Check mode can verify or ask about these operations, but it is not a sandbox. Start PUM only inside a workspace where these actions are acceptable.
+> PUM can read, write, and delete files. Check mode adds deterministic policy checks and can enforce native Bash isolation on supported Linux and Windows hosts. Other tools, extensions, and external triggers still run in the PUM process boundary described below. Review the safeguards and prerequisites before using untrusted workspaces.
 
 ## See PUM in action
 
@@ -60,7 +60,9 @@ PUM uses [pi](https://github.com/earendil-works/pi) for the agent loop and [Open
 
 Linux and macOS are the primary environments. Windows CI checks the code and Windows path behavior. Native Windows TUI operation remains provisional because it has not been fully validated in a Windows terminal.
 
-On Windows, install Git for Windows. Ensure that `bash.exe` is in `PATH` or remains in its standard location. Use Windows Terminal with PowerShell. Do not use PowerShell ISE.
+On Linux, native Bash sandboxing requires Bubblewrap (`bwrap`) and working unprivileged user namespaces. PUM probes a minimal sandbox launch; finding the executable alone is not sufficient. On Arch Linux, install the prerequisite separately with `sudo pacman -S --needed bubblewrap`.
+
+On Windows, install Git for Windows. Ensure that `bash.exe` is in `PATH` or remains in its standard location. Use Windows Terminal with PowerShell. Do not use PowerShell ISE. Native Bash sandboxing uses the optional alpha `@microsoft/mxc-sdk` package and requires its `base-container` CreateProcessInSandbox tier. PUM deliberately rejects the SDK's AppContainer+DACL fallback because it can modify host ACLs.
 
 ### Terminal title
 
@@ -229,7 +231,25 @@ For `edit` and `apply_patch`, PUM validates the complete proposed change before 
 
 Ask mode can allow an exact call once, for the current session, or for the current project. Approvals match the authoritative main or child identity, tool, verifier model, project, and canonical complete input. Chat text is not approval. Use **Clear approvals** in Settings to remove project approvals.
 
-The verifier uses a structured decision schema. One unclear response can receive one adjudication under the shared 15-second watchdog. Strict blocks malformed replies, errors, aborts, and timeouts. Balanced allows a fully validated call after an unclear, unavailable, failed, or timed-out review. Balanced still blocks explicit verifier `UNSAFE`, aborts, deterministic suspicious findings, malformed structures, and incomplete analysis. Ask requires the popup after hard rules for verifier `SAFE`, unclear, error, and unavailable results. Check mode is off by default and is not a sandbox.
+The verifier uses a structured decision schema. One unclear response can receive one adjudication under the shared 15-second watchdog. Strict blocks malformed replies, errors, aborts, and timeouts. Balanced allows a fully validated call after an unclear, unavailable, failed, or timed-out review. Balanced still blocks explicit verifier `UNSAFE`, aborts, deterministic suspicious findings, malformed structures, and incomplete analysis. Ask requires the popup after hard rules for verifier `SAFE`, unclear, error, and unavailable results. Check mode is off by default.
+
+#### Native Bash sandbox
+
+The **Sandbox** setting has three modes:
+
+- **Auto:** Enforce the platform sandbox for Bash when available. If probing fails, retain deterministic Check mode and show one process-local warning that is not written to session context.
+- **Require:** Block checked Bash calls unless native enforcement is available.
+- **Off:** Do not sandbox Bash. Check mode policy and approval behavior remain unchanged.
+
+Check mode **Off** always uses pi's normal unsandboxed Bash backend. For an active Check mode, PUM recomputes the sandbox policy from the exact approved command, authoritative working directory, configured additional roots, and deterministic access analysis. Model input cannot supply policy fields.
+
+The project and configured additional roots are writable. Explicit Balanced external reads are mounted read-only. PUM configuration and common credential paths are denied, and credential-shaped or process-injection environment variables are removed. A private temporary directory is supplied for the command. Safe pi metadata such as `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` remains available; session paths and identifiers are withheld.
+
+Network access is denied unless deterministic analysis recognizes an approved network operation. Bubblewrap's host-network mode is all-or-nothing and is **not domain-filtered**. Windows similarly grants or withholds the SDK's broad network capabilities; it does not provide hostname allowlists.
+
+The override uses pi's `createBashTool` implementation and custom Bash operations, preserving streaming, truncation, full-output files, rendering, timeout messages, abort handling, shell configuration, and child-tree cleanup. Only Bash commands are routed through this backend. PUM does not sandbox the TUI/model process itself.
+
+External triggers preserve direct executable/argument boundaries and continue to use deterministic Check mode, but they are not routed through the native sandbox in this release. The trigger manager's synchronous spawn boundary does not carry the exact approved policy object into execution; silently recomputing a second process policy there would weaken approval identity. Trigger output, environment, limits, and process supervision remain unchanged.
 
 Verifier prompts stay bounded. For an oversized Balanced review, PUM sends complete validation metadata, counts, findings, and SHA-256 digests. PUM does not send a raw prefix or suffix as if it were complete. Strict and Ask keep their fail-closed oversized-input behavior.
 
@@ -267,7 +287,7 @@ Set `PUM_DIR` to override the complete PUM data directory.
 | `auth.json` | Provider credentials and custom-provider keys |
 | `models.json` | Custom endpoints and model metadata; submitted keys are not stored here |
 | `settings.json` | Model and thinking level managed by pi |
-| `pum.json` | Theme, animation, search, writing, explanation, and check settings |
+| `pum.json` | Theme, animation, search, writing, explanation, Check mode, sandbox, and subagent settings |
 | `theme.json` | Optional semantic color overrides |
 | `history.json` | Prompt history by working directory |
 | `prompt-stash.json` | Stashed prompts by working directory |
