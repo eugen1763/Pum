@@ -81,7 +81,7 @@ describe("tool line state", () => {
     expect(toolStateGlyph("ok")).toBe("✓");
   });
 
-  test("uses one rejection style for live, settled, wrapped, and replayed rows", async () => {
+  test("uses orange foreground without a special background for live, settled, wrapped, and replayed rows", async () => {
     const setup = await createTestRenderer({ width: 34, height: 20 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
@@ -94,6 +94,10 @@ describe("tool line state", () => {
 
     createRoot(setup.renderer).render(
       <box style={{ flexDirection: "column", width: "100%" }}>
+        <ToolLine
+          theme={theme}
+          call={{ id: "normal", name: "bash", arg: "normal command", state: "ok" }}
+        />
         {calls.map(({ call, workingCaret }) => (
           <ToolLine key={call.id} theme={theme} call={call} workingCaret={workingCaret} />
         ))}
@@ -106,6 +110,7 @@ describe("tool line state", () => {
     expect(frame).toContain("another terminal");
     expect(frame).toContain("replayed command");
     const frameLines = frame.split("\n");
+    const normalRow = frameLines.findIndex((line) => line.includes("normal command"));
     const commandRow = frameLines.findIndex((line) => line.includes("replayed command"));
     const reasonRow = frameLines.findIndex((line) => line.includes("Check mode hard block:"));
     expect(reasonRow).toBe(commandRow + 1);
@@ -114,28 +119,34 @@ describe("tool line state", () => {
     const rejectionBg = parseColor(theme.rejectionBg);
     const capturedLines = setup.captureSpans().lines;
     const spans = capturedLines.flatMap((line) => line.spans);
-    const styledText = spans.filter((span) =>
-      ["live command", "settled.ts", "wrapped command", "replayed command"].some((text) => span.text.includes(text))
-    );
-    expect(styledText).toHaveLength(4);
-    expect(styledText.every((span) => span.fg.equals(rejection))).toBe(true);
-    expect(styledText.every((span) => span.bg.equals(rejectionBg))).toBe(true);
+    const normalSpan = capturedLines[normalRow]?.spans.find((span) => span.text.includes("normal command"));
+    expect(normalSpan).toBeDefined();
+
+    const rejectedSpans = capturedLines.slice(normalRow + 1).flatMap((line) => line.spans)
+      .filter((span) => span.text.trim());
+    expect(rejectedSpans.length).toBeGreaterThan(0);
+    expect(rejectedSpans.every((span) => span.fg.equals(rejection))).toBe(true);
+    expect(rejectedSpans.every((span) => span.bg.equals(normalSpan!.bg))).toBe(true);
+    expect(rejectedSpans.every((span) => !span.bg.equals(rejectionBg))).toBe(true);
 
     const markers = spans.filter((span) => span.text === "!");
     expect(markers).toHaveLength(4);
     expect(markers.every((span) => span.fg.equals(rejection))).toBe(true);
-    expect(markers.every((span) => span.bg.equals(rejectionBg))).toBe(true);
+    expect(markers.every((span) => span.bg.equals(normalSpan!.bg))).toBe(true);
 
     const reasonPrefix = spans.find((span) => span.text === "Check mode hard block:");
     expect(reasonPrefix?.fg.equals(rejection)).toBe(true);
-    expect(reasonPrefix?.bg.equals(rejectionBg)).toBe(true);
-    expect(reasonPrefix?.attributes).toBe(TextAttributes.BOLD);
+    expect(reasonPrefix?.bg.equals(normalSpan!.bg)).toBe(true);
+    expect(reasonPrefix!.attributes & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
 
     const reasonSpans = capturedLines.slice(reasonRow).flatMap((line) => line.spans)
       .filter((span) => span.text.trim());
     expect(reasonSpans.map((span) => span.text).join("")).toContain("command writes outside the project");
     expect(reasonSpans.every((span) => span.fg.equals(rejection))).toBe(true);
-    expect(reasonSpans.every((span) => span.bg.equals(rejectionBg))).toBe(true);
+    expect(reasonSpans.every((span) => span.bg.equals(normalSpan!.bg))).toBe(true);
+    const reasonSuffix = reasonSpans.filter((span) => span !== reasonPrefix);
+    expect(reasonSuffix.length).toBeGreaterThan(0);
+    expect(reasonSuffix.every((span) => (span.attributes & TextAttributes.BOLD) === 0)).toBe(true);
   });
 
   test("preserves failure and success styles", async () => {
@@ -240,27 +251,61 @@ describe("tool line state", () => {
   });
 
   test("updates rejection colors after a theme change", async () => {
-    const setup = await createTestRenderer({ width: 40, height: 6 });
+    const setup = await createTestRenderer({ width: 48, height: 8 });
     destroy = () => setup.renderer.destroy();
     const root = createRoot(setup.renderer);
-    const call: ToolCall = { id: "switch", name: "bash", arg: "switch command", state: "rejected" };
+    const call: ToolCall = {
+      id: "switch",
+      name: "bash",
+      arg: "switch command",
+      state: "rejected",
+      detail: "Check mode hard block: switch reason",
+    };
     const firstTheme = loadTheme("tokyonight");
 
-    root.render(<ToolLine theme={firstTheme} call={call} />);
+    root.render(
+      <box style={{ flexDirection: "column", width: "100%" }}>
+        <ToolLine
+          theme={firstTheme}
+          call={{ id: "normal", name: "bash", arg: "normal command", state: "ok" }}
+        />
+        <ToolLine theme={firstTheme} call={call} />
+      </box>,
+    );
     await settle(setup);
-    let span = setup.captureSpans().lines.flatMap((line) => line.spans)
-      .find((item) => item.text.includes("switch command"));
-    expect(span?.fg.equals(parseColor(firstTheme.rejection))).toBe(true);
-    expect(span?.bg.equals(parseColor(firstTheme.rejectionBg))).toBe(true);
+    let spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+    let normal = spans.find((item) => item.text.includes("normal command"));
+    let command = spans.find((item) => item.text.includes("switch command"));
+    let prefix = spans.find((item) => item.text === "Check mode hard block:");
+    let suffix = spans.find((item) => item.text.includes("switch reason"));
+    expect(command?.fg.equals(parseColor(firstTheme.rejection))).toBe(true);
+    expect(prefix?.fg.equals(parseColor(firstTheme.rejection))).toBe(true);
+    expect(suffix?.fg.equals(parseColor(firstTheme.rejection))).toBe(true);
+    expect(command?.bg.equals(normal!.bg)).toBe(true);
+    expect(prefix!.attributes & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
 
     const nextTheme = loadTheme("gruvbox");
-    root.render(<ToolLine theme={nextTheme} call={call} />);
+    root.render(
+      <box style={{ flexDirection: "column", width: "100%" }}>
+        <ToolLine
+          theme={nextTheme}
+          call={{ id: "normal", name: "bash", arg: "normal command", state: "ok" }}
+        />
+        <ToolLine theme={nextTheme} call={call} />
+      </box>,
+    );
     await settle(setup);
-    span = setup.captureSpans().lines.flatMap((line) => line.spans)
-      .find((item) => item.text.includes("switch command"));
-    expect(span?.fg.equals(parseColor(nextTheme.rejection))).toBe(true);
-    expect(span?.bg.equals(parseColor(nextTheme.rejectionBg))).toBe(true);
+    spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+    normal = spans.find((item) => item.text.includes("normal command"));
+    command = spans.find((item) => item.text.includes("switch command"));
+    prefix = spans.find((item) => item.text === "Check mode hard block:");
+    suffix = spans.find((item) => item.text.includes("switch reason"));
+    expect(command?.fg.equals(parseColor(nextTheme.rejection))).toBe(true);
+    expect(prefix?.fg.equals(parseColor(nextTheme.rejection))).toBe(true);
+    expect(suffix?.fg.equals(parseColor(nextTheme.rejection))).toBe(true);
+    expect(command?.bg.equals(normal!.bg)).toBe(true);
+    expect(command?.bg.equals(parseColor(nextTheme.rejectionBg))).toBe(false);
+    expect(prefix!.attributes & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
     expect(nextTheme.rejection).not.toBe(firstTheme.rejection);
-    expect(nextTheme.rejectionBg).not.toBe(firstTheme.rejectionBg);
   });
 });
