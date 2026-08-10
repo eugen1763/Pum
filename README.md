@@ -46,7 +46,7 @@ The following screens are real OpenTUI renders captured through `tmux`. A local 
 - **Prompt control:** Steer active work, answer model questionnaires, use an ownership-aware message cache, attach clipboard images, and resume sessions with metadata-rich history.
 - **External triggers:** Supervise background commands such as `gh run watch` and automatically wake the exact target agent when they exit.
 - **Provider choice:** Search the providers exposed by pi, or add an OpenAI-compatible custom endpoint.
-- **Optional safeguards:** Use strict, balanced, or ask Check mode for `bash`, `edit`, `apply_patch`, and external-trigger process proposals.
+- **Optional safeguards:** Use strict, balanced, or ask Check mode, plus native Bash sandboxing through Bubblewrap or Windows CreateProcessInSandbox when available.
 - **Terminal-first appearance:** Nine themes, semantic color overrides, Unicode glyphs, and optional animation.
 
 PUM uses [pi](https://github.com/earendil-works/pi) for the agent loop and [OpenTUI](https://github.com/anomalyco/opentui) for rendering.
@@ -220,10 +220,10 @@ Trigger events target one exact main or retained child session. A missing sessio
 Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_patch`, and external-trigger process execution:
 
 - **Strict:** Run deterministic hard rules, then require a clear verifier approval.
-- **Balanced:** Block deterministic hard-rule or suspicious findings. Allow ordinary complete project-local calls. Verifier review is non-blocking unless the verifier returns explicit `UNSAFE`.
+- **Balanced:** Block deterministic hard-rule or suspicious findings. Allow ordinary complete project-local calls and explicit non-sensitive external reads. Verifier review is non-blocking unless the verifier returns explicit `UNSAFE`.
 - **Ask:** Show the approval popup for every checked call that passes hard rules, unless an exact session or project approval already matches. A verifier `SAFE`, unclear, error, or unavailable result still requires approval.
 
-Every active profile hard-blocks project escape, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup. The only exception is a deterministic match for direct main-agent `npm publish` or `npm dist-tag add`. The verifier category does not control this exception. The exception still requires explicit popup approval. Managed subagents cannot use the exception.
+Every active profile hard-blocks external writes, location changes, execution operands, ambiguous path access, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. Balanced permits only explicit, deterministically classified, non-sensitive external reads. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup. The only exception is a deterministic match for direct main-agent `npm publish` or `npm dist-tag add`. The verifier category does not control this exception. The exception still requires explicit popup approval. Managed subagents cannot use the exception.
 
 Use `/check-path list`, `/check-path add <directory>`, `/check-path remove <directory>`, or `/check-path clear` to manage up to 16 additional directory roots for the current launch project. Bash, edit, and external-trigger checks can use these roots; `apply_patch` remains project-local. Added roots are canonicalized and remain subject to credential, traversal, symlink or junction, broad-deletion, and other hard blocks.
 

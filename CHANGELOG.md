@@ -2,6 +2,25 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.2-beta.1] - 2026-08-10
+
+### Added
+- Added dynamic terminal titles that report PUM activity and active subagent counts on Windows, Linux, and tmux-compatible terminals.
+- Added native Bash sandbox modes with Bubblewrap enforcement on supported Linux hosts and MXC BaseContainer/CreateProcessInSandbox enforcement on supported Windows hosts.
+
+### Changed
+- Allowed Balanced Check mode to read explicit non-sensitive external paths while continuing to block external writes, execution, location changes, ambiguous access, and credential paths.
+- Classified filesystem access and network intent deterministically, supplied external reads as read-only sandbox grants, denied network access by default, and applied the sandboxed Bash override to main and managed child sessions.
+- Added Auto, Require, and Off sandbox settings with visible non-session fallback warnings and fail-closed Require behavior.
+
+### Fixed
+- Stopped Windows Check mode from interpreting `printf` and `echo` data as drive-root-relative paths in compound repository-local Git inspection commands.
+- Prevented OAuth controller tests from opening a real browser device-code URL.
+
+### Security
+- Added private command temporary directories, credential and PUM configuration masks, sensitive environment filtering, process-tree cancellation, and direct external-read upload blocks.
+- Rejected the Windows AppContainer+DACL fallback because it can modify persistent host ACLs; PUM accepts only MXC's native BaseContainer tier.
+
 ## [0.2.1-beta.1] - 2026-08-10
 
 ### Fixed
@@ -112,6 +131,7 @@ All notable changes to PUM are documented in this file.
 - Added deterministic blocks for project escape, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion.
 - Added sanitized trigger environments, inert templates, strict argument-boundary checks, private bounded output files, and non-overridable hard-block or explicit `UNSAFE` decisions.
 
+[0.2.2-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.1-beta.1...v0.2.2-beta.1
 [0.2.1-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.4...v0.2.1-beta.1
 [0.2.0-beta.4]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.3...v0.2.0-beta.4
 [0.2.0-beta.3]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.2...v0.2.0-beta.3

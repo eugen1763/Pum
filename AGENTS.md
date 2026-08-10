@@ -477,6 +477,14 @@ Each of these cost real debugging. They are not obvious from the docs.
   roots and mutation targets must use the shared canonical identity and
   containment helpers in `platform.ts`; raw string or `realpath()` spelling
   comparisons can reject valid roots or authorize the wrong boundary.
+- **Bubblewrap mount order is part of the security policy.** Add system and
+  read-only mounts first, writable project roots next, and private temporary and
+  denied-path masks last. Reordering these arguments can expose credentials
+  through a broader earlier bind.
+- **MXC availability requires the native BaseContainer tier.** Importing the
+  optional SDK or receiving its AppContainer+DACL tier does not mean enforcement
+  is available. Auto must warn and fall back; Require must block. Never accept
+  the DACL tier because it can persist host ACL changes.
 
 ## Testing a TUI
 
