@@ -1,0 +1,188 @@
+import { homedir } from "node:os";
+import { posix, win32 } from "node:path";
+import { AGENT_DIR } from "./config";
+import type { CheckPolicyResult } from "./check-policy";
+import { isPathInsideOrSame, pathIdentity, type RuntimePlatform } from "./platform";
+import type {
+  SandboxCapability,
+  SandboxMode,
+  SandboxPolicy,
+  SandboxPolicyAccess,
+} from "./sandbox/types";
+
+export type BuildSandboxPolicyOptions = {
+  /** Exact command accepted by Check mode and any required user approval. */
+  command: string;
+  /** Authoritative project working directory. */
+  cwd: string;
+  /** Canonical Check mode roots for the launch project. */
+  additionalRoots?: readonly string[];
+  /** Deterministic Check mode result for the exact command. */
+  result: CheckPolicyResult;
+  /** Resolved shell executable. A backend must not select a shell. */
+  executable: string;
+  /** Complete shell arguments, including the exact command argument. */
+  args: readonly string[];
+  /** Private temporary directory prepared by the controller. */
+  privateTemp: string;
+  environment?: Readonly<Record<string, string | undefined>>;
+  pumConfigRoot?: string;
+  home?: string;
+  platform?: RuntimePlatform;
+};
+
+const SENSITIVE_ENVIRONMENT = /(?:^|_)(?:API_?KEY|AUTH|BEARER|COOKIE|CREDENTIALS?|PASS(?:WORD)?|PRIVATE_?KEY|SECRET|SESSION|TOKEN)(?:_|$)/i;
+const INJECTION_ENVIRONMENT = new Set([
+  "BASH_ENV", "BUN_OPTIONS", "ENV", "GIT_CONFIG_COUNT", "NODE_OPTIONS", "PERL5OPT",
+  "PROMPT_COMMAND", "PYTHONINSPECT", "PYTHONPATH", "RUBYOPT", "SHELLOPTS", "ZDOTDIR",
+]);
+
+export function isSandboxEnvironmentVariableDenied(name: string): boolean {
+  const upper = name.toUpperCase();
+  return SENSITIVE_ENVIRONMENT.test(upper)
+    || INJECTION_ENVIRONMENT.has(upper)
+    || upper.startsWith("AWS_")
+    || upper.startsWith("AZURE_")
+    || upper.startsWith("GOOGLE_")
+    || upper.startsWith("GITHUB_")
+    || upper.startsWith("NPM_")
+    || upper.startsWith("PUM_")
+    || upper.startsWith("PI_SESSION_");
+}
+
+/** Remove credentials, PUM/session metadata, and runtime injection variables. */
+export function sanitizeSandboxEnvironment(
+  environment: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  return Object.fromEntries(Object.entries(environment)
+    .filter(([name, value]) => value !== undefined
+      && !name.includes("\0")
+      && !isSandboxEnvironmentVariableDenied(name))
+    .map(([name, value]) => [name, value!] as const)
+    .sort(([first], [second]) => first.localeCompare(second)));
+}
+
+function pathApi(path: string, platform: RuntimePlatform): typeof posix {
+  return platform === "win32" || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\")
+    ? win32
+    : posix;
+}
+
+function canonicalPath(path: string, cwd: string, platform: RuntimePlatform): string {
+  const paths = pathApi(cwd, platform);
+  const absolute = paths.isAbsolute(path) ? path : paths.resolve(cwd, path);
+  return pathIdentity(absolute, platform);
+}
+
+function uniquePaths(paths: readonly string[], platform: RuntimePlatform): string[] {
+  return [...new Set(paths.map((path) => pathIdentity(path, platform)))]
+    .sort((first, second) => first.localeCompare(second));
+}
+
+/** Remove narrower paths when a root with the same permission already contains them. */
+function collapseSamePermissionRoots(paths: readonly string[], platform: RuntimePlatform): string[] {
+  const unique = uniquePaths(paths, platform);
+  return unique.filter((candidate) => !unique.some((parent) => (
+    parent !== candidate && isPathInsideOrSame(parent, candidate, platform)
+  )));
+}
+
+function deniedCredentialPaths(roots: readonly string[], home: string, platform: RuntimePlatform): string[] {
+  const directoryNames = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker"];
+  const fileNames = [
+    ".env", ".git-credentials", ".npmrc", ".pypirc", ".netrc", "auth.json", "credentials.json",
+  ];
+  const denied: string[] = [];
+  for (const root of [...roots, home]) {
+    const paths = pathApi(root, platform);
+    denied.push(...directoryNames.map((name) => paths.join(root, name)));
+    denied.push(...fileNames.map((name) => paths.join(root, name)));
+  }
+  return uniquePaths(denied, platform);
+}
+
+function canonicalAccesses(
+  result: CheckPolicyResult,
+  cwd: string,
+  platform: RuntimePlatform,
+): SandboxPolicyAccess[] {
+  return result.accesses.map(({ resolvedPath, mode, source, stage, external }) => ({
+    resolvedPath: canonicalPath(resolvedPath, cwd, platform),
+    mode,
+    source,
+    stage,
+    external,
+  }));
+}
+
+/** Build a backend-neutral policy from authoritative inputs and deterministic Check mode output. */
+export function buildSandboxPolicy(options: BuildSandboxPolicyOptions): SandboxPolicy {
+  const platform = options.platform ?? process.platform;
+  if (!options.command || options.command.includes("\0")) throw new Error("Sandbox command is invalid");
+  if (options.result.exactCommand !== options.command) throw new Error("Sandbox command does not match the Check mode analysis");
+  if (!options.executable || options.executable.includes("\0")) throw new Error("Sandbox executable is invalid");
+  if (!pathApi(options.cwd, platform).isAbsolute(options.executable)) throw new Error("Sandbox executable must be resolved");
+  if (options.args.some((argument) => argument.includes("\0"))) throw new Error("Sandbox arguments are invalid");
+  if (!options.args.includes(options.command)) throw new Error("Sandbox arguments must contain the exact command");
+  if (!options.result.analysis.complete || options.result.analysis.truncated || !options.result.analysis.syntaxBalanced) {
+    throw new Error("Sandbox policy requires complete Check mode analysis");
+  }
+  if (options.result.decision === "block") {
+    throw new Error(`Sandbox policy cannot grant a blocked command: ${options.result.reason}`);
+  }
+
+  const cwd = canonicalPath(options.cwd, options.cwd, platform);
+  const readWritePaths = collapseSamePermissionRoots([
+    cwd,
+    ...(options.additionalRoots ?? []).map((root) => canonicalPath(root, cwd, platform)),
+  ], platform);
+  const accesses = canonicalAccesses(options.result, cwd, platform);
+  const readOnlyPaths = collapseSamePermissionRoots(accesses
+    .filter((access) => access.external && access.mode === "read")
+    .map((access) => access.resolvedPath)
+    .filter((path) => !readWritePaths.some((root) => isPathInsideOrSame(root, path, platform))), platform);
+  const deniedPaths = uniquePaths([
+    canonicalPath(options.pumConfigRoot ?? AGENT_DIR, cwd, platform),
+    ...deniedCredentialPaths(readWritePaths, options.home ?? homedir(), platform),
+  ], platform);
+
+  return {
+    version: 1,
+    exactCommand: options.command,
+    cwd,
+    readOnlyPaths,
+    readWritePaths,
+    deniedPaths,
+    privateTemp: canonicalPath(options.privateTemp, cwd, platform),
+    environment: sanitizeSandboxEnvironment(options.environment ?? process.env),
+    executable: canonicalPath(options.executable, cwd, platform),
+    args: [...options.args],
+    network: options.result.network.access === "host" ? "host" : "deny",
+    rationale: options.result.reason,
+    accesses,
+    networkCommands: [...options.result.network.commands],
+  };
+}
+
+export type SandboxModeDecision = {
+  action: "direct" | "sandbox" | "block";
+  warning?: string;
+  reason?: string;
+};
+
+/** Resolve one capability probe. The caller displays an automatic fallback warning once. */
+export function decideSandboxMode(
+  mode: SandboxMode,
+  capability: SandboxCapability,
+): SandboxModeDecision {
+  if (mode === "off") return { action: "direct" };
+  if (capability.state === "enforced") return { action: "sandbox" };
+  const reason = capability.reason ?? `sandbox backend ${capability.backend} is ${capability.state}`;
+  if (mode === "require") {
+    return { action: "block", reason: `Sandbox enforcement is required: ${reason}` };
+  }
+  return {
+    action: "direct",
+    warning: `Sandbox enforcement is unavailable. PUM will use deterministic Check mode only. ${reason}`,
+  };
+}

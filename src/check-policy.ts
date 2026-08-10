@@ -35,10 +35,17 @@ export type CheckPathAccessMode = "read" | "write" | "execute" | "location" | "u
 
 export type CheckPathAccess = {
   path: string;
+  /** Deterministic absolute path resolved during Check mode analysis. */
+  resolvedPath: string;
   mode: CheckPathAccessMode;
   source: "operand" | "redirection" | "executable";
   stage: number;
   external: boolean;
+};
+
+export type CheckNetworkIntent = {
+  access: "none" | "host";
+  commands: string[];
 };
 
 export type BashOperator = {
@@ -92,12 +99,15 @@ export type BashAnalysis = {
 };
 
 export type CheckPolicyResult = {
+  /** Exact command text, or canonical direct argv text, that produced this result. */
+  exactCommand: string;
   profile: CheckPolicyProfile;
   decision: CheckPolicyDecision;
   reason: string;
   findings: CheckPolicyFinding[];
   accesses: CheckPathAccess[];
   analysis: BashAnalysis;
+  network: CheckNetworkIntent;
 };
 
 export type CheckPolicyLimits = {
@@ -615,7 +625,7 @@ function pathOperands(stage: BashStage): string[] {
   return [...new Set(values)];
 }
 
-type ClassifiedAccess = Omit<CheckPathAccess, "stage" | "external">;
+type ClassifiedAccess = Omit<CheckPathAccess, "stage" | "external" | "resolvedPath">;
 
 function positionalOperands(argv: string[]): string[] {
   const values: string[] = [];
@@ -968,7 +978,7 @@ function inspectHardBlocks(
       const value = classified.path;
       const dynamic = /(?:\$\(|`|\$\{|\$[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%)/.test(value);
       const resolved = normalizedAbsolute(value, activeCwd, projectCwd, allowedPaths);
-      accesses.push({ ...classified, stage: stage.index, external: !resolved.inside });
+      accesses.push({ ...classified, resolvedPath: resolved.absolute, stage: stage.index, external: !resolved.inside });
       if (dynamic) {
         addFinding(findings, { code: "unknown-path-access", severity: "hard-block", message: "path access is dynamic or ambiguous", stage: stage.index, path: value });
         continue;
@@ -1169,9 +1179,52 @@ function balancedCompleteShellLimits(command: string): Partial<CheckPolicyLimits
   };
 }
 
+const NETWORK_COMMANDS = new Set([
+  "curl", "wget", "fetch", "invoke-webrequest", "iwr", "invoke-restmethod", "irm",
+  "nc", "ncat", "netcat", "socat", "ssh", "scp", "sftp", "rsync", "ftp", "telnet",
+  "gh", "glab",
+]);
+
+function stageNetworkCommand(stage: BashStage): string | undefined {
+  const argv = effectiveArgv(stage.argv);
+  const name = commandName(argv[0]);
+  if (NETWORK_COMMANDS.has(name)) return name;
+  const subcommand = (argv[1] ?? "").toLowerCase();
+  if (name === "git" && new Set(["clone", "fetch", "pull", "push", "ls-remote"]).has(subcommand)) return `git ${subcommand}`;
+  if (["npm", "pnpm", "yarn"].includes(name)
+    && new Set(["add", "audit", "install", "publish", "search", "update", "upgrade", "view", "info"]).has(subcommand)) {
+    return `${name} ${subcommand}`;
+  }
+  if (name === "bun" && new Set(["add", "install", "publish", "update"]).has(subcommand)) return `bun ${subcommand}`;
+  if (["pip", "pip3"].includes(name) && new Set(["download", "index", "install", "search"]).has(subcommand)) return `${name} ${subcommand}`;
+  if (name === "cargo" && new Set(["install", "login", "owner", "publish", "search"]).has(subcommand)) return `cargo ${subcommand}`;
+  if (name === "go" && new Set(["get", "install"]).has(subcommand)) return `go ${subcommand}`;
+  return undefined;
+}
+
+/** Return deterministic network intent from the same shell analysis used by Check mode. */
+export function checkNetworkIntent(analysis: BashAnalysis, depth = 0): CheckNetworkIntent {
+  const commands: string[] = [];
+  for (const stage of analysis.stages) {
+    const direct = stageNetworkCommand(stage);
+    if (direct) commands.push(direct);
+    if (depth >= 2) continue;
+    const argv = effectiveArgv(stage.argv);
+    const nested = stage.substitutions.map((substitution) => substitution.text);
+    const flag = shellCommandFlag(commandName(argv[0]), argv);
+    if (flag >= 0 && argv[flag + 1]) nested.push(argv[flag + 1]!);
+    for (const command of nested) {
+      commands.push(...checkNetworkIntent(analyzeBashCommand(command), depth + 1).commands);
+    }
+  }
+  const unique = [...new Set(commands)].sort();
+  return { access: unique.length > 0 ? "host" : "none", commands: unique };
+}
+
 /** Analyze a bash tool call and return a deterministic profile decision. */
 export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPolicyResult {
   const profile = options.profile ?? "balanced";
+  const exactCommand = options.command;
   const limits = options.limits ?? (profile === "balanced" ? balancedCompleteShellLimits(options.command) : undefined);
   const analysis = analyzeBashCommand(options.command, limits);
   const { findings, accesses } = inspectHardBlocks(
@@ -1184,19 +1237,21 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
     options.allowedPaths,
     options.protectedPaths,
   );
+  const network = checkNetworkIntent(analysis);
   if (findings.some((item) => item.severity === "hard-block")) {
-    return { profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis };
+    return { exactCommand, profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis, network };
   }
 
   if (profile === "ask") {
     addFinding(findings, { code: "unrecognized-command", severity: "review", message: "ask profile requires review for every command" });
-    return { profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis };
+    return { exactCommand, profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis, network };
   }
 
   for (const finding of inspectSuspiciousExecution(analysis)) addFinding(findings, finding);
   if (profile === "balanced") {
-    if (findings.length) return { profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis };
+    if (findings.length) return { exactCommand, profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis, network };
     return {
+      exactCommand,
       profile,
       decision: "allow",
       reason: accesses.some((access) => access.external)
@@ -1205,6 +1260,7 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
       findings: [],
       accesses,
       analysis,
+      network,
     };
   }
 
@@ -1214,11 +1270,11 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
 
   const allNarrowReads = !hasComplexShell && analysis.stages.length === 1 && analysis.stages.every(isNarrowRead);
   if (allNarrowReads) {
-    return { profile, decision: "allow", reason: "narrow project-local inspection", findings: [], accesses, analysis };
+    return { exactCommand, profile, decision: "allow", reason: "narrow project-local inspection", findings: [], accesses, analysis, network };
   }
 
   if (!findings.length) addFinding(findings, { code: "unrecognized-command", severity: "review", message: "command is not a rigorously narrow built-in policy case" });
-  return { profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis };
+  return { exactCommand, profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis, network };
 }
 
 /** Analyze direct executable arguments without converting the arguments to shell text. */
@@ -1247,11 +1303,12 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
   }
 
   const argv = [options.executable, ...options.args];
+  const exactCommand = JSON.stringify(argv);
   const stage: BashStage = {
     index: 0,
     start: 0,
     end: 0,
-    text: JSON.stringify(argv),
+    text: exactCommand,
     pipeline: 0,
     argv,
     envAssignments: {},
@@ -1282,6 +1339,7 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
     options.allowedPaths,
     options.protectedPaths,
   );
+  const network = checkNetworkIntent(analysis);
   const executionDirectory = normalizedAbsolute(options.cwd, projectCwd, projectCwd, options.allowedPaths);
   const executionRootProblem = executionDirectory.additional
     ? additionalRootProblem(executionDirectory.root, fs)
@@ -1316,16 +1374,17 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
     });
   }
   if (findings.some((item) => item.severity === "hard-block")) {
-    return { profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis };
+    return { exactCommand, profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis, network };
   }
   if (profile === "ask") {
     addFinding(findings, { code: "unrecognized-command", severity: "review", message: "ask profile requires review for every command" });
-    return { profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis };
+    return { exactCommand, profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis, network };
   }
   for (const finding of inspectSuspiciousExecution(analysis)) addFinding(findings, finding);
   if (profile === "balanced") {
-    if (findings.length) return { profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis };
+    if (findings.length) return { exactCommand, profile, decision: "block", reason: findings[0]!.message, findings, accesses, analysis, network };
     return {
+      exactCommand,
       profile,
       decision: "allow",
       reason: accesses.some((access) => access.external)
@@ -1334,6 +1393,7 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
       findings: [],
       accesses,
       analysis,
+      network,
     };
   }
   if (analysis.mutationIntent.possible) {
@@ -1342,16 +1402,18 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
   const narrowRead = isNarrowRead(stage);
   if (narrowRead) {
     return {
+      exactCommand,
       profile,
       decision: "allow",
       reason: "narrow project-local inspection",
       findings: [],
       accesses,
       analysis,
+      network,
     };
   }
   if (!findings.length) {
     addFinding(findings, { code: "unrecognized-command", severity: "review", message: "command is not a rigorously narrow built-in policy case" });
   }
-  return { profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis };
+  return { exactCommand, profile, decision: "ask", reason: findings[0]!.message, findings, accesses, analysis, network };
 }

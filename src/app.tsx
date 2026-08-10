@@ -22,6 +22,7 @@ import {
   checkPathsForProject,
   MAX_ACTIVE_SUBAGENTS,
   MIN_ACTIVE_SUBAGENTS,
+  SANDBOX_MODES,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
   type PumSettings,
@@ -346,6 +347,7 @@ export function App({
   triggerManager,
   messageCacheController,
   terminalTitle,
+  startupWarnings = [],
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -368,16 +370,21 @@ export function App({
   triggerManager?: TriggerManagerLike;
   messageCacheController?: MessageCacheController;
   terminalTitle?: TerminalTitleController;
+  /** Visible process-local warnings. These lines never enter pi session context. */
+  startupWarnings?: readonly string[];
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
   const [tx, setTx] = useState<Transcript>(() => ({
     // A resumed session already holds messages; show them instead of a blank pane.
-    lines: replayEntries(
-      initialSession.sessionManager.buildContextEntries(),
-      cwd,
-      initial.showThinking,
-    ),
+    lines: [
+      ...replayEntries(
+        initialSession.sessionManager.buildContextEntries(),
+        cwd,
+        initial.showThinking,
+      ),
+      ...startupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
+    ],
     stream: null,
     pending: [],
   }));
@@ -557,6 +564,7 @@ export function App({
   };
   // The event subscription is set up once, so it reads the toggle via a ref.
   const showThinkingRef = useRef(initial.showThinking);
+  const startupWarningsRef = useRef([...startupWarnings]);
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const loginControllerRef = useRef<LoginController | null>(null);
@@ -876,8 +884,13 @@ export function App({
       .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
     setThinkingLevel(session.agent.state.thinkingLevel as ThinkingLevel);
     setModelId(session.agent.state.model.id);
+    const visibleStartupWarnings = startupWarningsRef.current;
+    startupWarningsRef.current = [];
     setTx({
-      lines: replayEntries(session.sessionManager.buildContextEntries(), cwd, showThinkingRef.current),
+      lines: [
+        ...replayEntries(session.sessionManager.buildContextEntries(), cwd, showThinkingRef.current),
+        ...visibleStartupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
+      ],
       stream: null,
       pending: [],
     });
@@ -1530,6 +1543,12 @@ export function App({
     update({ checkMode: CHECK_MODE_PROFILES[(index + step + CHECK_MODE_PROFILES.length) % CHECK_MODE_PROFILES.length]! });
   };
 
+  const stepSandboxMode = (step: number) => {
+    const current = settings.sandboxMode ?? "auto";
+    const index = SANDBOX_MODES.indexOf(current);
+    update({ sandboxMode: SANDBOX_MODES[(index + step + SANDBOX_MODES.length) % SANDBOX_MODES.length]! });
+  };
+
   const rowActions: Record<SettingRowId, { step?: (n: number) => void; enter?: () => void }> = {
     theme: { step: stepTheme },
     providers: { enter: openLogin },
@@ -1539,6 +1558,7 @@ export function App({
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
     checkMode: { step: stepCheckMode },
+    sandboxMode: { step: stepSandboxMode },
     checkModel: { enter: () => {
       setModelQuery("");
       setModelSearchFocused(false);
@@ -1586,6 +1606,7 @@ export function App({
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
     checkMode: `‹ ${settings.checkMode} ›`,
+    sandboxMode: `‹ ${settings.sandboxMode ?? "auto"} ›`,
     checkModel: `${settings.checkModel} ›`,
     checkPaths: `${checkPathsForProject(settings, cwd).length} additional · /check-path ›`,
     clearCheckApprovals: "clear ›",

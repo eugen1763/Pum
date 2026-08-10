@@ -13,6 +13,31 @@ function session() {
   } as any;
 }
 
+test("startup warnings remain visible without entering session context", async () => {
+  const setup = await createTestRenderer({ width: 70, height: 18 });
+  const activeSession = session();
+  const contextEntries: unknown[] = [];
+  activeSession.sessionManager.buildContextEntries = () => contextEntries;
+  flushSync(() => createRoot(setup.renderer).render(
+    <App
+      session={activeSession}
+      modelRuntime={{ getProviders: () => [], getAvailableSnapshot: () => [] } as any}
+      onNewSession={async () => activeSession}
+      loadSessions={async () => []}
+      onSwitchSession={async () => activeSession}
+      settings={{ showThinking: false, theme: "tokyonight", animations: false, workingRuleAnimation: "off", webSearch: false, writingStyle: "none", explanationStrength: "simple", checkMode: "off", checkModel: "mock/check", maxActiveSubagents: 10 }}
+      searchProviders={[]}
+      subagentManager={{ getAgents: () => [], subscribe: () => () => {}, bindMainSession: async () => {} } as any}
+      startupWarnings={["Sandbox unavailable. Active Check modes use deterministic checks only."]}
+    />,
+  ));
+  await setup.renderOnce();
+  await setup.flush();
+  expect(setup.captureCharFrame()).toContain("Sandbox unavailable");
+  expect(contextEntries).toEqual([]);
+  setup.renderer.destroy();
+});
+
 test("startup without an available provider renders the TUI and opens login", async () => {
   const setup = await createTestRenderer({ width: 70, height: 18 });
   const activeSession = session();
