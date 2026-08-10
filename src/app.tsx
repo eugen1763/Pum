@@ -2430,7 +2430,7 @@ export function App({
             textColor={theme.fg}
             cursorColor={theme.accent}
             selectionBg={theme.selectionBg}
-            wrapMode="char"
+            wrapMode="word"
             scrollMargin={1}
             focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !checkApproval}
             onContentChange={handleTextareaChange}
