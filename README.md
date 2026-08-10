@@ -62,6 +62,19 @@ Linux and macOS are the primary environments. Windows CI checks the code and Win
 
 On Windows, install Git for Windows. Ensure that `bash.exe` is in `PATH` or remains in its standard location. Use Windows Terminal with PowerShell. Do not use PowerShell ISE.
 
+### Terminal title
+
+PUM sets a compact terminal title such as `Pum · working · 2 subagents`. The title reports overall activity and counts only starting or running subagents. PUM clears the title during graceful shutdown.
+
+Windows Terminal and common Linux terminal emulators accept the title through OpenTUI. Inside `tmux`, PUM sets the active pane title. To copy that pane title to the outer terminal title, add this configuration:
+
+```tmux
+set -g set-titles on
+set -g set-titles-string '#T'
+```
+
+Keep `allow-set-title` enabled so applications can update the pane title. A `tmux` configuration can replace or suppress application titles. PUM cannot override that server policy.
+
 ## Install and start
 
 ### Install from source

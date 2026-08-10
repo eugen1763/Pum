@@ -81,7 +81,7 @@ import {
   removePendingImage,
   type PendingImage,
 } from "./image-paste";
-import type { SubagentManager } from "./subagents/manager";
+import { countActiveSubagents, type SubagentManager } from "./subagents/manager";
 import type { SpawnPreviewManager } from "./subagents/spawn-preview";
 import { SpawnPreviewPopup } from "./subagents/spawn-preview-popup";
 import { recallNewestQueuedUserMessage } from "./queue-recall";
@@ -119,6 +119,7 @@ import {
   type TriggerAction,
   type TriggerManagerLike,
 } from "./triggers/popup";
+import type { TerminalTitleController } from "./terminal-title";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -344,6 +345,7 @@ export function App({
   checkApprovalStore,
   triggerManager,
   messageCacheController,
+  terminalTitle,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -365,6 +367,7 @@ export function App({
   checkApprovalStore?: CheckApprovalStore;
   triggerManager?: TriggerManagerLike;
   messageCacheController?: MessageCacheController;
+  terminalTitle?: TerminalTitleController;
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -436,6 +439,7 @@ export function App({
   const syntaxStyle = useMemo(() => buildSyntaxStyle(theme), [theme]);
   const animations = settings.animations && supportsTrueColor();
   const agents = subagentManager.getAgents();
+  const activeSubagentCount = countActiveSubagents(agents);
   const activeAgent = activeAgentId
     ? agents.find((agent) => agent.id === activeAgentId)
     : undefined;
@@ -817,6 +821,13 @@ export function App({
     }),
     [subagentManager],
   );
+
+  useEffect(() => {
+    terminalTitle?.update({
+      working: busy || activeSubagentCount > 0,
+      activeSubagentCount,
+    });
+  }, [terminalTitle, busy, activeSubagentCount]);
 
   useEffect(() => spawnPreviewManager?.subscribe(() => {
     setSpawnPreviewRevision((revision) => revision + 1);
@@ -2236,7 +2247,7 @@ export function App({
           busy={visibleBusy}
           elapsedSec={visibleElapsedSec}
           agentCount={agents.length}
-          runningAgentCount={agents.filter((agent) => agent.status === "running" || agent.status === "starting").length}
+          runningAgentCount={activeSubagentCount}
           maxActiveAgentCount={settings.maxActiveSubagents}
           activeAgentName={activeAgent?.name}
         />
