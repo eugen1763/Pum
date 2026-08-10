@@ -243,6 +243,7 @@ export class SubagentManager {
   private readonly messageTimes = new Map<string, number[]>();
   private readonly settlements = new Map<string, SubagentSettlement>();
   private readonly acceptedSettlementMessageIds = new Set<string>();
+  private readonly settlementDeliveriesInFlight = new Set<string>();
 
   constructor(options: ManagerOptions) {
     this.modelRuntime = options.modelRuntime;
@@ -303,6 +304,7 @@ export class SubagentManager {
     this.messageTimes.clear();
     this.settlements.clear();
     this.acceptedSettlementMessageIds.clear();
+    this.settlementDeliveriesInFlight.clear();
     this.mainApi = pi;
     this.mainSessionManager = sessionManager;
     this.mainCwd = cwd;
@@ -430,6 +432,7 @@ export class SubagentManager {
     });
     this.mainApi = undefined;
     this.mainSessionManager = undefined;
+    this.settlementDeliveriesInFlight.clear();
     this.records.clear();
     this.emit();
   }
@@ -1646,6 +1649,7 @@ export class SubagentManager {
   }
 
   private acknowledgeSettlement(settlement: SubagentSettlement): void {
+    this.settlementDeliveriesInFlight.delete(settlement.messageId);
     if (settlement.acknowledgedAt !== undefined) return;
     settlement.acknowledgedAt = Date.now();
     this.acceptedSettlementMessageIds.add(settlement.messageId);
@@ -1662,6 +1666,14 @@ export class SubagentManager {
     if (settlement) this.acknowledgeSettlement(settlement);
   }
 
+  private clearSettlementDeliveriesForParent(parentAgentId: string): void {
+    for (const settlement of this.settlements.values()) {
+      if (settlement.parentAgentId === parentAgentId) {
+        this.settlementDeliveriesInFlight.delete(settlement.messageId);
+      }
+    }
+  }
+
   private async deliverSettlement(settlement: SubagentSettlement): Promise<boolean> {
     if (settlement.acknowledgedAt !== undefined) return true;
     const source = this.records.get(settlement.agentId);
@@ -1673,6 +1685,7 @@ export class SubagentManager {
         this.acknowledgeSettlement(settlement);
         return true;
       }
+      if (this.settlementDeliveriesInFlight.has(settlement.messageId)) return true;
       const data: AgentMessageData = {
         id: settlement.messageId,
         sender,
@@ -1681,14 +1694,17 @@ export class SubagentManager {
         at: settlement.createdAt,
         kind: settlement.status === "idle" ? "idle" : settlement.status === "completed" ? "completion" : "status",
       };
+      this.settlementDeliveriesInFlight.add(settlement.messageId);
       const delivered = this.wakeMain({
         customType: AGENT_MESSAGE_CUSTOM_TYPE,
         content: settlement.content,
         display: true,
         details: data,
       }, settlement.content);
-      if (!delivered) return false;
-      this.acknowledgeSettlement(settlement);
+      if (!delivered) {
+        this.settlementDeliveriesInFlight.delete(settlement.messageId);
+        return false;
+      }
       this.emit({ type: "main-line", line: this.agentMessageLine(data) });
       return true;
     }
@@ -1702,6 +1718,7 @@ export class SubagentManager {
         this.acknowledgeSettlement(settlement);
         return true;
       }
+      if (this.settlementDeliveriesInFlight.has(settlement.messageId)) return true;
       const data: AgentMessageData = {
         id: settlement.messageId,
         sender,
@@ -1714,6 +1731,7 @@ export class SubagentManager {
       if (!parent.snapshot.transcript.pending.some((item) => item.id === pending.id)) {
         this.addPending(parent, pending);
       }
+      this.settlementDeliveriesInFlight.add(settlement.messageId);
       try {
         withSearchRoute(parent.session.sessionId, () => {
           parent.api!.sendMessage(
@@ -1730,11 +1748,11 @@ export class SubagentManager {
           );
         });
       } catch {
+        this.settlementDeliveriesInFlight.delete(settlement.messageId);
         this.dropPending(parent, pending.id);
         return false;
       }
       this.updateStatus(parent, "running");
-      this.acknowledgeSettlement(settlement);
       return true;
     } catch {
       return false;
@@ -1761,6 +1779,7 @@ export class SubagentManager {
     if (!record) return;
     const sessionId = record.session?.sessionId;
     if (record.dispose) await record.dispose();
+    this.clearSettlementDeliveriesForParent(record.snapshot.id);
     if (sessionId) {
       await this.triggerManager?.invalidateAgent(sessionId, record.snapshot.id);
       this.emit({
