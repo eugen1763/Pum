@@ -8,11 +8,13 @@ import {
   isExplanationStrength,
   type ExplanationStrength,
 } from "./explanation-strength";
+import type { SandboxMode } from "./sandbox/types";
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
 export const CHECK_MODE_PROFILES = ["off", "strict", "balanced", "ask"] as const;
 export type CheckModeProfile = (typeof CHECK_MODE_PROFILES)[number];
+export const SANDBOX_MODES = ["auto", "require", "off"] as const;
 export const MIN_ACTIVE_SUBAGENTS = 1;
 export const MAX_ACTIVE_SUBAGENTS = 25;
 export const DEFAULT_MAX_ACTIVE_SUBAGENTS = 10;
@@ -63,6 +65,10 @@ export function isCheckModeProfile(value: unknown): value is CheckModeProfile {
   return CHECK_MODE_PROFILES.includes(value as CheckModeProfile);
 }
 
+export function isSandboxMode(value: unknown): value is SandboxMode {
+  return SANDBOX_MODES.includes(value as SandboxMode);
+}
+
 export function isWorkingRuleAnimationMode(value: unknown): value is WorkingRuleAnimationMode {
   return WORKING_RULE_ANIMATION_MODES.includes(value as WorkingRuleAnimationMode);
 }
@@ -83,6 +89,8 @@ export type PumSettings = {
   explanationStrength: ExplanationStrength;
   checkMode: CheckModeProfile;
   checkModel: string;
+  /** OS sandbox enforcement. Legacy settings omit this field and migrate to auto. */
+  sandboxMode?: SandboxMode;
   /** Additional canonical directory roots allowed by Check mode, keyed by launch project. */
   checkPaths?: CheckPathsByProject;
   maxActiveSubagents: number;
@@ -100,6 +108,7 @@ const DEFAULTS: PumSettings = {
   explanationStrength: "simple",
   checkMode: "off",
   checkModel: DEFAULT_CHECK_MODEL,
+  sandboxMode: "auto",
   checkPaths: {},
   maxActiveSubagents: DEFAULT_MAX_ACTIVE_SUBAGENTS,
 };
@@ -128,6 +137,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
       typeof merged.checkModel === "string" && merged.checkModel.includes("/")
         ? merged.checkModel
         : DEFAULTS.checkModel,
+    sandboxMode: isSandboxMode(merged.sandboxMode) ? merged.sandboxMode : DEFAULTS.sandboxMode,
     checkPaths: normalizeCheckPathsByProject(merged.checkPaths),
     maxActiveSubagents: normalizeMaxActiveSubagents(merged.maxActiveSubagents),
   };

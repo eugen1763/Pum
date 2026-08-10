@@ -26,7 +26,7 @@ describe("settings search and navigation", () => {
   test("filters labels, categories, and useful keywords", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual([
-      "checkMode", "checkModel", "checkPaths", "clearCheckApprovals",
+      "checkMode", "sandboxMode", "checkModel", "checkPaths", "clearCheckApprovals",
     ]);
     expect(filterSettingsRows("reasoning visible").map((row) => row.id)).toEqual(["showThinking"]);
     expect(filterSettingsRows("progress detailed").map((row) => row.id)).toEqual(["explanationStrength"]);

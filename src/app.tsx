@@ -22,6 +22,7 @@ import {
   checkPathsForProject,
   MAX_ACTIVE_SUBAGENTS,
   MIN_ACTIVE_SUBAGENTS,
+  SANDBOX_MODES,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
   type PumSettings,
@@ -1542,6 +1543,12 @@ export function App({
     update({ checkMode: CHECK_MODE_PROFILES[(index + step + CHECK_MODE_PROFILES.length) % CHECK_MODE_PROFILES.length]! });
   };
 
+  const stepSandboxMode = (step: number) => {
+    const current = settings.sandboxMode ?? "auto";
+    const index = SANDBOX_MODES.indexOf(current);
+    update({ sandboxMode: SANDBOX_MODES[(index + step + SANDBOX_MODES.length) % SANDBOX_MODES.length]! });
+  };
+
   const rowActions: Record<SettingRowId, { step?: (n: number) => void; enter?: () => void }> = {
     theme: { step: stepTheme },
     providers: { enter: openLogin },
@@ -1551,6 +1558,7 @@ export function App({
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
     checkMode: { step: stepCheckMode },
+    sandboxMode: { step: stepSandboxMode },
     checkModel: { enter: () => {
       setModelQuery("");
       setModelSearchFocused(false);
@@ -1598,6 +1606,7 @@ export function App({
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
     checkMode: `‹ ${settings.checkMode} ›`,
+    sandboxMode: `‹ ${settings.sandboxMode ?? "auto"} ›`,
     checkModel: `${settings.checkModel} ›`,
     checkPaths: `${checkPathsForProject(settings, cwd).length} additional · /check-path ›`,
     clearCheckApprovals: "clear ›",
