@@ -346,6 +346,7 @@ export function App({
   triggerManager,
   messageCacheController,
   terminalTitle,
+  startupWarnings = [],
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -368,16 +369,21 @@ export function App({
   triggerManager?: TriggerManagerLike;
   messageCacheController?: MessageCacheController;
   terminalTitle?: TerminalTitleController;
+  /** Visible process-local warnings. These lines never enter pi session context. */
+  startupWarnings?: readonly string[];
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
   const [tx, setTx] = useState<Transcript>(() => ({
     // A resumed session already holds messages; show them instead of a blank pane.
-    lines: replayEntries(
-      initialSession.sessionManager.buildContextEntries(),
-      cwd,
-      initial.showThinking,
-    ),
+    lines: [
+      ...replayEntries(
+        initialSession.sessionManager.buildContextEntries(),
+        cwd,
+        initial.showThinking,
+      ),
+      ...startupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
+    ],
     stream: null,
     pending: [],
   }));
@@ -557,6 +563,7 @@ export function App({
   };
   // The event subscription is set up once, so it reads the toggle via a ref.
   const showThinkingRef = useRef(initial.showThinking);
+  const startupWarningsRef = useRef([...startupWarnings]);
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const loginControllerRef = useRef<LoginController | null>(null);
@@ -876,8 +883,13 @@ export function App({
       .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
     setThinkingLevel(session.agent.state.thinkingLevel as ThinkingLevel);
     setModelId(session.agent.state.model.id);
+    const visibleStartupWarnings = startupWarningsRef.current;
+    startupWarningsRef.current = [];
     setTx({
-      lines: replayEntries(session.sessionManager.buildContextEntries(), cwd, showThinkingRef.current),
+      lines: [
+        ...replayEntries(session.sessionManager.buildContextEntries(), cwd, showThinkingRef.current),
+        ...visibleStartupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
+      ],
       stream: null,
       pending: [],
     });
