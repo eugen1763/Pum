@@ -1,5 +1,9 @@
 import { EventEmitter } from "node:events";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { PassThrough } from "node:stream";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "bun:test";
 import type { ContainerConfig, PlatformSupport } from "@microsoft/mxc-sdk";
 import type { SandboxPolicy } from "./types.js";
@@ -153,6 +157,44 @@ test("probe reports an enforced native ProcessContainer", async () => {
 	);
 	expect(result).toEqual({ state: "enforced", backend: "mxc" });
 });
+
+test("default probe imports MXC with native Windows whoami first", async () => {
+	if (process.platform !== "win32") return;
+	const root = await mkdtemp(join(tmpdir(), "pum-mxc-whoami-"));
+	const marker = join(root, "gnu-whoami-selected");
+	const fakeWhoami = join(root, "whoami.cmd");
+	await writeFile(
+		fakeWhoami,
+		`@echo off\r\necho GNU whoami selected 1^>^&2\r\necho selected>"${marker}"\r\nexit /b 1\r\n`,
+		"utf8",
+	);
+
+	try {
+		const windowsModule = pathToFileURL(join(import.meta.dir, "windows.ts")).href;
+		const script = [
+			'await import("node:child_process");',
+			`const { createWindowsSandboxBackend } = await import(${JSON.stringify(windowsModule)});`,
+			"await createWindowsSandboxBackend().probe();",
+		].join("\n");
+		const env = { ...process.env };
+		for (const name of Object.keys(env)) {
+			if (name.toLowerCase() === "path") delete env[name];
+		}
+		env.PATH = `${root}${delimiter}${process.env.PATH ?? ""}`;
+		const child = Bun.spawn([process.execPath, "-e", script], {
+			cwd: import.meta.dir,
+			env,
+			stdout: "ignore",
+			stderr: "pipe",
+		});
+		const stderr = await new Response(child.stderr).text();
+		expect(await child.exited).toBe(0);
+		expect(stderr).toBe("");
+		await expect(access(marker)).rejects.toThrow();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+}, 20_000);
 
 test("probe reports a missing optional SDK without throwing", async () => {
 	const result = await probeWindowsSandbox(async () => {

@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { delimiter, join, win32 } from "node:path";
+import { join, win32 } from "node:path";
 import type {
 	ContainerConfig,
 	PlatformSupport,
@@ -31,16 +31,19 @@ const REQUIRED_UI_CAPABILITIES = [
 
 const loadMxcSdk: MxcSdkLoader = async () => {
 	// MXC 0.7 resolves `whoami /user` through a shell during module import.
-	// Prefer the native Windows binary so a Git/MSYS PATH does not select GNU whoami.
-	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
-	const previous = process.env[pathKey];
+	// Bun caches the default child-process environment, so changing PATH here
+	// does not affect MXC after node:child_process has already been imported.
 	const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
-	if (systemRoot) process.env[pathKey] = [join(systemRoot, "System32"), previous].filter(Boolean).join(delimiter);
+	const system32 = join(systemRoot ?? "C:\\Windows", "System32");
+	const previousCwd = process.cwd();
+	const specifier = import.meta.resolve("@microsoft/mxc-sdk");
 	try {
-		return await import("@microsoft/mxc-sdk");
+		// Bun can synchronously require this ESM package. Keep the cwd change
+		// synchronous so no unrelated work can observe the temporary directory.
+		process.chdir(system32);
+		return require(specifier) as MxcSdk;
 	} finally {
-		if (previous === undefined) delete process.env[pathKey];
-		else process.env[pathKey] = previous;
+		process.chdir(previousCwd);
 	}
 };
 
