@@ -20,7 +20,7 @@ Rules:
 - Run independent task groups in parallel.
 - Keep each subagent task complete and self-contained.
 - Track every unfinished task group through completion notifications.
-- Merge each successful subagent with the worktree tool as soon as it settles.
+- Merge each successful subagent only after a completion notice arrives and authoritative status is \`completed\`; idle settlement is not completion.
 - Before merging a managed parent, recursively merge or resolve every retained descendant.
 - Close the deepest descendants first. Every retained status blocks the parent, including completed and failed descendants.
 - Wait to merge only for a concrete dependency, known conflict risk, or required integration order. State that reason explicitly.

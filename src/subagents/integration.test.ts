@@ -117,7 +117,22 @@ function retainAgent(
       updatedAt: Date.now(),
       usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
     },
+    activityGeneration: 0,
+    idleNotifiedGeneration: 0,
   });
+  if (status === "completed") {
+    (manager as any).settlements.set(`${id}:0:completed`, {
+      id: `${id}:0:completed`,
+      messageId: `settlement-${id}:0:completed`,
+      agentId: id,
+      parentAgentId,
+      status: "completed",
+      activityGeneration: 0,
+      content: `Subagent ${worktree.name} completed.`,
+      createdAt: Date.now(),
+      acknowledgedAt: Date.now(),
+    });
+  }
 }
 
 async function waitUntil(predicate: () => boolean, timeout = 5_000): Promise<void> {
@@ -471,6 +486,10 @@ describe("background subagents", () => {
 
     expect(wakeMessages).toEqual([]);
 
+    await manager.sendUserMessage(spawned.id, "Prepare the final completion report.");
+    await finishAgent(manager, spawned.id, "Integration agent completed successfully.");
+    await waitUntil(() => manager.getAgent(spawned.id)?.status === "completed");
+    expect(notices.some((notice) => notice.includes("Subagent integration-agent completed."))).toBe(true);
     const merged = await (manager as any).worktreeAction(repo, "merge", spawned.id);
     expect(merged.content[0].text).toContain("Closed integration-agent and removed its worktree");
     expect(manager.getAgent(spawned.id)).toBeUndefined();
@@ -531,7 +550,9 @@ describe("background subagents", () => {
     await (restored as any).retrySettlementsForParent(null);
     expect(deliveries).toHaveLength(1);
 
-    await (restored as any).worktreeAction(repo, "merge", child.id);
+    await expect((restored as any).worktreeAction(repo, "merge", child.id))
+      .rejects.toThrow("while its authoritative status is idle");
+    await (restored as any).worktreeAction(repo, "remove", child.id);
     await restored.detachMain();
   });
 
@@ -546,7 +567,7 @@ describe("background subagents", () => {
     const childWorktree = await createWorktree(repo, "recursive-child");
     const grandchildWorktree = await createWorktree(repo, "recursive-grandchild");
     const unrelatedWorktree = await createWorktree(repo, "recursive-unrelated");
-    retainAgent(manager, "recursive-parent-id", parentWorktree, "idle");
+    retainAgent(manager, "recursive-parent-id", parentWorktree, "completed");
     retainAgent(manager, "recursive-child-id", childWorktree, "completed", "recursive-parent-id");
     retainAgent(manager, "recursive-grandchild-id", grandchildWorktree, "failed", "recursive-child-id");
     retainAgent(manager, "recursive-unrelated-id", unrelatedWorktree, "interrupted");
@@ -559,8 +580,12 @@ describe("background subagents", () => {
       on() {},
       registerTool(tool: any) { parentTools.set(tool.name, tool); },
     });
-    await parentTools.get("worktree").execute("nested-merge", {
+    await expect(parentTools.get("worktree").execute("nested-merge", {
       action: "merge",
+      target: "recursive-grandchild-id",
+    })).rejects.toThrow("while its authoritative status is failed");
+    await parentTools.get("worktree").execute("nested-remove", {
+      action: "remove",
       target: "recursive-grandchild-id",
     });
     expect(manager.getAgent("recursive-grandchild-id")).toBeUndefined();
@@ -571,7 +596,9 @@ describe("background subagents", () => {
     expect(manager.getAgent("recursive-parent-id")).toBeUndefined();
     expect(manager.getAgent("recursive-unrelated-id")).toBeDefined();
 
-    await (manager as any).worktreeAction(repo, "merge", "recursive-unrelated-id");
+    await expect((manager as any).worktreeAction(repo, "merge", "recursive-unrelated-id"))
+      .rejects.toThrow("while its authoritative status is interrupted");
+    await (manager as any).worktreeAction(repo, "remove", "recursive-unrelated-id");
     await manager.detachMain();
   });
 
@@ -593,6 +620,9 @@ describe("background subagents", () => {
       .toContain("All 1 subagent slots are active");
     const retained = manager.getAgents()[0]!;
     await waitUntil(() => !["starting", "running"].includes(manager.getAgent(retained.id)?.status ?? ""));
+    await manager.sendUserMessage(retained.id, "Prepare the final completion report.");
+    await finishAgent(manager, retained.id, "Capacity race winner completed.");
+    await waitUntil(() => manager.getAgent(retained.id)?.status === "completed");
     await (manager as any).worktreeAction(repo, "merge", retained.id);
     await manager.detachMain();
   });
@@ -605,7 +635,7 @@ describe("background subagents", () => {
     const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
     await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
     const parentWorktree = await createWorktree(repo, "closure-race-parent");
-    retainAgent(manager, "closure-race-parent-id", parentWorktree, "idle");
+    retainAgent(manager, "closure-race-parent-id", parentWorktree, "completed");
 
     let release!: () => void;
     let entered!: () => void;

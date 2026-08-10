@@ -1343,6 +1343,22 @@ export class SubagentManager {
     );
   }
 
+  private assertManagedMergeReady(record: RuntimeRecord): void {
+    if (record.snapshot.status !== "completed") {
+      throw new Error(
+        `Cannot merge ${record.snapshot.name} while its authoritative status is ${record.snapshot.status}. ` +
+          "A managed merge requires status completed after its completion notice arrives. Idle settlement is not completion.",
+      );
+    }
+    const completion = this.settlements.get(this.settlementId(record, "completed"));
+    if (completion?.acknowledgedAt === undefined) {
+      throw new Error(
+        `Cannot merge ${record.snapshot.name} before its completion notice arrives. ` +
+          "Authoritative status completed alone is not sufficient.",
+      );
+    }
+  }
+
   async sendUserMessage(
     id: string,
     text: string,
@@ -1825,10 +1841,10 @@ export class SubagentManager {
     if (action === "merge") {
       return this.withWorktreeLock(async () => {
         const managedAgent = this.findRecord(target);
-        if (managedAgent && ["starting", "running"].includes(managedAgent.snapshot.status)) {
-          throw new Error(`Stop ${managedAgent.snapshot.name} before ${action}`);
+        if (managedAgent) {
+          this.assertNoRetainedDescendants(managedAgent, "merge");
+          this.assertManagedMergeReady(managedAgent);
         }
-        if (managedAgent) this.assertNoRetainedDescendants(managedAgent, "merge");
         const record = managedAgent?.snapshot.worktree
           ?? (await listWorktrees(cwd)).find((item) => item.name === target || item.branch === target);
         if (!record) throw new Error(`Unknown worktree: ${target}`);

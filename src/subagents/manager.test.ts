@@ -878,6 +878,33 @@ describe("SubagentManager extension", () => {
     )).not.toThrow();
   });
 
+  test("rejects managed merges from every non-completed status", async () => {
+    const statuses: Exclude<SubagentStatus, "completed">[] = [
+      "idle",
+      "failed",
+      "stopped",
+      "interrupted",
+      "starting",
+      "running",
+    ];
+
+    for (const status of statuses) {
+      const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+      addTestAgent(manager, `agent-${status}`, status);
+      await expect((manager as any).worktreeAction("/tmp", "merge", `agent-${status}`)).rejects.toThrow(
+        `Cannot merge agent-${status} while its authoritative status is ${status}`,
+      );
+    }
+  });
+
+  test("rejects a completed managed merge before its completion notice arrives", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "completed-without-notice", "completed");
+
+    await expect((manager as any).worktreeAction("/tmp", "merge", "completed-without-notice"))
+      .rejects.toThrow("Cannot merge completed-without-notice before its completion notice arrives");
+  });
+
   test("blocks finish_subagent until every descendant closes", async () => {
     const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
     addTestAgent(manager, "parent", "idle");
