@@ -656,6 +656,10 @@ describe("SubagentManager extension", () => {
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0].details.id).toBe(unacknowledged.messageId);
     expect(lines).toHaveLength(1);
+    expect(unacknowledged.acknowledgedAt).toBeUndefined();
+
+    (manager as any).acknowledgeSettlementMessage(unacknowledged.messageId);
+
     expect(events.filter((event) => event.event === "settlement").at(-1).settlement.acknowledgedAt).toBeNumber();
   });
 
@@ -785,7 +789,19 @@ describe("SubagentManager extension", () => {
 
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0].details.id).toBe(settlement.messageId);
+    expect(settlement.acknowledgedAt).toBeUndefined();
+
+    processAgentEvent(manager, "parent", {
+      type: "message_start",
+      message: {
+        role: "custom",
+        customType: "pum.agent_message",
+        details: deliveries[0].details,
+      },
+    });
+
     expect(settlement.acknowledgedAt).toBeNumber();
+    expect(manager.getAgent("parent")?.transcript.pending).toEqual([]);
   });
 
   test("deduplicates a crash-window nested settlement at the recipient session boundary", async () => {

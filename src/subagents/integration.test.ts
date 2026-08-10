@@ -15,6 +15,7 @@ import { SubagentManager } from "./manager";
 import { createWorktree } from "../worktree";
 import type { SubagentStatus } from "./types";
 import { SandboxController } from "../sandbox";
+import { replayEntries } from "../replay";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -530,6 +531,95 @@ describe("background subagents", () => {
     expect(deliveries[0].details.id).toBe(settlementBeforeRestart.settlement.messageId);
     await (restored as any).retrySettlementsForParent(null);
     expect(deliveries).toHaveLength(1);
+
+    await (restored as any).worktreeAction(repo, "merge", child.id);
+    await restored.detachMain();
+  });
+
+  test("retries one stable completion after restart before delayed insertion", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const parent = SessionManager.inMemory(repo);
+    const delayedBeforeRestart: any[] = [];
+    const firstManager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await firstManager.attachMain({
+      appendEntry(customType: string, data: unknown) {
+        parent.appendCustomEntry(customType, data);
+      },
+      sendMessage(message: any) {
+        delayedBeforeRestart.push(message);
+      },
+    } as any, parent, repo);
+
+    const child = await firstManager.spawn({
+      task: "Complete before delayed settlement insertion.",
+      name: "restart-completion-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    });
+    await finishAgent(firstManager, child.id, "Crash-window completion summary.");
+    await waitUntil(() => firstManager.getAgent(child.id)?.status === "completed");
+
+    const completionBeforeRestart = delayedBeforeRestart.find(
+      (message) => message.details?.kind === "completion",
+    );
+    expect(completionBeforeRestart).toBeDefined();
+    const persistedSettlement = parent.getEntries()
+      .filter((entry: any) => entry.type === "custom" && entry.customType === "pum.subagent")
+      .map((entry: any) => entry.data)
+      .find((event: any) =>
+        event.event === "settlement"
+          && event.settlement?.agentId === child.id
+          && event.settlement?.status === "completed",
+      );
+    expect(persistedSettlement.settlement.messageId).toBe(completionBeforeRestart.details.id);
+    expect(persistedSettlement.settlement.acknowledgedAt).toBeUndefined();
+    expect(parent.getEntries().some(
+      (entry: any) => entry.type === "custom_message" && entry.details?.id === completionBeforeRestart.details.id,
+    )).toBe(false);
+    await firstManager.detachMain();
+
+    const retries: any[] = [];
+    const restored = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await restored.attachMain({
+      appendEntry(customType: string, data: unknown) {
+        parent.appendCustomEntry(customType, data);
+      },
+      sendMessage(message: any) {
+        retries.push(message);
+      },
+    } as any, parent, repo);
+    await (restored as any).retrySettlementsForParent(null);
+    await (restored as any).retrySettlementsForParent(null);
+
+    const completionRetries = retries.filter((message) => message.details?.kind === "completion");
+    expect(completionRetries).toHaveLength(1);
+    expect(completionRetries[0].details.id).toBe(completionBeforeRestart.details.id);
+
+    parent.appendCustomMessageEntry(
+      completionRetries[0].customType,
+      completionRetries[0].content,
+      completionRetries[0].display,
+      completionRetries[0].details,
+    );
+    await (restored as any).retrySettlementsForParent(null);
+
+    expect(retries.filter((message) => message.details?.kind === "completion")).toHaveLength(1);
+    const replayedCompletion = replayEntries(parent.buildContextEntries(), repo, true).filter(
+      (line) => line.kind === "agent-message" && line.text.includes("Subagent restart-completion-child completed."),
+    );
+    expect(replayedCompletion).toHaveLength(1);
+    const acknowledgedSettlement = parent.getEntries()
+      .filter((entry: any) => entry.type === "custom" && entry.customType === "pum.subagent")
+      .map((entry: any) => entry.data)
+      .filter((event: any) =>
+        event.event === "settlement"
+          && event.settlement?.messageId === completionRetries[0].details.id,
+      )
+      .at(-1);
+    expect(acknowledgedSettlement.settlement.acknowledgedAt).toBeNumber();
 
     await (restored as any).worktreeAction(repo, "merge", child.id);
     await restored.detachMain();
