@@ -1,7 +1,7 @@
 import { generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
-import { basename, dirname, relative, resolve, sep } from "node:path";
+import { basename, dirname, parse, relative, resolve, sep } from "node:path";
 import { previewApplyPatch } from "./apply-patch";
 import type { CheckedToolName } from "./check-approvals";
 import {
@@ -85,6 +85,11 @@ async function validateEditPath(
   const roots = await Promise.all([projectRoot, ...allowedPaths].map((path) => realpath(path)));
   const absolute = resolve(projectRoot, inputPath);
   const sortedRoots = roots.sort((first, second) => second.length - first.length);
+  if (process.platform === "win32" && windowsAbsolute(inputPath)) {
+    const targetRoot = parse(absolute).root.toLowerCase();
+    const hasAllowedVolume = sortedRoots.some((candidate) => parse(candidate).root.toLowerCase() === targetRoot);
+    if (!hasAllowedVolume) throw new Error(`Edit path is outside the allowed Check mode paths: ${inputPath}`);
+  }
   let root = sortedRoots.find((candidate) => isPathInsideOrSame(candidate, absolute));
   if (!root) {
     let targetIdentity: string;
