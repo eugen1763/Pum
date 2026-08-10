@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { basename, delimiter, dirname, join } from "node:path";
 import type {
 	ContainerConfig,
 	PlatformSupport,
@@ -28,7 +29,20 @@ const REQUIRED_UI_CAPABILITIES = [
 	"canBlockDisplaySettingsChanges",
 ] as const;
 
-const loadMxcSdk: MxcSdkLoader = () => import("@microsoft/mxc-sdk");
+const loadMxcSdk: MxcSdkLoader = async () => {
+	// MXC 0.7 resolves `whoami /user` through a shell during module import.
+	// Prefer the native Windows binary so a Git/MSYS PATH does not select GNU whoami.
+	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+	const previous = process.env[pathKey];
+	const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+	if (systemRoot) process.env[pathKey] = [join(systemRoot, "System32"), previous].filter(Boolean).join(delimiter);
+	try {
+		return await import("@microsoft/mxc-sdk");
+	} finally {
+		if (previous === undefined) delete process.env[pathKey];
+		else process.env[pathKey] = previous;
+	}
+};
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -48,6 +62,12 @@ function validateNativeSupport(support: PlatformSupport): SandboxCapability {
 	}
 	if (!support.isolationTier) {
 		return unavailable("The MXC native ProcessContainer probe did not return an isolation tier");
+	}
+	if (support.isolationTier !== "base-container") {
+		return unavailable(
+			`MXC BaseContainer/CreateProcessInSandbox is unavailable (reported tier: ${support.isolationTier}). ` +
+			"PUM does not use the AppContainer DACL fallback because it can change host ACLs.",
+		);
 	}
 	const ui = support.uiCapabilities;
 	if (!ui) {
@@ -106,6 +126,13 @@ function uniqueWindowsPaths(paths: readonly string[]): string[] {
 	return result;
 }
 
+function windowsRuntimePaths(executable: string): string[] {
+	const executableDirectory = dirname(executable);
+	return basename(executableDirectory).toLowerCase() === "bin"
+		? [dirname(executableDirectory)]
+		: [executableDirectory];
+}
+
 function sandboxEnvironment(policy: SandboxPolicy): string[] {
 	const entries = Object.entries(policy.environment).filter(
 		([name]) => name.toUpperCase() !== "TEMP" && name.toUpperCase() !== "TMP",
@@ -131,7 +158,7 @@ export function buildWindowsMxcConfig(
 	const mxcPolicy: MxcPolicy = {
 		version: "0.7.0-alpha",
 		filesystem: {
-			readonlyPaths: uniqueWindowsPaths(policy.readOnlyPaths),
+			readonlyPaths: uniqueWindowsPaths([...policy.readOnlyPaths, ...windowsRuntimePaths(policy.executable)]),
 			readwritePaths: uniqueWindowsPaths([...policy.readWritePaths, policy.privateTemp]),
 			deniedPaths: uniqueWindowsPaths(policy.deniedPaths),
 			clearPolicyOnExit: true,

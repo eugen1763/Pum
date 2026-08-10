@@ -45,9 +45,15 @@ describe("sandbox policy generation", () => {
     expect(policy.args).toEqual(["-c", command]);
     expect(policy.readWritePaths).toEqual([cwd, shared]);
     expect(policy.readOnlyPaths).toEqual([outside]);
-    expect(policy.environment).toEqual({ PATH: "/bin" });
+    expect(policy.environment).toEqual({
+      PATH: "/bin",
+      TEMP: "/tmp/pum-private",
+      TMP: "/tmp/pum-private",
+      TMPDIR: "/tmp/pum-private",
+    });
     expect(policy.deniedPaths).toContain("/home/user/.config/pum");
     expect(policy.deniedPaths).toContain("/work/repo/.env");
+    expect(policy.deniedPaths).toContain("/etc/shadow");
     expect(policy.network).toBe("deny");
     expect(policy.accesses).toContainEqual(expect.objectContaining({
       resolvedPath: outside,
@@ -115,6 +121,24 @@ describe("sandbox policy generation", () => {
       fileSystem: inertFileSystem,
     });
     expect(result.network).toEqual({ access: "host", commands: ["git fetch"] });
+  });
+
+  test("keeps the approved command identity while analyzing an authoritative shell prefix", () => {
+    const command = "printf ok";
+    const executionCommand = `export CI=1\n${command}`;
+    const result = analyzeCheckPolicy({ command: executionCommand, cwd: "/repo", profile: "balanced" });
+    const policy = buildSandboxPolicy({
+      command,
+      executionCommand,
+      cwd: "/repo",
+      result,
+      executable: "/bin/sh",
+      args: ["-c", executionCommand],
+      privateTemp: "/tmp/pum-private",
+      platform: "linux",
+    });
+    expect(policy.exactCommand).toBe(command);
+    expect(policy.args).toEqual(["-c", executionCommand]);
   });
 
   test("rejects blocked or mismatched Check mode results", () => {

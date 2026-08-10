@@ -111,6 +111,16 @@ describe("Linux Bubblewrap sandbox", () => {
     expect(args).toContain("--unshare-net");
   });
 
+  test("masks missing denied paths as read-only files so they cannot be created", () => {
+    const args = buildBubblewrapArgv(policy({ deniedPaths: ["/work/project/.env"] }), {
+      systemMounts: ["/usr"],
+      pathKind: () => undefined,
+    });
+    const index = args.findIndex((value, offset) => value === "--ro-bind"
+      && args[offset + 1] === "/dev/null" && args[offset + 2] === "/work/project/.env");
+    expect(index).toBeGreaterThan(-1);
+  });
+
   test("uses the host network only when the policy permits it", () => {
     const denied = buildBubblewrapArgv(policy({ deniedPaths: [] }), { systemMounts: ["/usr"] });
     const host = buildBubblewrapArgv(policy({ network: "host", deniedPaths: [] }), { systemMounts: ["/usr"] });

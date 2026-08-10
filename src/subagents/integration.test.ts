@@ -14,6 +14,7 @@ import { QuestionnaireManager } from "../questionnaire";
 import { SubagentManager } from "./manager";
 import { createWorktree } from "../worktree";
 import type { SubagentStatus } from "./types";
+import { SandboxController } from "../sandbox";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -230,6 +231,55 @@ describe("background subagents", () => {
     });
     const childSession = (manager as any).records.get(child.id).session;
     expect(childSession.agent.state.tools.map((tool: any) => tool.name)).toContain("apply_patch");
+    await manager.detachMain();
+  });
+
+  test("overrides Bash in main and managed child sessions", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const model = runtime.getModel("mock", "mock-model");
+    expect(model).toBeDefined();
+    const sandboxExtension = new SandboxController({
+      mode: "auto",
+      backend: {
+        id: process.platform === "win32" ? "mxc" : "bubblewrap",
+        probe: async () => ({ state: "unavailable", backend: process.platform === "win32" ? "mxc" : "bubblewrap" }),
+        spawn() { throw new Error("not used"); },
+      },
+    }).extension();
+    const services = await createAgentSessionServices({
+      cwd: repo,
+      agentDir,
+      modelRuntime: runtime,
+      resourceLoaderOptions: { extensionFactories: [sandboxExtension] },
+    });
+    const main = await createAgentSessionFromServices({
+      services,
+      sessionManager: SessionManager.inMemory(repo),
+      model,
+      tools: ["bash"],
+    });
+    expect(main.session.agent.state.tools.find((tool) => tool.name === "bash")?.description)
+      .toContain("native OS sandboxing");
+    main.session.dispose();
+
+    const manager = new SubagentManager({
+      modelRuntime: runtime,
+      agentDir,
+      childExtensionFactories: [sandboxExtension],
+    });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const child = await manager.spawn({
+      task: "Wait for Bash override inspection.",
+      name: "sandbox-bash-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    });
+    const childSession = (manager as any).records.get(child.id).session;
+    expect(childSession.agent.state.tools.find((tool: any) => tool.name === "bash")?.description)
+      .toContain("native OS sandboxing");
     await manager.detachMain();
   });
 

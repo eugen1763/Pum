@@ -348,6 +348,8 @@ export function App({
   messageCacheController,
   terminalTitle,
   startupWarnings = [],
+  onSandboxModeChange,
+  sandboxWarningSource,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -372,6 +374,8 @@ export function App({
   terminalTitle?: TerminalTitleController;
   /** Visible process-local warnings. These lines never enter pi session context. */
   startupWarnings?: readonly string[];
+  onSandboxModeChange?: (mode: NonNullable<PumSettings["sandboxMode"]>) => void;
+  sandboxWarningSource?: { subscribeWarnings(listener: (warning: string) => void): () => void };
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -806,6 +810,10 @@ export function App({
       return pending ? resolvePendingDelivery(value, pending.id) : value;
     });
 
+  useEffect(() => sandboxWarningSource?.subscribeWarnings((warning) => {
+    append({ kind: "text", role: "system", text: warning });
+  }), [sandboxWarningSource]);
+
   useEffect(() => checkApprovalCoordinator?.subscribe((request) => {
     setCheckApproval(request);
     setCheckApprovalDecision("allowOnce");
@@ -1053,6 +1061,7 @@ export function App({
     if (patch.explanationStrength !== undefined) {
       setExplanationStrength(patch.explanationStrength);
     }
+    if (patch.sandboxMode !== undefined) onSandboxModeChange?.(patch.sandboxMode);
     if (patch.checkMode !== undefined || patch.checkModel !== undefined || patch.checkPaths !== undefined) {
       setCheckModeConfig({
         profile: next.checkMode,

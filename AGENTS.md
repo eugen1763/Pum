@@ -53,6 +53,11 @@ bun run start    # open the TUI in the current directory
 | `src/check-mutation.ts` | Pre-execution edit and patch diff proposals |
 | `src/check-approvals.ts` | Exact once, session, and project approval state |
 | `src/check-approval-popup.tsx` | Responsive Ask-mode approval popup |
+| `src/sandbox/types.ts` | Shared native sandbox capability, policy, and process contracts |
+| `src/sandbox-policy.ts` | Canonical policy derivation, environment filtering, and fallback decisions |
+| `src/sandbox/index.ts` | pi Bash override, backend selection, probing, and enforcement controller |
+| `src/sandbox/linux.ts` | Linux Bubblewrap backend and direct argv construction |
+| `src/sandbox/windows.ts` | Windows MXC/CreateProcessInSandbox backend and argv quoting |
 | `src/triggers/manager.ts` | Process-local trigger lifecycle, limits, routing, and cleanup |
 | `src/triggers/tools.ts` | Main/child trigger model tools and target authorization |
 | `src/triggers/popup.tsx` | Responsive Ctrl+T trigger management popup |
@@ -123,6 +128,24 @@ These were chosen deliberately. Change them only on purpose.
   direct npm publish mutations from the authoritative main agent. The exception
   does not depend on the verifier category. It still requires popup approval.
   Managed subagents cannot use the exception.
+- **Active Check modes can enforce a native Bash sandbox.** PUM overrides pi's
+  built-in `bash` with `createBashTool` and custom `BashOperations` in
+  main and managed child sessions. Check mode Off and Sandbox Off use pi's local
+  backend. Auto uses Bubblewrap on Linux or MXC BaseContainer on Windows when a
+  real probe succeeds, otherwise it keeps deterministic Check mode and shows one
+  process-local warning outside session context. Require blocks Bash without an
+  enforced backend. Policy is recomputed from the exact approved command and
+  authoritative cwd/config. Project and additional roots are writable; explicit
+  Balanced external reads are read-only; PUM config, credentials, unsafe
+  environment variables, and network-by-default are denied. Recognized network
+  operations receive the host network, which is not domain-filtered. Linux uses
+  direct `bwrap` argv, a private temp mount, `--die-with-parent`, a new session,
+  and namespace/process-tree cleanup. Windows dynamically imports the alpha
+  `@microsoft/mxc-sdk` and accepts only its `base-container`
+  CreateProcessInSandbox tier; never enable the AppContainer+DACL fallback because
+  it can change host ACLs. The TUI/model process is never sandboxed. External
+  triggers retain deterministic checks and direct argv supervision but do not use
+  this backend until approved policy can cross their synchronous spawn boundary.
 - **Additional Check mode paths are explicit and project-scoped.** `/check-path`
   lists, adds, removes, or clears up to 16 canonical directory roots for the
   launch project. Added roots must exist. PUM rejects filesystem roots, paths
