@@ -18,6 +18,7 @@ export type MessageCacheRequester =
 export type MessageCacheSendRequest = {
   requester: MessageCacheRequester;
   ids: string[];
+  entries: StashedPrompt[];
 };
 
 export type MessageCacheSendResult = {
@@ -83,6 +84,8 @@ export class MessageCacheController {
   private executor?: MessageCacheExecutor;
   private readonly listeners = new Set<() => void>();
   private readonly active = new Set<string>();
+  private readonly reservations = new Map<string, symbol>();
+  private readonly operations = new Map<symbol, Set<string>>();
   private mainSessionId?: string;
 
   constructor(
@@ -107,12 +110,28 @@ export class MessageCacheController {
       if (this.mainSessionId === sessionId) {
         this.mainSessionId = undefined;
         this.active.clear();
+        this.reservations.clear();
+        this.operations.clear();
       }
     };
   }
 
   releaseRequester(requester: Pick<MessageCacheRequester, "kind" | "id">): void {
-    this.active.delete(`${requester.kind}:${requester.id}`);
+    const key = `${requester.kind}:${requester.id}`;
+    this.active.delete(key);
+    for (const [token, keys] of this.operations) {
+      keys.delete(key);
+      if (keys.size === 0) this.releaseOperation(token);
+    }
+  }
+
+  private releaseOperation(token: symbol): void {
+    const keys = this.operations.get(token);
+    if (keys) for (const key of keys) this.active.delete(key);
+    this.operations.delete(token);
+    for (const [id, owner] of this.reservations) {
+      if (owner === token) this.reservations.delete(id);
+    }
   }
 
   list(): StashedPrompt[] {
@@ -135,11 +154,12 @@ export class MessageCacheController {
   }
 
   delete(requester: MessageCacheRequester, id: string): void {
+    if (this.reservations.has(id)) throw new Error("The cache entry is reserved by an active send");
     this.store.removeStashById(this.workspaceCwd, id, requester.id);
     this.emit();
   }
 
-  execute(ids: readonly string[]): { entries: StashedPrompt[]; state: PromptCacheState } {
+  private execute(ids: readonly string[]): { entries: StashedPrompt[]; state: PromptCacheState } {
     const result = this.store.executeStashByIds(this.workspaceCwd, ids);
     this.emit();
     return result;
@@ -150,21 +170,29 @@ export class MessageCacheController {
     if (requester.kind === "main" && requester.id !== this.mainSessionId) {
       throw new Error("The requesting main session is no longer active");
     }
-    this.read(ids);
+    const entries = this.read(ids);
     const requesterKey = `${requester.kind}:${requester.id}`;
     const targetKey = ids.length > 1 || requester.kind === "main"
       ? `main:${this.mainSessionId}`
       : requesterKey;
-    if (this.active.has(requesterKey) || this.active.has(targetKey)) {
+    if (
+      this.active.has(requesterKey)
+      || this.active.has(targetKey)
+      || ids.some((id) => this.reservations.has(id))
+    ) {
       throw new Error("A message-cache send is already active for this requester or target");
     }
-    this.active.add(requesterKey);
-    this.active.add(targetKey);
+    const keys = new Set([requesterKey, targetKey]);
+    const token = Symbol("message-cache-send");
+    for (const key of keys) this.active.add(key);
+    for (const id of ids) this.reservations.set(id, token);
+    this.operations.set(token, keys);
     try {
-      return await this.executor({ requester, ids: [...ids] });
+      const result = await this.executor({ requester, ids: [...ids], entries: [...entries] });
+      this.execute(ids);
+      return result;
     } catch (error) {
-      this.active.delete(requesterKey);
-      this.active.delete(targetKey);
+      this.releaseOperation(token);
       throw error;
     }
   }

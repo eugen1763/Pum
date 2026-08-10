@@ -138,7 +138,6 @@ describe("message cache send serialization", () => {
     let received: string[] = [];
     controller.bindExecutor("session-1", async (request) => {
       received = request.ids;
-      controller.execute(request.ids);
       return { count: request.ids.length, route: "main" };
     });
 
@@ -166,6 +165,48 @@ describe("message cache send serialization", () => {
     controller.releaseRequester(child);
     await expect(controller.send(child, [first.id, second.id])).rejects.toThrow("already active");
     controller.releaseRequester({ kind: "main", id: "main-session" });
+  });
+
+  test("leaves entries pending when main delivery fails", async () => {
+    const { controller } = fixture();
+    const requester = { kind: "main", id: "session-1", name: "main" } as const;
+    const entry = controller.add(requester, "main task");
+    controller.bindExecutor("session-1", async () => {
+      throw new Error("main delivery failed");
+    });
+
+    await expect(controller.send(requester, [entry.id])).rejects.toThrow("main delivery failed");
+    expect(controller.list().find((item) => item.id === entry.id)?.executed).toBe(false);
+  });
+
+  test("leaves entries pending when child delivery fails", async () => {
+    const { controller } = fixture();
+    const requester = { kind: "subagent", id: "child-1", name: "worker" } as const;
+    const entry = controller.add(requester, "child task");
+    controller.bindExecutor("main-session", async () => {
+      throw new Error("child delivery failed");
+    });
+
+    await expect(controller.send(requester, [entry.id])).rejects.toThrow("child delivery failed");
+    expect(controller.list().find((item) => item.id === entry.id)?.executed).toBe(false);
+  });
+
+  test("reserves IDs across requesters and commits after successful delivery", async () => {
+    const { controller } = fixture();
+    const firstRequester = { kind: "subagent", id: "child-1", name: "one" } as const;
+    const secondRequester = { kind: "subagent", id: "child-2", name: "two" } as const;
+    const entry = controller.add(firstRequester, "shared task");
+    let resolve!: () => void;
+    controller.bindExecutor("main-session", () => new Promise((done) => {
+      resolve = () => done({ count: 1, route: "subagent" });
+    }));
+
+    const running = controller.send(firstRequester, [entry.id]);
+    await expect(controller.send(secondRequester, [entry.id])).rejects.toThrow("already active");
+    expect(controller.list().find((item) => item.id === entry.id)?.executed).toBe(false);
+    resolve();
+    await running;
+    expect(controller.list().find((item) => item.id === entry.id)?.executed).toBe(true);
   });
 
   test("rejects a stale main session and keeps workspaces isolated", async () => {

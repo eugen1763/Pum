@@ -124,20 +124,20 @@ function memoryStores(initial: Array<{ text: string; executed: boolean }> = []) 
 
 async function renderCacheApp(options: {
   initialStash?: Array<{ text: string; executed: boolean }>;
-  onMainPrompt?: (prompt: string) => void;
-  onSubagentMessage?: (prompt: string) => void;
+  onMainPrompt?: (prompt: string) => unknown | Promise<unknown>;
+  onSubagentMessage?: (prompt: string) => unknown | Promise<unknown>;
   messageCacheController?: MessageCacheController;
 }) {
   const setup = await createTestRenderer({ width: 80, height: 24, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const stores = memoryStores(options.initialStash);
   const session = fakeSession();
-  session.prompt = async (prompt: string) => options.onMainPrompt?.(prompt);
+  session.prompt = async (prompt: string) => { await options.onMainPrompt?.(prompt); };
   const manager = {
     getAgents: () => [snapshot],
     subscribe: () => () => {},
     bindMainSession: async () => {},
-    sendUserMessage: async (_id: string, prompt: string) => options.onSubagentMessage?.(prompt),
+    sendUserMessage: async (_id: string, prompt: string) => { await options.onSubagentMessage?.(prompt); },
     abortAgent: async () => {},
     persistToolEvent() {},
     createStandaloneWorktree: async () => snapshot.worktree,
@@ -562,6 +562,44 @@ describe("subagent transcript UI", () => {
     );
     await settle(setup);
     expect(subagentMessages).toEqual(["task one"]);
+  });
+
+  test("keeps model cache entries pending after failed main and child delivery", async () => {
+    const entries = [
+      { id: "cache-main", text: "main task", executed: false, owner: { type: "user" as const } },
+      { id: "cache-child", text: "child task", executed: false, owner: { type: "user" as const } },
+    ];
+    const store = {
+      loadStash: () => entries,
+      addAgentStash: () => { throw new Error("not used"); },
+      removeStashById: () => { throw new Error("not used"); },
+      executeStashByIds: (_cwd: string, ids: string[]) => {
+        const selected = ids.map((id) => entries.find((entry) => entry.id === id)!);
+        for (const entry of entries) if (ids.includes(entry.id)) entry.executed = true;
+        return {
+          entries: selected,
+          state: { history: selected.map((entry) => entry.text), stash: entries },
+        };
+      },
+    } as any;
+    const controller = new MessageCacheController("/tmp/project", store);
+    const { setup } = await renderCacheApp({
+      messageCacheController: controller,
+      onMainPrompt: async () => { throw new Error("main enqueue failed"); },
+      onSubagentMessage: async () => { throw new Error("child enqueue failed"); },
+    });
+
+    await expect(controller.send(
+      { kind: "main", id: "main-session", name: "main" },
+      ["cache-main"],
+    )).rejects.toThrow("main enqueue failed");
+    await expect(controller.send(
+      { kind: "subagent", id: "agent-1", name: "worker-one" },
+      ["cache-child"],
+    )).rejects.toThrow("child enqueue failed");
+    await settle(setup);
+
+    expect(entries.map((entry) => entry.executed)).toEqual([false, false]);
   });
 
   test("requires two Escape presses before aborting the selected subagent", async () => {
