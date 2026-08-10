@@ -281,12 +281,12 @@ These were chosen deliberately. Change them only on purpose.
   `createAgentSession` reads them back at startup. Do not duplicate that here.
   `pum.json` holds only what pi does not know about, including UI preferences,
   web search, check mode, and writing style.
-- **Release publication keeps OIDC and dist-tag credentials separate.** The
-  Release workflow uses npm trusted publishing only for `npm publish`.
-  Prereleases publish under `beta`, then use the GitHub `npm` environment secret
-  `NPM_TOKEN` only for exact `npm dist-tag add ... latest`. The token
-  must be granular, limited to `pum-agent`, read/write, expiring, and configured
-  with Bypass 2FA. Never print, persist, or use the token for publication.
+- **Release publication uses one package-scoped registry credential.** The
+  GitHub `npm` environment supplies `NPM_TOKEN` for `npm publish` and exact
+  prerelease `npm dist-tag add ... latest` mutations. GitHub OIDC remains
+  enabled for npm provenance. The token must be granular, limited to
+  `pum-agent`, read/write, expiring, and configured with Bypass 2FA. Never
+  print, persist, or expose the token.
 - **Check mode has explicit profiles and deterministic hard blocks.** `strict`
   keeps fail-closed verifier behavior. `balanced` blocks only hard-rule,
   explicitly suspicious, clearly dangerous, obfuscated, malformed, or

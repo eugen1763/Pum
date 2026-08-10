@@ -1,7 +1,7 @@
 ---
 name: pum-release
 description: Prepares and publishes a PUM patch release. Use when releasing pum-agent: closes queued agent work, audits README.md and AGENTS.md, writes CHANGELOG.md, bumps the patch version, validates the package, commits, tags, publishes through GitHub Actions, and verifies npm and GitHub Releases.
-compatibility: Requires Bun, Git, GitHub CLI authentication, npm trusted publishing, an npm NPM_TOKEN secret for dist-tags in the GitHub npm environment, and the PUM repository release workflow.
+compatibility: Requires Bun, Git, GitHub CLI authentication, a package-scoped npm NPM_TOKEN secret in the GitHub npm environment, and the PUM repository release workflow.
 ---
 
 # PUM Patch Release
@@ -77,7 +77,7 @@ Validate that:
 - prerelease versions will publish under npm tag `beta` and then move `latest` to the same exact version;
 - stable versions will publish directly under `latest`.
 
-Confirm that the GitHub `npm` environment contains an `NPM_TOKEN` secret. Inspect only secret names, never values. The token must be granular, limited to `pum-agent`, read/write, configured with Bypass 2FA, and given the shortest practical expiration. Trusted publishing remains responsible for `npm publish`; the token is only for `npm dist-tag add`.
+Confirm that the GitHub `npm` environment contains an `NPM_TOKEN` secret. Inspect only secret names, never values. The token must be granular, limited to `pum-agent`, read/write, configured with Bypass 2FA, and given the shortest practical expiration. The workflow uses it for `npm publish` and exact dist-tag updates while GitHub OIDC supplies release provenance.
 
 ## 3. Audit README.md
 
@@ -233,7 +233,7 @@ Identify the CI and Release workflow runs for the exact commit/tag. Use `gh run 
 
 The release workflow must reject mismatched tags. Never change a release tag to point at a later fix.
 
-The workflow publishes through npm trusted publishing. For a prerelease, it then uses the GitHub `npm` environment secret `NPM_TOKEN` to assign the exact published version to `latest`. Do not perform the normal `latest` promotion manually and do not request an OTP in chat. If the promotion fails, inspect the one failed workflow log and verify that the secret exists, remains unexpired, has package write access, and has Bypass 2FA enabled.
+The workflow uses the GitHub `npm` environment secret `NPM_TOKEN` for publication and, for a prerelease, to assign the exact published version to `latest`. GitHub OIDC remains enabled for provenance. Do not perform the normal `latest` promotion manually and do not request an OTP in chat. If publication or promotion fails, inspect the one failed workflow log and verify that the secret exists, remains unexpired, has package write access, and has Bypass 2FA enabled.
 
 ## 10. Verify publication
 
