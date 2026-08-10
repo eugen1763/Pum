@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -375,7 +375,7 @@ describe("external-trigger process checks", () => {
   test("uses a canonical identity with exact argument boundaries and no display name", () => {
     const first = canonicalProcessCheckInput(proposal());
     expect(first).toContain('\"args\":[\"test\",\"value && rm -rf .\",\"two words\"]');
-    expect(first).not.toContain("tests");
+    expect(first).not.toContain("triggerName");
     expect(canonicalProcessCheckInput(proposal({ triggerName: "renamed" }))).toBe(first);
     expect(canonicalProcessCheckInput(proposal({ operation: "resume" }))).not.toBe(first);
     expect(canonicalProcessCheckInput(proposal({ args: ["test value", "&&"] }))).not.toBe(first);
@@ -409,6 +409,31 @@ describe("external-trigger process checks", () => {
 
     expect(evaluation).toMatchObject({ decision: "block", category: "hard-block" });
     expect(evaluation.reason).toContain("outside the project");
+    expect(verifier.calls).toBe(0);
+  });
+
+  test("allows a structured external read without review only in Balanced", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-process-project-"));
+    const external = mkdtempSync(join(tmpdir(), "pum-balanced-process-external-"));
+    temporaryDirectories.push(cwd, external);
+    const externalFile = join(external, "README.md");
+    writeFileSync(externalFile, "public documentation\n");
+    const verifier = runtime([]);
+    const process = proposal({ executable: "cat", args: [externalFile], cwd });
+
+    expect(await evaluateProcessCheck(verifier, temporaryCache().cache, {
+      proposal: process,
+      projectCwd: cwd,
+      config: { profile: "balanced", model: config.model },
+    })).toMatchObject({ decision: "allow", category: "balanced" });
+    expect(await evaluateProcessCheck(verifier, temporaryCache().cache, {
+      proposal: process, projectCwd: cwd, config,
+    })).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(await evaluateProcessCheck(verifier, temporaryCache().cache, {
+      proposal: process,
+      projectCwd: cwd,
+      config: { profile: "ask", model: config.model },
+    })).toMatchObject({ decision: "block", category: "hard-block" });
     expect(verifier.calls).toBe(0);
   });
 });
@@ -568,6 +593,34 @@ describe("profile evaluation and structured verdicts", () => {
     expect((await evaluateToolCall(verifier, cache, {
       toolName: "bash", input: { command: "bun test src/check-mode.test.ts" }, cwd: process.cwd(), config: balanced,
     })).decision).toBe("allow");
+    expect(verifier.calls).toBe(0);
+  });
+
+  test("allows an explicit external read without review only in Balanced", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-balanced-read-project-"));
+    const external = mkdtempSync(join(tmpdir(), "pum-balanced-read-external-"));
+    temporaryDirectories.push(cwd, external);
+    const externalFile = join(external, "README.md");
+    writeFileSync(externalFile, "public documentation\n");
+    const command = `cat '${externalFile.replaceAll("'", `'\\''`)}'`;
+    const verifier = runtime([]);
+
+    expect(await evaluateToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command },
+      cwd,
+      config: { profile: "balanced", model: config.model },
+    })).toMatchObject({ decision: "allow", category: "balanced" });
+    expect(await evaluateToolCall(verifier, cache, {
+      toolName: "bash", input: { command }, cwd, config,
+    })).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(await evaluateToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command },
+      cwd,
+      config: { profile: "ask", model: config.model },
+    })).toMatchObject({ decision: "block", category: "hard-block" });
     expect(verifier.calls).toBe(0);
   });
 
