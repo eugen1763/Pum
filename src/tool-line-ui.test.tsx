@@ -38,7 +38,7 @@ function rejectedReplayCall(): ToolCall {
         toolCallId: "replayed",
         toolName: "bash",
         content: [{ type: "text", text: "blocked" }],
-        details: rejectedToolDetails({}),
+        details: rejectedToolDetails({}, "Check mode approval was denied or cancelled"),
         isError: true,
       },
     },
@@ -105,6 +105,10 @@ describe("tool line state", () => {
     expect(frame.match(/!/g)).toHaveLength(4);
     expect(frame).toContain("another terminal");
     expect(frame).toContain("replayed command");
+    const frameLines = frame.split("\n");
+    const commandRow = frameLines.findIndex((line) => line.includes("replayed command"));
+    const reasonRow = frameLines.findIndex((line) => line.includes("approval was denied"));
+    expect(reasonRow).toBe(commandRow + 1);
 
     const rejection = parseColor(theme.rejection);
     const rejectionBg = parseColor(theme.rejectionBg);
@@ -120,6 +124,10 @@ describe("tool line state", () => {
     expect(markers).toHaveLength(4);
     expect(markers.every((span) => span.fg.equals(rejection))).toBe(true);
     expect(markers.every((span) => span.bg.equals(rejectionBg))).toBe(true);
+
+    const reason = spans.find((span) => span.text.includes("approval was denied"));
+    expect(reason?.fg.equals(rejection)).toBe(true);
+    expect(reason?.bg.equals(rejectionBg)).toBe(true);
   });
 
   test("preserves failure and success styles", async () => {

@@ -11,6 +11,7 @@ import {
   evaluateToolCall,
   isBashCacheEligible,
   isRejectedToolResult,
+  rejectedToolReason,
   redactApprovalPreview,
   safetyDecision,
   setCheckModeConfig,
@@ -302,7 +303,7 @@ describe("bash safety cache", () => {
     expect(isBashCacheEligible({ command: "bun test" })).toBe(false);
   });
 
-  test("marks blocked tool results for rejected rendering and replay", async () => {
+  test("marks blocked tool results through pi's immediate-result lifecycle", async () => {
     const handlers = new Map<string, Function>();
     const extension = createCheckModeExtension({
       getAvailableSnapshot: () => [],
@@ -321,6 +322,7 @@ describe("bash safety cache", () => {
 
     for (const [toolName, input] of [
       ["bash", { command: "echo test" }],
+      ["edit", { path: "missing.ts", oldText: "old", newText: "new" }],
       ["apply_patch", { patch: "*** Begin Patch\n*** End Patch" }],
     ] as const) {
       const id = `call-${toolName}`;
@@ -328,14 +330,32 @@ describe("bash safety cache", () => {
         { toolName, toolCallId: id, input },
         { cwd: process.cwd() },
       );
-      const patch = await handlers.get("tool_result")?.({
-        toolName,
-        toolCallId: id,
-        details: {},
-      });
-
       expect(block).toMatchObject({ block: true });
-      expect(isRejectedToolResult({ details: patch.details })).toBe(true);
+
+      // pi 0.84 turns a blocked beforeToolCall into an immediate error result.
+      // It does not call afterToolCall or the extension tool_result handler.
+      const immediateResult = {
+        content: [{ type: "text", text: block.reason }],
+        details: {},
+      };
+      expect(isRejectedToolResult(immediateResult, id)).toBe(true);
+      expect(rejectedToolReason(immediateResult, id)).toBe(block.reason);
+
+      const finalized = await handlers.get("message_end")?.({
+        message: {
+          role: "toolResult",
+          toolCallId: id,
+          toolName,
+          content: immediateResult.content,
+          details: { existing: true },
+          isError: true,
+        },
+      });
+      expect(finalized.message.details).toMatchObject({ existing: true });
+      expect(isRejectedToolResult(finalized.message)).toBe(true);
+      expect(rejectedToolReason(finalized.message)).toBe(block.reason);
+      expect(isRejectedToolResult(immediateResult, id)).toBe(false);
+      expect(await handlers.get("message_end")?.({ message: finalized.message })).toBeUndefined();
     }
   });
 });
