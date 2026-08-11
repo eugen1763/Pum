@@ -76,6 +76,17 @@ describe("apply_patch tool metadata", () => {
       .toBe("Admin, Subagents");
   });
 
+  test("shows only documented web search arguments", () => {
+    expect(toolArg("web_search", {
+      action: { type: "search", queries: ["first query", "second query"] },
+      unrelated: "must not display",
+    }, "/repo")).toBe("first query · second query");
+    expect(toolArg("web_search", {
+      action: { type: "unknown", payload: "must not display" },
+      unrelated: "must not display",
+    }, "/repo")).toBe("");
+  });
+
   test("summarizes message cache actions without exposing cached text", () => {
     expect(toolArg("message_cache_list", {}, "/repo")).toBe("list");
     expect(toolArg("message_cache_add", { text: "large private cached task" }, "/repo")).toBe("add");

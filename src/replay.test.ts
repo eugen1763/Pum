@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { rejectedToolDetails } from "./check-mode";
 import { replayEntries } from "./replay";
+import { WEB_SEARCH_CUSTOM_TYPE } from "./web-search";
 import {
   AGENT_MESSAGE_CUSTOM_TYPE,
   AGENT_MESSAGE_DISPLAY_TYPE,
@@ -193,6 +194,36 @@ describe("subagent transcript replay", () => {
         state: "ok",
       },
     });
+  });
+
+  test("restores the best persisted web search argument", () => {
+    const lines = replayEntries([
+      {
+        type: "custom",
+        customType: WEB_SEARCH_CUSTOM_TYPE,
+        data: { id: "search-1", query: "", state: "running" },
+      },
+      {
+        type: "custom",
+        customType: WEB_SEARCH_CUSTOM_TYPE,
+        data: { id: "search-1", query: "release date", state: "ok" },
+      },
+      {
+        type: "custom",
+        customType: WEB_SEARCH_CUSTOM_TYPE,
+        data: { id: "search-1", query: "", state: "ok" },
+      },
+    ], process.cwd(), true);
+
+    expect(lines).toEqual([{
+      kind: "tool",
+      call: {
+        id: "search-1",
+        name: "web_search",
+        arg: "release date",
+        state: "ok",
+      },
+    }]);
   });
 
   test("restores Windows project paths with stable display separators", () => {

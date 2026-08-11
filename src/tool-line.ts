@@ -1,4 +1,5 @@
 import { posix, win32 } from "node:path";
+import { webSearchArgument } from "./web-search";
 
 export type ToolCall = {
   id: string;
@@ -35,6 +36,7 @@ export function toolArg(name: string, args: any, cwd: string): string {
   if (name === "bash" && typeof args.command === "string") {
     return args.command.split("\n")[0]!.trim();
   }
+  if (name === "web_search") return webSearchArgument(args);
   if (name === "read" && typeof args.path === "string") {
     const path = displayToolPath(args.path, cwd);
     const range: string[] = [];
