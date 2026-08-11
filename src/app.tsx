@@ -6,7 +6,7 @@ import {
   type TextareaRenderable,
 } from "@opentui/core";
 import { randomUUID } from "node:crypto";
-import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
+import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -151,6 +151,26 @@ const QUIT_WINDOW_MS = 2000;
 const MAX_INPUT_ROWS = 8;
 /** Keys that move around without changing the text. */
 const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
+
+/**
+ * An Enter carrying an explicit modifier, encoded in the escape sequence.
+ * Windows Terminal under PowerShell can emit kitty `ESC[13;Nu` or
+ * modifyOtherKeys `ESC[27;N;13~` forms before OpenTUI negotiates the
+ * keyboard protocol, so the parser leaves `key.name` empty. `N` is one more
+ * than a bit mask: Shift=1, Alt=2, Ctrl=4.
+ */
+const MODIFIED_ENTER_SEQUENCE = /^\x1b\[(?:13;(\d+)u|27;(\d+);13~)$/;
+
+function modifiedEnterFromSequence(sequence: string) {
+  const match = MODIFIED_ENTER_SEQUENCE.exec(sequence);
+  if (!match) return null;
+  const mask = parseInt(match[1] ?? match[2]!, 10) - 1;
+  return {
+    shift: (mask & 1) !== 0,
+    alt: (mask & 2) !== 0,
+    ctrl: (mask & 4) !== 0,
+  };
+}
 
 export function historyOpenBlockReason(options: {
   hasPendingImages: boolean;
@@ -1222,6 +1242,20 @@ export function App({
     const timer = setTimeout(syncInputMetrics, 0);
     return () => clearTimeout(timer);
   }, [width, commandInput, inputRows, quitArmed, cancelArmed]);
+
+  // The editor reports cursor moves only when they go through the edit buffer
+  // (typing, left/right). Vertical arrows, Home/End, and mouse clicks move the
+  // visual cursor without that event, so re-measure after any rendered frame.
+  // Nothing renders while the app is idle, so this check costs nothing then;
+  // the keyboard handler re-measures vertical moves immediately on top of it.
+  const renderer = useRenderer();
+  useEffect(() => {
+    const onFrame = () => scheduleInputMetrics();
+    renderer.on("frame", onFrame);
+    return () => {
+      renderer.off("frame", onFrame);
+    };
+  }, [renderer]);
 
   // Hosted web searches are not pi tool calls, so they arrive out of band.
   useEffect(() => {
@@ -2388,12 +2422,21 @@ export function App({
       key.name === "kpenter" ||
       key.name === "linefeed";
     const hasAlt = key.meta || key.option;
+    // A terminal can encode Shift/Ctrl/Alt+Enter in the escape sequence even
+    // before OpenTUI negotiates the keyboard protocol. Merge those modifier
+    // bits with any the parser already decoded, so plain Enter still sends
+    // and a modified Enter routes to exactly one action.
+    const sequenceMods = isReturn ? null : modifiedEnterFromSequence(key.sequence);
+    const isReturnKey = isReturn || sequenceMods !== null;
+    const hasAltForReturn = hasAlt || (sequenceMods?.alt ?? false);
+    const hasCtrlForReturn = key.ctrl || (sequenceMods?.ctrl ?? false);
+    const hasShiftForReturn = key.shift || (sequenceMods?.shift ?? false);
     // Ctrl+Alt+Enter is an explicit cache alias for terminals that reserve
     // Alt+Enter, such as Windows Terminal's default fullscreen binding.
-    const isCacheReturn = hasAlt && isReturn;
-    const isNewlineReturn = (key.ctrl || key.shift) && !hasAlt && isReturn;
+    const isCacheReturn = hasAltForReturn && isReturnKey;
+    const isNewlineReturn = (hasCtrlForReturn || hasShiftForReturn) && !hasAltForReturn && isReturnKey;
     const isPlainReturn =
-      isReturn && !key.ctrl && !key.shift && !key.meta && !key.option;
+      isReturnKey && !hasCtrlForReturn && !hasShiftForReturn && !hasAltForReturn;
     const inputValue = inputRef.current?.plainText ?? "";
     const commandMatches = stashOpenRef.current
       ? []
@@ -2560,7 +2603,12 @@ export function App({
         return;
       }
       // Keep arrow navigation inside multiline or visually wrapped prompts.
-      if ((inputRef.current?.editorView.getTotalVirtualLineCount() ?? 1) > 1) return;
+      // The editor reports no cursor change for vertical moves, so re-measure
+      // the visual row after the textarea processes the key.
+      if ((inputRef.current?.editorView.getTotalVirtualLineCount() ?? 1) > 1) {
+        scheduleInputMetrics();
+        return;
+      }
       if (key.name === "up" && !inputValue && pendingImages.current.length === 0) {
         const queued = visibleTx.pending.some((pending) =>
           !pending.delivered &&
@@ -2580,6 +2628,12 @@ export function App({
       key.stopPropagation();
       recall(key.name === "up" ? -1 : 1);
       return;
+    }
+
+    // Home/End/PageUp/PageDown move the cursor without a reported cursor
+    // change, so re-measure after the textarea handles them.
+    if (key.name === "home" || key.name === "end" || key.name === "pageup" || key.name === "pagedown") {
+      scheduleInputMetrics();
     }
 
     if (key.name === "escape") {
