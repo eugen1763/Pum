@@ -313,6 +313,16 @@ These were chosen deliberately. Change them only on purpose.
   Lifecycle notices, acknowledgements, failed deliveries, and duplicate settle
   events do not start cycles. Persisted activity generations suppress duplicates
   after resume. An idle notice never means that an agent is ready to merge.
+- **Open-resource reminders break silent idle loops.** PUM counts settled turns
+  separately for the main agent and each managed child while relevant retained
+  descendants or nonterminal external triggers remain open. The third settled
+  turn queues one durable `pum.agent_message` reminder with the exact open state.
+  A successful reminder resets the count. The reminder-triggered turn does not
+  count. No-open-resource settlement and session attachment also reset the count.
+  Failed delivery keeps the threshold ready for a later settled-turn retry.
+  Reminder messages never count as child activity and never create parent idle
+  notices. The reminder asks for action only when appropriate and forbids an
+  acknowledgement-only reply.
 - **Inter-agent acknowledgements do not recurse.** Do not reply to acknowledgements,
   status-only messages, or completion notices unless they contain new work or a
   question. Stop any acknowledgement echo loop immediately.

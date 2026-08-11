@@ -114,6 +114,31 @@ describe("subagent transcript replay", () => {
     }]);
   });
 
+  test("restores a durable idle-open reminder as one agent-message row", () => {
+    const reminder = {
+      id: "idle-open-reminder-main-1",
+      sender: "pum",
+      recipient: "main",
+      text: "Reminder: 3 agent turns settled while managed resources remained open.",
+      at: 1,
+      kind: "reminder",
+    };
+    const lines = replayEntries([{
+      type: "custom_message",
+      customType: AGENT_MESSAGE_CUSTOM_TYPE,
+      content: reminder.text,
+      display: true,
+      details: reminder,
+    }], process.cwd(), true);
+
+    expect(lines).toEqual([{
+      kind: "agent-message",
+      sender: "pum",
+      recipient: "main",
+      text: reminder.text,
+    }]);
+  });
+
   test("restores apply_patch arguments and changed-line details", () => {
     const lines = replayEntries([
       {

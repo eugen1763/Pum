@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
   SUBAGENT_COORDINATION_SYSTEM_PROMPT,
+  IDLE_OPEN_REMINDER_THRESHOLD,
   SubagentManager,
   buildSubagentCapacityPrompt,
   countActiveSubagents,
@@ -78,6 +79,161 @@ function settleAgent(manager: SubagentManager, id: string): void {
 }
 
 describe("SubagentManager extension", () => {
+  test("reminds main after three settled turns and suppresses recursive duplicates", () => {
+    const handlers = new Map<string, Function[]>();
+    const deliveries: any[] = [];
+    const events: any[] = [];
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "idle");
+    manager.subscribe((event) => events.push(event));
+    (manager.mainExtension() as any).factory({
+      on(name: string, handler: Function) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      registerTool() {},
+      appendEntry() {},
+      sendMessage(message: any, options: any) { deliveries.push({ message, options }); },
+    });
+
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
+      handlers.get("agent_settled")?.[0]?.({});
+    }
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].options).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    expect(deliveries[0].message.details.kind).toBe("reminder");
+    expect(deliveries[0].message.content).toContain("worker [worker] — idle");
+    expect(deliveries[0].message.content).toContain("not a request for acknowledgement");
+    expect(events.filter((event) => event.type === "main-pending-add")).toHaveLength(1);
+
+    handlers.get("agent_settled")?.[0]?.({});
+    expect(deliveries).toHaveLength(1);
+
+    handlers.get("message_start")?.[0]?.({ message: { role: "custom", ...deliveries[0].message } });
+    handlers.get("agent_settled")?.[0]?.({});
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
+      handlers.get("agent_settled")?.[0]?.({});
+    }
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[1].message.details.id).not.toBe(deliveries[0].message.details.id);
+  });
+
+  test("resets the main idle-open count when no managed resource remains", () => {
+    const handlers = new Map<string, Function[]>();
+    const deliveries: any[] = [];
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "first", "idle");
+    (manager.mainExtension() as any).factory({
+      on(name: string, handler: Function) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      registerTool() {},
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); },
+    });
+
+    handlers.get("agent_settled")?.[0]?.({});
+    handlers.get("agent_settled")?.[0]?.({});
+    (manager as any).records.delete("first");
+    handlers.get("agent_settled")?.[0]?.({});
+    addTestAgent(manager, "second", "idle");
+    handlers.get("agent_settled")?.[0]?.({});
+    handlers.get("agent_settled")?.[0]?.({});
+    expect(deliveries).toEqual([]);
+    handlers.get("agent_settled")?.[0]?.({});
+    expect(deliveries).toHaveLength(1);
+  });
+
+  test("counts an open trigger without subagents and ignores terminal trigger records", () => {
+    const handlers = new Map<string, Function[]>();
+    const deliveries: any[] = [];
+    let triggerState = "cancelled";
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      triggerManager: {
+        getTriggers: () => [{
+          id: "watch",
+          name: "watch build",
+          state: triggerState,
+          target: { sessionId: "main-session", agentId: null, label: "main" },
+        }],
+        markTargetSettled() {},
+      } as any,
+    });
+    (manager.mainExtension() as any).factory({
+      on(name: string, handler: Function) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      registerTool() {},
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); },
+    });
+
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
+      handlers.get("agent_settled")?.[0]?.({});
+    }
+    expect(deliveries).toEqual([]);
+
+    triggerState = "paused";
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
+      handlers.get("agent_settled")?.[0]?.({});
+    }
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].content).toContain("watch build [watch] — paused; target main");
+  });
+
+  test("reminds a managed child about descendants and exact-target triggers without a new idle notice", async () => {
+    const trigger = {
+      id: "watch",
+      name: "watch build",
+      state: "paused",
+      target: { sessionId: "parent-session", agentId: "parent", label: "parent" },
+    };
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      triggerManager: {
+        getTriggers: () => [trigger],
+        markTargetSettled() {},
+      } as any,
+    });
+    addTestAgent(manager, "parent", "running");
+    addTestAgent(manager, "child", "idle", "parent");
+    const mainDeliveries: any[] = [];
+    const childDeliveries: any[] = [];
+    (manager as any).mainApi = { appendEntry() {}, sendMessage(message: any) { mainDeliveries.push(message); } };
+    const parent = (manager as any).records.get("parent");
+    parent.session = {
+      sessionId: "parent-session",
+      isStreaming: false,
+      sessionManager: { appendCustomEntry() {} },
+    };
+    parent.api = { sendMessage(message: any, options: any) { childDeliveries.push({ message, options }); } };
+
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
+      processAgentEvent(manager, "parent", {
+        type: "message_start",
+        message: { role: "user", content: `Work cycle ${turn}` },
+      });
+      settleAgent(manager, "parent");
+    }
+    await Promise.resolve();
+
+    const reminder = childDeliveries.find((delivery) => delivery.message.details?.kind === "reminder");
+    expect(reminder).toBeDefined();
+    expect(reminder.options).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    expect(reminder.message.content).toContain("child [child] — idle");
+    expect(reminder.message.content).toContain("watch build [watch] — paused; target parent");
+    const idleCount = mainDeliveries.filter((message) => message.details?.kind === "idle").length;
+
+    processAgentEvent(manager, "parent", { type: "message_start", message: { role: "custom", ...reminder.message } });
+    settleAgent(manager, "parent");
+    await Promise.resolve();
+
+    expect(mainDeliveries.filter((message) => message.details?.kind === "idle")).toHaveLength(idleCount);
+  });
+
   test("registers main coordination tools", () => {
     const tools: string[] = [];
     const definitions = new Map<string, any>();

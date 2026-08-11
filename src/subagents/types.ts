@@ -84,7 +84,7 @@ export type AgentMessageData = {
   recipient: string;
   text: string;
   at: number;
-  kind?: "message" | "acknowledgement" | "idle" | "completion" | "status" | "user-instruction";
+  kind?: "message" | "acknowledgement" | "idle" | "completion" | "status" | "user-instruction" | "reminder";
 };
 
 export type TriggerEventData = ExternalTriggerEventData & {

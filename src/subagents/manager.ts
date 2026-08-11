@@ -83,8 +83,10 @@ import type { SpawnPreviewManager, SpawnPreviewRequester } from "./spawn-preview
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
+export const IDLE_OPEN_REMINDER_THRESHOLD = 3;
 const ACTIVE_SUBAGENT_STATUSES = new Set<SubagentStatus>(["starting", "running"]);
 const AVAILABLE_TRIGGER_TARGET_STATUSES = new Set<SubagentStatus>(["starting", "running", "idle"]);
+const CLOSED_TRIGGER_STATES = new Set(["expired", "cancelled", "unavailable"]);
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
@@ -171,6 +173,18 @@ type RuntimeRecord = {
   idleNotifiedGeneration: number;
 };
 
+type IdleOpenReminderState = {
+  settledTurns: number;
+  sequence: number;
+  inFlightMessageId?: string;
+  skipNextSettlement: boolean;
+};
+
+type OpenReminderResources = {
+  subagents: RuntimeRecord[];
+  triggers: ReturnType<TriggerRuntimeManager["getTriggers"]>;
+};
+
 type ManagerOptions = {
   modelRuntime: ModelRuntime;
   agentDir: string;
@@ -248,6 +262,7 @@ export class SubagentManager {
   private readonly settlements = new Map<string, SubagentSettlement>();
   private readonly acceptedSettlementMessageIds = new Set<string>();
   private readonly settlementDeliveriesInFlight = new Set<string>();
+  private readonly idleOpenReminderStates = new Map<string, IdleOpenReminderState>();
 
   constructor(options: ManagerOptions) {
     this.modelRuntime = options.modelRuntime;
@@ -309,6 +324,7 @@ export class SubagentManager {
     this.settlements.clear();
     this.acceptedSettlementMessageIds.clear();
     this.settlementDeliveriesInFlight.clear();
+    this.idleOpenReminderStates.clear();
     this.mainApi = pi;
     this.mainSessionManager = sessionManager;
     this.mainCwd = cwd;
@@ -510,7 +526,145 @@ export class SubagentManager {
     if (message.customType === TRIGGER_EVENT_CUSTOM_TYPE) return true;
     if (message.customType !== AGENT_MESSAGE_CUSTOM_TYPE) return false;
     const details = message.details as AgentMessageData | undefined;
-    return !["acknowledgement", "idle", "completion", "status"].includes(details?.kind ?? "message");
+    return !["acknowledgement", "idle", "completion", "status", "reminder"].includes(details?.kind ?? "message");
+  }
+
+  private reminderKey(agentId: string | null): string {
+    return agentId ?? "main";
+  }
+
+  private reminderState(agentId: string | null): IdleOpenReminderState {
+    const key = this.reminderKey(agentId);
+    let state = this.idleOpenReminderStates.get(key);
+    if (!state) {
+      state = { settledTurns: 0, sequence: 0, skipNextSettlement: false };
+      this.idleOpenReminderStates.set(key, state);
+    }
+    return state;
+  }
+
+  private acceptIdleOpenReminder(agentId: string | null, message: any): void {
+    if (message?.role !== "custom" || message.customType !== AGENT_MESSAGE_CUSTOM_TYPE) return;
+    const details = message.details as AgentMessageData | undefined;
+    if (details?.kind !== "reminder") return;
+    const state = this.reminderState(agentId);
+    if (state.inFlightMessageId && details.id !== state.inFlightMessageId) return;
+    state.inFlightMessageId = undefined;
+    state.settledTurns = 0;
+    state.skipNextSettlement = true;
+  }
+
+  private openReminderResources(agentId: string | null): OpenReminderResources {
+    const subagents = agentId === null
+      ? [...this.records.values()]
+      : this.retainedDescendants(agentId).map(({ record }) => record);
+    const targetSessionId = agentId === null ? undefined : this.records.get(agentId)?.session?.sessionId;
+    const triggers = (this.triggerManager?.getTriggers?.() ?? []).filter((trigger) =>
+      !CLOSED_TRIGGER_STATES.has(trigger.state)
+        && (agentId === null
+          || (trigger.target.agentId === agentId
+            && (targetSessionId === undefined || trigger.target.sessionId === targetSessionId))),
+    );
+    return { subagents, triggers };
+  }
+
+  private idleOpenReminderText(resources: OpenReminderResources, settledTurns: number): string {
+    const sections = [
+      `Reminder: ${settledTurns} agent turns settled while managed resources remained open.`,
+      "This is a lifecycle reminder, not a request for acknowledgement. Do not reply only to acknowledge it.",
+    ];
+    if (resources.subagents.length > 0) {
+      sections.push(
+        "Still-open managed subagents:",
+        ...resources.subagents.map((record) =>
+          `- ${record.snapshot.name} [${record.snapshot.id}] — ${record.snapshot.status}`,
+        ),
+      );
+    }
+    if (resources.triggers.length > 0) {
+      sections.push(
+        "Still-open external triggers:",
+        ...resources.triggers.map((trigger) =>
+          `- ${trigger.name} [${trigger.id}] — ${trigger.state}; target ${trigger.target.label}`,
+        ),
+      );
+    }
+    sections.push("Coordinate, close, merge, remove, or cancel these resources when appropriate.");
+    return sections.join("\n");
+  }
+
+  private deliverIdleOpenReminder(
+    agentId: string | null,
+    state: IdleOpenReminderState,
+    resources: OpenReminderResources,
+  ): boolean {
+    const record = agentId === null ? undefined : this.records.get(agentId);
+    if (agentId !== null && (!record?.api || !record.session || record.session.isStreaming)) return false;
+    const sequence = state.sequence + 1;
+    const id = `idle-open-reminder-${this.reminderKey(agentId)}-${sequence}`;
+    const text = this.idleOpenReminderText(resources, state.settledTurns);
+    const data: AgentMessageData = {
+      id,
+      sender: "pum",
+      recipient: record?.snapshot.name ?? "main",
+      text,
+      at: Date.now(),
+      kind: "reminder",
+    };
+    const pending: PendingLine = { id, line: this.agentMessageLine(data) };
+    state.sequence = sequence;
+    state.inFlightMessageId = id;
+    state.settledTurns = 0;
+
+    if (agentId === null) {
+      this.emit({ type: "main-pending-add", pending });
+      if (this.wakeMain({
+        customType: AGENT_MESSAGE_CUSTOM_TYPE,
+        content: text,
+        display: true,
+        details: data,
+      }, text)) return true;
+      this.emit({ type: "main-pending-drop", id });
+    } else {
+      this.addPending(record!, pending);
+      try {
+        withSearchRoute(record!.session!.sessionId, () => {
+          record!.api!.sendMessage({
+            customType: AGENT_MESSAGE_CUSTOM_TYPE,
+            content: text,
+            display: true,
+            details: data,
+          }, { deliverAs: "followUp", triggerTurn: true });
+        });
+        this.updateStatus(record!, "running");
+        return true;
+      } catch {
+        this.dropPending(record!, id);
+      }
+    }
+
+    state.inFlightMessageId = undefined;
+    state.settledTurns = IDLE_OPEN_REMINDER_THRESHOLD;
+    return false;
+  }
+
+  private noteSettledTurnWithOpenResources(agentId: string | null): void {
+    const state = this.reminderState(agentId);
+    const resources = this.openReminderResources(agentId);
+    if (resources.subagents.length === 0 && resources.triggers.length === 0) {
+      this.idleOpenReminderStates.delete(this.reminderKey(agentId));
+      return;
+    }
+    if (state.skipNextSettlement) {
+      state.skipNextSettlement = false;
+      state.settledTurns = 0;
+      return;
+    }
+    if (state.inFlightMessageId) return;
+    state.settledTurns += 1;
+    if (state.settledTurns >= IDLE_OPEN_REMINDER_THRESHOLD) {
+      this.deliverIdleOpenReminder(agentId, state, resources);
+    }
   }
 
   private dropPending(record: RuntimeRecord, id: string): void {
@@ -535,6 +689,7 @@ export class SubagentManager {
     switch (event.type) {
       case "message_start": {
         const message = event.message;
+        this.acceptIdleOpenReminder(record.snapshot.id, message);
         if (this.countsAsActivity(message)) this.beginActivity(record);
         if (message?.role === "custom"
           && [AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) {
@@ -696,6 +851,7 @@ export class SubagentManager {
             finishSummary: null,
           });
         }
+        if (status === "idle") this.noteSettledTurnWithOpenResources(record.snapshot.id);
         break;
       }
     }
@@ -896,9 +1052,11 @@ export class SubagentManager {
             available: true,
             settled: true,
           });
+          this.noteSettledTurnWithOpenResources(null);
         });
         pi.on("message_start", (event) => {
           const message = event.message;
+          this.acceptIdleOpenReminder(null, message);
           if (message.role !== "custom"
             || ![AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) return;
           const id = (message.details as AgentMessageData | undefined)?.id;
