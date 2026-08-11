@@ -145,16 +145,16 @@ function expectAgentCounts(
 describe("StatusBar usage and subagent counts", () => {
   test("shows separate compact token metrics in a wide layout", async () => {
     const frame = await renderStatus(100, 0, 0);
-    expect(frame).toContain("cwd project · main · ↑ 1.2k · ↓ 345 · ↺ 2.4k · 20%");
+    expect(frame).toContain("project · main · ↑ 1.2k · ↓ 345 · ↺ 2.4k · 20%");
     expectOneMeasuredLine(frame, 100);
   });
 
   test("renders cwd immediately before branch with its semantic color", async () => {
     const { setup, theme } = await renderStatusSetup(100);
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("cwd Pum · main");
+    expect(frame).toContain("Pum · main");
     const cwdSpan = setup.captureSpans().lines.flatMap((line) => line.spans)
-      .find((span) => span.text === "cwd Pum");
+      .find((span) => span.text === "Pum");
     expect(cwdSpan?.fg.equals(parseColor(theme.statusCwd))).toBe(true);
   });
 
@@ -187,24 +187,24 @@ describe("StatusBar usage and subagent counts", () => {
   });
 
   test("removes optional fields in the exact required threshold order", () => {
-    expect(visibleOptionalFields(72)).toEqual([
+    expect(visibleOptionalFields(68)).toEqual([
       "title", "cwd", "branch", "outgoing", "incoming", "cacheRead", "cost", "context",
     ]);
-    expect(visibleOptionalFields(71)).toEqual([
+    expect(visibleOptionalFields(67)).toEqual([
       "title", "cwd", "branch", "outgoing", "incoming", "cacheRead", "context",
     ]);
-    expect(visibleOptionalFields(63)).toEqual([
+    expect(visibleOptionalFields(59)).toEqual([
       "title", "cwd", "branch", "outgoing", "incoming", "cacheRead", "context",
     ]);
-    expect(visibleOptionalFields(62)).toEqual([
+    expect(visibleOptionalFields(58)).toEqual([
       "title", "cwd", "branch", "outgoing", "incoming", "context",
     ]);
-    expect(visibleOptionalFields(53)).toEqual([
+    expect(visibleOptionalFields(49)).toEqual([
       "title", "cwd", "branch", "incoming", "context",
     ]);
-    expect(visibleOptionalFields(44)).toEqual(["title", "cwd", "branch", "context"]);
-    expect(visibleOptionalFields(36)).toEqual(["cwd", "branch", "context"]);
-    expect(visibleOptionalFields(29)).toEqual(["branch", "context"]);
+    expect(visibleOptionalFields(40)).toEqual(["title", "cwd", "branch", "context"]);
+    expect(visibleOptionalFields(32)).toEqual(["cwd", "branch", "context"]);
+    expect(visibleOptionalFields(25)).toEqual(["branch", "context"]);
     expect(visibleOptionalFields(15)).toEqual(["context"]);
   });
 

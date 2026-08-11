@@ -32,10 +32,10 @@ export const statusTextWidth = (text: string): number => Bun.stringWidth(text);
 /** Show the launch directory without the long parent path. */
 export function formatWorkingDirectory(cwd: string): string {
   const withoutTrailingSeparators = cwd.replace(/[\\/]+$/, "");
-  if (!withoutTrailingSeparators) return "cwd /";
-  if (/^[A-Za-z]:$/.test(withoutTrailingSeparators)) return `cwd ${withoutTrailingSeparators}\\`;
+  if (!withoutTrailingSeparators) return "/";
+  if (/^[A-Za-z]:$/.test(withoutTrailingSeparators)) return `${withoutTrailingSeparators}\\`;
   const name = withoutTrailingSeparators.split(/[\\/]/).at(-1) || withoutTrailingSeparators;
-  return `cwd ${name}`;
+  return name;
 }
 
 export function statusMetadataItems(values: StatusMetadataValues): StatusMetadataItem[] {

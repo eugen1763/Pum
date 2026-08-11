@@ -23,7 +23,7 @@ describe("status metadata formatting", () => {
   test("matches StatusBar compact values and marks warning context", () => {
     const items = statusMetadataItems(values);
     expect(items.map((item) => item.text)).toEqual([
-      "cwd worker",
+      "worker",
       "pum/worker",
       "↑ 1.2k",
       "↓ 345",
@@ -55,17 +55,17 @@ describe("status metadata formatting", () => {
   });
 
   test("formats POSIX, Windows, root, and Unicode working directories", () => {
-    expect(formatWorkingDirectory("/repo/feature")).toBe("cwd feature");
-    expect(formatWorkingDirectory("C:\\dev\\Pum\\")).toBe("cwd Pum");
-    expect(formatWorkingDirectory("C:\\")).toBe("cwd C:\\");
-    expect(formatWorkingDirectory("/")).toBe("cwd /");
-    expect(formatWorkingDirectory("C:\\开发\\界面")).toBe("cwd 界面");
+    expect(formatWorkingDirectory("/repo/feature")).toBe("feature");
+    expect(formatWorkingDirectory("C:\\dev\\Pum\\")).toBe("Pum");
+    expect(formatWorkingDirectory("C:\\")).toBe("C:\\");
+    expect(formatWorkingDirectory("/")).toBe("/");
+    expect(formatWorkingDirectory("C:\\开发\\界面")).toBe("界面");
   });
 
   test("uses the semantic cwd color token", () => {
     const theme = loadTheme("tokyonight");
     const chunks = statusMetadataChunks(statusMetadataItems(values), theme);
-    expect(chunks[0]?.text).toBe("cwd worker");
+    expect(chunks[0]?.text).toBe("worker");
     expect(chunks[0]!.fg!.equals(parseColor(theme.statusCwd))).toBe(true);
   });
 });
