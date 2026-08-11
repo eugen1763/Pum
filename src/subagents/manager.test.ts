@@ -161,29 +161,29 @@ describe("SubagentManager extension", () => {
         markTargetSettled() {},
       } as any,
     });
-+    (manager.mainExtension() as any).factory({
-+      on(name: string, handler: Function) {
-+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
-+      },
-+      registerTool() {},
-+      appendEntry() {},
-+      sendMessage(message: any) { deliveries.push(message); },
-+    });
-+
-+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
-+      handlers.get("agent_settled")?.[0]?.({});
-+    }
-+    expect(deliveries).toEqual([]);
-+
-+    triggerState = "paused";
-+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
-+      handlers.get("agent_settled")?.[0]?.({});
-+    }
-+    expect(deliveries).toHaveLength(1);
-+    expect(deliveries[0].content).toContain("watch build [watch] — paused; target main");
-+  });
-+
-+  test("reminds a managed child about descendants and exact-target triggers without a new idle notice", async () => {
+    (manager.mainExtension() as any).factory({
+      on(name: string, handler: Function) {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      },
+      registerTool() {},
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); },
+    });
+
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
+      handlers.get("agent_settled")?.[0]?.({});
+    }
+    expect(deliveries).toEqual([]);
+
+    triggerState = "paused";
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD; turn += 1) {
+      handlers.get("agent_settled")?.[0]?.({});
+    }
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].content).toContain("watch build [watch] — paused; target main");
+  });
+
+  test("reminds a managed child about descendants and exact-target triggers without a new idle notice", async () => {
     const trigger = {
       id: "watch",
       name: "watch build",
