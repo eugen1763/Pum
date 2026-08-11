@@ -1,7 +1,7 @@
 import { decodePasteBytes, type ScrollBoxRenderable, type TextareaRenderable } from "@opentui/core";
 import { randomUUID } from "node:crypto";
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
-import type { Model } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimationProvider, supportsTrueColor, useWorkingRule, type WorkingRuleRole } from "./animation";
@@ -13,7 +13,6 @@ import {
   moveSettingSelection,
   SettingsPopup,
   SETTINGS_ROWS,
-  THINKING_LEVELS,
   type SettingRowId,
   type ThinkingLevel,
 } from "./settings-popup";
@@ -1095,8 +1094,9 @@ export function App({
   };
 
   const stepThinking = (step: number) => {
-    const i = THINKING_LEVELS.indexOf(thinkingLevel);
-    const target = THINKING_LEVELS[Math.max(0, Math.min(THINKING_LEVELS.length - 1, i + step))]!;
+    const levels = getSupportedThinkingLevels(session.agent.state.model);
+    const i = levels.indexOf(thinkingLevel);
+    const target = levels[Math.max(0, Math.min(levels.length - 1, i + step))]!;
     session.setThinkingLevel(target);
     // setThinkingLevel clamps to what the model supports — show the real value.
     setThinkingLevel(session.agent.state.thinkingLevel as ThinkingLevel);
