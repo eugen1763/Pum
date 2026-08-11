@@ -165,6 +165,22 @@ These were chosen deliberately. Change them only on purpose.
   keep the approved-root boundary. Every active profile still blocks external
   location changes, writes, execution operands, ambiguous access, credential
   access, escaping links or junctions, broad deletion, and other hard rules.
+- **The main agent can deliberately edit exact PUM settings files.** The
+  authoritative main agent may `edit` or `bash`-write `settings.json`, `pum.json`,
+  and `theme.json` directly inside the PUM agent directory. The allowlist is
+  exact file names, never the whole config directory. Credentials stay denied:
+  `auth.json`, `models.json` key material, session content, and any other file
+  or subdirectory under the config directory keep the protected-path and
+  credential hard blocks. Managed subagents are blocked because they share the
+  host config directory. The native sandbox still denies the whole PUM config
+  root, so an enforced sandbox backend keeps config-root writes blocked even
+  when the deterministic layer approves them.
+- **Null devices and Git Bash drive paths are policy-friendly.** `/dev/null` is
+  a null device in every path flavor, so `2>/dev/null` and `> /dev/null` no
+  longer classify as external writes on a Windows cwd. A Git Bash / MSYS drive
+  path such as `/c/Users/...` or `/d/dev/...` resolves to its native drive, so
+  the session cwd, project roots, and `cd` targets share one canonical identity
+  on Windows for the deterministic policy.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,

@@ -136,6 +136,8 @@ export type AnalyzeCheckPolicyOptions = {
   fileSystem?: CheckPolicyFileSystem;
   /** Canonical sensitive roots that no checked command may access. */
   protectedPaths?: readonly string[];
+  /** Exact canonical files exempt from their protected root. No directory is ever exempt. */
+  allowedProtectedFiles?: readonly string[];
 };
 
 export type ProcessCheckOperation = "create" | "start" | "resume" | "repeat" | "invoke-run";
@@ -161,6 +163,8 @@ export type AnalyzeExecutablePolicyOptions = Pick<ProcessCheckProposal, "executa
   fileSystem?: CheckPolicyFileSystem;
   /** Canonical sensitive roots that no checked process may access. */
   protectedPaths?: readonly string[];
+  /** Exact canonical files exempt from their protected root. No directory is ever exempt. */
+  allowedProtectedFiles?: readonly string[];
 };
 
 export const DEFAULT_CHECK_POLICY_LIMITS: Readonly<CheckPolicyLimits> = Object.freeze({
@@ -707,6 +711,55 @@ function pathFlavor(value: string, cwd: string): typeof posix | typeof win32 {
   return windowsSyntax(value) || windowsSyntax(cwd) ? win32 : posix;
 }
 
+/** A lone drive-letter component such as /c or /d is a Git Bash / MSYS root. */
+function isWindowsStylePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\") || /^\/[A-Za-z](?:\/|$)/.test(value);
+}
+
+/** Translate a Git Bash / MSYS drive path like /d/dev/Pum to D:\\dev\\Pum. */
+function translateMsysDrivePath(value: string): string | undefined {
+  const match = /^\/[A-Za-z](?:\/(.*))?$/.exec(value);
+  if (!match) return undefined;
+  return `${value[1]!.toUpperCase()}:\\${(match[1] ?? "").replaceAll("/", "\\")}`;
+}
+
+/** Translate a chain of unambiguous MSYS drives. Every component stays literal otherwise. */
+function translateWindowsContextPath(value: string): string {
+  return translateMsysDrivePath(value) ?? value;
+}
+
+type NormalizedWindowsContext = {
+  cwd: string;
+  projectCwd: string;
+  allowedPaths: string[];
+  protectedPaths: string[];
+};
+
+/**
+ * Unify Git Bash / MSYS spellings with native Windows drive paths so the
+ * session cwd, project roots, and protected roots share one identity. When no
+ * path is Windows-like the values pass through unchanged, so POSIX policy
+ * stays byte-for-byte the same.
+ */
+function normalizeWindowsContext(
+  cwd: string,
+  projectCwd: string,
+  allowedPaths: readonly string[] = [],
+  protectedPaths: readonly string[] = [],
+): NormalizedWindowsContext {
+  const windowsContext = isWindowsStylePath(cwd) || isWindowsStylePath(projectCwd)
+    || allowedPaths.some(isWindowsStylePath) || protectedPaths.some(isWindowsStylePath);
+  if (!windowsContext) {
+    return { cwd, projectCwd, allowedPaths: [...allowedPaths], protectedPaths: [...protectedPaths] };
+  }
+  return {
+    cwd: translateWindowsContextPath(cwd),
+    projectCwd: translateWindowsContextPath(projectCwd),
+    allowedPaths: allowedPaths.map(translateWindowsContextPath),
+    protectedPaths: protectedPaths.map(translateWindowsContextPath),
+  };
+}
+
 function isUrl(value: string): boolean {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(value);
 }
@@ -725,10 +778,11 @@ function normalizedAbsolute(
   allowedPaths: readonly string[] = [],
 ): { absolute: string; root: string; inside: boolean; additional: boolean } {
   const flavor = pathFlavor(value, cwd);
+  const operand = flavor === win32 ? translateWindowsContextPath(value) : value;
   const roots = [projectCwd, ...allowedPaths]
     .map((root) => flavor.resolve(root))
     .sort((first, second) => second.length - first.length);
-  const expanded = value === "~" || value.startsWith("~/") || value.startsWith("~\\") ? value : value;
+  const expanded = operand === "~" || operand.startsWith("~/") || operand.startsWith("~\\") ? operand : operand;
   const absolute = flavor.resolve(cwd, expanded);
   const root = roots.find((candidate) => {
     const relative = flavor.relative(candidate, absolute);
@@ -746,7 +800,8 @@ function normalizedAbsolute(
 
 function isAllowedRoot(value: string, cwd: string, projectCwd: string, allowedPaths: readonly string[]): boolean {
   const flavor = pathFlavor(value, cwd);
-  const absolute = flavor.resolve(cwd, value);
+  const operand = flavor === win32 ? translateWindowsContextPath(value) : value;
+  const absolute = flavor.resolve(cwd, operand);
   return [projectCwd, ...allowedPaths]
     .some((root) => flavor.relative(flavor.resolve(root), absolute) === "");
 }
@@ -759,8 +814,8 @@ export function isCredentialSensitivePath(value: string): boolean {
     || lower.includes("secrets/") || lower.endsWith("/shadow") || lower.endsWith("/passwd");
 }
 
-function isExactPosixNullDevice(value: string, cwd: string): boolean {
-  return value === "/dev/null" && pathFlavor(value, cwd) === posix;
+function isNullDevice(value: string): boolean {
+  return value === "/dev/null";
 }
 
 function pathOperands(stage: BashStage): string[] {
@@ -1067,6 +1122,13 @@ function insideProtectedPath(path: string, protectedPaths: readonly string[]): b
   });
 }
 
+/** Exact canonical identity comparison, case-folded on Windows spellings. */
+function samePathIdentity(first: string, second: string): boolean {
+  const flavor = pathFlavor(first, second);
+  const identity = (value: string) => flavor === win32 ? flavor.resolve(value).toLowerCase() : flavor.resolve(value);
+  return identity(first) === identity(second);
+}
+
 function externalPathUsesLink(path: string, fs: CheckPolicyFileSystem): boolean {
   const flavor = pathFlavor(path, path);
   const resolved = flavor.resolve(path);
@@ -1093,6 +1155,7 @@ function inspectHardBlocks(
   projectCwd = cwd,
   allowedPaths: readonly string[] = [],
   protectedPaths: readonly string[] = [],
+  allowedProtectedFiles: readonly string[] = [],
 ): { findings: CheckPolicyFinding[]; accesses: CheckPathAccess[] } {
   const findings: CheckPolicyFinding[] = [];
   const accesses: CheckPathAccess[] = [];
@@ -1214,10 +1277,12 @@ function inspectHardBlocks(
         addFinding(findings, { code: "unknown-path-access", severity: "hard-block", message: "path access is dynamic or ambiguous", stage: stage.index, path: value });
         continue;
       }
-      if (isCredentialSensitivePath(value) || insideProtectedPath(resolved.absolute, protectedPaths)) {
+      const exemptSettingsFile = allowedProtectedFiles.some((settingsFile) => samePathIdentity(resolved.absolute, settingsFile));
+      if (!exemptSettingsFile && (isCredentialSensitivePath(value) || insideProtectedPath(resolved.absolute, protectedPaths))) {
         addFinding(findings, { code: "credential-access", severity: "hard-block", message: "command accesses a credential, secret, or PUM configuration path", stage: stage.index, path: value });
       }
-      if (isExactPosixNullDevice(value, activeCwd)) continue;
+      if (isNullDevice(value)) continue;
+      if (exemptSettingsFile) continue;
       if (value.startsWith("~")) {
         addFinding(findings, { code: "outside-project", severity: "hard-block", message: "home-relative path cannot be resolved safely", stage: stage.index, path: value });
         continue;
@@ -1274,7 +1339,7 @@ function inspectHardBlocks(
         : SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
       if (commandFlag >= 0 && argv[commandFlag + 1]) nestedCommands.push(argv[commandFlag + 1]!);
       for (const nestedCommand of nestedCommands) {
-        const nested = inspectHardBlocks(analyzeBashCommand(nestedCommand), activeCwd, fs, profile, depth + 1, projectCwd, allowedPaths, protectedPaths);
+        const nested = inspectHardBlocks(analyzeBashCommand(nestedCommand), activeCwd, fs, profile, depth + 1, projectCwd, allowedPaths, protectedPaths, allowedProtectedFiles);
         for (const access of nested.accesses) accesses.push({ ...access, stage: stage.index });
         for (const finding of nested.findings) {
           addFinding(findings, { ...finding, stage: stage.index, message: `nested command: ${finding.message}` });
@@ -1464,15 +1529,17 @@ export function analyzeCheckPolicy(options: AnalyzeCheckPolicyOptions): CheckPol
   const exactCommand = options.command;
   const limits = options.limits ?? (profile === "balanced" ? balancedCompleteShellLimits(options.command) : undefined);
   const analysis = analyzeBashCommand(options.command, limits);
+  const normalized = normalizeWindowsContext(options.cwd, options.cwd, options.allowedPaths, options.protectedPaths);
   const { findings, accesses } = inspectHardBlocks(
     analysis,
-    options.cwd,
+    normalized.cwd,
     options.fileSystem ?? nodeFileSystem,
     profile,
     0,
-    options.cwd,
-    options.allowedPaths,
-    options.protectedPaths,
+    normalized.projectCwd,
+    normalized.allowedPaths,
+    normalized.protectedPaths,
+    options.allowedProtectedFiles,
   );
   const network = checkNetworkIntent(analysis);
   if (findings.some((item) => item.severity === "hard-block")) {
@@ -1566,18 +1633,20 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
   };
   const projectCwd = options.projectCwd ?? options.cwd;
   const fs = options.fileSystem ?? nodeFileSystem;
+  const normalized = normalizeWindowsContext(options.cwd, projectCwd, options.allowedPaths, options.protectedPaths);
   const { findings, accesses } = inspectHardBlocks(
     analysis,
-    options.cwd,
+    normalized.cwd,
     fs,
     profile,
     0,
-    projectCwd,
-    options.allowedPaths,
-    options.protectedPaths,
+    normalized.projectCwd,
+    normalized.allowedPaths,
+    normalized.protectedPaths,
+    options.allowedProtectedFiles,
   );
   const network = checkNetworkIntent(analysis);
-  const executionDirectory = normalizedAbsolute(options.cwd, projectCwd, projectCwd, options.allowedPaths);
+  const executionDirectory = normalizedAbsolute(normalized.cwd, normalized.projectCwd, normalized.projectCwd, normalized.allowedPaths);
   const executionRootProblem = executionDirectory.additional
     ? additionalRootProblem(executionDirectory.root, fs)
     : undefined;
@@ -1586,28 +1655,28 @@ export function analyzeExecutablePolicy(options: AnalyzeExecutablePolicyOptions)
       code: "outside-project",
       severity: "hard-block",
       message: "execution cwd resolves outside the project boundary",
-      path: options.cwd,
+      path: normalized.cwd,
     });
   } else if (executionRootProblem === "missing") {
     addFinding(findings, {
       code: "outside-project",
       severity: "hard-block",
       message: "additional Check mode path no longer exists",
-      path: options.cwd,
+      path: normalized.cwd,
     });
   } else if (executionRootProblem === "link") {
     addFinding(findings, {
       code: "escaping-symlink",
       severity: "hard-block",
       message: "additional Check mode path became a symlink or junction",
-      path: options.cwd,
+      path: normalized.cwd,
     });
   } else if (symlinkEscapes(executionDirectory.absolute, executionDirectory.root, fs)) {
     addFinding(findings, {
       code: "escaping-symlink",
       severity: "hard-block",
       message: "execution cwd follows a symlink outside the project boundary or cannot be verified",
-      path: options.cwd,
+      path: normalized.cwd,
     });
   }
   if (findings.some((item) => item.severity === "hard-block")) {
