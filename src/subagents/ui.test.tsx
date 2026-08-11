@@ -239,7 +239,7 @@ describe("subagent transcript UI", () => {
         subagentManager={manager}
       />,
     ));
-    await settle(setup);
+    await settleUntil(setup, () => listener !== undefined);
     const pending = {
       id: "idle-open-reminder-main-1",
       line: {
@@ -250,15 +250,18 @@ describe("subagent transcript UI", () => {
       },
     };
 
-    listener?.({ type: "main-pending-add", pending });
-    await settle(setup);
-    expect(setup.captureCharFrame()).toContain("pum → main · queued");
-    expect(setup.captureCharFrame()).toContain("managed subagents remain open");
+    flushSync(() => listener!({ type: "main-pending-add", pending }));
+    await settleUntil(setup, () => setup.captureCharFrame().includes("pum → main · queued"));
+    const queuedFrame = setup.captureCharFrame();
+    expect(queuedFrame).toContain("pum → main · queued");
+    expect(queuedFrame).toContain("managed subagents remain open");
 
-    listener?.({ type: "main-pending-resolve", id: pending.id });
-    await settle(setup);
-    expect(setup.captureCharFrame()).toContain("pum → main");
-    expect(setup.captureCharFrame()).not.toContain("pum → main · queued");
+    flushSync(() => listener!({ type: "main-pending-resolve", id: pending.id }));
+    await settleUntil(setup, () => !setup.captureCharFrame().includes("pum → main · queued"));
+    const durableFrame = setup.captureCharFrame();
+    expect(durableFrame).toContain("pum → main");
+    expect(durableFrame).toContain("managed subagents remain open");
+    expect(durableFrame).not.toContain("pum → main · queued");
   });
 
   test("restores main usage and resets it for a new session", async () => {
