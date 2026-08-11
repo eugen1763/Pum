@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_DIR } from "./config";
 import { DEFAULT_CHECK_MODEL } from "./check-mode";
@@ -152,5 +152,10 @@ export function loadSettings(): PumSettings {
 }
 
 export function saveSettings(settings: PumSettings): void {
-  writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+  // Write to a temporary sibling file, then rename into place, so a crash
+  // during the write cannot corrupt pum.json. loadSettings keeps its tolerance
+  // for a corrupt or missing file, so a leftover temp file never affects it.
+  const temporary = `${SETTINGS_PATH}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temporary, JSON.stringify(settings, null, 2));
+  renameSync(temporary, SETTINGS_PATH);
 }

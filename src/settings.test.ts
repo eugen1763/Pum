@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   CHECK_MODE_PROFILES,
   DEFAULT_MAX_ACTIVE_SUBAGENTS,
@@ -80,5 +83,105 @@ describe("PUM settings migration", () => {
       expect(normalizeSettings({ sandboxMode }).sandboxMode).toBe(sandboxMode);
     }
     expect(normalizeSettings({ sandboxMode: "on" } as any).sandboxMode).toBe("auto");
+  });
+});
+
+const temporaryDirectories: string[] = [];
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function temporaryConfigDirectory(): string {
+  const directory = mkdtempSync(join(tmpdir(), "pum-settings-test-"));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+async function runInConfigDirectory(directory: string, script: string): Promise<{
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}> {
+  const processResult = Bun.spawn([process.execPath, "-e", script], {
+    env: { ...process.env, PUM_DIR: directory },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    processResult.exited,
+    new Response(processResult.stdout).text(),
+    new Response(processResult.stderr).text(),
+  ]);
+  return { exitCode, stdout, stderr };
+}
+
+describe("PUM settings persistence", () => {
+  test("saveSettings round-trips through loadSettings", async () => {
+    const directory = temporaryConfigDirectory();
+    const settingsModule = new URL("./settings.ts", import.meta.url).href;
+    const script = [
+      `import { loadSettings, saveSettings } from ${JSON.stringify(settingsModule)};`,
+      `const settings = {`,
+      `  showThinking: true,`,
+      `  theme: "gruvbox",`,
+      `  animations: false,`,
+      `  workingRuleAnimation: "coordinated",`,
+      `  webSearch: false,`,
+      `  writingStyle: "none",`,
+      `  explanationStrength: "detailed",`,
+      `  checkMode: "balanced",`,
+      `  checkModel: "anthropic/claude-3.7-sonnet",`,
+      `  sandboxMode: "off",`,
+      `  checkPaths: {},`,
+      `  maxActiveSubagents: 7,`,
+      `};`,
+      `saveSettings(settings);`,
+      `console.log(JSON.stringify(loadSettings()));`,
+    ].join("\n");
+
+    const result = await runInConfigDirectory(directory, script);
+
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      showThinking: true,
+      theme: "gruvbox",
+      animations: false,
+      workingRuleAnimation: "coordinated",
+      webSearch: false,
+      writingStyle: "none",
+      explanationStrength: "detailed",
+      checkMode: "balanced",
+      checkModel: "anthropic/claude-3.7-sonnet",
+      sandboxMode: "off",
+      checkPaths: {},
+      maxActiveSubagents: 7,
+    });
+  });
+
+  test("leftover temp files do not affect loading", async () => {
+    const directory = temporaryConfigDirectory();
+    // A crash could leave temp files behind. loading must ignore them and must
+    // never mistake one for pum.json itself.
+    writeFileSync(join(directory, "pum.json.1234.1234567890123.tmp"), "partial json", "utf8");
+    writeFileSync(join(directory, "pum.json.5678.1234567890456.tmp"), "{", "utf8");
+    const settingsModule = new URL("./settings.ts", import.meta.url).href;
+    const script = [
+      `import { loadSettings } from ${JSON.stringify(settingsModule)};`,
+      `console.log(JSON.stringify(loadSettings()));`,
+    ].join("\n");
+
+    const result = await runInConfigDirectory(directory, script);
+
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    const loaded = JSON.parse(result.stdout);
+    expect(loaded.theme).toBe("tokyonight");
+    expect(loaded.animations).toBe(true);
+    expect(loaded.checkMode).toBe("off");
+    expect(loaded.sandboxMode).toBe("auto");
+    expect(loaded.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
   });
 });
