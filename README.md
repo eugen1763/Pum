@@ -140,6 +140,7 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `
 | `Ctrl+L` | Open the agent transcript selector |
 | `Shift+Tab` / `Ctrl+Shift+Tab` | Cycle through agent transcripts |
 | `Ctrl+H` | Open session history when the terminal reports the key distinctly |
+| `Ctrl+N` | Open recent answers (News) |
 | `Ctrl+End` | Scroll to the end of the selected transcript |
 | `Ctrl+P` | Open settings |
 | `Ctrl+T` | Open supervised external triggers |
@@ -147,7 +148,7 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `
 | `Ctrl+C` | Clear the selected non-empty draft; on an empty draft, press twice to quit |
 | `?` | Show all controls when the prompt is empty |
 
-Useful commands include `/login`, `/history`, `/triggers`, `/check-path`, `/clear`, `/compress`, and `/worktree`.
+Useful commands include `/login`, `/history`, `/news`, `/triggers`, `/check-path`, `/clear`, `/compress`, and `/worktree`.
 
 ### Copy transcript text
 
@@ -170,6 +171,18 @@ set -g allow-passthrough on
 Reload the `tmux` configuration after this change. Use the terminal's Shift-drag selection as a manual fallback.
 
 PUM limits remote OSC 52 payloads to 100,000 Base64 characters. This limit prevents large selections from corrupting terminal output.
+
+### Recent answers (News)
+
+Open the News popup with `Ctrl+N` or `/news`. It lists the final answers of user-initiated turns, newest first. Each entry shows the user prompt and any follow-up steers that produced the answer, above the answer itself.
+
+- `←` / `→` — move between answers
+- `Space` — toggle an answer between read and unread
+- `c` — copy the current answer to the clipboard
+- `Enter` — reply to the current answer with a quoted draft
+- `Esc` — close the popup
+
+PUM marks an answer read automatically only when a new user prompt follows it directly in the transcript. If anything else appears between the answer and the next prompt — a subagent message, a trigger event, a queued message, or an in-progress stream — the answer stays unread.
 
 ## Parallel subagents
 

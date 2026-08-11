@@ -81,6 +81,7 @@ bun run start    # open the TUI in the current directory
 | Alt+V | Attach an image from the graphical clipboard |
 | Ctrl+Backspace / Ctrl+W | Delete the previous word |
 | Ctrl+H | Open session history when the terminal reports it distinctly |
+| Ctrl+N | Open recent answers (News); `c` copies the selected answer |
 | Ctrl+End | Scroll to the end of the selected transcript |
 | Tab | Open/close the prompt stash on an empty input |
 | Shift+Up / Shift+Down | Extend a prompt-stash selection |
@@ -482,6 +483,16 @@ These were chosen deliberately. Change them only on purpose.
   complete `bash` input. Mutation calls never enter this cache. Project scripts,
   shell composition, output-writing options, and helper options never enter the
   cache. Cache errors degrade to misses and never replace a decision.
+
+- **News answers persist the user prompt and steers that produced them.** The
+  news companion file stores `prompts` (`text` plus a `steer` flag) with each
+  answer; the popup renders them above the answer with the transcript's
+  user-row style. An answer is marked read only when a new user prompt follows
+  it directly in the transcript. Any interleaved line (agent message, trigger
+  event, stream, or queued message) leaves it unread. Resumed transcripts are
+  tagged with news ids at launch as well as on session switch. A resumed
+  answer whose text no longer matches a replayed line stays unread by design.
+  The popup copies the selected answer to the clipboard on `c`.
 
 ## Things that bite
 

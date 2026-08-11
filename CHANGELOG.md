@@ -2,6 +2,21 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.9-beta.1] - 2026-08-11
+
+### Added
+- Showed the user prompt and follow-up steers that produced each answer above the answer in the News popup, styled like the transcript's user rows.
+- Added a `c` shortcut in the News popup to copy the selected answer to the clipboard through the same routes as text selection (native, command, or OSC 52 over remote sessions).
+- Added `/news` to the command completion list so it previews like the other commands.
+
+### Changed
+- Marked a news answer read only when a new user prompt follows it directly in the transcript. Subagent messages, trigger events, queued messages, and in-progress streams now stop the mark.
+
+### Fixed
+- Tagged resumed transcript answer lines with their news identifiers at launch, so read markers appear on resume exactly as on a session switch.
+- Documented `Ctrl+W` as a word-delete shortcut alongside `Ctrl+Backspace` in the help popup.
+- Wrote `pum.json` through a temporary file and atomic rename so a crash during a save cannot corrupt the settings file.
+
 ## [0.2.8-beta.1] - 2026-08-11
 
 ### Added
