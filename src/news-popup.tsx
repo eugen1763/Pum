@@ -82,13 +82,15 @@ export function NewsPopup({
               verticalScrollbarOptions={{ visible: true }}
               style={{ width: bodyWidth, flexGrow: 1, flexShrink: 0, minWidth: 0 }}
             >
-              <markdown
-                content={current.text}
-                streaming={false}
-                syntaxStyle={syntaxStyle}
-                fg={seen ? theme.dim : theme.assistant}
-                style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
-              />
+              <box style={{ width: "100%", paddingRight: 1 }}>
+                <markdown
+                  content={current.text}
+                  streaming={false}
+                  syntaxStyle={syntaxStyle}
+                  fg={seen ? theme.dim : theme.assistant}
+                  style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+                />
+              </box>
             </scrollbox>
           </box>
         </>
