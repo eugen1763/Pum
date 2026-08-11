@@ -32,6 +32,7 @@ bun run start    # open the TUI in the current directory
 | `src/prompt-cache.ts` | Reconciliation, retention, migration, and atomic persistence |
 | `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
+| `src/text-paste.ts` | Bounded local clipboard text capture for secure login fields |
 | `src/clipboard.ts` | Completed text selection copy routes for native clipboards and OSC 52 |
 | `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
@@ -116,6 +117,11 @@ These were chosen deliberately. Change them only on purpose.
   controller keeps secrets outside React state. The popup renders only a length
   mask. Custom keys go to PUM's `auth.json`, while `models.json` contains only
   endpoint, compatibility, and model metadata.
+- **Login text paste preserves the secret boundary.** OpenTUI bracketed paste
+  routes endpoint and API-key text directly to the login controller. Local
+  Ctrl+V fallback uses bounded clipboard output and direct process arguments;
+  remote sessions do not invoke a host clipboard command. Secret contents never
+  enter React labels, logs, session entries, or error text.
 - **Custom provider discovery is conservative.** PUM normalizes an HTTP(S)
   endpoint and probes only the OpenAI-compatible `/models` route. PUM does not
   infer a different API shape from a failed probe. Config writes use a temporary
