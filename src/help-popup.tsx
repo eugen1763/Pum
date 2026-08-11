@@ -26,6 +26,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["Alt+Enter", "Cache without sending"],
       ["Alt+V", "Attach a clipboard image"],
       ["Ctrl+Backspace", "Delete the previous word"],
+      ["Ctrl+W", "Delete the previous word"],
       ["Questionnaire", "↑↓/←→ move · Enter select · Esc cancel"],
     ],
   },

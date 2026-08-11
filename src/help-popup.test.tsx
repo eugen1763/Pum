@@ -59,10 +59,17 @@ describe("Help popup layout", () => {
 
     const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));
     const contentStart = lines.findIndex((line) => line.includes("Prompt"));
-    const contentEnd = lines.findIndex((line) => line.includes("pum -r"));
     const footerIndex = lines.findIndex((line) => line.includes("esc or ? close"));
     expect(contentStart - summaryEnd).toBe(2);
-    expect(footerIndex - contentEnd).toBe(2);
+
+    // The footer sits two rows after the last content row: one bottom gap and
+    // the footer itself. Walk up from the footer past the blank gap so the
+    // assertion stays valid as the Prompt group gains rows.
+    let lastContentIndex = footerIndex - 1;
+    while (lastContentIndex > contentStart && lines[lastContentIndex].match(/^\s*│\s*│\s*$/u)) {
+      lastContentIndex -= 1;
+    }
+    expect(footerIndex - lastContentIndex).toBe(2);
     expect(lines[footerIndex]).not.toContain("Send, or steer while working");
   });
 

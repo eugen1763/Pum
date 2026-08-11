@@ -26,6 +26,10 @@ export const COMMANDS: Command[] = [
     description: "Add or update a provider login",
   },
   {
+    name: "/news",
+    description: "Open recent answers (News)",
+  },
+  {
     name: "/check-path",
     description: "Manage additional Check mode directory roots",
   },
