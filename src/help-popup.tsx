@@ -64,23 +64,10 @@ export const HELP_GROUPS: HelpGroup[] = [
     ],
   },
   {
-    title: "News",
-    controls: [
-      ["Ctrl+N", "Open recent answers"],
-      ["← / →", "Move between answers"],
-      ["n", "Jump to the answer"],
-      ["p", "Jump to the user prompt"],
-      ["Space", "Toggle read or unread"],
-      ["c", "Copy the answer"],
-      ["Enter", "Reply with a quote"],
-      ["Esc", "Close News"],
-    ],
-  },
-  {
     title: "Application",
     controls: [
       ["Ctrl+P", "Open Settings"],
-      ["Ctrl+N", "Open recent answers (News)"],
+      ["Ctrl+N", "Open News; n/p jump"],
       ["Ctrl+T", "Open external triggers"],
       ["Ctrl+End", "Scroll transcript to the end"],
       ["/ in Settings", "Focus settings search"],
