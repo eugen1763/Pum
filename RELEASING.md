@@ -26,7 +26,7 @@ For prereleases, the workflow publishes with `beta`, then assigns the exact vers
 3. Run `bun test`.
 4. Run `bunx tsc --noEmit`.
 5. Run `git diff --check`.
-6. Run `npm pack --dry-run`.
+6. Run `npm pack --dry-run --ignore-scripts --cache node_modules/.cache/npm`.
 7. Run `bun run pack:check`.
 8. Commit the version and release changes.
 9. Push the release commit to `main` without creating or pushing a tag.

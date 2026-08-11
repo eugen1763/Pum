@@ -373,8 +373,7 @@ describe("subagent transcript UI", () => {
     expect(markdownContent(setup.renderer.root)).toContain("Subagent transcript");
     const childFrame = setup.captureCharFrame();
     expect(childFrame).toContain(`${formatWorkingDirectory(process.cwd())} · pum/worker-one`);
-    expect(childFrame).toContain("↑ 1.2k · ↓ 345 · 40%");
-    expect(childFrame).not.toContain("↺ 2.4k");
+    expect(childFrame).toContain("↑ 1.2k · ↓ 345 · ↺ 2.4k · 40%");
     expect(childFrame).not.toContain("$0.250");
 
     setup.mockInput.pressTab({ shift: true, ctrl: true });

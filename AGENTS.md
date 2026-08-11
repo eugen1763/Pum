@@ -193,6 +193,8 @@ These were chosen deliberately. Change them only on purpose.
   subset of tokens. Add a token rather than a hex code.
 - **The status bar is always exactly one rendered row.** Narrow layouts remove
   cost, cache-read tokens, outgoing tokens, incoming tokens, then the PUM title.
+  The launch directory appears immediately left of the Git branch with its own
+  semantic colour and drops before higher-priority agent and branch data.
   Remaining metadata follows explicit operational priorities and Unicode column
   measurements. The status bar never wraps or switches to a stacked layout.
 - **The terminal title reflects overall activity.** PUM uses OpenTUI's title API,

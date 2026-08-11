@@ -2,6 +2,18 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.6-beta.1] - 2026-08-11
+
+### Added
+- Added the launch working-directory name immediately before the Git branch in the one-row status bar, with a dedicated semantic theme color and responsive removal on narrow terminals.
+
+### Changed
+- Allowed Balanced Check mode to run one direct, lifecycle-disabled `npm pack` with an explicit project-local cache and either the current package or one exact registry package version.
+- Updated release validation and installation verification to keep npm cache and package output inside the project.
+
+### Security
+- Kept file, Git, URL, tag, range, credential, external-write, shell-composed, and global-install package operations blocked; npm publication and dist-tag mutations still require the existing authoritative main-agent approval path.
+
 ## [0.2.5-beta.1] - 2026-08-11
 
 ### Fixed
