@@ -6,6 +6,7 @@ import type { SandboxBackend, SandboxCapability, SandboxPolicy } from "./types";
 import { SandboxController } from "./index";
 import { setCheckModeConfig } from "../check-mode";
 import { DEFAULT_CHECK_MODEL } from "../check-mode";
+import { pathsHaveSameIdentity } from "../platform";
 
 function context(cwd: string) {
   return {
@@ -116,9 +117,11 @@ describe("sandbox Bash override", () => {
         context(worktree),
       );
 
-      const readOnly = mock.policies[0]!.readOnlyPaths.map((path) => path.toLowerCase());
-      expect(readOnly).toContain(worktree.toLowerCase());
-      expect(readOnly).toContain(commonGit.toLowerCase());
+      const readOnly = mock.policies[0]!.readOnlyPaths;
+      expect((await Promise.all(readOnly.map((path) => pathsHaveSameIdentity(path, worktree))))
+        .some(Boolean)).toBe(true);
+      expect((await Promise.all(readOnly.map((path) => pathsHaveSameIdentity(path, commonGit))))
+        .some(Boolean)).toBe(true);
       expect(mock.policies[0]!.readWritePaths).toEqual([]);
     } finally {
       rmSync(root, { recursive: true, force: true });
