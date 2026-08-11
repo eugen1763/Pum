@@ -184,7 +184,7 @@ bun install --frozen-lockfile
 bun test
 bun run typecheck
 git diff --check
-npm pack --dry-run
+npm pack --dry-run --ignore-scripts --cache node_modules/.cache/npm
 bun run pack:check
 ```
 
@@ -295,11 +295,11 @@ After successful workflows, verify all of the following:
 Example installation check:
 
 ```bash
-bun i -g pum-agent@beta
-pum --help
+npm install --prefix node_modules/.pum-install pum-agent@<VERSION>
+node_modules/.pum-install/node_modules/.bin/pum --help
 ```
 
-Use an isolated install location when changing the developer machine’s global packages would be disruptive.
+The project-local prefix avoids changes to the developer machine's global packages.
 
 ## 11. Final report
 

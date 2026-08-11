@@ -371,6 +371,13 @@ These were chosen deliberately. Change them only on purpose.
   `npm publish` or `npm dist-tag add` from the authoritative main agent. The
   verifier category does not control the match. The exception still requires
   explicit popup approval. Managed subagents remain blocked.
+- **Balanced npm pack is narrow and deterministic.** PUM accepts only one direct
+  `npm pack` command with lifecycle scripts disabled and an explicit cache path.
+  A package operand must be one exact registry package version. Cache and pack
+  destinations must resolve inside the project or an approved additional root.
+  File, Git, URL, tag, range, ambiguous, credential, external-write, composed,
+  and global-install forms remain blocked. This rule does not change the
+  main-agent approval exception for `npm publish` or `npm dist-tag add`.
 - **Check mode verifies complete structured proposals.** Bash requests include
   all stages, operators, pipelines, redirections, substitutions, environment
   assignments, mutation intent, and boundaries. `edit` and `apply_patch`

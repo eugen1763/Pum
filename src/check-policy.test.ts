@@ -565,6 +565,134 @@ describe("structured executable proposals", () => {
   });
 });
 
+describe("deterministic npm pack", () => {
+  test("allows exact registry versions and classifies only explicit write roots", () => {
+    const cwd = temporaryProject();
+    const commands = [
+      "npm pack pum-agent@1.2.3-beta.1 --ignore-scripts --cache node_modules/.cache/npm --pack-destination build/packs",
+      "npm pack @scope/package@2.0.0+build.4 --dry-run --json --ignore-scripts --cache=node_modules/.cache/npm",
+    ];
+
+    for (const command of commands) {
+      const result = analyzeCheckPolicy({ command, cwd, profile: "balanced" });
+      expect(result.decision).toBe("allow");
+      expect(result.network).toEqual({ access: "host", commands: ["npm pack"] });
+      expect(result.accesses).toContainEqual(expect.objectContaining({ path: "node_modules/.cache/npm", mode: "write", external: false }));
+      expect(result.accesses.some((access) => access.path.includes("pum-agent@") || access.path.includes("@scope/package@"))).toBe(false);
+    }
+  });
+
+  test("applies the same npm pack rules to direct executable proposals", () => {
+    const local = analyzeCheckPolicy({
+      command: "npm pack --dry-run --ignore-scripts --cache node_modules/.cache/npm",
+      cwd: temporaryProject(),
+    });
+    expect(local.decision).toBe("allow");
+    expect(local.network).toEqual({ access: "none", commands: [] });
+    expect(local.accesses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "node_modules/.cache/npm", mode: "write" }),
+      expect.objectContaining({ path: ".", mode: "write" }),
+    ]));
+
+    const cwd = temporaryProject();
+    const result = analyzeExecutablePolicy({
+      executable: "npm",
+      args: ["pack", "pum-agent@1.2.3", "--ignore-scripts", "--cache", "node_modules/.cache/npm", "--pack-destination", "dist"],
+      cwd,
+      projectCwd: cwd,
+    });
+
+    expect(result.decision).toBe("allow");
+    expect(result.accesses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "node_modules/.cache/npm", mode: "write" }),
+      expect.objectContaining({ path: "dist", mode: "write" }),
+    ]));
+  });
+
+  test("allows npm pack write paths under an approved additional root", () => {
+    const cwd = temporaryProject();
+    const shared = mkdtempSync(join(tmpdir(), "pum-pack-output-"));
+    temporaryDirectories.push(shared);
+    mkdirSync(join(shared, "cache"));
+    mkdirSync(join(shared, "packs"));
+    const command = `npm pack pum-agent@1.2.3 --ignore-scripts --cache ${shellQuote(join(shared, "cache"))} --pack-destination ${shellQuote(join(shared, "packs"))}`;
+
+    expect(analyzeCheckPolicy({ command, cwd, allowedPaths: [shared] }).decision).toBe("allow");
+  });
+
+  test("blocks npm pack external, ambiguous, and credential write paths", () => {
+    const cwd = "/work/repo";
+    const commands = [
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache /tmp/npm-cache",
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache .cache --pack-destination /tmp/packs",
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache '$CACHE_DIR'",
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache .npmrc",
+    ];
+
+    for (const command of commands) {
+      expect(analyzeCheckPolicy({ command, cwd, fileSystem: virtualFileSystem }).decision).toBe("block");
+    }
+  });
+
+  test("rejects non-registry specs, non-exact versions, lifecycle execution, and unsupported options", () => {
+    const cwd = temporaryProject();
+    const unsafe = [
+      "npm pack pum-agent@1.2.3 --cache .cache",
+      "npm pack pum-agent@1.2.3 --ignore-scripts",
+      "npm pack pum-agent@latest --ignore-scripts --cache .cache",
+      "npm pack 'pum-agent@^1.2.3' --ignore-scripts --cache .cache",
+      "npm pack . --ignore-scripts --cache .cache",
+      "npm pack ../package --ignore-scripts --cache .cache",
+      "npm pack file:../package --ignore-scripts --cache .cache",
+      "npm pack git+https://example.test/package.git --ignore-scripts --cache .cache",
+      "npm pack https://example.test/package.tgz --ignore-scripts --cache .cache",
+      "npm pack pum-agent@1.2.3 other@1.0.0 --ignore-scripts --cache .cache",
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache .cache --foreground-scripts",
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache .cache --cache other-cache",
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache .cache --pack-destination . --pack-destination dist",
+    ];
+
+    for (const command of unsafe) {
+      const result = analyzeCheckPolicy({ command, cwd });
+      expect(result.decision).toBe("block");
+      expect(result.findings.map((finding) => finding.code)).toContain("unsafe-npm-pack");
+    }
+  });
+
+  test("requires direct npm pack without shell composition", () => {
+    const cwd = temporaryProject();
+    const unsafe = [
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache .cache && echo done",
+      "npm pack pum-agent@1.2.3 --ignore-scripts --cache .cache > pack.txt",
+      "MODE=test npm pack pum-agent@1.2.3 --ignore-scripts --cache .cache",
+      "env npm pack pum-agent@1.2.3 --ignore-scripts --cache .cache",
+    ];
+
+    for (const command of unsafe) {
+      const result = analyzeCheckPolicy({ command, cwd });
+      expect(result.decision).toBe("block");
+      expect(result.findings.map((finding) => finding.code)).toContain("unsafe-npm-pack");
+    }
+  });
+
+  test("does not extend npm pack support to installs or global writes", () => {
+    const cwd = "/work/repo";
+    expect(analyzeCheckPolicy({
+      command: "npm install ../package",
+      cwd,
+      fileSystem: virtualFileSystem,
+    }).decision).toBe("block");
+    for (const command of [
+      "npm install -g pum-agent@1.2.3",
+      "npm --global install pum-agent@1.2.3",
+      "bun i --global pum-agent@1.2.3",
+      "bun --global add pum-agent@1.2.3",
+    ]) {
+      expect(analyzeCheckPolicy({ command, cwd, fileSystem: virtualFileSystem }).decision).toBe("block");
+    }
+  });
+});
+
 describe("Balanced-only external reads", () => {
   const posixCwd = "/work/repo";
   const windowsCwd = "C:\\work\\repo";
