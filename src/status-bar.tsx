@@ -44,6 +44,9 @@ const REMOVAL_ORDER: readonly (StatusMetadataItem["key"] | "title")[] = [
   "title",
 ];
 
+/** The WorkingPulse spinner occupies exactly one terminal column. */
+const PULSE_GLYPH_WIDTH = 1;
+
 type WorkingMode = "full" | "compact" | "pulse" | null;
 type LeftPart = "model" | "thinking" | "agents" | "activeAgent";
 
@@ -105,8 +108,14 @@ function agentTextWidth(input: StatusBarLayoutInput, layout: StatusBarLayout): n
   let width = 0;
   if (layout.showIdleAgents && idle > 0) width += statusTextWidth(`◇ ${idle}`);
   if (layout.showRunningAgents && input.runningAgentCount > 0) {
+    // One space separates the idle block, not the pulse glyph.
     if (width) width += 1;
-    width += 1 + statusTextWidth(` ${input.runningAgentCount}/${input.maxActiveAgentCount}`);
+    // The running block renders as the pulse glyph (PULSE_GLYPH_WIDTH columns)
+    // followed by the " N/M" counter. That leading space is inside the text
+    // that statusTextWidth measures.
+    width += PULSE_GLYPH_WIDTH + statusTextWidth(
+      ` ${input.runningAgentCount}/${input.maxActiveAgentCount}`,
+    );
   }
   return width;
 }
@@ -122,7 +131,7 @@ function leftParts(input: StatusBarLayoutInput, layout: StatusBarLayout): LeftPa
 
 function workingWidth(input: StatusBarLayoutInput, mode: WorkingMode): number {
   if (!mode) return 0;
-  if (mode === "pulse") return 1;
+  if (mode === "pulse") return PULSE_GLYPH_WIDTH;
   const elapsedWidth = statusTextWidth(fmtElapsed(input.elapsedSec));
   return mode === "full" ? 12 + elapsedWidth : 4 + elapsedWidth;
 }
