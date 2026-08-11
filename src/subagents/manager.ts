@@ -33,10 +33,13 @@ import {
   type RecalledQueuedMessage,
 } from "../queue-recall";
 import {
-  MESSAGE_CACHE_TOOLS,
   messageCacheDetail,
   type MessageCacheController,
 } from "../message-cache";
+import {
+  ToolGroupsController,
+  childAllowedToolNames,
+} from "../tool-groups";
 import {
   registerTriggerTools,
   type TriggerRuntimeManager,
@@ -163,6 +166,7 @@ type RuntimeRecord = {
   dispose?: () => Promise<void> | void;
   finishRequested?: string;
   userInstructionNotices?: Map<string, string>;
+  toolGroups?: ToolGroupsController;
   activityGeneration: number;
   idleNotifiedGeneration: number;
 };
@@ -743,6 +747,10 @@ export class SubagentManager {
             name: messageCacheRecord.snapshot.name,
           }));
         }
+        const toolGroupsRecord = this.records.get(agentId);
+        if (toolGroupsRecord?.toolGroups) {
+          toolGroupsRecord.toolGroups.registerTool(pi);
+        }
         if (this.triggerManager) {
           registerTriggerTools(
             pi,
@@ -1158,6 +1166,10 @@ export class SubagentManager {
     const sessionManager = record.snapshot.sessionFile && existsSync(record.snapshot.sessionFile)
       ? SessionManagerClass.open(record.snapshot.sessionFile, sessionDir)
       : SessionManagerClass.create(record.snapshot.worktree.path, sessionDir);
+    // Each child tracks its own enabled tool groups, persisted next to its
+    // session file. Restore before the child's enable_tools tool registers.
+    record.toolGroups = new ToolGroupsController("subagent");
+    record.toolGroups.load(sessionManager.getSessionFile());
     const services = await createAgentSessionServices({
       cwd: record.snapshot.worktree.path,
       agentDir: this.agentDir,
@@ -1175,18 +1187,12 @@ export class SubagentManager {
       sessionManager,
       model,
       thinkingLevel: record.snapshot.thinkingLevel as any,
-      tools: [
-        "read", "write", "edit", "apply_patch", "bash", "questionnaire",
-        "spawn_subagent", "message_agent", "list_subagents", "finish_subagent", "worktree",
-        ...MESSAGE_CACHE_TOOLS,
-        ...(this.triggerManager ? [
-          "create_trigger", "list_triggers", "inspect_trigger", "pause_trigger",
-          "resume_trigger", "cancel_trigger", "invoke_trigger",
-        ] : []),
-      ],
+      tools: childAllowedToolNames(),
     });
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
+    // Narrow the outgoing tool list to core plus enabled groups for this child.
+    result.session.setActiveToolsByName(record.toolGroups.activeTools());
     record.unsubscribe = result.session.subscribe((event) => this.processSessionEvent(record, event));
     record.unsubscribeSearch = observeSearchCalls(result.session.sessionId, (call) => {
       if (call.phase === "start") {

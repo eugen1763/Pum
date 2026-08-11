@@ -32,9 +32,10 @@ import { createShutdown } from "./shutdown";
 import { settleSyntaxHighlighting } from "./syntax";
 import { applyPatchExtension } from "./apply-patch";
 import { QuestionnaireManager } from "./questionnaire";
+import { ToolGroupsController, mainAllowedToolNames } from "./tool-groups";
 import { SpawnPreviewManager } from "./subagents/spawn-preview";
 import { SessionHistoryIndex } from "./session-history-metadata";
-import { MESSAGE_CACHE_TOOLS, MessageCacheController } from "./message-cache";
+import { MessageCacheController } from "./message-cache";
 import { TriggerManager } from "./triggers/manager";
 import {
   NodeTriggerFileOperations,
@@ -67,6 +68,7 @@ export async function start(options: StartupOptions): Promise<void> {
   setExplanationStrength(settings.explanationStrength);
   const questionnaireManager = new QuestionnaireManager();
   const spawnPreviewManager = new SpawnPreviewManager();
+  const mainToolGroups = new ToolGroupsController("main");
   const sessionHistoryIndex = new SessionHistoryIndex();
   const messageCacheController = new MessageCacheController(process.cwd());
   setCheckModeConfig({
@@ -170,26 +172,23 @@ export async function start(options: StartupOptions): Promise<void> {
             sandboxExtension,
             applyPatchExtension,
             questionnaireManager.extension({ id: "main", name: "main" }),
+            mainToolGroups.extension(),
             subagentExtension,
           ],
         },
       });
-      return {
-        ...(await createAgentSessionFromServices({
-          services,
-          sessionManager,
-          sessionStartEvent,
-          tools: [
-            "read", "write", "edit", "apply_patch", "bash", "questionnaire",
-            "spawn_subagent", "message_agent", "list_subagents", "stop_subagent", "worktree",
-            ...MESSAGE_CACHE_TOOLS,
-            "create_trigger", "list_triggers", "inspect_trigger", "pause_trigger",
-            "resume_trigger", "cancel_trigger", "invoke_trigger",
-          ],
-        })),
+      // Each session tracks its own enabled tool groups, persisted next to
+      // the session file. Restore before enable_tools registers and runs, then
+      // narrow the outgoing tool list to core plus enabled groups.
+      mainToolGroups.load(sessionManager.getSessionFile());
+      const result = await createAgentSessionFromServices({
         services,
-        diagnostics: services.diagnostics,
-      };
+        sessionManager,
+        sessionStartEvent,
+        tools: mainAllowedToolNames(),
+      });
+      result.session.setActiveToolsByName(mainToolGroups.activeTools());
+      return { ...result, services, diagnostics: services.diagnostics };
     },
     {
       cwd,
