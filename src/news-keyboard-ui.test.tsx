@@ -6,6 +6,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "./app";
+import type { ClipboardRoute } from "./clipboard";
 import { saveNewsItems, type NewsItem } from "./news";
 
 let destroy: (() => void) | undefined;
@@ -27,7 +28,10 @@ const settings = {
   maxActiveSubagents: 10,
 };
 
-function fakeSession(path = join(mkdtempSync(join(tmpdir(), "pum-news-ui-")), "current-session.jsonl")) {
+function fakeSession(
+  path = join(mkdtempSync(join(tmpdir(), "pum-news-ui-")), "current-session.jsonl"),
+  contextEntries: any[] = [],
+) {
   return {
     agent: {
       state: {
@@ -35,7 +39,7 @@ function fakeSession(path = join(mkdtempSync(join(tmpdir(), "pum-news-ui-")), "c
         thinkingLevel: "off",
       },
     },
-    sessionManager: { buildContextEntries: () => [], getEntries: () => [] },
+    sessionManager: { buildContextEntries: () => contextEntries, getEntries: () => [] },
     sessionFile: path,
     sessionId: "current-session",
     subscribe: () => () => {},
@@ -63,7 +67,10 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.flush();
 }
 
-async function renderApp(session: ReturnType<typeof fakeSession> = fakeSession()) {
+async function renderApp(
+  session: ReturnType<typeof fakeSession> = fakeSession(),
+  copyNewsAnswerText?: (text: string) => Promise<ClipboardRoute>,
+) {
   const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const manager = {
@@ -104,6 +111,7 @@ async function renderApp(session: ReturnType<typeof fakeSession> = fakeSession()
         replace: () => [],
         remove: () => [],
       }}
+      copyNewsAnswerText={copyNewsAnswerText}
     />,
   );
   await settle(setup);
@@ -206,8 +214,11 @@ describe("news keyboard shortcuts", () => {
     expect(frame).toContain("> First line of the answer.");
   });
 
-  test("a later user prompt marks the newest answer answered", async () => {
-    const session = fakeSession();
+  test("a later user prompt marks the newest answer answered when it follows directly", async () => {
+    const session = fakeSession(undefined, [{
+      type: "message",
+      message: { role: "assistant", content: [{ type: "text", text: "Answered by reply." }] },
+    }]);
     saveNewsItems(session.sessionFile, [newsItem("a1", "Answered by reply.", T0)]);
     const setup = await renderApp(session);
 
@@ -218,6 +229,31 @@ describe("news keyboard shortcuts", () => {
     setup.mockInput.pressKey("n", { ctrl: true });
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("✓");
+  });
+
+  test("a message in between stops the previous answer being marked read", async () => {
+    const session = fakeSession(undefined, [
+      {
+        type: "message",
+        message: { role: "assistant", content: [{ type: "text", text: "Blocked by a note." }] },
+      },
+      {
+        type: "custom",
+        customType: "pum.agent_message_display",
+        data: { id: "m1", sender: "worker", recipient: "main", text: "subagent note" },
+      },
+    ]);
+    saveNewsItems(session.sessionFile, [newsItem("a1", "Blocked by a note.", T0)]);
+    const setup = await renderApp(session);
+
+    await setup.mockInput.typeText("please continue");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    setup.mockInput.pressKey("n", { ctrl: true });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("◦");
+    expect(setup.captureCharFrame()).not.toContain("✓");
   });
 
   test("closes news when another popup opens and opens from Settings", async () => {
@@ -246,6 +282,52 @@ describe("news keyboard shortcuts", () => {
     const newsFrame = setup.captureCharFrame();
     expect(newsFrame).toContain("No answers yet.");
     expect(newsFrame).not.toContain("Settings");
+  });
+
+  test("shows the user prompt and steers above the answer", async () => {
+    const session = fakeSession();
+    saveNewsItems(session.sessionFile, [{
+      ...newsItem("a1", "The final answer.", T0),
+      prompts: [
+        { text: "First question", steer: false },
+        { text: "Keep going", steer: true },
+      ],
+    }]);
+    const setup = await renderApp(session);
+
+    setup.mockInput.pressKey("n", { ctrl: true });
+    await settle(setup);
+    const contents = descendants(setup.renderer.root, MarkdownRenderable).map((row) => row.content);
+    expect(contents[0]).toBe("First question");
+    expect(contents[1]).toBe("Keep going");
+    expect(contents.at(-1)).toBe("The final answer.");
+    expect(newsMarkdownSetup(setup)).toBe("The final answer.");
+  });
+
+  test("C copies the selected answer to the clipboard", async () => {
+    const session = fakeSession();
+    saveNewsItems(session.sessionFile, [
+      newsItem("a1", "Copy the first answer.", T0),
+      newsItem("a2", "Copy the second answer.", T0 - 60_000),
+    ]);
+    const copied: string[] = [];
+    const copyNewsAnswerText = async (text: string): Promise<ClipboardRoute> => {
+      copied.push(text);
+      return "command";
+    };
+    const setup = await renderApp(session, copyNewsAnswerText);
+
+    setup.mockInput.pressKey("n", { ctrl: true });
+    await settle(setup);
+    await setup.mockInput.typeText("c");
+    await settle(setup);
+    expect(copied).toEqual(["Copy the first answer."]);
+
+    setup.mockInput.pressArrow("left");
+    await settle(setup);
+    await setup.mockInput.typeText("c");
+    await settle(setup);
+    expect(copied).toEqual(["Copy the first answer.", "Copy the second answer."]);
   });
 });
 

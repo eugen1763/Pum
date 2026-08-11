@@ -135,6 +135,7 @@ import {
 } from "./triggers/popup";
 import type { TerminalTitleController } from "./terminal-title";
 import { readClipboardText } from "./text-paste";
+import { copyTextToClipboard } from "./clipboard";
 import { NewsPopup } from "./news-popup";
 import {
   NEWS_CAPACITY,
@@ -142,6 +143,7 @@ import {
   saveNewsItems,
   tagNewsLines,
   type NewsItem,
+  type NewsPrompt,
 } from "./news";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
@@ -387,6 +389,7 @@ export function App({
   captureImage = captureClipboardImage,
   readPastedText = readClipboardText,
   stagePastedText = stagePastedTextDefault,
+  copyNewsAnswerText = copyTextToClipboard,
   onExit = () => process.exit(0),
   checkApprovalCoordinator,
   checkApprovalStore,
@@ -415,6 +418,8 @@ export function App({
   readPastedText?: typeof readClipboardText;
   /** Store oversized pasted text in a temp file and show a marker in its place. */
   stagePastedText?: typeof stagePastedTextDefault;
+  /** Copies the selected news answer for the popup. */
+  copyNewsAnswerText?: typeof copyTextToClipboard;
   onExit?: () => void | Promise<void>;
   checkApprovalCoordinator?: CheckApprovalCoordinator;
   checkApprovalStore?: CheckApprovalStore;
@@ -428,19 +433,26 @@ export function App({
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
-  const [tx, setTx] = useState<Transcript>(() => ({
+  const [tx, setTx] = useState<Transcript>(() => {
     // A resumed session already holds messages; show them instead of a blank pane.
-    lines: [
-      ...replayEntries(
-        initialSession.sessionManager.buildContextEntries(),
-        cwd,
-        initial.showThinking,
-      ),
-      ...startupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
-    ],
-    stream: null,
-    pending: [],
-  }));
+    const replayedLines = replayEntries(
+      initialSession.sessionManager.buildContextEntries(),
+      cwd,
+      initial.showThinking,
+    );
+    return {
+      lines: [
+        ...tagNewsLines(replayedLines, loadNewsItems(initialSession.sessionFile)),
+        ...startupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
+      ],
+      stream: null,
+      pending: [],
+    };
+  });
+  const txRef = useRef<Transcript>({ lines: [], stream: null, pending: [] });
+  useEffect(() => {
+    txRef.current = tx;
+  }, [tx]);
   const [busy, setBusy] = useState(false);
   const [quitArmed, setQuitArmed] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
@@ -604,6 +616,8 @@ export function App({
   const userTurnActiveRef = useRef(false);
   /** Text of the final assistant message; reset at each assistant message start. */
   const answerBufRef = useRef("");
+  /** User prompt and steer texts of the running main turn, oldest first. */
+  const turnPromptsRef = useRef<NewsPrompt[]>([]);
   const resetQuitArm = () => {
     lastQuitPress.current = 0;
     clearTimeout(quitTimer.current);
@@ -1172,6 +1186,7 @@ export function App({
               at: Date.now(),
               read: false,
               answered: false,
+              prompts: turnPromptsRef.current,
             };
             const nextNews = [item, ...newsRef.current].slice(0, NEWS_CAPACITY);
             newsRef.current = nextNews;
@@ -1193,6 +1208,7 @@ export function App({
           }
           answerBufRef.current = "";
           userTurnActiveRef.current = false;
+          turnPromptsRef.current = [];
           releasePostTurnPastedTexts("main");
           setWorking(false);
           break;
@@ -1483,6 +1499,18 @@ export function App({
   const markNewestNewsAnswered = () => {
     const first = newsRef.current[0];
     if (!first || (first.read && first.answered)) return;
+    const current = txRef.current;
+    const last = current.lines[current.lines.length - 1];
+    // Mark read only when the new user prompt lands directly after the newest
+    // answer. Any interleaved line (agent message, trigger event, queued
+    // message, or an in-progress stream) means the prompt is not a direct reply.
+    const directReply =
+      current.stream === null &&
+      current.pending.length === 0 &&
+      last?.kind === "text" &&
+      last.role === "assistant" &&
+      last.newsId === first.id;
+    if (!directReply) return;
     commitNews(
       newsRef.current.map((entry, index) =>
         index === 0 ? { ...entry, read: true, answered: true } : entry,
@@ -1511,6 +1539,16 @@ export function App({
       const transcriptScroll = transcriptScrollRef.current;
       if (transcriptScroll) transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
     });
+  };
+
+  const copyNewsAnswer = () => {
+    const item = newsRef.current[newsCursorRef.current];
+    if (!item) return;
+    copyNewsAnswerText(item.text, {
+      osc52: (value) => renderer.copyToClipboardOSC52(value),
+    }).catch((error) =>
+      append({ kind: "text", role: "error", text: `copy failed: ${String(error)}` }),
+    );
   };
 
   const selectHistorySession = (path: string) => {
@@ -1718,6 +1756,7 @@ export function App({
       text: displayText.trim(),
     };
 
+    turnPromptsRef.current.push({ text: displayText.trim(), steer: busyRef.current });
     // Working already: keep the steering message pending at the transcript
     // bottom until pi emits message_start for its actual insertion.
     if (busyRef.current) {
@@ -2320,6 +2359,7 @@ export function App({
       else if (key.name === "left") moveNewsCursor(1);
       else if (key.name === "right") moveNewsCursor(-1);
       else if (key.name === "space" || key.sequence === " ") toggleCurrentNewsRead();
+      else if (key.name === "c" || key.sequence === "c") void copyNewsAnswer();
       else if (key.name === "return" || key.name === "enter" || key.name === "kpenter")
         replyToCurrentNews();
       return;

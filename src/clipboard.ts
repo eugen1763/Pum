@@ -82,7 +82,23 @@ export async function copySelectionText(
   text: string,
   options: ClipboardCopyOptions = {},
 ): Promise<ClipboardRoute> {
-  if (!text) throw new Error("Cannot copy an empty selection");
+  return copyTextCore(text, options, "Cannot copy an empty selection");
+}
+
+/** Copy arbitrary text (a news answer, for example) through the same routes. */
+export async function copyTextToClipboard(
+  text: string,
+  options: ClipboardCopyOptions = {},
+): Promise<ClipboardRoute> {
+  return copyTextCore(text, options, "Cannot copy empty text");
+}
+
+async function copyTextCore(
+  text: string,
+  options: ClipboardCopyOptions,
+  emptyMessage: string,
+): Promise<ClipboardRoute> {
+  if (!text) throw new Error(emptyMessage);
 
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;

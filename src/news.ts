@@ -1,6 +1,13 @@
 import { basename, dirname, join } from "node:path";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 
+export type NewsPrompt = {
+  /** The user prompt or steer text that produced the answer. */
+  text: string;
+  /** True when the text steered an already-running turn. */
+  steer: boolean;
+};
+
 export type NewsItem = {
   /** Stable identifier used to tag the matching transcript line. */
   id: string;
@@ -12,6 +19,8 @@ export type NewsItem = {
   read: boolean;
   /** True when the user replied to it. */
   answered: boolean;
+  /** User prompt and steers that produced this answer, oldest first. */
+  prompts?: NewsPrompt[];
 };
 
 /** The list never holds more than this many answers. */
@@ -31,7 +40,15 @@ function isNewsItem(value: unknown): value is NewsItem {
     typeof item.text === "string" &&
     typeof item.at === "number" &&
     typeof item.read === "boolean" &&
-    typeof item.answered === "boolean"
+    typeof item.answered === "boolean" &&
+    (item.prompts === undefined ||
+      (Array.isArray(item.prompts) &&
+        item.prompts.every(
+          (prompt) =>
+            Boolean(prompt) &&
+            typeof (prompt as Record<string, unknown>).text === "string" &&
+            typeof (prompt as Record<string, unknown>).steer === "boolean",
+        )))
   );
 }
 

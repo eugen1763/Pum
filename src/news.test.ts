@@ -65,6 +65,34 @@ describe("news persistence", () => {
     );
     expect(loadNewsItems(sessionFile)).toEqual([item("good")]);
   });
+
+  test("round trips answer prompts through the companion file", () => {
+    const sessionFile = tempSessionFile();
+    const items = [{
+      ...item("answer with prompts"),
+      prompts: [
+        { text: "first question", steer: false },
+        { text: "keep going", steer: true },
+      ],
+    }];
+    saveNewsItems(sessionFile, items);
+    expect(loadNewsItems(sessionFile)).toEqual(items);
+  });
+
+  test("skips entries with malformed prompts", () => {
+    const sessionFile = tempSessionFile();
+    saveNewsItems(sessionFile, [item("good")]);
+    writeFileSync(
+      newsFileFor(sessionFile),
+      JSON.stringify([
+        { ...item("bad steers"), prompts: [{ text: "missing steer" }] },
+        { ...item("bad prompts"), prompts: "nope" },
+        item("good"),
+      ]),
+      "utf8",
+    );
+    expect(loadNewsItems(sessionFile)).toEqual([item("good")]);
+  });
 });
 
 describe("tagNewsLines", () => {

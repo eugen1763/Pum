@@ -3,11 +3,12 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { buildSyntaxStyle } from "./syntax";
 import { PopupFrame } from "./popup-frame";
 import { formatAge, type NewsItem } from "./news";
+import { TextLine } from "./transcript";
 import type { Theme } from "./theme";
 
 /**
  * Presentational popup for recent final answers. It owns no keyboard logic;
- * `app.tsx` routes arrows, Space, Enter, and Esc to the shared handlers.
+ * `app.tsx` routes arrows, Space, Enter, Esc, and C to the shared handlers.
  */
 export function NewsPopup({
   theme,
@@ -28,9 +29,9 @@ export function NewsPopup({
   const marginY = terminalHeight >= 16 ? Math.max(1, Math.floor(terminalHeight * 0.07)) : 0;
   const width = Math.max(1, terminalWidth - marginX * 2);
   const height = Math.max(1, terminalHeight - marginY * 2);
-  // PopupFrame adds a 1-c wide border and 1-c padding per side, and the gutter
-  // takes 2 columns, so the markdown body gets a concrete numeric width.
-  const bodyWidth = Math.max(1, width - 6);
+  // PopupFrame adds a 1-c wide border and 1-c padding per side, so the
+  // markdown body gets a concrete numeric width.
+  const bodyWidth = Math.max(1, width - 4);
   const count = items.length;
   const current = items[cursor];
   const seen = current ? current.read : false;
@@ -61,38 +62,45 @@ export function NewsPopup({
             <text content={formatAge(current.at)} fg={theme.dim} bg={theme.popupBg} wrapMode="none" />
           </box>
           <box style={{ height: 1, flexShrink: 0 }} />
-          <box
-            style={{
-              flexGrow: 1,
-              flexShrink: 1,
-              minHeight: 0,
-              flexDirection: "row",
-            }}
+          <scrollbox
+            ref={markdownScrollRef}
+            verticalScrollbarOptions={{ visible: true }}
+            style={{ width: bodyWidth, flexGrow: 1, flexShrink: 0, minWidth: 0 }}
           >
-            <box style={{ width: 2, flexShrink: 0 }}>
-              <text
-                content={seen ? "✓" : "◦"}
-                fg={seen ? theme.success : theme.dim}
-                bg={theme.popupBg}
-                wrapMode="none"
-              />
-            </box>
-            <scrollbox
-              ref={markdownScrollRef}
-              verticalScrollbarOptions={{ visible: true }}
-              style={{ width: bodyWidth, flexGrow: 1, flexShrink: 0, minWidth: 0 }}
-            >
-              <box style={{ width: "100%", paddingRight: 1 }}>
-                <markdown
-                  content={current.text}
-                  streaming={false}
+            <box style={{ width: "100%", paddingRight: 1 }}>
+              {current.prompts?.map((prompt, index) => (
+                <TextLine
+                  key={`${index}:${prompt.text}:${prompt.steer}`}
+                  theme={theme}
                   syntaxStyle={syntaxStyle}
-                  fg={seen ? theme.dim : theme.assistant}
-                  style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+                  role="user"
+                  text={prompt.text}
                 />
+              ))}
+              {current.prompts && current.prompts.length > 0 ? (
+                <box style={{ height: 1, flexShrink: 0 }} />
+              ) : null}
+              <box style={{ flexDirection: "row", width: "100%" }}>
+                <box style={{ width: 2, flexShrink: 0 }}>
+                  <text
+                    content={seen ? "✓ " : "◦ "}
+                    fg={seen ? theme.success : theme.dim}
+                    bg={theme.popupBg}
+                    wrapMode="none"
+                  />
+                </box>
+                <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+                  <markdown
+                    content={current.text}
+                    streaming={false}
+                    syntaxStyle={syntaxStyle}
+                    fg={seen ? theme.dim : theme.assistant}
+                    style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+                  />
+                </box>
               </box>
-            </scrollbox>
-          </box>
+            </box>
+          </scrollbox>
         </>
       ) : (
         <box style={{ flexGrow: 1, flexDirection: "column" }}>
@@ -103,7 +111,7 @@ export function NewsPopup({
       <text
         content={count === 0
           ? "esc close"
-          : "← → navigate · space read/unread · enter reply · esc close"}
+          : "← → navigate · space read/unread · c copy · enter reply · esc close"}
         fg={theme.dim}
         bg={theme.popupBg}
         wrapMode="none"
