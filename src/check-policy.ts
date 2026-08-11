@@ -17,6 +17,7 @@ export type CheckPolicyFindingCode =
   | "external-read-exfiltration"
   | "destructive-git"
   | "broad-deletion"
+  | "unsafe-npm-install"
   | "unsafe-npm-pack"
   | "suspicious-execution"
   | "shell-complexity"
@@ -219,6 +220,14 @@ type NpmPackCommand = {
   packDestination: string;
 };
 
+type NpmInstallCommand = {
+  valid: boolean;
+  reason?: string;
+  packageSpec?: string;
+  prefix?: string;
+  cache?: string;
+};
+
 function isExactRegistryPackageVersion(value: string): boolean {
   const packageName = String.raw`(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)`;
   const numericIdentifier = String.raw`(?:0|[1-9]\d*)`;
@@ -226,6 +235,65 @@ function isExactRegistryPackageVersion(value: string): boolean {
   const buildIdentifier = String.raw`[0-9a-zA-Z-]+`;
   const version = String.raw`${numericIdentifier}\.${numericIdentifier}\.${numericIdentifier}(?:-${prereleaseIdentifier}(?:\.${prereleaseIdentifier})*)?(?:\+${buildIdentifier}(?:\.${buildIdentifier})*)?`;
   return new RegExp(`^${packageName}@${version}$`).test(value);
+}
+
+function npmInstallCommand(argv: string[]): NpmInstallCommand | undefined {
+  if (commandName(argv[0]) !== "npm" || argv[1] !== "install") return undefined;
+  const positionals: string[] = [];
+  let prefix: string | undefined;
+  let cache: string | undefined;
+  let ignoreScriptsCount = 0;
+  const pathOptions = new Map([["--prefix", "prefix"], ["--cache", "cache"]] as const);
+
+  for (let index = 2; index < argv.length; index++) {
+    const value = argv[index]!;
+    if (value === "--ignore-scripts") {
+      ignoreScriptsCount++;
+      continue;
+    }
+    const separate = pathOptions.get(value as "--prefix" | "--cache");
+    if (separate) {
+      const path = argv[++index];
+      if (!path || path.startsWith("-")) return { valid: false, reason: `${value} requires one explicit path` };
+      if (separate === "prefix") {
+        if (prefix !== undefined) return { valid: false, reason: "npm install --prefix must occur exactly once" };
+        prefix = path;
+      } else {
+        if (cache !== undefined) return { valid: false, reason: "npm install --cache must occur exactly once" };
+        cache = path;
+      }
+      continue;
+    }
+    const attached = /^(--prefix|--cache)=(.*)$/.exec(value);
+    if (attached) {
+      if (!attached[2]) return { valid: false, reason: `${attached[1]} requires one explicit path` };
+      if (attached[1] === "--prefix") {
+        if (prefix !== undefined) return { valid: false, reason: "npm install --prefix must occur exactly once" };
+        prefix = attached[2];
+      } else {
+        if (cache !== undefined) return { valid: false, reason: "npm install --cache must occur exactly once" };
+        cache = attached[2];
+      }
+      continue;
+    }
+    if (value.startsWith("-")) {
+      return { valid: false, reason: `npm install option ${value} is not in the deterministic allowlist` };
+    }
+    positionals.push(value);
+  }
+
+  if (ignoreScriptsCount !== 1) {
+    return { valid: false, reason: "npm install must disable lifecycle scripts exactly once with --ignore-scripts" };
+  }
+  if (!prefix) return { valid: false, reason: "npm install must set an explicit approved --prefix path" };
+  if (!cache) return { valid: false, reason: "npm install must set an explicit approved --cache path" };
+  if ([prefix, cache].some((path) => /[*?\[\]{}]/.test(path))) {
+    return { valid: false, reason: "npm install write paths must not contain shell expansion patterns" };
+  }
+  if (positionals.length !== 1 || !isExactRegistryPackageVersion(positionals[0]!)) {
+    return { valid: false, reason: "npm install must use one exact registry package version" };
+  }
+  return { valid: true, packageSpec: positionals[0], prefix, cache };
 }
 
 function npmPackCommand(argv: string[]): NpmPackCommand | undefined {
@@ -292,6 +360,21 @@ function commandName(argv0: string | undefined): string {
   if (!argv0) return "";
   const basename = argv0.replaceAll("\\", "/").split("/").at(-1) ?? argv0;
   return basename.replace(/\.(?:exe|cmd|bat)$/i, "").toLowerCase();
+}
+
+function npmSubcommand(argv: string[]): string | undefined {
+  if (commandName(argv[0]) !== "npm") return undefined;
+  const valueOptions = new Set(["--cache", "--prefix", "--registry", "--userconfig"]);
+  for (let index = 1; index < argv.length; index++) {
+    const value = argv[index]!;
+    if (valueOptions.has(value)) {
+      index++;
+      continue;
+    }
+    if (value.startsWith("-")) continue;
+    return value.toLowerCase();
+  }
+  return undefined;
 }
 
 function effectiveArgv(argv: string[]): string[] {
@@ -431,6 +514,7 @@ function mutationIndicators(argv: string[], redirections: BashRedirection[]): st
   if (name === "git" && argv[1] && !new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "branch"]).has(argv[1])) {
     indicators.push("Git state change");
   }
+  if (npmInstallCommand(argv)?.valid) indicators.push("package installation or cache output");
   if (npmPackCommand(argv)?.valid) indicators.push("package archive or cache output");
   return [...new Set(indicators)];
 }
@@ -822,6 +906,12 @@ function classifyStageAccesses(stage: BashStage): ClassifiedAccess[] {
   }
 
   if (DATA_OPERAND_COMMANDS.has(name)) return accesses;
+  const npmInstall = npmInstallCommand(argv);
+  if (npmInstall?.valid) {
+    accesses.push({ path: npmInstall.prefix!, mode: "write", source: "operand" });
+    accesses.push({ path: npmInstall.cache!, mode: "write", source: "operand" });
+    return accesses;
+  }
   const npmPack = npmPackCommand(argv);
   if (npmPack?.valid) {
     accesses.push({ path: npmPack.cache!, mode: "write", source: "operand" });
@@ -1016,6 +1106,33 @@ function inspectHardBlocks(
     const argv = effectiveArgv(stage.argv);
     const name = commandName(argv[0]);
     const lowerArgs = argv.map((arg) => arg.toLowerCase());
+    const npmInstall = npmInstallCommand(argv);
+    if (npmInstall) {
+      const direct = commandName(stage.argv[0]) === "npm"
+        && analysis.stages.length === 1
+        && analysis.operators.length === 0
+        && stage.substitutions.length === 0
+        && stage.redirections.length === 0
+        && Object.keys(stage.envAssignments).length === 0;
+      if (!direct || !npmInstall.valid) {
+        addFinding(findings, {
+          code: "unsafe-npm-install",
+          severity: "hard-block",
+          message: !direct ? "npm install must be one direct command without shell composition" : npmInstall.reason!,
+          stage: stage.index,
+        });
+      }
+    } else if (name === "npm" && new Set([
+      "install", "i", "add", "ci", "install-ci-test", "install-test", "rebuild",
+      "update", "upgrade", "remove", "uninstall", "link",
+    ]).has(npmSubcommand(argv) ?? "")) {
+      addFinding(findings, {
+        code: "unsafe-npm-install",
+        severity: "hard-block",
+        message: "only the deterministic direct npm install verification form is supported",
+        stage: stage.index,
+      });
+    }
     const npmPack = npmPackCommand(argv);
     if (npmPack) {
       const direct = commandName(stage.argv[0]) === "npm"
@@ -1307,6 +1424,9 @@ function stageNetworkCommand(stage: BashStage): string | undefined {
   if (name === "git" && new Set(["clone", "fetch", "pull", "push", "ls-remote"]).has(subcommand)) return `git ${subcommand}`;
   if (name === "npm" && subcommand === "pack") {
     return npmPackCommand(argv)?.packageSpec ? "npm pack" : undefined;
+  }
+  if (name === "npm" && subcommand === "install") {
+    return npmInstallCommand(argv)?.valid ? "npm install" : undefined;
   }
   if (["npm", "pnpm", "yarn"].includes(name)
     && new Set(["add", "audit", "install", "publish", "search", "update", "upgrade", "view", "info"]).has(subcommand)) {

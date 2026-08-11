@@ -380,6 +380,14 @@ These were chosen deliberately. Change them only on purpose.
   File, Git, URL, tag, range, ambiguous, credential, external-write, composed,
   and global-install forms remain blocked. This rule does not change the
   main-agent approval exception for `npm publish` or `npm dist-tag add`.
+- **Balanced release installation is narrow and deterministic.** PUM accepts
+  only one direct `npm install` of one exact registry package version. The
+  command must include `--ignore-scripts`, an explicit `--prefix`, and an
+  explicit `--cache`. Both paths must resolve inside the project or an approved
+  additional root. File, Git, URL, tag, range, ambiguous, credential,
+  external-write, composed, alias, global, and unsupported-option forms remain
+  blocked. General package installation and lifecycle-enabled installation
+  remain blocked.
 - **Check mode verifies complete structured proposals.** Bash requests include
   all stages, operators, pipelines, redirections, substitutions, environment
   assignments, mutation intent, and boundaries. `edit` and `apply_patch`

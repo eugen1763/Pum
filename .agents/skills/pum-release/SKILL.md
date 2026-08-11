@@ -295,7 +295,7 @@ After successful workflows, verify all of the following:
 Example installation check:
 
 ```bash
-npm install --prefix node_modules/.pum-install pum-agent@<VERSION>
+npm install pum-agent@<VERSION> --ignore-scripts --prefix node_modules/.pum-install --cache node_modules/.cache/npm
 node_modules/.pum-install/node_modules/.bin/pum --help
 ```
 
