@@ -70,6 +70,12 @@ describe("apply_patch tool metadata", () => {
     }, "/repo")).toBe("2 questions · Scope");
   });
 
+  test("shows enabled tool groups", () => {
+    expect(toolArg("enable_tools", { groups: ["Admin"] }, "/repo")).toBe("Admin");
+    expect(toolArg("enable_tools", { groups: ["Admin", "Subagents"] }, "/repo"))
+      .toBe("Admin, Subagents");
+  });
+
   test("summarizes message cache actions without exposing cached text", () => {
     expect(toolArg("message_cache_list", {}, "/repo")).toBe("list");
     expect(toolArg("message_cache_add", { text: "large private cached task" }, "/repo")).toBe("add");

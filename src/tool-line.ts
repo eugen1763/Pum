@@ -90,6 +90,9 @@ export function toolArg(name: string, args: any, cwd: string): string {
     if (typeof args.id === "string") return `${action} · ${args.id}`;
     return action;
   }
+  if (name === "enable_tools" && Array.isArray(args.groups)) {
+    return args.groups.filter((group: unknown): group is string => typeof group === "string").join(", ");
+  }
   if (name === "questionnaire" && Array.isArray(args.questions)) {
     const count = args.questions.length;
     const first = args.questions[0];
