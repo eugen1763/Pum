@@ -46,7 +46,10 @@ import type { StartupOptions } from "./cli";
 import { installSelectionClipboard } from "./clipboard";
 import { TerminalTitleController } from "./terminal-title";
 import { SandboxController } from "./sandbox";
-import { filesystemSandboxExtension } from "./filesystem-sandbox";
+import {
+  createFilesystemSandboxExtension,
+  filesystemSandboxExtension,
+} from "./filesystem-sandbox";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -143,14 +146,17 @@ export async function start(options: StartupOptions): Promise<void> {
       writingStyleExtension,
       explanationStrengthExtension,
       checkModePromptExtension,
-      sandboxExtension,
-      filesystemSandboxExtension,
     ],
-    childExtensionFactoriesForAgent: [(agentId) => createCheckModeExtension(modelRuntime, undefined, {
-      coordinator: checkApprovalCoordinator,
-      approvals: checkApprovalStore,
-      identity: { kind: "subagent", agentId },
-    })],
+    childExtensionFactoriesForAgent: [
+      (agentId) => createCheckModeExtension(modelRuntime, undefined, {
+        coordinator: checkApprovalCoordinator,
+        approvals: checkApprovalStore,
+        identity: { kind: "subagent", agentId },
+      }),
+      (_agentId, isReadonly) => sandboxController.extension({ readonly: isReadonly }),
+      (_agentId, isReadonly) => createFilesystemSandboxExtension({ readonly: isReadonly }),
+    ],
+    sandboxModeSource: () => sandboxController.mode,
   });
   const subagentExtension = subagentManager.mainExtension();
   // Hosted web search rides on the provider, so it must be wrapped before the
@@ -253,7 +259,10 @@ export async function start(options: StartupOptions): Promise<void> {
       messageCacheController={messageCacheController}
       terminalTitle={terminalTitle}
       startupWarnings={sandboxWarning ? [sandboxWarning] : []}
-      onSandboxModeChange={(mode) => sandboxController.setMode(mode)}
+      onSandboxModeChange={(mode) => {
+        sandboxController.setMode(mode);
+        subagentManager.refreshSandboxMode();
+      }}
       sandboxWarningSource={sandboxController}
       loginRequired={loginRequired}
       checkApprovalCoordinator={checkApprovalCoordinator}

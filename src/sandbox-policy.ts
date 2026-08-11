@@ -33,6 +33,10 @@ export type BuildSandboxPolicyOptions = {
   pumConfigRoot?: string;
   home?: string;
   platform?: RuntimePlatform;
+  /** Mount project and additional roots read-only instead of read-write. */
+  readonlyRoots?: boolean;
+  /** Extra trusted roots needed for read-only inspection, such as managed worktree Git metadata. */
+  additionalReadOnlyRoots?: readonly string[];
 };
 
 const SENSITIVE_ENVIRONMENT = /(?:^|_)(?:API_?KEY|AUTH|BEARER|COOKIE|CREDENTIALS?|PASS(?:WORD)?|PRIVATE_?KEY|SECRET|SESSION|TOKEN)(?:_|$)/i;
@@ -142,18 +146,23 @@ export function buildSandboxPolicy(options: BuildSandboxPolicyOptions): SandboxP
   }
 
   const cwd = canonicalPath(options.cwd, options.cwd, platform);
-  const readWritePaths = collapseSamePermissionRoots([
+  const authorizedRoots = collapseSamePermissionRoots([
     cwd,
     ...(options.additionalRoots ?? []).map((root) => canonicalPath(root, cwd, platform)),
   ], platform);
+  const readWritePaths = options.readonlyRoots ? [] : authorizedRoots;
   const accesses = canonicalAccesses(options.result, cwd, platform);
-  const readOnlyPaths = collapseSamePermissionRoots(accesses
-    .filter((access) => access.external && access.mode === "read")
-    .map((access) => access.resolvedPath)
-    .filter((path) => !readWritePaths.some((root) => isPathInsideOrSame(root, path, platform))), platform);
+  const readOnlyPaths = collapseSamePermissionRoots([
+    ...(options.readonlyRoots ? authorizedRoots : []),
+    ...(options.additionalReadOnlyRoots ?? []).map((root) => canonicalPath(root, cwd, platform)),
+    ...accesses
+      .filter((access) => access.external && access.mode === "read")
+      .map((access) => access.resolvedPath)
+      .filter((path) => !authorizedRoots.some((root) => isPathInsideOrSame(root, path, platform))),
+  ], platform);
   const deniedPaths = uniquePaths([
     canonicalPath(options.pumConfigRoot ?? AGENT_DIR, cwd, platform),
-    ...deniedCredentialPaths(readWritePaths, options.home ?? homedir(), platform),
+    ...deniedCredentialPaths(authorizedRoots, options.home ?? homedir(), platform),
   ], platform);
 
   const privateTemp = canonicalPath(options.privateTemp, cwd, platform);
@@ -173,7 +182,9 @@ export function buildSandboxPolicy(options: BuildSandboxPolicyOptions): SandboxP
     environment,
     executable: canonicalPath(options.executable, cwd, platform),
     args: [...options.args],
-    network: options.result.network.access === "host" ? "host" : "deny",
+    network: options.readonlyRoots
+      ? "deny"
+      : options.result.network.access === "host" ? "host" : "deny",
     rationale: options.result.reason,
     accesses,
     networkCommands: [...options.result.network.commands],

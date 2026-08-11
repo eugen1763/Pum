@@ -65,7 +65,8 @@ export function toolArg(name: string, args: any, cwd: string): string {
     if (paths.length > 1) return `${paths.length} files · ${paths[0]}`;
   }
   if (name === "spawn_subagent" && typeof args.task === "string") {
-    return typeof args.name === "string" ? `${args.name} · ${args.task}` : args.task;
+    const task = typeof args.name === "string" ? `${args.name} · ${args.task}` : args.task;
+    return args.readonly === true ? `readonly · ${task}` : task;
   }
   if (name === "message_agent" && typeof args.target === "string") {
     return typeof args.message === "string" ? `${args.target} · ${args.message}` : args.target;

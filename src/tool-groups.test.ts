@@ -116,6 +116,25 @@ describe("tool group membership", () => {
     }
   });
 
+  test("readonly children omit mutation tools from core, allowlist, and enabled groups", () => {
+    const active = activeToolNames(["Admin", "Subagents", "Worktree"], "subagent", true);
+    for (const tool of [
+      "write", "edit", "apply_patch", "spawn_subagent", "message_agent", "create_trigger",
+      "resume_trigger", "invoke_trigger", "message_cache_add", "message_cache_delete",
+      "message_cache_send",
+    ]) {
+      expect(active).not.toContain(tool);
+      expect(childAllowedToolNames(true)).not.toContain(tool);
+    }
+    for (const tool of [
+      "read", "bash", "finish_subagent", "list_subagents", "message_cache_list", "message_cache_read", "list_triggers", "inspect_trigger",
+      "pause_trigger", "cancel_trigger", "worktree",
+    ]) {
+      expect(active).toContain(tool);
+      expect(childAllowedToolNames(true)).toContain(tool);
+    }
+  });
+
   test("enabling a group adds exactly its tools and leaves other groups hidden", () => {
     const active = activeToolNames(["Admin"], "main");
     for (const tool of ADMIN_GROUP_TOOL_NAMES) {
@@ -203,6 +222,11 @@ describe("tool group persistence", () => {
     expect(fresh.enabledGroups()).toEqual(["Worktree"]);
     expect(fresh.activeTools()).toContain("worktree");
     expect(fresh.activeTools()).toContain("finish_subagent");
+
+    const readonlyChild = new ToolGroupsController("subagent", undefined, true);
+    readonlyChild.load(sessionFile);
+    expect(readonlyChild.activeTools()).toContain("worktree");
+    expect(readonlyChild.activeTools()).not.toContain("write");
   });
 
   test("enableGroup rejects unknown groups without persisting", () => {

@@ -91,6 +91,18 @@ describe("spawn preview App flow", () => {
     expect(setup.captureCharFrame()).toContain("main draft restored");
   });
 
+  test("labels readonly child previews", async () => {
+    const { setup, preview } = await renderApp();
+    const result = preview.request(
+      { sessionId: "main-session", agentId: null, name: "main" },
+      { ...options, readonly: true },
+    );
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("Child task · readonly");
+    preview.cancel();
+    await result;
+  });
+
   test("cancels without changing the parent draft", async () => {
     const { setup, preview } = await renderApp();
     await setup.mockInput.typeText("safe draft");

@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SandboxBackend, SandboxCapability, SandboxPolicy } from "./types";
 import { SandboxController } from "./index";
 import { setCheckModeConfig } from "../check-mode";
@@ -37,9 +40,9 @@ function backend(capability: SandboxCapability) {
   return { value, policies, probeCount: () => probes };
 }
 
-function registeredBash(controller: SandboxController) {
+function registeredBash(controller: SandboxController, options: { readonly?: boolean } = {}) {
   let tool: any;
-  (controller.extension() as { factory: (pi: any) => void }).factory({
+  (controller.extension(options) as { factory: (pi: any) => void }).factory({
     registerTool(value: any) { tool = value; },
   } as any);
   return tool;
@@ -70,6 +73,70 @@ describe("sandbox Bash override", () => {
     expect(policy.environment.PI_REASONING_LEVEL).toBe("high");
     expect(policy.environment.PI_SESSION_ID).toBeUndefined();
     expect(policy.environment.PI_SESSION_FILE).toBeUndefined();
+  });
+
+  test("gives readonly Bash no writable roots even when Check mode is off", async () => {
+    setCheckModeConfig({ profile: "off", model: DEFAULT_CHECK_MODEL, additionalPaths: [process.cwd()] });
+    const mock = backend({ state: "enforced", backend: process.platform === "win32" ? "mxc" : "bubblewrap" });
+    const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: process.platform });
+    await registeredBash(controller, { readonly: true }).execute(
+      "call",
+      { command: "git status --short" },
+      undefined,
+      undefined,
+      context(process.cwd()),
+    );
+
+    expect(mock.policies).toHaveLength(1);
+    expect(mock.policies[0]!.readWritePaths).toEqual([]);
+    expect(mock.policies[0]!.readOnlyPaths.map((path) => path.toLowerCase()))
+      .toContain(process.cwd().toLowerCase());
+    expect(mock.policies[0]!.environment.GIT_OPTIONAL_LOCKS).toBe("0");
+  });
+
+  test("mounts managed worktree Git metadata read-only", async () => {
+    const root = mkdtempSync(join(tmpdir(), "pum-readonly-git-"));
+    const repository = join(root, "project");
+    const worktree = join(repository, ".pum", "worktrees", "reviewer");
+    const commonGit = join(repository, ".git");
+    const worktreeGit = join(commonGit, "worktrees", "reviewer");
+    mkdirSync(worktree, { recursive: true });
+    mkdirSync(worktreeGit, { recursive: true });
+    writeFileSync(join(worktree, ".git"), `gitdir: ${worktreeGit}\n`);
+    writeFileSync(join(worktreeGit, "commondir"), "../..\n");
+    try {
+      setCheckModeConfig({ profile: "off", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+      const mock = backend({ state: "enforced", backend: process.platform === "win32" ? "mxc" : "bubblewrap" });
+      const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: process.platform });
+      await registeredBash(controller, { readonly: true }).execute(
+        "call",
+        { command: "git status --short" },
+        undefined,
+        undefined,
+        context(worktree),
+      );
+
+      const readOnly = mock.policies[0]!.readOnlyPaths.map((path) => path.toLowerCase());
+      expect(readOnly).toContain(worktree.toLowerCase());
+      expect(readOnly).toContain(commonGit.toLowerCase());
+      expect(mock.policies[0]!.readWritePaths).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("blocks readonly Bash instead of using automatic direct fallback", async () => {
+    setCheckModeConfig({ profile: "balanced", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    const mock = backend({ state: "unavailable", backend: "bubblewrap", reason: "bwrap was not found" });
+    const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: "linux" });
+    await expect(registeredBash(controller, { readonly: true }).execute(
+      "call",
+      { command: "printf blocked" },
+      undefined,
+      undefined,
+      context(process.cwd()),
+    )).rejects.toThrow("Readonly Bash requires native sandbox enforcement");
+    expect(mock.policies).toHaveLength(0);
   });
 
   test("blocks checked Bash in require mode when enforcement is unavailable", async () => {

@@ -24,11 +24,16 @@ export type WorktreeRecord = {
   baseCommit: string;
 };
 
-async function git(cwd: string, args: string[]): Promise<string> {
+async function git(
+  cwd: string,
+  args: string[],
+  environment?: NodeJS.ProcessEnv,
+): Promise<string> {
   const result = await execFileAsync("git", args, {
     cwd,
     encoding: "utf8",
     maxBuffer: 4 * 1024 * 1024,
+    ...(environment ? { env: { ...process.env, ...environment } } : {}),
   });
   return result.stdout.trim();
 }
@@ -185,9 +190,17 @@ export async function listWorktrees(cwd: string): Promise<WorktreeRecord[]> {
   return canonicalizeManagedWorktreeRecords(records, parent);
 }
 
-export async function worktreeStatus(cwd: string, record: WorktreeRecord): Promise<string> {
+export async function worktreeStatus(
+  cwd: string,
+  record: WorktreeRecord,
+  readonly = false,
+): Promise<string> {
   const path = await managedWorktreePath(cwd, record.path);
-  const status = await git(path, ["status", "--short", "--branch"]);
+  const status = await git(
+    path,
+    ["status", "--short", "--branch"],
+    readonly ? { GIT_OPTIONAL_LOCKS: "0" } : undefined,
+  );
   return status || `## ${record.branch}`;
 }
 

@@ -117,6 +117,7 @@ describe("SubagentManager extension", () => {
     expect(result.systemPrompt).toContain("0/10 active; 10 slots available");
     expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
     expect(definitions.get("spawn_subagent").parameters.properties.preview).toBeDefined();
+    expect(definitions.get("spawn_subagent").parameters.properties.readonly).toBeUndefined();
     expect(definitions.get("spawn_subagent").promptGuidelines).toContain(
       "For follow-up implementation work, prefer spawn_subagent while configured capacity is available.",
     );
@@ -140,6 +141,71 @@ describe("SubagentManager extension", () => {
       },
     });
     expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
+  });
+
+  test("exposes readonly spawn only while Sandbox is on and rejects it while Sandbox is Off", async () => {
+    let sandboxMode: "auto" | "off" = "auto";
+    const onManager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      sandboxModeSource: () => sandboxMode,
+    });
+    addTestAgent(onManager, "parent", "idle");
+    const mainTools = new Map<string, any>();
+    const childTools = new Map<string, any>();
+    (onManager.mainExtension() as any).factory({
+      on() {},
+      registerTool(tool: any) { mainTools.set(tool.name, tool); },
+    });
+    ((onManager as any).childExtension("parent") as any).factory({
+      on() {},
+      registerTool(tool: any) { childTools.set(tool.name, tool); },
+    });
+    expect(mainTools.get("spawn_subagent").parameters.properties.readonly).toBeDefined();
+    expect(childTools.get("spawn_subagent").parameters.properties.readonly).toBeDefined();
+    sandboxMode = "off";
+    onManager.refreshSandboxMode();
+    expect(mainTools.get("spawn_subagent").parameters.properties.readonly).toBeUndefined();
+    expect(childTools.get("spawn_subagent").parameters.properties.readonly).toBeUndefined();
+
+    const offManager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      sandboxModeSource: () => "off",
+    });
+    await expect(offManager.spawn({
+      task: "Inspect only",
+      modelId: "mock/model",
+      thinkingLevel: "off",
+      readonly: true,
+    })).rejects.toThrow("Sandbox setting");
+    expect((offManager as any).records.size).toBe(0);
+  });
+
+  test("prevents readonly children from delegating mutation paths", async () => {
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      sandboxModeSource: () => "auto",
+    });
+    addTestAgent(manager, "readonly-parent", "idle");
+    (manager as any).records.get("readonly-parent").snapshot.readonly = true;
+    const tools = new Map<string, any>();
+    ((manager as any).childExtension("readonly-parent") as any).factory({
+      on() {},
+      registerTool(tool: any) { tools.set(tool.name, tool); },
+    });
+
+    await expect(tools.get("spawn_subagent").execute("spawn", {
+      task: "Mutate elsewhere",
+    }, undefined, undefined, { sessionManager: { getSessionId: () => "child-session" } }))
+      .rejects.toThrow("cannot spawn child agents");
+    await expect(tools.get("worktree").execute("merge", { action: "merge", target: "peer" }))
+      .rejects.toThrow("cannot run worktree merge");
+    await expect((manager as any).resolveTriggerSelector("main-session", {
+      kind: "subagent",
+      agent: "readonly-parent",
+    })).rejects.toThrow("cannot be an external trigger target");
   });
 
   test("previews main and child spawns without side effects, then delivers an optional note", async () => {
@@ -711,6 +777,48 @@ describe("SubagentManager extension", () => {
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0].content).toContain("summary: Persisted summary.");
     expect(entries.some((entry) => entry.data?.event === "finish" && entry.data.finishSummary === null)).toBe(true);
+  });
+
+  test("restores persisted readonly state and defaults legacy snapshots to mutable", async () => {
+    const base = {
+      id: "readonly-worker",
+      name: "readonly-worker",
+      task: "inspect",
+      status: "idle",
+      worktree: {
+        name: "readonly-worker",
+        path: "/tmp/readonly-worker",
+        branch: "pum/readonly-worker",
+        baseBranch: "main",
+        baseCommit: "abc",
+      },
+      parentAgentId: null,
+      modelId: "mock/model",
+      thinkingLevel: "off",
+      startedAt: 1,
+      updatedAt: 1,
+      usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
+    };
+    const entries = [
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: { event: "spawned", id: "readonly-worker", snapshot: { ...base, readonly: true } },
+      },
+      {
+        type: "custom",
+        customType: "pum.subagent",
+        data: { event: "spawned", id: "legacy-worker", snapshot: { ...base, id: "legacy-worker", name: "legacy-worker" } },
+      },
+    ];
+    const restored = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    await restored.attachMain({ appendEntry() {}, sendMessage() {} } as any, {
+      getSessionId: () => "main-session",
+      getEntries: () => entries,
+    } as any, "/repo");
+
+    expect(restored.getAgent("readonly-worker")?.readonly).toBe(true);
+    expect(restored.getAgent("legacy-worker")?.readonly).toBe(false);
   });
 
   test("retries an unacknowledged persisted settlement and skips an acknowledged settlement", async () => {

@@ -40,6 +40,7 @@ bun run start    # open the TUI in the current directory
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
 | `src/subagents/spawn-preview.ts` | Requester-bound preview queue and approval settlement |
 | `src/subagents/spawn-preview-popup.tsx` | Responsive Markdown preview and optional note input |
+| `src/subagents/readonly.ts` | Fail-closed readonly child tool guard |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
 | `src/queue-recall.ts` | Atomic newest-first recall of queued user messages |
 | `src/session-history-metadata.ts` | Bounded session JSONL metadata and usage index |
@@ -253,6 +254,20 @@ These were chosen deliberately. Change them only on purpose.
   `preview: true` queues a requester-bound root popup. Approval calls the normal
   spawn path, then sends a non-empty note as a separate durable user message.
   Cancellation creates no child and discards the note because no recipient exists.
+- **Readonly subagents require Sandbox Auto or Require.** The `spawn_subagent`
+  schema exposes `readonly` only when Sandbox is not Off. Live Sandbox changes
+  update the registered TypeBox schema objects. Execution and direct manager
+  calls reject readonly requests while Sandbox is Off. The snapshot persists
+  the flag, and resume restores it. Readonly children omit `write`, `edit`,
+  `apply_patch`, child spawning, inter-agent delegation, process-starting trigger
+  tools, and message-cache mutation tools. A fail-closed child hook blocks
+  unknown tools and mutation-capable combined tools. Worktree access permits only `list`
+  and `status`. Main agents cannot create external triggers for readonly children.
+  Readonly Bash never uses direct fallback. It requires native enforcement even
+  when Check mode is Off, mounts the project, additional roots, and managed Git
+  metadata read-only, and denies Bash network access. Existing readonly children
+  stay fail-closed if the user later changes Sandbox to Off. Main-agent behavior
+  and mutable child behavior remain unchanged.
 - **Up recalls only queued user text.** On an empty single-line selected prompt,
   Up removes the newest matching user message from the exact pi queue and pending
   transcript before restoring the text. It never recalls delivered, inter-agent,

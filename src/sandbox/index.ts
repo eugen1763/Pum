@@ -5,7 +5,7 @@ import {
   type BashOperations,
   type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -25,6 +25,10 @@ export type SandboxControllerOptions = {
   agentDir?: string;
 };
 
+export type SandboxExtensionOptions = {
+  readonly?: boolean;
+};
+
 function platformBackend(platform: NodeJS.Platform): SandboxBackend | undefined {
   if (platform === "linux") return createBubblewrapBackend({ platform });
   if (platform === "win32") return createWindowsSandboxBackend({ platform });
@@ -37,6 +41,28 @@ function unsupportedCapability(platform: NodeJS.Platform): SandboxCapability {
     backend: platform === "win32" ? "mxc" : "bubblewrap",
     reason: `Native Bash sandboxing is not supported on ${platform}`,
   };
+}
+
+async function gitMetadataReadOnlyRoots(cwd: string): Promise<string[]> {
+  const dotGit = join(cwd, ".git");
+  try {
+    const metadata = await lstat(dotGit);
+    if (metadata.isDirectory()) return [await realpath(dotGit)];
+    if (!metadata.isFile()) return [];
+    const pointer = await readFile(dotGit, "utf8");
+    const match = pointer.match(/^gitdir:\s*(.+)\s*$/im);
+    if (!match) return [];
+    const gitDir = await realpath(resolve(cwd, match[1]!));
+    try {
+      const commonPointer = (await readFile(join(gitDir, "commondir"), "utf8")).trim();
+      if (!commonPointer) return [gitDir];
+      return [gitDir, await realpath(resolve(gitDir, commonPointer))];
+    } catch {
+      return [gitDir];
+    }
+  } catch {
+    return [];
+  }
 }
 
 function findExecutable(executable: string, platform: NodeJS.Platform): string {
@@ -111,15 +137,17 @@ export class SandboxController {
     return undefined;
   }
 
-  extension(): InlineExtension {
+  extension(options: SandboxExtensionOptions = {}): InlineExtension {
     const base = createBashTool(process.cwd());
     const controller = this;
+    const readonly = options.readonly === true;
     return {
-      name: "pum-native-bash-sandbox",
+      name: readonly ? "pum-readonly-native-bash-sandbox" : "pum-native-bash-sandbox",
       factory: (pi) => {
         pi.registerTool({
           ...base,
-          description: `${base.description} PUM applies native OS sandboxing when Check mode and Sandbox settings require it.`,
+          description: `${base.description} PUM applies native OS sandboxing when Check mode and Sandbox settings require it.`
+            + (readonly ? " This readonly child receives no writable project or additional roots." : ""),
           execute: async (id, params, signal, onUpdate, ctx) => {
             const cwd = ctx.cwd;
             let settings = controller.#settings.get(cwd);
@@ -130,7 +158,10 @@ export class SandboxController {
             const shellPath = settings.getShellPath();
             const commandPrefix = settings.getShellCommandPrefix();
             const check = getCheckModeConfig();
-            if (check.profile === "off" || controller.#mode === "off") {
+            if (readonly && controller.#mode === "off") {
+              throw new Error("Readonly Bash is blocked while the PUM Sandbox setting is Off");
+            }
+            if (!readonly && (check.profile === "off" || controller.#mode === "off")) {
               const local = createBashTool(cwd, { shellPath, commandPrefix });
               return (local.execute as any)(id, params, signal, onUpdate, ctx);
             }
@@ -139,6 +170,11 @@ export class SandboxController {
             const decision = decideSandboxMode(controller.#mode, capability);
             if (decision.action === "block") throw new Error(decision.reason);
             if (decision.action === "direct") {
+              if (readonly) {
+                throw new Error(
+                  `Readonly Bash requires native sandbox enforcement: ${capability.reason ?? `sandbox backend ${capability.backend} is ${capability.state}`}`,
+                );
+              }
               if (decision.warning) controller.#emitWarning(decision.warning);
               const local = createBashTool(cwd, { shellPath, commandPrefix });
               return (local.execute as any)(id, params, signal, onUpdate, ctx);
@@ -153,7 +189,7 @@ export class SandboxController {
                 const result = analyzeCheckPolicy({
                   command: executionCommand,
                   cwd: executionCwd,
-                  profile: check.profile as Exclude<typeof check.profile, "off">,
+                  profile: (check.profile === "off" ? "balanced" : check.profile) as Exclude<typeof check.profile, "off">,
                   allowedPaths: check.additionalPaths,
                   protectedPaths: [controller.#agentDir],
                 });
@@ -165,6 +201,9 @@ export class SandboxController {
                 const commandFromStdin = shell.commandTransport === "stdin";
                 const args = commandFromStdin ? [...shell.args] : [...shell.args, executionCommand];
                 try {
+                  const additionalReadOnlyRoots = readonly
+                    ? await gitMetadataReadOnlyRoots(executionCwd)
+                    : [];
                   const policy = buildSandboxPolicy({
                     command,
                     executionCommand,
@@ -175,9 +214,13 @@ export class SandboxController {
                     args,
                     stdin: commandFromStdin,
                     privateTemp,
-                    environment: options.env,
+                    environment: readonly
+                      ? { ...options.env, GIT_OPTIONAL_LOCKS: "0" }
+                      : options.env,
                     pumConfigRoot: controller.#agentDir,
                     platform: controller.#platform,
+                    readonlyRoots: readonly,
+                    additionalReadOnlyRoots,
                   });
                   const handle = controller.#backend!.spawn(policy, {
                     onStdout: options.onData,

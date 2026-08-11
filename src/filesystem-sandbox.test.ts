@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setCheckModeConfig } from "./check-mode";
 import {
+  createFilesystemSandboxExtension,
   filesystemSandboxExtension,
   validateSandboxPatch,
   validateSandboxPath,
@@ -66,6 +67,31 @@ describe("filesystem sandbox", () => {
     await expect(validateSandboxPatch(project, "*** Begin Patch\n"
       + "*** Add File: ../outside.txt\n+no\n"
       + "*** End Patch")).rejects.toThrow("parent traversal");
+  });
+
+  test("blocks write, edit, and apply_patch for readonly children but preserves reads", async () => {
+    const project = directory("pum-readonly-sandbox-hook-");
+    const source = join(project, "source.ts");
+    writeFileSync(source, "export const value = 1;\n");
+    setCheckModeConfig({ profile: "off", model: "test/model" });
+
+    const handlers = new Map<string, Function>();
+    (createFilesystemSandboxExtension({ readonly: true }) as any).factory({
+      on(name: string, handler: Function) { handlers.set(name, handler); },
+    });
+    const context = { cwd: project };
+
+    await expect(handlers.get("tool_call")?.({ toolName: "read", input: { path: source } }, context))
+      .resolves.toBeUndefined();
+    for (const [toolName, input] of [
+      ["write", { path: source, content: "changed" }],
+      ["edit", { path: source, edits: [{ oldText: "value", newText: "changed" }] }],
+      ["apply_patch", { patch: "*** Begin Patch\n*** Delete File: source.ts\n*** End Patch" }],
+    ] as const) {
+      const result = await handlers.get("tool_call")?.({ toolName, input }, context);
+      expect(result).toMatchObject({ block: true });
+      expect(result.reason).toContain(`readonly child cannot use ${toolName}`);
+    }
   });
 
   test("blocks read, edit, and apply_patch tool calls before execution", async () => {
