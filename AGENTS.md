@@ -24,6 +24,7 @@ bun run start    # open the TUI in the current directory
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
 | `src/apply-patch.ts` | Codex patch parser, validation, atomic commit, and pi tool |
 | `src/questionnaire.ts` | Model tool, request queue, answer state, and main/child bridge |
+| `src/tool-groups.ts` | Hidden tool groups, the `enable_tools` tool, and per-session persistence |
 | `src/questionnaire-popup.tsx` | OpenTUI questionnaire popup and responsive layout |
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
 | `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
@@ -347,6 +348,21 @@ These were chosen deliberately. Change them only on purpose.
   `createAgentSession` reads them back at startup. Do not duplicate that here.
   `pum.json` holds only what pi does not know about, including UI preferences,
   web search, check mode, and writing style.
+- **Optional tools live in hidden per-session groups.** PUM does not send
+  every custom tool schema on every request. Core tools (read, write, edit,
+  apply_patch, bash, questionnaire; finish_subagent for children) are always
+  sent. The Admin (trigger + message-cache), Subagents, and Worktree groups
+  are hidden until the model reveals them. One always-present `enable_tools`
+  tool (registered per session) accepts group names; its execute calls
+  `setActiveToolsByName` so the group's real schemas start being sent from the
+  next request onward. `state.tools` is pi's authoritative outgoing tool list
+  (it flows unmodified into the request body), so narrowing it never filters
+  the core loop's built-ins. Hidden tools stay in the registry but are absent
+  from the model tool list until enabled. Main and child sessions track their
+  own groups independently, persisted in a companion file next to each
+  session JSONL (the same pattern as the news companion file) so they survive
+  resume and never enter LLM context. There is no News group because PUM has
+  no news model tool; groups with zero tools are dropped.
 - **Release publication uses one package-scoped registry credential.** The
   GitHub `npm` environment supplies `NPM_TOKEN` for `npm publish` and exact
   prerelease `npm dist-tag add ... latest` mutations. GitHub OIDC remains
