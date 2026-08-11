@@ -8,6 +8,7 @@ import {
   validateSandboxPatch,
   validateSandboxPath,
 } from "./filesystem-sandbox";
+import { pathsHaveSameIdentity } from "./platform";
 
 const directories: string[] = [];
 
@@ -28,9 +29,10 @@ describe("filesystem sandbox", () => {
     writeFileSync(join(project, "source.ts"), "export const value = 1;\n");
     writeFileSync(join(shared, "shared.ts"), "export const shared = true;\n");
 
-    await expect(validateSandboxPath(project, "source.ts")).resolves.toMatchObject({ root: project });
-    await expect(validateSandboxPath(project, join(shared, "shared.ts"), [shared]))
-      .resolves.toMatchObject({ root: shared });
+    const projectResult = await validateSandboxPath(project, "source.ts");
+    const sharedResult = await validateSandboxPath(project, join(shared, "shared.ts"), [shared]);
+    expect(await pathsHaveSameIdentity(projectResult.root, project)).toBe(true);
+    expect(await pathsHaveSameIdentity(sharedResult.root, shared)).toBe(true);
   });
 
   test("blocks outside paths and credential-sensitive files", async () => {
