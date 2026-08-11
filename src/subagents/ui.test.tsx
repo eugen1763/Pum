@@ -202,7 +202,7 @@ async function press(
 
 describe("subagent transcript UI", () => {
   test("restores main usage and resets it for a new session", async () => {
-    const setup = await createTestRenderer({ width: 100, height: 24, kittyKeyboard: true });
+    const setup = await createTestRenderer({ width: 120, height: 24, kittyKeyboard: true });
     destroy = () => setup.renderer.destroy();
     const resumed = fakeSession([{
       type: "message",
@@ -325,7 +325,7 @@ describe("subagent transcript UI", () => {
   });
 
   test("cycles forward and backward with header notice", async () => {
-    const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
+    const setup = await createTestRenderer({ width: 120, height: 28, kittyKeyboard: true });
     destroy = () => setup.renderer.destroy();
     const manager = {
       getAgents: () => [snapshot],
