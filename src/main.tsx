@@ -14,6 +14,7 @@ import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { installWebSearch, webSearch } from "./web-search";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
+import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-prompt";
 import {
   explanationStrengthExtension,
   setExplanationStrength,
@@ -59,6 +60,7 @@ export async function start(options: StartupOptions): Promise<void> {
     mode: settings.sandboxMode ?? "auto",
     agentDir: AGENT_DIR,
   });
+  setSandboxModeSource(() => sandboxController.mode);
   const sandboxWarning = await sandboxController.startupWarning(settings.checkMode);
   const sandboxExtension = sandboxController.extension();
   setWritingStyle(settings.writingStyle);
@@ -137,6 +139,7 @@ export async function start(options: StartupOptions): Promise<void> {
     childExtensionFactories: [
       writingStyleExtension,
       explanationStrengthExtension,
+      checkModePromptExtension,
       sandboxExtension,
     ],
     childExtensionFactoriesForAgent: [(agentId) => createCheckModeExtension(modelRuntime, undefined, {
@@ -162,6 +165,7 @@ export async function start(options: StartupOptions): Promise<void> {
           extensionFactories: [
             writingStyleExtension,
             explanationStrengthExtension,
+            checkModePromptExtension,
             mainCheckModeExtension,
             sandboxExtension,
             applyPatchExtension,
