@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimationProvider, supportsTrueColor, useWorkingRule, type WorkingRuleRole } from "./animation";
 import {
   filterModels,
@@ -433,6 +433,14 @@ export function App({
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
+  // Load the news companion file exactly once on mount. The transcript
+  // initializer reads these items from the ref instead of re-reading the file.
+  const newsRef = useRef<NewsItem[]>([]);
+  const [news, setNews] = useState<NewsItem[]>(() => {
+    const items = loadNewsItems(initialSession.sessionFile);
+    newsRef.current = items;
+    return items;
+  });
   const [tx, setTx] = useState<Transcript>(() => {
     // A resumed session already holds messages; show them instead of a blank pane.
     const replayedLines = replayEntries(
@@ -442,7 +450,7 @@ export function App({
     );
     return {
       lines: [
-        ...tagNewsLines(replayedLines, loadNewsItems(initialSession.sessionFile)),
+        ...tagNewsLines(replayedLines, newsRef.current),
         ...startupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
       ],
       stream: null,
@@ -450,7 +458,9 @@ export function App({
     };
   });
   const txRef = useRef<Transcript>({ lines: [], stream: null, pending: [] });
-  useEffect(() => {
+  // Layout effect: commit may hand control to a user handler before paint, so
+  // the mirror must update synchronously to avoid a stale transcript read.
+  useLayoutEffect(() => {
     txRef.current = tx;
   }, [tx]);
   const [busy, setBusy] = useState(false);
@@ -506,12 +516,6 @@ export function App({
   const [triggerCursor, setTriggerCursor] = useState(0);
   const [, setTriggerRevision] = useState(0);
 
-  const newsRef = useRef<NewsItem[]>([]);
-  const [news, setNews] = useState<NewsItem[]>(() => {
-    const items = loadNewsItems(initialSession.sessionFile);
-    newsRef.current = items;
-    return items;
-  });
   const [newsOpen, setNewsOpen] = useState(false);
   const newsOpenRef = useRef(false);
   const [newsCursor, setNewsCursor] = useState(0);
@@ -1497,6 +1501,10 @@ export function App({
   };
 
   const markNewestNewsAnswered = () => {
+    // When a resumed answer's text no longer matches a replayed line (for
+    // example after compaction or regeneration), the line cannot be tagged
+    // with its news id, so a direct prompt will not mark it read. This is
+    // intentional, not a bug.
     const first = newsRef.current[0];
     if (!first || (first.read && first.answered)) return;
     const current = txRef.current;
