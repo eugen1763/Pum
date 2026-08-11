@@ -115,3 +115,48 @@ describe("mutation previews", () => {
     expect(pathSensitivity(".env.local").credential).toBe(true);
   });
 });
+describe("PUM settings-file edits", () => {
+  test("previews an exact settings-file edit under the agent directory", async () => {
+    const cwd = project();
+    const settingsDir = project();
+    writeFileSync(join(settingsDir, "settings.json"), "{\"model\":\"one\"}\n");
+    const settingsFiles = ["settings.json", "pum.json", "theme.json"].map((name) => join(settingsDir, name));
+    const path = join(settingsDir, "settings.json");
+
+    const preview = await previewMutation("edit", cwd, {
+      path,
+      edits: [{ oldText: "one", newText: "two" }],
+    }, [], settingsFiles);
+    expect(preview?.settingsFile).toBe(path);
+    expect(preview?.changedPaths).toEqual([path]);
+    expect(preview?.projectContained).toBe(true);
+    expect(preview?.unifiedDiff).toContain("+{\"model\":\"two\"}");
+  });
+
+  test("rejects auth.json and session edits even with the settings list", async () => {
+    const cwd = project();
+    const settingsDir = project();
+    writeFileSync(join(settingsDir, "auth.json"), "{}\n");
+    const settingsFiles = ["settings.json", "pum.json", "theme.json"].map((name) => join(settingsDir, name));
+
+    await expect(previewMutation("edit", cwd, {
+      path: join(settingsDir, "auth.json"),
+      edits: [{ oldText: "{}", newText: "{\"x\":1}" }],
+    }, [], settingsFiles)).rejects.toThrow("outside");
+    await expect(previewMutation("edit", cwd, {
+      path: join(settingsDir, "sessions", "s.jsonl"),
+      edits: [{ oldText: "{}", newText: "{\"x\":1}" }],
+    }, [], settingsFiles)).rejects.toThrow("outside");
+  });
+
+  test("rejects a settings-file edit when no settings list is provided", async () => {
+    const cwd = project();
+    const settingsDir = project();
+    writeFileSync(join(settingsDir, "settings.json"), "{}\n");
+
+    await expect(previewMutation("edit", cwd, {
+      path: join(settingsDir, "settings.json"),
+      edits: [{ oldText: "{}", newText: "{\"x\":1}" }],
+    })).rejects.toThrow("outside");
+  });
+});

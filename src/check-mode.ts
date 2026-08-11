@@ -3,7 +3,7 @@ import type { InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-ag
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { AGENT_DIR } from "./config";
+import { AGENT_DIR, settingsFilePaths } from "./config";
 import { projectStorageKey } from "./platform";
 import {
   canonicalJson,
@@ -243,6 +243,7 @@ export async function prepareCheck(
   profile: Exclude<CheckModeProfile, "off">,
   context: UntrustedContext = {},
   additionalPaths: readonly string[] = [],
+  settingsFiles: readonly string[] = [],
 ): Promise<{ prepared?: PreparedCheck; block?: string; balancedAllow?: string }> {
   let canonicalInput: string;
   try {
@@ -263,12 +264,13 @@ export async function prepareCheck(
         projectCwd: cwd,
         allowedPaths: additionalPaths,
         protectedPaths: [AGENT_DIR],
+        allowedProtectedFiles: settingsFiles,
         profile,
       });
     } else {
       const command = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
       if (typeof command !== "string") return { block: "Bash safety check requires a complete command string or process proposal" };
-      policy = analyzeCheckPolicy({ command, cwd, profile, allowedPaths: additionalPaths, protectedPaths: [AGENT_DIR] });
+      policy = analyzeCheckPolicy({ command, cwd, profile, allowedPaths: additionalPaths, protectedPaths: [AGENT_DIR], allowedProtectedFiles: settingsFiles });
     }
     bash = policy.analysis;
     if (!bash.complete || bash.truncated || !bash.syntaxBalanced) {
@@ -277,7 +279,7 @@ export async function prepareCheck(
     if (policy.decision === "block") return { block: `Check mode hard block: ${policy.reason}` };
   } else {
     try {
-      mutation = await previewMutation(toolName, cwd, input, additionalPaths);
+      mutation = await previewMutation(toolName, cwd, input, additionalPaths, settingsFiles);
     } catch (error) {
       return { block: `Check mode blocked invalid or stale ${toolName} input: ${error instanceof Error ? error.message : String(error)}` };
     }
@@ -421,6 +423,9 @@ export async function prepareCheck(
     if (mutation && balancedMutationAllowed(mutation)) {
       return { prepared, balancedAllow: "balanced profile recognized a narrow project-local ordinary edit" };
     }
+    if (mutation?.settingsFile) {
+      return { prepared, balancedAllow: "balanced profile recognized a deliberate PUM settings-file edit" };
+    }
   }
   return { prepared };
 }
@@ -512,6 +517,8 @@ export type ToolCheck = {
   context?: UntrustedContext;
   /** Authority identity supplied by the owning session integration. */
   requester?: CheckApprovalIdentity;
+  /** Exact PUM settings files enabled by the owning scope. Empty for managed subagents. */
+  settingsFiles?: readonly string[];
   isApproved?: (prepared: PreparedCheck) => boolean;
 };
 export type ProcessCheckCall = Omit<ToolCheck, "toolName" | "input" | "cwd"> & {
@@ -654,6 +661,9 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
   if (config.profile === "off") return { decision: "allow", reason: "Check mode is off", category: "off" };
   if (call.signal?.aborted) return { decision: "block", reason: "Safety check aborted", category: "abort" };
   const profile = config.profile as Exclude<CheckModeProfile, "off">;
+  const settingsFiles = call.requester?.kind === "main"
+    ? call.settingsFiles ?? settingsFilePaths()
+    : [];
   const preparedResult = await prepareCheck(
     call.toolName,
     call.input,
@@ -661,6 +671,7 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
     profile,
     call.context,
     config.additionalPaths,
+    settingsFiles,
   );
   if (!preparedResult.prepared) return { decision: "block", reason: preparedResult.block ?? "Safety preparation failed", category: "hard-block" };
   const prepared = preparedResult.prepared;

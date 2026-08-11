@@ -188,8 +188,8 @@ describe("deterministic hard blocks", () => {
     expect(unc.findings.map((item) => item.code)).toContain("outside-project");
 
     const posixSpelling = analyzeCheckPolicy({ command: "cat /dev/null", cwd: "C:\\work\\repo", profile: "strict", fileSystem: fs });
-    expect(posixSpelling.decision).toBe("block");
-    expect(posixSpelling.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path: "/dev/null" }));
+    expect(posixSpelling.decision).toBe("allow");
+    expect(posixSpelling.findings).toEqual([]);
   });
 
   test("accepts a Windows project-local absolute path for boundary analysis", () => {
@@ -520,8 +520,8 @@ describe("structured executable proposals", () => {
     const windows = analyzeExecutablePolicy({
       executable: "cat", args: ["/dev/null"], cwd: "C:\\work\\repo", projectCwd: "C:\\work\\repo", profile: "strict", fileSystem: fs,
     });
-    expect(windows.decision).toBe("block");
-    expect(windows.findings).toContainEqual(expect.objectContaining({ code: "outside-project", path: "/dev/null" }));
+    expect(windows.decision).toBe("allow");
+    expect(windows.findings).toEqual([]);
   });
 
   test("applies hard rules to direct argv and embedded interpreter programs", () => {
@@ -1172,5 +1172,208 @@ describe("profile decisions", () => {
     expect(suspicious.findings).toContainEqual(expect.objectContaining({ code: "suspicious-execution", stage: 2 }));
     expect(longLateDanger).toMatchObject({ decision: "block", analysis: { complete: true, truncated: false } });
     expect(longLateDanger.findings).toContainEqual(expect.objectContaining({ code: "outside-project", stage: 1 }));
+  });
+});
+describe("deterministic read-only inspection commands", () => {
+  test("allows plain project-local reads across cat, head, tail, wc, rg, ls, and the grep family in Balanced", () => {
+    const cwd = temporaryProject();
+    const allowed = [
+      "grep -E 'TODO' src/index.ts",
+      "grep -P 'TODO' src/index.ts",
+      "grep -i 'todo' src/index.ts",
+      "rg 'TODO' src",
+      "cat src/index.ts",
+      "head -n 5 src/index.ts",
+      "tail -n 5 src/index.ts",
+      "wc -l src/index.ts",
+      "ls -la src",
+    ];
+
+    for (const command of allowed) {
+      const result = analyzeCheckPolicy({ command, cwd, profile: "balanced" });
+      expect(result.decision).toBe("allow");
+      expect(result.findings).toEqual([]);
+    }
+
+    expect(analyzeCheckPolicy({ command: "cat src/index.ts", cwd, profile: "strict" }).decision).toBe("allow");
+    expect(analyzeCheckPolicy({ command: "grep -E 'TODO' src/index.ts", cwd, profile: "ask" }).decision).toBe("ask");
+  });
+
+  test("reproduces the transcript regression: reads with stderr suppressed to /dev/null", () => {
+    const cwd = temporaryProject();
+    const allowed = [
+      "cat src/index.ts 2>/dev/null",
+      "cat src/index.ts > /dev/null 2>&1",
+      "grep -rniE 'TODO' src 2>/dev/null | head -5",
+      "wc -l src/index.ts 2>/dev/null",
+      "ls src 2>/dev/null",
+    ];
+
+    for (const command of allowed) {
+      const result = analyzeCheckPolicy({ command, cwd, profile: "balanced" });
+      expect(result.decision).toBe("allow");
+      expect(result.findings.map((finding) => finding.code)).not.toContain("outside-project");
+    }
+  });
+
+  test("allows reads of an absolute project path in POSIX and Windows spellings", () => {
+    const cwd = temporaryProject();
+    const absolute = join(cwd, "src", "index.ts");
+    expect(analyzeCheckPolicy({ command: `cat ${shellQuote(absolute)}`, cwd, profile: "balanced" }).decision).toBe("allow");
+    if (process.platform === "win32") {
+      expect(analyzeCheckPolicy({ command: `cat ${shellQuote(absolute)}`, cwd, profile: "strict" }).decision).toBe("allow");
+    }
+  });
+
+  test("keeps external write variants of the same reads blocked", () => {
+    const cwd = temporaryProject();
+    const blocked = [
+      "grep -E 'TODO' src/index.ts > ../grep-out.txt",
+      "cat src/index.ts > /opt/scratch.txt",
+      "cat src/index.ts 2>/dev/null > ../cat-out.txt",
+    ];
+
+    for (const command of blocked) {
+      const result = analyzeCheckPolicy({ command, cwd, profile: "balanced", fileSystem: virtualFileSystem });
+      expect(result.decision).toBe("block");
+      expect(result.findings.map((finding) => finding.code)).toContain("outside-project");
+    }
+  });
+
+  test("keeps the null device exact and preserves credential blocks around it", () => {
+    const cwd = temporaryProject();
+    expect(analyzeCheckPolicy({ command: "printf x > /dev/null", cwd, profile: "balanced" }).decision).toBe("allow");
+    expect(analyzeCheckPolicy({ command: "printf x > /dev/zero", cwd, profile: "balanced", fileSystem: virtualFileSystem }).findings.map((f) => f.code)).toContain("outside-project");
+    expect(analyzeCheckPolicy({ command: "cat .env 2>/dev/null", cwd, profile: "balanced" }).findings.map((f) => f.code)).toContain("credential-access");
+    expect(analyzeCheckPolicy({ command: "cat /dev/null/child", cwd, profile: "strict", fileSystem: virtualFileSystem }).decision).toBe("block");
+  });
+
+  test("resolves Git Bash drive paths against the session cwd", () => {
+    const cwd = "C:\\work\\repo";
+    const fs: CheckPolicyFileSystem = { exists: () => false, isSymbolicLink: () => false, realpath: (path) => path };
+    const inside = analyzeCheckPolicy({ command: "cd /c/work/repo && cat src/index.ts", cwd, profile: "balanced", fileSystem: fs });
+    expect(inside.decision).toBe("allow");
+
+    const outside = analyzeCheckPolicy({ command: "cd /d/work/repo && cat src/index.ts", cwd, profile: "balanced", fileSystem: fs });
+    expect(outside.decision).toBe("block");
+    expect(outside.findings.map((finding) => finding.code)).toContain("outside-project");
+  });
+
+  test("translates MSYS drive reads for Balanced external-read classification", () => {
+    const cwd = "C:\\work\\repo";
+    const result = analyzeCheckPolicy({ command: "cat /c/Users/fhubo/.bun/install/README.md", cwd, profile: "balanced", fileSystem: virtualFileSystem });
+    expect(result.decision).toBe("allow");
+    expect(result.findings.map((finding) => finding.code)).not.toContain("credential-access");
+  });
+
+  test("keeps the session cwd inside the project when spelled as a Git Bash drive path", () => {
+    const cwd = "/d/work/pum/.pum/worktrees/child";
+    const fs: CheckPolicyFileSystem = { exists: () => false, isSymbolicLink: () => false, realpath: (path) => path };
+    const result = analyzeCheckPolicy({ command: "cd /d/work/pum/.pum/worktrees/child && cat src/index.ts", cwd, profile: "balanced", fileSystem: fs });
+    expect(result.decision).toBe("allow");
+  });
+});
+
+describe("PUM settings-file write boundary", () => {
+  const configDir = "/home/runner/.config/pum";
+  const settings = ["settings.json", "pum.json", "theme.json"].map((name) => `${configDir}/${name}`);
+  const cwd = "/work/repo";
+
+  test("bash writes and reads of exact settings files are allowed only when exempt", () => {
+    const write = analyzeCheckPolicy({
+      command: `printf '{}' > ${shellQuote(join(configDir, "settings.json"))}`,
+      cwd,
+      profile: "balanced",
+      protectedPaths: [configDir],
+      allowedProtectedFiles: settings,
+      fileSystem: virtualFileSystem,
+    });
+    expect(write.decision).toBe("allow");
+
+    const read = analyzeCheckPolicy({
+      command: `cat ${shellQuote(join(configDir, "theme.json"))}`,
+      cwd,
+      profile: "balanced",
+      protectedPaths: [configDir],
+      allowedProtectedFiles: settings,
+      fileSystem: virtualFileSystem,
+    });
+    expect(read.decision).toBe("allow");
+  });
+
+  test("the whole config root stays blocked without the exemption", () => {
+    const write = analyzeCheckPolicy({
+      command: `printf '{}' > ${shellQuote(`${configDir}/settings.json`)}`,
+      cwd,
+      profile: "balanced",
+      protectedPaths: [configDir],
+      fileSystem: virtualFileSystem,
+    });
+    expect(write.decision).toBe("block");
+    expect(write.findings.map((finding) => finding.code)).toContain("credential-access");
+  });
+
+  test("auth.json, session content, and nested settings paths stay blocked", () => {
+    for (const path of [
+      `${configDir}/auth.json`,
+      `${configDir}/models.json`,
+      `${configDir}/sessions/2026.jsonl`,
+      `${configDir}/sub/settings.json`,
+    ]) {
+      const result = analyzeCheckPolicy({
+        command: `printf x > ${shellQuote(path)}`,
+        cwd,
+        profile: "balanced",
+        protectedPaths: [configDir],
+        allowedProtectedFiles: settings,
+        fileSystem: virtualFileSystem,
+      });
+      expect(result.decision).toBe("block");
+      expect(result.findings.map((finding) => finding.code)).toContain("credential-access");
+    }
+  });
+
+  test("keeps the settings exemption out of strict and ask automatic allowances", () => {
+    const write = `printf '{}' > ${shellQuote(`${configDir}/pum.json`)}`;
+    for (const profile of ["strict", "ask"] as const) {
+      const result = analyzeCheckPolicy({
+        command: write,
+        cwd,
+        profile,
+        protectedPaths: [configDir],
+        allowedProtectedFiles: settings,
+        fileSystem: virtualFileSystem,
+      });
+      expect(result.decision).toBe("ask");
+    }
+  });
+
+  test("allows a direct executable settings write through the exemption", () => {
+    const result = analyzeExecutablePolicy({
+      executable: "bash",
+      args: ["-c", `printf '{}' > ${configDir}/pum.json`],
+      cwd,
+      projectCwd: cwd,
+      profile: "balanced",
+      protectedPaths: [configDir],
+      allowedProtectedFiles: settings,
+      fileSystem: virtualFileSystem,
+    });
+    expect(result.decision).toBe("allow");
+    expect(result.accesses).toContainEqual(expect.objectContaining({ path: `${configDir}/pum.json`, mode: "write" }));
+  });
+
+  test("does not open sibling or key files through the settings exemption", () => {
+    const result = analyzeExecutablePolicy({
+      executable: "bash",
+      args: ["-c", `printf '{}' > ${configDir}/auth.json`],
+      cwd,
+      projectCwd: cwd,
+      profile: "balanced",
+      protectedPaths: [configDir],
+      allowedProtectedFiles: settings,
+      fileSystem: virtualFileSystem,
+    });
+    expect(result.decision).toBe("block");
   });
 });

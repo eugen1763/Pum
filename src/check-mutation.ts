@@ -30,6 +30,8 @@ export type MutationPreview = {
   contentChars: number;
   contentSha256: string;
   suspiciousFindings: string[];
+  /** Exact authorized PUM settings file when this mutation targets one. */
+  settingsFile?: string;
 };
 
 const CONFIG_NAMES = new Set([
@@ -72,18 +74,40 @@ function windowsAbsolute(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path) || /^\/\//.test(path);
 }
 
+async function settingsFileIndex(settingsFiles: readonly string[], absolute: string): Promise<number> {
+  let targetIdentity: string;
+  try {
+    targetIdentity = await canonicalPathIdentityAllowMissing(absolute);
+  } catch {
+    return -1;
+  }
+  const identities = await Promise.all(settingsFiles.map((file) => canonicalPathIdentityAllowMissing(file)));
+  return identities.findIndex((identity) => identity === targetIdentity);
+}
+
 async function validateEditPath(
   cwd: string,
   inputPath: string,
   allowedPaths: readonly string[],
-): Promise<{ root: string; absolute: string; display: string; mode: number }> {
+  settingsFiles: readonly string[],
+): Promise<{ root: string; absolute: string; display: string; mode: number; settingsFile?: string }> {
   if (!inputPath || inputPath.includes("\0")) throw new Error("Edit path is invalid");
   if (windowsAbsolute(inputPath) && process.platform !== "win32") {
     throw new Error(`Edit path is outside the project: ${inputPath}`);
   }
   const projectRoot = await realpath(cwd);
-  const roots = await Promise.all([projectRoot, ...allowedPaths].map((path) => realpath(path)));
   const absolute = resolve(projectRoot, inputPath);
+  if (settingsFiles.length > 0 && !isPathInsideOrSame(projectRoot, absolute)) {
+    const index = await settingsFileIndex(settingsFiles, absolute);
+    if (index >= 0) {
+      const authorized = settingsFiles[index]!;
+      const metadata = await lstat(absolute);
+      if (!metadata.isFile()) throw new Error(`Edit path is not a file: ${inputPath}`);
+      const canonical = await realpath(absolute);
+      return { root: dirname(authorized), absolute: canonical, display: absolute, mode: metadata.mode, settingsFile: authorized };
+    }
+  }
+  const roots = await Promise.all([projectRoot, ...allowedPaths].map((path) => realpath(path)));
   const sortedRoots = roots.sort((first, second) => second.length - first.length);
   if (process.platform === "win32" && windowsAbsolute(inputPath)) {
     const targetRoot = parse(absolute).root.toLowerCase();
@@ -171,7 +195,12 @@ function completeContentMetadata(patch: string): Pick<MutationPreview, "contentC
   };
 }
 
-async function previewEdit(cwd: string, input: unknown, allowedPaths: readonly string[]): Promise<MutationPreview> {
+async function previewEdit(
+  cwd: string,
+  input: unknown,
+  allowedPaths: readonly string[],
+  settingsFiles: readonly string[],
+): Promise<MutationPreview> {
   if (!input || typeof input !== "object") throw new Error("Edit input is invalid");
   const value = input as { path?: unknown; edits?: unknown; oldText?: unknown; newText?: unknown };
   if (typeof value.path !== "string") throw new Error("Edit path is invalid");
@@ -189,7 +218,7 @@ async function previewEdit(cwd: string, input: unknown, allowedPaths: readonly s
     && typeof (edit as any).newText === "string",
   )) throw new Error("Edit replacements are invalid");
 
-  const validated = await validateEditPath(cwd, value.path, allowedPaths);
+  const validated = await validateEditPath(cwd, value.path, allowedPaths, settingsFiles);
   const buffer = await readFile(validated.absolute);
   let content: string;
   try {
@@ -224,6 +253,7 @@ async function previewEdit(cwd: string, input: unknown, allowedPaths: readonly s
     deletedPaths: 0,
     projectContained: true,
     ...completeContentMetadata(patch),
+    settingsFile: validated.settingsFile,
   };
 }
 
@@ -232,8 +262,9 @@ export async function previewMutation(
   cwd: string,
   input: unknown,
   allowedPaths: readonly string[] = [],
+  settingsFiles: readonly string[] = [],
 ): Promise<MutationPreview | undefined> {
-  if (toolName === "edit") return previewEdit(cwd, input, allowedPaths);
+  if (toolName === "edit") return previewEdit(cwd, input, allowedPaths, settingsFiles);
   if (toolName !== "apply_patch") return undefined;
   if (!input || typeof input !== "object" || typeof (input as { patch?: unknown }).patch !== "string") {
     throw new Error("Apply patch input is invalid");

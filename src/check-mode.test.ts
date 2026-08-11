@@ -1166,3 +1166,106 @@ describe("ask profile approvals", () => {
     unsubscribe();
   });
 });
+describe("PUM settings-file scope and identity gating", () => {
+  test("allows a deliberate main settings-file bash write in Balanced without review", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-settings-project-"));
+    const settingsDir = mkdtempSync(join(tmpdir(), "pum-settings-dir-"));
+    temporaryDirectories.push(cwd, settingsDir);
+    const settingsFiles = ["settings.json", "pum.json", "theme.json"].map((name) => join(settingsDir, name));
+    const verifier = runtime([]);
+
+    const main = await evaluateToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command: `printf '{}' > '${join(settingsDir, "pum.json")}'` },
+      cwd,
+      config: { profile: "balanced", model: config.model },
+      requester: { kind: "main" },
+      settingsFiles,
+    });
+    expect(main).toMatchObject({ decision: "allow", category: "balanced" });
+    expect(verifier.calls).toBe(0);
+
+    const child = await evaluateToolCall(verifier, cache, {
+      toolName: "bash",
+      input: { command: `printf '{}' > '${join(settingsDir, "pum.json")}'` },
+      cwd,
+      config: { profile: "balanced", model: config.model },
+      requester: { kind: "subagent", agentId: "child-1" },
+      settingsFiles,
+    });
+    expect(child).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(verifier.calls).toBe(0);
+  });
+
+  test("allows an exact main settings-file edit but keeps the same path blocked for subagents", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-settings-project-"));
+    const settingsDir = mkdtempSync(join(tmpdir(), "pum-settings-dir-"));
+    temporaryDirectories.push(cwd, settingsDir);
+    const settingsPath = join(settingsDir, "settings.json");
+    writeFileSync(settingsPath, "{\"model\":\"one\"}\n");
+    const settingsFiles = ["settings.json", "pum.json", "theme.json"].map((name) => join(settingsDir, name));
+    const input = { path: settingsPath, edits: [{ oldText: "one", newText: "two" }] };
+    const verifier = runtime([]);
+    const balanced = { profile: "balanced" as const, model: config.model };
+
+    const main = await evaluateToolCall(verifier, cache, {
+      toolName: "edit", input, cwd, config: balanced, requester: { kind: "main" }, settingsFiles,
+    });
+    expect(main).toMatchObject({ decision: "allow", category: "balanced" });
+    expect(verifier.calls).toBe(0);
+
+    const child = await evaluateToolCall(verifier, cache, {
+      toolName: "edit", input, cwd, config: balanced, requester: { kind: "subagent", agentId: "child-1" }, settingsFiles,
+    });
+    expect(child).toMatchObject({ decision: "block", category: "hard-block" });
+    expect(verifier.calls).toBe(0);
+  });
+
+  test("settings-file edits still require review in Strict", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-settings-project-"));
+    const settingsDir = mkdtempSync(join(tmpdir(), "pum-settings-dir-"));
+    temporaryDirectories.push(cwd, settingsDir);
+    const settingsPath = join(settingsDir, "pum.json");
+    writeFileSync(settingsPath, "{\"a\":1}\n");
+    const settingsFiles = ["settings.json", "pum.json", "theme.json"].map((name) => join(settingsDir, name));
+    const verifier = runtime([result('{"decision":"safe","category":"config","confidence":1,"reason":"settings edit"}')]);
+
+    const strict = await evaluateToolCall(verifier, cache, {
+      toolName: "edit",
+      input: { path: settingsPath, edits: [{ oldText: "1", newText: "2" }] },
+      cwd,
+      config: { profile: "strict", model: config.model },
+      requester: { kind: "main" },
+      settingsFiles,
+    });
+    expect(strict.decision).toBe("allow");
+    expect(strict.category).toBe("config");
+    expect(verifier.calls).toBe(1);
+  });
+
+  test("auth.json and session writes stay blocked for main even with settings enabled", async () => {
+    const { cache } = temporaryCache();
+    const cwd = mkdtempSync(join(tmpdir(), "pum-settings-project-"));
+    const settingsDir = mkdtempSync(join(tmpdir(), "pum-settings-dir-"));
+    temporaryDirectories.push(cwd, settingsDir);
+    const settingsFiles = ["settings.json", "pum.json", "theme.json"].map((name) => join(settingsDir, name));
+    const verifier = runtime([]);
+    const balanced = { profile: "balanced" as const, model: config.model };
+
+    for (const path of [join(settingsDir, "auth.json"), join(settingsDir, "sessions", "s.jsonl")]) {
+      const evaluation = await evaluateToolCall(verifier, cache, {
+        toolName: "bash",
+        input: { command: `printf x > '${path}'` },
+        cwd,
+        config: balanced,
+        requester: { kind: "main" },
+        settingsFiles,
+      });
+      expect(evaluation.decision).toBe("block");
+    }
+    expect(verifier.calls).toBe(0);
+  });
+});
