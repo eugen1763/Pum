@@ -2,6 +2,28 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.8-beta.1] - 2026-08-11
+
+### Added
+- Added a News popup (Ctrl+N or `/news`) listing the final answers of user-initiated turns, newest first. Answers persist next to the session and keep their seen state across resume.
+- Made the News popup body render through the Markdown renderer with its own scrollbar, so headings, lists, and code render and long answers scroll.
+- Allowed Space in the News popup to toggle an answer between read and unread.
+- Grouped PUM custom tool schemas behind a per-session `enable_tools` gate: the Core tools are always sent; the Admin, Subagents, and Worktree groups are hidden until enabled and their enabled state survives resume.
+- Told the model what the active Check mode profile allows and denies by injecting a per-turn guidance block that updates when the profile, sandbox, or approved roots change.
+- Made pasted text larger than 16 KB use a `[Pasted text #n]` marker backed by a temporary file the model can read; the file is removed when the snippet is deleted, the draft clears, or the turn settles.
+
+### Changed
+- Enlarged the News popup to use most of the terminal instead of a fixed small box.
+- Preserved hand-tuned per-model settings such as thinking level maps and compatibility flags when the provider is logged in again.
+
+### Fixed
+- Made Shift+Enter and Ctrl+Enter insert a newline on Windows Terminal with PowerShell 7 by decoding kitty and modifyOtherKeys sequences; plain Enter still sends.
+- Made the multiline prompt gutter follow the cursor when it moves with arrow keys, Home/End, or the mouse, not only when typing.
+- Fixed Check mode to treat `/dev/null` as a null device on every path flavor and Git Bash drive paths as native drives, so read-only inspection commands such as `grep -E`, `cat`, `head`, `tail`, `wc`, `rg`, and `ls` pass Balanced appropriately, and `cd` into the project worktree no longer false-flags.
+
+### Security
+- Allowed the authoritative main agent to deliberately edit its own settings files (`settings.json`, `pum.json`, `theme.json`). `auth.json`, model key material, and session content stay blocked; managed subagents stay blocked; an enforced native sandbox still denies the config root.
+
 ## [0.2.7-beta.1] - 2026-08-11
 
 ### Changed
