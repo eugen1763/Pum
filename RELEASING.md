@@ -34,6 +34,8 @@ For prereleases, the workflow publishes with `beta`, then assigns the exact vers
 11. If CI fails, inspect its failed log once, fix the failure in a new commit, push it, and repeat the exact-commit CI gate. Never tag a queued, running, or failed commit.
 12. After green `main` CI, create and push a signed or annotated tag named `v<package version>`.
 13. Watch the exact tag CI and Release workflow runs to completion.
+14. Run `npm install pum-agent@<VERSION> --ignore-scripts --prefix node_modules/.pum-install --cache node_modules/.cache/npm` after publication.
+15. Run `node_modules/.pum-install/node_modules/.bin/pum --help` to verify the installed executable.
 
 The workflow rejects a tag that differs from `package.json`. The workflow never changes the package version.
 

@@ -693,6 +693,160 @@ describe("deterministic npm pack", () => {
   });
 });
 
+describe("deterministic npm release verification install", () => {
+  test("allows one exact package with explicit approved prefix and cache writes", () => {
+    const cwd = temporaryProject();
+    const commands = [
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix node_modules/.pum-install --cache node_modules/.cache/npm",
+      "npm install --ignore-scripts --prefix=node_modules/.pum-install --cache=node_modules/.cache/npm @scope/package@2.0.0+build.4",
+    ];
+
+    for (const command of commands) {
+      const result = analyzeCheckPolicy({ command, cwd, profile: "balanced" });
+      expect(result.decision).toBe("allow");
+      expect(result.network).toEqual({ access: "host", commands: ["npm install"] });
+      expect(result.accesses).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "node_modules/.pum-install", mode: "write", external: false }),
+        expect.objectContaining({ path: "node_modules/.cache/npm", mode: "write", external: false }),
+      ]));
+      expect(result.accesses.some((access) => access.path.includes("package@"))).toBe(false);
+    }
+  });
+
+  test("applies the same install rule to direct executable proposals", () => {
+    const cwd = temporaryProject();
+    const result = analyzeExecutablePolicy({
+      executable: "npm",
+      args: [
+        "install", "pum-agent@0.2.7-beta.1", "--ignore-scripts",
+        "--prefix", "node_modules/.pum-install", "--cache", "node_modules/.cache/npm",
+      ],
+      cwd,
+      projectCwd: cwd,
+    });
+
+    expect(result.decision).toBe("allow");
+    expect(result.network).toEqual({ access: "host", commands: ["npm install"] });
+    expect(result.accesses).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "node_modules/.pum-install", mode: "write" }),
+      expect.objectContaining({ path: "node_modules/.cache/npm", mode: "write" }),
+    ]));
+  });
+
+  test("allows install writes under one approved additional root", () => {
+    const cwd = temporaryProject();
+    const shared = mkdtempSync(join(tmpdir(), "pum-install-output-"));
+    temporaryDirectories.push(shared);
+    mkdirSync(join(shared, "cache"));
+    mkdirSync(join(shared, "prefix"));
+    const command = `npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix ${shellQuote(join(shared, "prefix"))} --cache ${shellQuote(join(shared, "cache"))}`;
+
+    expect(analyzeCheckPolicy({ command, cwd, allowedPaths: [shared] }).decision).toBe("allow");
+  });
+
+  test("blocks external, ambiguous, credential, and escaping install write paths", () => {
+    const cwd = "/work/repo";
+    const commands = [
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix /tmp/pum-install --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache /tmp/npm-cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix '$INSTALL_DIR' --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache '$CACHE_DIR'",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .npmrc --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache auth.json",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix 'build/*' --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache 'cache/{one,two}'",
+    ];
+
+    for (const command of commands) {
+      expect(analyzeCheckPolicy({ command, cwd, fileSystem: virtualFileSystem }).decision).toBe("block");
+    }
+
+    if (process.platform !== "win32") {
+      const project = temporaryProject();
+      const outside = mkdtempSync(join(tmpdir(), "pum-install-escape-"));
+      temporaryDirectories.push(outside);
+      symlinkSync(outside, join(project, "linked"), "dir");
+      const escaped = analyzeCheckPolicy({
+        command: "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix linked/install --cache .cache",
+        cwd: project,
+      });
+      expect(escaped.findings.map((finding) => finding.code)).toContain("escaping-symlink");
+    }
+  });
+
+  test("rejects missing safeguards, non-exact specs, and unsupported options", () => {
+    const cwd = temporaryProject();
+    const unsafe = [
+      "npm install pum-agent@0.2.7-beta.1 --prefix .install --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install",
+      "npm install --ignore-scripts --prefix .install --cache .cache",
+      "npm install pum-agent@latest --ignore-scripts --prefix .install --cache .cache",
+      "npm install 'pum-agent@^0.2.7' --ignore-scripts --prefix .install --cache .cache",
+      "npm install . --ignore-scripts --prefix .install --cache .cache",
+      "npm install ../package --ignore-scripts --prefix .install --cache .cache",
+      "npm install file:../package --ignore-scripts --prefix .install --cache .cache",
+      "npm install git+https://example.test/package.git --ignore-scripts --prefix .install --cache .cache",
+      "npm install https://example.test/package.tgz --ignore-scripts --prefix .install --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 other@1.0.0 --ignore-scripts --prefix .install --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache .cache --global",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache .cache --foreground-scripts",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache .cache --save",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --ignore-scripts --prefix .install --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --prefix other --cache .cache",
+      "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache .cache --cache other",
+    ];
+
+    for (const command of unsafe) {
+      const result = analyzeCheckPolicy({ command, cwd });
+      expect(result.decision).toBe("block");
+      expect(result.findings.map((finding) => finding.code)).toContain("unsafe-npm-install");
+    }
+  });
+
+  test("requires one direct npm install without shell features or wrappers", () => {
+    const cwd = temporaryProject();
+    const safe = "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache .cache";
+    const unsafe = [
+      `${safe} && echo done`,
+      `${safe} > install.txt`,
+      `MODE=test ${safe}`,
+      `env ${safe}`,
+      `command ${safe}`,
+    ];
+
+    for (const command of unsafe) {
+      const result = analyzeCheckPolicy({ command, cwd });
+      expect(result.decision).toBe("block");
+      expect(result.findings.map((finding) => finding.code)).toContain("unsafe-npm-install");
+    }
+  });
+
+  test("keeps aliases, global forms, and general package installation blocked", () => {
+    const cwd = temporaryProject();
+    const commands = [
+      "npm i pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache .cache",
+      "npm add pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache .cache",
+      "npm ci --ignore-scripts --prefix .install --cache .cache",
+      "npm install -g pum-agent@0.2.7-beta.1",
+      "npm --global install pum-agent@0.2.7-beta.1",
+      "npm --prefix .install install pum-agent@0.2.7-beta.1",
+      "npm rebuild pum-agent@0.2.7-beta.1",
+    ];
+
+    for (const command of commands) expect(analyzeCheckPolicy({ command, cwd }).decision).toBe("block");
+  });
+
+  test("keeps the narrow install as a Balanced-only deterministic allowance", () => {
+    const cwd = temporaryProject();
+    const command = "npm install pum-agent@0.2.7-beta.1 --ignore-scripts --prefix .install --cache .cache";
+
+    expect(analyzeCheckPolicy({ command, cwd, profile: "balanced" }).decision).toBe("allow");
+    expect(analyzeCheckPolicy({ command, cwd, profile: "strict" }).decision).toBe("ask");
+    expect(analyzeCheckPolicy({ command, cwd, profile: "ask" }).decision).toBe("ask");
+  });
+});
+
 describe("Balanced-only external reads", () => {
   const posixCwd = "/work/repo";
   const windowsCwd = "C:\\work\\repo";
