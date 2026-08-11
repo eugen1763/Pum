@@ -17,6 +17,7 @@ export type CheckPolicyFindingCode =
   | "external-read-exfiltration"
   | "destructive-git"
   | "broad-deletion"
+  | "unsafe-npm-pack"
   | "suspicious-execution"
   | "shell-complexity"
   | "mutation"
@@ -209,6 +210,84 @@ const EXPLICIT_READ_COMMANDS = new Set([
   "cat", "head", "tail", "less", "more", "stat", "file", "ls", "tree", "du", "wc", "realpath", "readlink",
 ]);
 const DATA_OPERAND_COMMANDS = new Set(["printf", "echo"]);
+
+type NpmPackCommand = {
+  valid: boolean;
+  reason?: string;
+  packageSpec?: string;
+  cache?: string;
+  packDestination: string;
+};
+
+function isExactRegistryPackageVersion(value: string): boolean {
+  const packageName = String.raw`(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)`;
+  const numericIdentifier = String.raw`(?:0|[1-9]\d*)`;
+  const prereleaseIdentifier = String.raw`(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)`;
+  const buildIdentifier = String.raw`[0-9a-zA-Z-]+`;
+  const version = String.raw`${numericIdentifier}\.${numericIdentifier}\.${numericIdentifier}(?:-${prereleaseIdentifier}(?:\.${prereleaseIdentifier})*)?(?:\+${buildIdentifier}(?:\.${buildIdentifier})*)?`;
+  return new RegExp(`^${packageName}@${version}$`).test(value);
+}
+
+function npmPackCommand(argv: string[]): NpmPackCommand | undefined {
+  if (commandName(argv[0]) !== "npm" || argv[1] !== "pack") return undefined;
+  const positionals: string[] = [];
+  let cache: string | undefined;
+  let packDestination = ".";
+  let packDestinationSet = false;
+  let ignoreScripts = false;
+  const booleanOptions = new Set(["--dry-run", "--json", "--ignore-scripts"]);
+  const pathOptions = new Map([["--cache", "cache"], ["--pack-destination", "packDestination"]] as const);
+
+  for (let index = 2; index < argv.length; index++) {
+    const value = argv[index]!;
+    if (booleanOptions.has(value)) {
+      if (value === "--ignore-scripts") ignoreScripts = true;
+      continue;
+    }
+    const separate = pathOptions.get(value as "--cache" | "--pack-destination");
+    if (separate) {
+      const path = argv[++index];
+      if (!path || path.startsWith("-")) return { valid: false, reason: `${value} requires one explicit path`, packDestination };
+      if (separate === "cache") {
+        if (cache !== undefined) return { valid: false, reason: "npm pack --cache must occur exactly once", packDestination };
+        cache = path;
+      } else {
+        if (packDestinationSet) return { valid: false, reason: "npm pack --pack-destination must occur at most once", packDestination };
+        packDestination = path;
+        packDestinationSet = true;
+      }
+      continue;
+    }
+    const attached = /^(--cache|--pack-destination)=(.*)$/.exec(value);
+    if (attached) {
+      if (!attached[2]) return { valid: false, reason: `${attached[1]} requires one explicit path`, packDestination };
+      if (attached[1] === "--cache") {
+        if (cache !== undefined) return { valid: false, reason: "npm pack --cache must occur exactly once", packDestination };
+        cache = attached[2];
+      } else {
+        if (packDestinationSet) return { valid: false, reason: "npm pack --pack-destination must occur at most once", packDestination };
+        packDestination = attached[2];
+        packDestinationSet = true;
+      }
+      continue;
+    }
+    if (value === "--") {
+      positionals.push(...argv.slice(index + 1));
+      break;
+    }
+    if (value.startsWith("-")) return { valid: false, reason: `npm pack option ${value} is not in the deterministic allowlist`, packDestination };
+    positionals.push(value);
+  }
+
+  if (!ignoreScripts) return { valid: false, reason: "npm pack must disable lifecycle scripts with --ignore-scripts", packDestination };
+  if (!cache) return { valid: false, reason: "npm pack must set an explicit project-local --cache path", packDestination };
+  if (positionals.length > 1) return { valid: false, reason: "npm pack accepts at most one deterministic package spec", cache, packDestination };
+  if (positionals[0] && !isExactRegistryPackageVersion(positionals[0])) {
+    return { valid: false, reason: "npm pack package spec must be an exact registry package version", cache, packDestination };
+  }
+  return { valid: true, packageSpec: positionals[0], cache, packDestination };
+}
+
 function commandName(argv0: string | undefined): string {
   if (!argv0) return "";
   const basename = argv0.replaceAll("\\", "/").split("/").at(-1) ?? argv0;
@@ -352,6 +431,7 @@ function mutationIndicators(argv: string[], redirections: BashRedirection[]): st
   if (name === "git" && argv[1] && !new Set(["status", "diff", "log", "show", "rev-parse", "ls-files", "branch"]).has(argv[1])) {
     indicators.push("Git state change");
   }
+  if (npmPackCommand(argv)?.valid) indicators.push("package archive or cache output");
   return [...new Set(indicators)];
 }
 
@@ -742,6 +822,12 @@ function classifyStageAccesses(stage: BashStage): ClassifiedAccess[] {
   }
 
   if (DATA_OPERAND_COMMANDS.has(name)) return accesses;
+  const npmPack = npmPackCommand(argv);
+  if (npmPack?.valid) {
+    accesses.push({ path: npmPack.cache!, mode: "write", source: "operand" });
+    accesses.push({ path: npmPack.packDestination, mode: "write", source: "operand" });
+    return accesses;
+  }
   if (["cd", "chdir", "set-location"].includes(name)) {
     return [...accesses, ...positionalOperands(argv).map((path) => ({ path, mode: "location" as const, source: "operand" as const }))];
   }
@@ -930,6 +1016,34 @@ function inspectHardBlocks(
     const argv = effectiveArgv(stage.argv);
     const name = commandName(argv[0]);
     const lowerArgs = argv.map((arg) => arg.toLowerCase());
+    const npmPack = npmPackCommand(argv);
+    if (npmPack) {
+      const direct = commandName(stage.argv[0]) === "npm"
+        && analysis.stages.length === 1
+        && analysis.operators.length === 0
+        && stage.substitutions.length === 0
+        && stage.redirections.length === 0
+        && Object.keys(stage.envAssignments).length === 0;
+      if (!direct || !npmPack.valid) {
+        addFinding(findings, {
+          code: "unsafe-npm-pack",
+          severity: "hard-block",
+          message: !direct ? "npm pack must be one direct command without shell composition" : npmPack.reason!,
+          stage: stage.index,
+        });
+      }
+    }
+    const globalPackageWrite = (name === "npm" || name === "bun")
+      && lowerArgs.some((arg) => new Set(["install", "add", "i", "update", "upgrade", "remove", "uninstall", "link"]).has(arg))
+      && lowerArgs.some((arg) => arg === "-g" || arg === "--global");
+    if (globalPackageWrite) {
+      addFinding(findings, {
+        code: "outside-project",
+        severity: "hard-block",
+        message: "global package installation writes outside the project and approved roots",
+        stage: stage.index,
+      });
+    }
     if (PRIVILEGE_COMMANDS.has(name)
       || ((name === "powershell" || name === "start-process") && lowerArgs.includes("runas"))) {
       addFinding(findings, { code: "privilege-escalation", severity: "hard-block", message: `${name} can escalate privileges`, stage: stage.index });
@@ -1191,6 +1305,9 @@ function stageNetworkCommand(stage: BashStage): string | undefined {
   if (NETWORK_COMMANDS.has(name)) return name;
   const subcommand = (argv[1] ?? "").toLowerCase();
   if (name === "git" && new Set(["clone", "fetch", "pull", "push", "ls-remote"]).has(subcommand)) return `git ${subcommand}`;
+  if (name === "npm" && subcommand === "pack") {
+    return npmPackCommand(argv)?.packageSpec ? "npm pack" : undefined;
+  }
   if (["npm", "pnpm", "yarn"].includes(name)
     && new Set(["add", "audit", "install", "publish", "search", "update", "upgrade", "view", "info"]).has(subcommand)) {
     return `${name} ${subcommand}`;

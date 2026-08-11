@@ -11,7 +11,7 @@ const packageJson = await Bun.file("package.json").json() as {
   bin?: Record<string, string>;
 };
 
-const output = await $`npm pack --dry-run --json`.quiet().text();
+const output = await $`npm pack --dry-run --json --ignore-scripts --cache node_modules/.cache/npm`.quiet().text();
 const parsed = JSON.parse(output) as PackResult[] | Record<string, PackResult>;
 const results = Array.isArray(parsed) ? parsed : Object.values(parsed);
 if (results.length !== 1) {
