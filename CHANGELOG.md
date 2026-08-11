@@ -2,6 +2,19 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.7-beta.1] - 2026-08-11
+
+### Changed
+- Simplified the status-bar working-directory field to show only the compact directory name before the Git branch.
+- Allowed Balanced Check mode to perform release installation verification only for one exact registry package version with lifecycle scripts disabled and explicit project-local prefix and cache paths.
+
+### Fixed
+- Made the Thinking level setting navigate through only the levels supported by the active main-agent model, so custom models can move down from `max` to their next supported level.
+- Made selected-subagent status assertions independent of terminal widths that legitimately show or hide lower-priority cost metadata.
+
+### Security
+- Kept global, lifecycle-enabled, aliased, composed, unsupported, non-exact, credential, ambiguous, external-write, and escaping package installation forms blocked in Balanced mode.
+
 ## [0.2.6-beta.1] - 2026-08-11
 
 ### Added
