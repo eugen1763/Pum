@@ -23,7 +23,7 @@ pum
 PUM opens the login panel automatically on the first start.
 
 > [!WARNING]
-> PUM can read, write, and delete files. Check mode adds deterministic policy checks and can enforce native Bash isolation on supported Linux and Windows hosts. Other tools, extensions, and external triggers still run in the PUM process boundary described below. Review the safeguards and prerequisites before using untrusted workspaces.
+> PUM can read, write, and delete files. Check mode adds deterministic policy checks, and supported hosts can enforce native Bash isolation. The file-tool sandbox is a process-local path guard, not complete operating-system isolation. Review the safeguards before using untrusted workspaces.
 
 ## See PUM in action
 
@@ -46,7 +46,8 @@ The following screens are real OpenTUI renders captured through `tmux`. A local 
 - **Prompt control:** Steer active work, answer model questionnaires, use an ownership-aware message cache, attach clipboard images, and resume sessions with metadata-rich history.
 - **External triggers:** Supervise background commands such as `gh run watch` and automatically wake the exact target agent when they exit.
 - **Provider choice:** Search the providers exposed by pi, or add an OpenAI-compatible custom endpoint.
-- **Optional safeguards:** Use strict, balanced, or ask Check mode, plus native Bash sandboxing through Bubblewrap or Windows CreateProcessInSandbox when available.
+- **Filesystem boundary:** `read`, `write`, and `edit` stay inside the project and configured allowed roots. `apply_patch` stays project-local.
+- **Optional safeguards:** Use strict, balanced, or ask Check mode for `bash`, `edit`, `apply_patch`, and external-trigger process proposals. Supported hosts can also use native Bash sandboxing through Bubblewrap or Windows CreateProcessInSandbox.
 - **Terminal-first appearance:** Nine themes, semantic color overrides, Unicode glyphs, and optional animation.
 
 PUM uses [pi](https://github.com/earendil-works/pi) for the agent loop and [OpenTUI](https://github.com/anomalyco/opentui) for rendering.
@@ -231,6 +232,17 @@ Trigger events target one exact main or retained child session. A missing sessio
 
 `apply_patch` supports add, update, delete, move, multiple files, and multiple hunks. PUM validates the full patch before changing files. It rejects traversal, absolute paths, escaping symlinks, path conflicts, and ambiguous context. A failed commit restores all touched files.
 
+### Filesystem sandbox
+
+The process-local filesystem sandbox validates `read`, `write`, `edit`, and `apply_patch` before execution.
+
+- Project paths and `/check-path` roots are allowed.
+- Credential-sensitive paths are blocked.
+- Symbolic links and junctions in tool paths are blocked.
+- `apply_patch` remains project-local and keeps its atomic validation.
+
+This boundary does not isolate `bash`, package scripts, extensions, or trigger processes from the operating system. Use a container, VM, or policy-controlled sandbox for stronger isolation.
+
 ### Check mode
 
 Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_patch`, and external-trigger process execution:
@@ -241,7 +253,7 @@ Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_pa
 
 Every active profile hard-blocks external writes, location changes, execution operands, ambiguous path access, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. Balanced permits explicit, deterministically classified, non-sensitive external reads. It accepts one direct `npm pack` only when lifecycle scripts are disabled, an explicit cache stays in an approved root, output stays in an approved root, and any package operand is one exact registry version. Balanced also accepts one direct `npm install` of one exact registry version only when `--ignore-scripts`, an approved `--prefix`, and an approved `--cache` are explicit. File, Git, URL, tag, range, composed, general install, and global-install forms remain blocked. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup. The only publication exception is a deterministic match for direct main-agent `npm publish` or `npm dist-tag add`. The verifier category does not control this exception. The exception still requires explicit popup approval. Managed subagents cannot use it.
 
-Use `/check-path list`, `/check-path add <directory>`, `/check-path remove <directory>`, or `/check-path clear` to manage up to 16 additional directory roots for the current launch project. Bash, edit, and external-trigger checks can use these roots; `apply_patch` remains project-local. Added roots are canonicalized and remain subject to credential, traversal, symlink or junction, broad-deletion, and other hard blocks.
+Use `/check-path list`, `/check-path add <directory>`, `/check-path remove <directory>`, or `/check-path clear` to manage up to 16 additional directory roots for the current launch project. The filesystem sandbox applies these roots to `read`, `write`, and `edit`. Bash, edit, and external-trigger checks also use these roots; `apply_patch` remains project-local. Added roots are canonicalized and remain subject to credential, traversal, symlink or junction, broad-deletion, and other hard blocks.
 
 For `edit` and `apply_patch`, PUM validates the complete proposed change before any mutation. Review data includes the unified diff, changed paths, line counts, sensitivity flags, project containment, and full-content SHA-256. Invalid, stale, malformed, escaping, or incompletely analyzed input blocks the call. Patch length alone does not block a valid Balanced call.
 
@@ -266,6 +278,8 @@ Network access is denied unless deterministic analysis recognizes an approved ne
 The override uses pi's `createBashTool` implementation and custom Bash operations, preserving streaming, truncation, full-output files, rendering, timeout messages, abort handling, shell configuration, and child-tree cleanup. Only Bash commands are routed through this backend. PUM does not sandbox the TUI/model process itself.
 
 External triggers preserve direct executable/argument boundaries and continue to use deterministic Check mode, but they are not routed through the native sandbox in this release. The trigger manager's synchronous spawn boundary does not carry the exact approved policy object into execution; silently recomputing a second process policy there would weaken approval identity. Trigger output, environment, limits, and process supervision remain unchanged.
+
+The filesystem sandbox is a process-local path guard for `read`, `write`, `edit`, and `apply_patch`. It does not replace native Bash isolation and does not cover scripts, extensions, or trigger processes.
 
 Verifier prompts stay bounded. For an oversized Balanced review, PUM sends complete validation metadata, counts, findings, and SHA-256 digests. PUM does not send a raw prefix or suffix as if it were complete. Strict and Ask keep their fail-closed oversized-input behavior.
 

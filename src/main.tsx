@@ -46,6 +46,7 @@ import type { StartupOptions } from "./cli";
 import { installSelectionClipboard } from "./clipboard";
 import { TerminalTitleController } from "./terminal-title";
 import { SandboxController } from "./sandbox";
+import { filesystemSandboxExtension } from "./filesystem-sandbox";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -143,6 +144,7 @@ export async function start(options: StartupOptions): Promise<void> {
       explanationStrengthExtension,
       checkModePromptExtension,
       sandboxExtension,
+      filesystemSandboxExtension,
     ],
     childExtensionFactoriesForAgent: [(agentId) => createCheckModeExtension(modelRuntime, undefined, {
       coordinator: checkApprovalCoordinator,
@@ -168,6 +170,7 @@ export async function start(options: StartupOptions): Promise<void> {
             writingStyleExtension,
             explanationStrengthExtension,
             checkModePromptExtension,
+            filesystemSandboxExtension,
             mainCheckModeExtension,
             sandboxExtension,
             applyPatchExtension,

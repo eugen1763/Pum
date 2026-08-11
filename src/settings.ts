@@ -91,7 +91,7 @@ export type PumSettings = {
   checkModel: string;
   /** OS sandbox enforcement. Legacy settings omit this field and migrate to auto. */
   sandboxMode?: SandboxMode;
-  /** Additional canonical directory roots allowed by Check mode, keyed by launch project. */
+  /** Additional canonical directory roots allowed by the filesystem sandbox and Check mode, keyed by launch project. */
   checkPaths?: CheckPathsByProject;
   maxActiveSubagents: number;
 };

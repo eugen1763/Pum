@@ -52,6 +52,7 @@ bun run start    # open the TUI in the current directory
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/check-mode.ts` | Safety profiles for commands, mutations, and trigger processes |
 | `src/check-paths.ts` | Project-scoped additional Check mode root validation and commands |
+| `src/filesystem-sandbox.ts` | Process-local path boundary for file tools |
 | `src/check-policy.ts` | Deterministic shell and structured-process hard rules |
 | `src/check-mutation.ts` | Pre-execution edit and patch diff proposals |
 | `src/check-approvals.ts` | Exact once, session, and project approval state |
@@ -184,6 +185,12 @@ These were chosen deliberately. Change them only on purpose.
   path such as `/c/Users/...` or `/d/dev/...` resolves to its native drive, so
   the session cwd, project roots, and `cd` targets share one canonical identity
   on Windows for the deterministic policy.
+- **The filesystem sandbox covers file tools.** `read`, `write`, and `edit` are
+  limited to the project and configured `/check-path` roots before execution.
+  `apply_patch` validates every patch path before its atomic project-local
+  commit. Credential-sensitive paths and symbolic-link or junction components
+  are blocked. This is a process-local path guard, not operating-system
+  isolation for bash, scripts, extensions, or trigger processes.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
