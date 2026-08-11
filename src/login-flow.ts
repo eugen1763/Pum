@@ -121,6 +121,32 @@ export async function persistCustomProvider(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+  const existingProvider = (current.providers ?? {})[providerId] as
+    | { models?: Array<Record<string, unknown>> }
+    | undefined;
+  const existingById = new Map(
+    (existingProvider?.models ?? []).map((model) => [String(model.id), model]),
+  );
+  const resolvedModels = models.map((model) => {
+    const existing = existingById.get(model.id.trim());
+    if (existing) {
+      // Keep hand-tuned per-model settings (reasoning, compat, thinkingLevelMap,
+      // contextWindow, maxTokens) when re-logging into the same provider.
+      return {
+        ...existing,
+        id: model.id,
+        name: model.name ?? (typeof existing.name === "string" ? existing.name : model.id),
+      };
+    }
+    return {
+      id: model.id,
+      name: model.name ?? model.id,
+      reasoning: false,
+      input: ["text"],
+      contextWindow: 128000,
+      maxTokens: 16384,
+    };
+  });
   const next: ModelsFile = {
     ...current,
     providers: {
@@ -134,14 +160,7 @@ export async function persistCustomProvider(
           supportsDeveloperRole: false,
           supportsReasoningEffort: false,
         },
-        models: models.map((model) => ({
-          id: model.id,
-          name: model.name ?? model.id,
-          reasoning: false,
-          input: ["text"],
-          contextWindow: 128000,
-          maxTokens: 16384,
-        })),
+        models: resolvedModels,
       },
     },
   };

@@ -59,6 +59,49 @@ describe("custom OpenAI-compatible provider", () => {
     expect(data.providers["custom-host"].api).toBe("openai-completions");
     expect(text).not.toContain("top-secret");
   });
+
+  test("preserves hand-tuned model settings on re-login", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pum-models-"));
+    const path = join(dir, "models.json");
+    await Bun.write(path, JSON.stringify({
+      providers: {
+        "custom-host": {
+          baseUrl: "https://host.test/v1",
+          models: [{
+            id: "ds4-ops",
+            name: "ds4-ops",
+            reasoning: true,
+            compat: {
+              supportsDeveloperRole: false,
+              supportsReasoningEffort: true,
+              thinkingFormat: "chat-template",
+              chatTemplateKwargs: {
+                thinking: { $var: "thinking.enabled" },
+                reasoning_effort: { $var: "thinking.effort" },
+              },
+            },
+            thinkingLevelMap: { low: null, max: "max" },
+            contextWindow: 128000,
+            maxTokens: 16384,
+          }],
+        },
+      },
+    }));
+    await persistCustomProvider("custom-host", "https://host.test/v1", [
+      { id: "ds4-ops" },
+      { id: "new-model" },
+    ], path);
+    const data = JSON.parse(await readFile(path, "utf8"));
+    const kept = data.providers["custom-host"].models.find((m: any) => m.id === "ds4-ops");
+    expect(kept.reasoning).toBe(true);
+    expect(kept.compat.thinkingFormat).toBe("chat-template");
+    expect(kept.compat.chatTemplateKwargs.reasoning_effort).toEqual({ $var: "thinking.effort" });
+    expect(kept.thinkingLevelMap.max).toBe("max");
+    expect(kept.contextWindow).toBe(128000);
+    expect(kept.maxTokens).toBe(16384);
+    const fresh = data.providers["custom-host"].models.find((m: any) => m.id === "new-model");
+    expect(fresh.reasoning).toBe(false);
+  });
 });
 
 test("secret redaction removes exact and token-shaped values", () => {
