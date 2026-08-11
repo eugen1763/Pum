@@ -2,6 +2,7 @@ import { fg, type TextChunk } from "@opentui/core";
 import type { Theme } from "./theme";
 
 export type StatusMetadataValues = {
+  cwd?: string;
   branch: string | null;
   outgoingTokens: number;
   incomingTokens: number;
@@ -11,9 +12,9 @@ export type StatusMetadataValues = {
 };
 
 export type StatusMetadataItem = {
-  key: "branch" | "outgoing" | "incoming" | "cacheRead" | "cost" | "context";
+  key: "cwd" | "branch" | "outgoing" | "incoming" | "cacheRead" | "cost" | "context";
   text: string;
-  tone: "branch" | "dim" | "warn";
+  tone: "cwd" | "branch" | "dim" | "warn";
   priority: number;
 };
 
@@ -28,8 +29,20 @@ export const formatCost = (value: number): string =>
 
 export const statusTextWidth = (text: string): number => Bun.stringWidth(text);
 
+/** Show the launch directory without the long parent path. */
+export function formatWorkingDirectory(cwd: string): string {
+  const withoutTrailingSeparators = cwd.replace(/[\\/]+$/, "");
+  if (!withoutTrailingSeparators) return "cwd /";
+  if (/^[A-Za-z]:$/.test(withoutTrailingSeparators)) return `cwd ${withoutTrailingSeparators}\\`;
+  const name = withoutTrailingSeparators.split(/[\\/]/).at(-1) || withoutTrailingSeparators;
+  return `cwd ${name}`;
+}
+
 export function statusMetadataItems(values: StatusMetadataValues): StatusMetadataItem[] {
   const items: StatusMetadataItem[] = [];
+  if (values.cwd) {
+    items.push({ key: "cwd", text: formatWorkingDirectory(values.cwd), tone: "cwd", priority: 85 });
+  }
   if (values.branch) {
     items.push({ key: "branch", text: values.branch, tone: "branch", priority: 90 });
   }
@@ -101,8 +114,10 @@ export function statusMetadataChunks(
   const chunks: TextChunk[] = [];
   for (const item of items) {
     if (chunks.length) chunks.push(fg(theme.dim)(" · "));
-    const color = item.tone === "branch"
-      ? theme.toolArg
+    const color = item.tone === "cwd"
+      ? theme.statusCwd
+      : item.tone === "branch"
+        ? theme.toolArg
       : item.tone === "warn"
         ? theme.warn
         : theme.dim;
