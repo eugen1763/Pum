@@ -269,6 +269,8 @@ describe("SubagentManager extension", () => {
     const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
     const mainDeliveries: any[] = [];
     const mainEntries: any[] = [];
+    const mainEvents: any[] = [];
+    manager.subscribe((event) => mainEvents.push(event));
     (manager as any).parentSessionId = "main-session";
     (manager as any).mainRunning = true;
     (manager as any).mainApi = {
@@ -282,6 +284,8 @@ describe("SubagentManager extension", () => {
     }));
     expect(mainEntries[0].customType).toBe(TRIGGER_EVENT_CUSTOM_TYPE);
     expect(mainDeliveries[0].options).toEqual({ deliverAs: "steer", triggerTurn: true });
+    expect(mainEvents.filter((event) => event.type === "main-line")).toEqual([]);
+    expect(mainEvents.filter((event) => event.type === "main-pending-add")).toHaveLength(1);
 
     addTestAgent(manager, "child", "idle");
     const childEntries: any[] = [];

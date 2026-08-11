@@ -1474,7 +1474,6 @@ export class SubagentManager {
         throw new Error("The main trigger target is unavailable");
       }
       this.mainApi.appendEntry(TRIGGER_EVENT_CUSTOM_TYPE, data);
-      this.emit({ type: "main-line", line });
       this.emit({ type: "main-pending-add", pending });
       if (!this.wakeMain(message, data.text, "steer")) {
         this.emit({ type: "main-pending-drop", id: data.id });
