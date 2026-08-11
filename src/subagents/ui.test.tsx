@@ -4,6 +4,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot, flushSync } from "@opentui/react";
 import { App } from "../app";
 import { MessageCacheController } from "../message-cache";
+import { formatWorkingDirectory } from "../status-metadata";
 import type { SubagentSnapshot } from "./types";
 
 let destroy: (() => void) | undefined;
@@ -370,7 +371,11 @@ describe("subagent transcript UI", () => {
     await setup.flush();
     expect(setup.captureCharFrame()).toContain("worker-one");
     expect(markdownContent(setup.renderer.root)).toContain("Subagent transcript");
-    expect(setup.captureCharFrame()).toContain("↑ 1.2k · ↓ 345 · ↺ 2.4k · $0.250 · 40%");
+    const childFrame = setup.captureCharFrame();
+    expect(childFrame).toContain(`${formatWorkingDirectory(process.cwd())} · pum/worker-one`);
+    expect(childFrame).toContain("↑ 1.2k · ↓ 345 · 40%");
+    expect(childFrame).not.toContain("↺ 2.4k");
+    expect(childFrame).not.toContain("$0.250");
 
     setup.mockInput.pressTab({ shift: true, ctrl: true });
     await new Promise((resolve) => setTimeout(resolve, 10));

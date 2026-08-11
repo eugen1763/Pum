@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { parseColor } from "@opentui/core";
 import {
   fitStatusMetadata,
+  formatWorkingDirectory,
+  statusMetadataChunks,
   statusMetadataItems,
   statusMetadataWidth,
 } from "./status-metadata";
+import { loadTheme } from "./theme";
 
 const values = {
+  cwd: "/repo/worker",
   branch: "pum/worker",
   outgoingTokens: 1200,
   incomingTokens: 345,
@@ -18,6 +23,7 @@ describe("status metadata formatting", () => {
   test("matches StatusBar compact values and marks warning context", () => {
     const items = statusMetadataItems(values);
     expect(items.map((item) => item.text)).toEqual([
+      "cwd worker",
       "pum/worker",
       "↑ 1.2k",
       "↓ 345",
@@ -43,8 +49,23 @@ describe("status metadata formatting", () => {
 
   test("fits high-priority values without changing display order", () => {
     const items = statusMetadataItems(values);
-    const fitted = fitStatusMetadata(items, 24);
-    expect(statusMetadataWidth(fitted)).toBeLessThanOrEqual(24);
-    expect(fitted.map((item) => item.key)).toEqual(["branch", "incoming", "context"]);
+    const fitted = fitStatusMetadata(items, 30);
+    expect(statusMetadataWidth(fitted)).toBeLessThanOrEqual(30);
+    expect(fitted.map((item) => item.key)).toEqual(["cwd", "branch", "context"]);
+  });
+
+  test("formats POSIX, Windows, root, and Unicode working directories", () => {
+    expect(formatWorkingDirectory("/repo/feature")).toBe("cwd feature");
+    expect(formatWorkingDirectory("C:\\dev\\Pum\\")).toBe("cwd Pum");
+    expect(formatWorkingDirectory("C:\\")).toBe("cwd C:\\");
+    expect(formatWorkingDirectory("/")).toBe("cwd /");
+    expect(formatWorkingDirectory("C:\\开发\\界面")).toBe("cwd 界面");
+  });
+
+  test("uses the semantic cwd color token", () => {
+    const theme = loadTheme("tokyonight");
+    const chunks = statusMetadataChunks(statusMetadataItems(values), theme);
+    expect(chunks[0]?.text).toBe("cwd worker");
+    expect(chunks[0]!.fg!.equals(parseColor(theme.statusCwd))).toBe(true);
   });
 });

@@ -9,6 +9,8 @@ export type Theme = {
   fg: string;
   dim: string;
   accent: string;
+  /** Foreground for the current working directory in the status bar. */
+  statusCwd: string;
   border: string;
   /** Foreground and background of a user turn's full-width bar. */
   user: string;
@@ -47,6 +49,7 @@ const tokyonight: Theme = {
   fg: "#c0caf5",
   dim: "#565f89",
   accent: "#7aa2f7",
+  statusCwd: "#2ac3de",
   border: "#292e42",
   user: "#c0caf5",
   userBg: "#283457",
@@ -79,6 +82,7 @@ const gruvbox: Theme = {
   fg: "#ebdbb2",
   dim: "#928374",
   accent: "#83a598",
+  statusCwd: "#8ec07c",
   border: "#3c3836",
   user: "#ebdbb2",
   userBg: "#3c3836",
@@ -111,6 +115,7 @@ const catppuccin: Theme = {
   fg: "#cdd6f4",
   dim: "#6c7086",
   accent: "#89b4fa",
+  statusCwd: "#94e2d5",
   border: "#313244",
   user: "#cdd6f4",
   userBg: "#313244",
@@ -143,6 +148,7 @@ const nord: Theme = {
   fg: "#d8dee9",
   dim: "#7b88a1",
   accent: "#88c0d0",
+  statusCwd: "#8fbcbb",
   border: "#3b4252",
   user: "#eceff4",
   userBg: "#434c5e",
@@ -175,6 +181,7 @@ const dracula: Theme = {
   fg: "#f8f8f2",
   dim: "#6272a4",
   accent: "#bd93f9",
+  statusCwd: "#8be9fd",
   border: "#44475a",
   user: "#f8f8f2",
   userBg: "#44475a",
@@ -207,6 +214,7 @@ const rosepine: Theme = {
   fg: "#e0def4",
   dim: "#6e6a86",
   accent: "#c4a7e7",
+  statusCwd: "#9ccfd8",
   border: "#26233a",
   user: "#e0def4",
   userBg: "#26233a",
@@ -239,6 +247,7 @@ const solarized: Theme = {
   fg: "#839496",
   dim: "#586e75",
   accent: "#268bd2",
+  statusCwd: "#2aa198",
   border: "#073642",
   user: "#93a1a1",
   userBg: "#073642",
@@ -271,6 +280,7 @@ const kanagawa: Theme = {
   fg: "#dcd7ba",
   dim: "#727169",
   accent: "#7e9cd8",
+  statusCwd: "#7fb4ca",
   border: "#2a2a37",
   user: "#dcd7ba",
   userBg: "#2d4f67",
@@ -303,6 +313,7 @@ const githubLight: Theme = {
   fg: "#24292f",
   dim: "#6e7781",
   accent: "#0969da",
+  statusCwd: "#0a3069",
   border: "#d0d7de",
   user: "#24292f",
   userBg: "#ddf4ff",

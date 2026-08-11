@@ -15,6 +15,7 @@ export type StatusProps = {
   theme: Theme;
   modelId: string;
   thinkingLevel: string;
+  cwd: string;
   branch: string | null;
   outgoingTokens: number;
   incomingTokens: number;
@@ -65,6 +66,7 @@ type StatusBarLayoutInput = Pick<
   StatusProps,
   | "modelId"
   | "thinkingLevel"
+  | "cwd"
   | "branch"
   | "outgoingTokens"
   | "incomingTokens"
@@ -181,6 +183,10 @@ export function statusBarLayout(input: StatusBarLayoutInput): StatusBarLayout {
   // Preserve operational context before decorative padding and secondary data.
   if (layout.totalWidth > input.width) {
     layout.trailingSpace = false;
+    measureLayout(input, layout);
+  }
+  if (layout.totalWidth > input.width) {
+    layout.metadata = layout.metadata.filter((item) => item.key !== "cwd");
     measureLayout(input, layout);
   }
   if (layout.totalWidth > input.width) {

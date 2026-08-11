@@ -2309,6 +2309,7 @@ export function App({
           theme={theme}
           modelId={visibleModelId}
           thinkingLevel={visibleThinkingLevel}
+          cwd={cwd}
           branch={visibleBranch}
           outgoingTokens={visibleUsage.outgoing}
           incomingTokens={visibleUsage.incoming}

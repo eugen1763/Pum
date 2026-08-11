@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { parseColor } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import type { ComponentProps } from "react";
@@ -24,6 +25,7 @@ async function renderStatus(
         theme={loadTheme("tokyonight")}
         modelId="mock-model"
         thinkingLevel="off"
+        cwd="/repo/project"
         branch="main"
         outgoingTokens={1200}
         incomingTokens={345}
@@ -46,9 +48,46 @@ async function renderStatus(
   return setup.captureCharFrame();
 }
 
+async function renderStatusSetup(
+  width: number,
+  overrides: Partial<ComponentProps<typeof StatusBar>> = {},
+) {
+  const setup = await createTestRenderer({ width, height: 8 });
+  destroy = () => setup.renderer.destroy();
+  const theme = loadTheme("tokyonight");
+  createRoot(setup.renderer).render(
+    <AnimationProvider enabled={false}>
+      <StatusBar
+        theme={theme}
+        modelId="mock-model"
+        thinkingLevel="off"
+        cwd="C:\\dev\\Pum"
+        branch="main"
+        outgoingTokens={0}
+        incomingTokens={0}
+        cacheReadTokens={0}
+        cost={0}
+        contextPct={20}
+        busy={false}
+        elapsedSec={0}
+        agentCount={0}
+        runningAgentCount={0}
+        maxActiveAgentCount={10}
+        {...overrides}
+      />
+    </AnimationProvider>,
+  );
+  await setup.renderOnce();
+  await setup.flush();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await setup.renderOnce();
+  return { setup, theme };
+}
+
 const thresholdInput = {
   modelId: "m",
   thinkingLevel: "o",
+  cwd: "/repo/project",
   branch: "main",
   outgoingTokens: 1200,
   incomingTokens: 345,
@@ -106,8 +145,17 @@ function expectAgentCounts(
 describe("StatusBar usage and subagent counts", () => {
   test("shows separate compact token metrics in a wide layout", async () => {
     const frame = await renderStatus(100, 0, 0);
-    expect(frame).toContain("main · ↑ 1.2k · ↓ 345 · ↺ 2.4k · 20%");
+    expect(frame).toContain("cwd project · main · ↑ 1.2k · ↓ 345 · ↺ 2.4k · 20%");
     expectOneMeasuredLine(frame, 100);
+  });
+
+  test("renders cwd immediately before branch with its semantic color", async () => {
+    const { setup, theme } = await renderStatusSetup(100);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("cwd Pum · main");
+    const cwdSpan = setup.captureSpans().lines.flatMap((line) => line.spans)
+      .find((span) => span.text === "cwd Pum");
+    expect(cwdSpan?.fg.equals(parseColor(theme.statusCwd))).toBe(true);
   });
 
   test("shows separate idle and capacity-aware working counts", async () => {
@@ -139,30 +187,25 @@ describe("StatusBar usage and subagent counts", () => {
   });
 
   test("removes optional fields in the exact required threshold order", () => {
-    expect(visibleOptionalFields(58)).toEqual([
-      "title", "branch", "outgoing", "incoming", "cacheRead", "cost", "context",
+    expect(visibleOptionalFields(72)).toEqual([
+      "title", "cwd", "branch", "outgoing", "incoming", "cacheRead", "cost", "context",
     ]);
-    expect(visibleOptionalFields(57)).toEqual([
-      "title", "branch", "outgoing", "incoming", "cacheRead", "context",
+    expect(visibleOptionalFields(71)).toEqual([
+      "title", "cwd", "branch", "outgoing", "incoming", "cacheRead", "context",
     ]);
-    expect(visibleOptionalFields(49)).toEqual([
-      "title", "branch", "outgoing", "incoming", "cacheRead", "context",
+    expect(visibleOptionalFields(63)).toEqual([
+      "title", "cwd", "branch", "outgoing", "incoming", "cacheRead", "context",
     ]);
-    expect(visibleOptionalFields(48)).toEqual([
-      "title", "branch", "outgoing", "incoming", "context",
+    expect(visibleOptionalFields(62)).toEqual([
+      "title", "cwd", "branch", "outgoing", "incoming", "context",
     ]);
-    expect(visibleOptionalFields(40)).toEqual([
-      "title", "branch", "outgoing", "incoming", "context",
+    expect(visibleOptionalFields(53)).toEqual([
+      "title", "cwd", "branch", "incoming", "context",
     ]);
-    expect(visibleOptionalFields(39)).toEqual([
-      "title", "branch", "incoming", "context",
-    ]);
-    expect(visibleOptionalFields(31)).toEqual([
-      "title", "branch", "incoming", "context",
-    ]);
-    expect(visibleOptionalFields(30)).toEqual(["title", "branch", "context"]);
-    expect(visibleOptionalFields(23)).toEqual(["title", "branch", "context"]);
-    expect(visibleOptionalFields(22)).toEqual(["branch", "context"]);
+    expect(visibleOptionalFields(44)).toEqual(["title", "cwd", "branch", "context"]);
+    expect(visibleOptionalFields(36)).toEqual(["cwd", "branch", "context"]);
+    expect(visibleOptionalFields(29)).toEqual(["branch", "context"]);
+    expect(visibleOptionalFields(15)).toEqual(["context"]);
   });
 
   test("prioritizes active work across branch, model, thinking, and agent metadata", () => {
@@ -216,6 +259,7 @@ describe("StatusBar usage and subagent counts", () => {
       const frame = await renderStatus(width, 12, 9, {
         modelId: "模型-ultra-long",
         thinkingLevel: "high",
+        cwd: "C:\\开发\\界面",
         branch: "feature/very-long",
         cost: 0.25,
         contextPct: 88,

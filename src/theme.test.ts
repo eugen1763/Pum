@@ -20,6 +20,8 @@ describe("rejection theme tokens", () => {
       expect(theme.rejection).toBe(theme.warn);
       expect(theme.rejection).not.toBe(theme.error);
       expect(theme.rejectionBg).not.toBe(theme.bg);
+      expect(theme.statusCwd).toBeTruthy();
+      expect(theme.statusCwd).not.toBe(theme.dim);
       expect(theme.popupShadow).toBeTruthy();
       expect(theme.popupShadow).not.toBe(theme.popupBg);
     }
@@ -30,9 +32,11 @@ describe("rejection theme tokens", () => {
     temporaryDirectories.push(directory);
     const rejection = PRESETS["github-light"]!.accent;
     const rejectionBg = PRESETS["github-light"]!.userBg;
+    const statusCwd = PRESETS["github-light"]!.codeType;
     writeFileSync(join(directory, "theme.json"), JSON.stringify({
       rejection,
       rejectionBg,
+      statusCwd,
       popupShadow: PRESETS["github-light"]!.border,
       unknownRejectionToken: "ignored",
     }));
@@ -58,6 +62,7 @@ describe("rejection theme tokens", () => {
     const theme = JSON.parse(stdout);
     expect(theme.rejection).toBe(rejection);
     expect(theme.rejectionBg).toBe(rejectionBg);
+    expect(theme.statusCwd).toBe(statusCwd);
     expect(theme.popupShadow).toBe(PRESETS["github-light"]!.border);
     expect(theme.unknownRejectionToken).toBeUndefined();
   });
