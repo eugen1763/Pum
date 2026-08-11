@@ -82,7 +82,7 @@ bun run start    # open the TUI in the current directory
 | Alt+V | Attach an image from the graphical clipboard |
 | Ctrl+Backspace / Ctrl+W | Delete the previous word |
 | Ctrl+H | Open session history when the terminal reports it distinctly |
-| Ctrl+N | Open recent answers (News); `c` copies the selected answer |
+| Ctrl+N | Open recent answers (News); `n` jumps to the answer, `p` to the user prompt, and `c` copies the selected answer |
 | Ctrl+End | Scroll to the end of the selected transcript |
 | Tab | Open/close the prompt stash on an empty input |
 | Shift+Up / Shift+Down | Extend a prompt-stash selection |
@@ -499,7 +499,9 @@ These were chosen deliberately. Change them only on purpose.
   event, stream, or queued message) leaves it unread. Resumed transcripts are
   tagged with news ids at launch as well as on session switch. A resumed
   answer whose text no longer matches a replayed line stays unread by design.
-  The popup copies the selected answer to the clipboard on `c`.
+  The popup copies the selected answer to the clipboard on `c`. Its controls stay
+  inside the popup frame. Press `n` to jump to the answer and `p` to jump to the
+  user prompt.
 
 ## Things that bite
 

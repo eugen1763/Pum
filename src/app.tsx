@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimationProvider, supportsTrueColor, useWorkingRule, type WorkingRuleRole } from "./animation";
 import {
   filterModels,
@@ -162,6 +162,26 @@ const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup"
  * than a bit mask: Shift=1, Alt=2, Ctrl=4.
  */
 const MODIFIED_ENTER_SEQUENCE = /^\x1b\[(?:13;(\d+)u|27;(\d+);13~)$/;
+const KITTY_PRINTABLE_SEQUENCE = /^\x1b\[(\d+)(?:;\d+(?::\d+)?)?u$/;
+const MODIFY_OTHER_KEYS_PRINTABLE_SEQUENCE = /^\x1b\[27;\d+;(\d+)~$/;
+
+function printableKeyCharacter(
+  name: string | undefined,
+  sequence: string,
+  raw = sequence,
+): string | undefined {
+  if (name?.length === 1) return name.toLowerCase();
+  for (const candidate of [sequence, raw]) {
+    if (candidate.length === 1) return candidate.toLowerCase();
+    const kitty = KITTY_PRINTABLE_SEQUENCE.exec(candidate);
+    const modifyOtherKeys = MODIFY_OTHER_KEYS_PRINTABLE_SEQUENCE.exec(candidate);
+    const codePoint = Number(kitty?.[1] ?? modifyOtherKeys?.[1]);
+    if (!Number.isInteger(codePoint) || codePoint < 0x20 || codePoint > 0x10FFFF) continue;
+    if (codePoint >= 0xD800 && codePoint <= 0xDFFF) continue;
+    return String.fromCodePoint(codePoint).toLowerCase();
+  }
+  return undefined;
+}
 
 function modifiedEnterFromSequence(sequence: string) {
   const match = MODIFIED_ENTER_SEQUENCE.exec(sequence);
@@ -1490,6 +1510,44 @@ export function App({
     setNewsCursor(next);
   };
 
+  const jumpFromNews = (target: "answer" | "prompt") => {
+    const item = newsRef.current[newsCursorRef.current];
+    if (!item) return;
+    const lines = txRef.current.lines;
+    const answerIndex = lines.findIndex((line) =>
+      line.kind === "text" && line.role === "assistant" && line.newsId === item.id,
+    );
+    let targetIndex = answerIndex;
+    if (target === "prompt") {
+      const promptText = item.prompts?.find((prompt) => !prompt.steer)?.text
+        ?? item.prompts?.[0]?.text;
+      targetIndex = -1;
+      if (promptText) {
+        const end = answerIndex >= 0 ? answerIndex : lines.length;
+        for (let index = end - 1; index >= 0; index--) {
+          const line = lines[index];
+          if (line?.kind === "text" && line.role === "user" && line.text === promptText) {
+            targetIndex = index;
+            break;
+          }
+        }
+      }
+    }
+    if (targetIndex < 0) return;
+
+    if (activeAgentIdRef.current !== null && !selectAgentView(null)) return;
+    newsOpenRef.current = false;
+    setNewsOpen(false);
+    const scrollToTarget = () => {
+      const transcript = transcriptScrollRef.current;
+      if (!transcript) return;
+      transcript.scrollTop = 0;
+      transcript.scrollChildIntoView(`transcript-line-${targetIndex}`);
+    };
+    queueMicrotask(scrollToTarget);
+    setTimeout(scrollToTarget, 30);
+  };
+
   const toggleCurrentNewsRead = () => {
     const item = newsRef.current[newsCursorRef.current];
     if (!item) return;
@@ -2355,19 +2413,22 @@ export function App({
       return;
     }
 
-    if (key.ctrl && key.name === "n") {
+    const printableKey = printableKeyCharacter(key.name, key.sequence, key.raw);
+    if (key.ctrl && printableKey === "n") {
       key.stopPropagation();
       if (newsOpenRef.current) closeNews();
       else openNews();
       return;
     }
-    if (newsOpenRef.current) {
+    if (newsOpenRef.current || newsOpen) {
       key.stopPropagation();
       if (key.name === "escape") closeNews();
       else if (key.name === "left") moveNewsCursor(1);
       else if (key.name === "right") moveNewsCursor(-1);
       else if (key.name === "space" || key.sequence === " ") toggleCurrentNewsRead();
-      else if (key.name === "c" || key.sequence === "c") void copyNewsAnswer();
+      else if (printableKey === "n") jumpFromNews("answer");
+      else if (printableKey === "p") jumpFromNews("prompt");
+      else if (printableKey === "c") void copyNewsAnswer();
       else if (key.name === "return" || key.name === "enter" || key.name === "kpenter")
         replyToCurrentNews();
       return;
@@ -2812,10 +2873,14 @@ export function App({
                   ? `agent:${line.sender}:${line.recipient}:${i}:${line.text}`
                   : `text:${line.role}:${i}:${line.text}`;
             return (
-              <Fragment key={lineKey}>
+              <box
+                id={`transcript-line-${i}`}
+                key={lineKey}
+                style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}
+              >
                 {gapBefore ? <Gap /> : null}
                 {row}
-              </Fragment>
+              </box>
             );
           })}
           {visibleTx.stream ? (
@@ -2925,7 +2990,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="word"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !checkApproval}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !newsOpen && !loginOpen && !questionnaire && !spawnPreview && !checkApproval}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}

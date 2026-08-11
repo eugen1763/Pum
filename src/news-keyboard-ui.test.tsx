@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { MarkdownRenderable, type BaseRenderable } from "@opentui/core";
+import { MarkdownRenderable, ScrollBoxRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { mkdtempSync } from "node:fs";
@@ -62,7 +62,7 @@ const T0 = 1_700_000_000_000;
 async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.renderOnce();
   await setup.flush();
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 40));
   await setup.renderOnce();
   await setup.flush();
 }
@@ -174,6 +174,71 @@ describe("news keyboard shortcuts", () => {
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("2 / 3");
     expect(newsMarkdownSetup(setup)).toBe("Older answer.");
+  });
+
+  test("n closes News and jumps to the answer; p jumps to the user prompt", async () => {
+    const before = Array.from({ length: 18 }, (_, index) => ({
+      type: "message",
+      message: {
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: index % 2 === 0
+          ? `Earlier prompt ${index}`
+          : [{ type: "text", text: `Earlier answer ${index}` }],
+      },
+    }));
+    const after = Array.from({ length: 18 }, (_, index) => ({
+      type: "message",
+      message: {
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: index % 2 === 0
+          ? `Later prompt ${index}`
+          : [{ type: "text", text: `Later answer ${index}` }],
+      },
+    }));
+    const prompt = "Target user prompt";
+    const answer = "Target assistant answer";
+    const promptIndex = before.length;
+    const answerIndex = promptIndex + 1;
+    const session = fakeSession(undefined, [
+      ...before,
+      { type: "message", message: { role: "user", content: prompt } },
+      { type: "message", message: { role: "assistant", content: [{ type: "text", text: answer }] } },
+      ...after,
+    ]);
+    saveNewsItems(session.sessionFile, [{
+      ...newsItem("a1", answer, T0),
+      prompts: [{ text: prompt, steer: false }],
+    }]);
+    const setup = await renderApp(session);
+    const renderable = setup.renderer.root.findDescendantById("transcript-scrollbox");
+    expect(renderable).toBeInstanceOf(ScrollBoxRenderable);
+    const transcript = renderable as ScrollBoxRenderable;
+    expect(transcript.scrollHeight).toBeGreaterThan(transcript.viewport.height);
+
+    setup.mockInput.pressKey("n", { ctrl: true });
+    await settle(setup);
+    await setup.mockInput.typeText("n");
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("1 / 1");
+    expectTranscriptTargetVisible(transcript, answerIndex);
+
+    setup.mockInput.pressKey("n", { ctrl: true });
+    await settle(setup);
+    setup.renderer.keyInput.processParsedKey({
+      name: "",
+      ctrl: false,
+      meta: false,
+      shift: false,
+      option: false,
+      number: false,
+      sequence: "\u001b[112u",
+      raw: "\u001b[112u",
+      eventType: "press",
+      source: "kitty",
+    });
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("1 / 1");
+    expectTranscriptTargetVisible(transcript, promptIndex);
   });
 
   test("Space toggles the current answer read and unread", async () => {
@@ -335,6 +400,13 @@ function expectSetupInput(setup: Awaited<ReturnType<typeof createTestRenderer>>,
   expect(
     setup.captureCharFrame().split("\n").some((line) => line.includes(`❯ ${text}`)),
   ).toBe(true);
+}
+
+function expectTranscriptTargetVisible(transcript: ScrollBoxRenderable, index: number) {
+  const target = transcript.findDescendantById(`transcript-line-${index}`);
+  expect(target).toBeDefined();
+  expect(target!.screenY).toBeGreaterThanOrEqual(transcript.viewport.screenY);
+  expect(target!.screenY).toBeLessThan(transcript.viewport.screenY + transcript.viewport.height);
 }
 
 function descendants<T extends BaseRenderable>(

@@ -8,7 +8,7 @@ import type { Theme } from "./theme";
 
 /**
  * Presentational popup for recent final answers. It owns no keyboard logic;
- * `app.tsx` routes arrows, Space, Enter, Esc, and C to the shared handlers.
+ * `app.tsx` routes arrows, Space, Enter, Esc, C, N, and P to the shared handlers.
  */
 export function NewsPopup({
   theme,
@@ -45,6 +45,14 @@ export function NewsPopup({
     });
   }, [itemId, count]);
 
+  const footer = count === 0
+    ? "esc close"
+    : terminalWidth >= 90
+      ? "← → navigate · n answer · p prompt · space read/unread · c copy · enter reply · esc close"
+      : terminalWidth >= 64
+        ? "←→ navigate · n answer · p prompt · space read · c copy · enter reply · esc"
+        : "←→ nav · n answer · p prompt · space read · c copy · enter · esc";
+
   return (
     <PopupFrame
       theme={theme}
@@ -63,24 +71,29 @@ export function NewsPopup({
           </box>
           <box style={{ height: 1, flexShrink: 0 }} />
           <scrollbox
+            id="news-scrollbox"
             ref={markdownScrollRef}
             verticalScrollbarOptions={{ visible: true }}
-            style={{ width: bodyWidth, flexGrow: 1, flexShrink: 0, minWidth: 0 }}
+            style={{ width: bodyWidth, flexGrow: 1, flexShrink: 1, minHeight: 1, minWidth: 0 }}
           >
             <box style={{ width: "100%", paddingRight: 1 }}>
-              {current.prompts?.map((prompt, index) => (
-                <TextLine
-                  key={`${index}:${prompt.text}:${prompt.steer}`}
-                  theme={theme}
-                  syntaxStyle={syntaxStyle}
-                  role="user"
-                  text={prompt.text}
-                />
-              ))}
+              {current.prompts && current.prompts.length > 0 ? (
+                <box style={{ width: "100%", flexShrink: 0 }}>
+                  {current.prompts.map((prompt, index) => (
+                    <TextLine
+                      key={`${index}:${prompt.text}:${prompt.steer}`}
+                      theme={theme}
+                      syntaxStyle={syntaxStyle}
+                      role="user"
+                      text={prompt.text}
+                    />
+                  ))}
+                </box>
+              ) : null}
               {current.prompts && current.prompts.length > 0 ? (
                 <box style={{ height: 1, flexShrink: 0 }} />
               ) : null}
-              <box style={{ flexDirection: "row", width: "100%" }}>
+              <box style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}>
                 <box style={{ width: 2, flexShrink: 0 }}>
                   <text
                     content={seen ? "✓ " : "◦ "}
@@ -109,13 +122,11 @@ export function NewsPopup({
       )}
       <box style={{ height: 1, flexShrink: 0 }} />
       <text
-        content={count === 0
-          ? "esc close"
-          : "← → navigate · space read/unread · c copy · enter reply · esc close"}
+        content={footer}
         fg={theme.dim}
         bg={theme.popupBg}
         wrapMode="none"
-        style={{ flexShrink: 0 }}
+        style={{ height: 1, flexShrink: 0 }}
       />
     </PopupFrame>
   );

@@ -142,6 +142,7 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `
 | `Shift+Tab` / `Ctrl+Shift+Tab` | Cycle through agent transcripts |
 | `Ctrl+H` | Open session history when the terminal reports the key distinctly |
 | `Ctrl+N` | Open recent answers (News) |
+| `n` / `p` in News | Jump to the answer / user prompt |
 | `Ctrl+End` | Scroll to the end of the selected transcript |
 | `Ctrl+P` | Open settings |
 | `Ctrl+T` | Open supervised external triggers |
@@ -178,6 +179,8 @@ PUM limits remote OSC 52 payloads to 100,000 Base64 characters. This limit preve
 Open the News popup with `Ctrl+N` or `/news`. It lists the final answers of user-initiated turns, newest first. Each entry shows the user prompt and any follow-up steers that produced the answer, above the answer itself.
 
 - `←` / `→` — move between answers
+- `n` — jump to the answer
+- `p` — jump to the user prompt
 - `Space` — toggle an answer between read and unread
 - `c` — copy the current answer to the clipboard
 - `Enter` — reply to the current answer with a quoted draft
