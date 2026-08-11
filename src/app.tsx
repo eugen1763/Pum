@@ -509,7 +509,7 @@ export function App({
   const { width, height } = useTerminalDimensions();
   const syntaxStyle = useMemo(() => buildSyntaxStyle(theme), [theme]);
   const newsReadById = useMemo(
-    () => new Map(news.map((item) => [item.id, item.read || item.answered])),
+    () => new Map(news.map((item) => [item.id, item.read])),
     [news],
   );
   const animations = settings.animations && supportsTrueColor();
@@ -1470,12 +1470,12 @@ export function App({
     setNewsCursor(next);
   };
 
-  const markCurrentNewsRead = () => {
+  const toggleCurrentNewsRead = () => {
     const item = newsRef.current[newsCursorRef.current];
-    if (!item || item.read || item.answered) return;
+    if (!item) return;
     commitNews(
       newsRef.current.map((entry) =>
-        entry.id === item.id ? { ...entry, read: true } : entry,
+        entry.id === item.id ? { ...entry, read: !entry.read } : entry,
       ),
     );
   };
@@ -2319,7 +2319,7 @@ export function App({
       if (key.name === "escape") closeNews();
       else if (key.name === "left") moveNewsCursor(1);
       else if (key.name === "right") moveNewsCursor(-1);
-      else if (key.name === "space" || key.sequence === " ") markCurrentNewsRead();
+      else if (key.name === "space" || key.sequence === " ") toggleCurrentNewsRead();
       else if (key.name === "return" || key.name === "enter" || key.name === "kpenter")
         replyToCurrentNews();
       return;

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { MarkdownRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { mkdtempSync } from "node:fs";
@@ -148,27 +149,26 @@ describe("news keyboard shortcuts", () => {
 
     setup.mockInput.pressKey("n", { ctrl: true });
     await settle(setup);
-    let frame = setup.captureCharFrame();
-    expect(frame).toContain("1 / 3");
-    expect(frame).toContain("Newest answer.");
+    expect(setup.captureCharFrame()).toContain("1 / 3");
+    expect(newsMarkdownSetup(setup)).toBe("Newest answer.");
 
     setup.mockInput.pressArrow("left");
     await settle(setup);
-    frame = setup.captureCharFrame();
-    expect(frame).toContain("2 / 3");
-    expect(frame).toContain("Older answer.");
+    expect(setup.captureCharFrame()).toContain("2 / 3");
+    expect(newsMarkdownSetup(setup)).toBe("Older answer.");
 
     setup.mockInput.pressArrow("left");
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("3 / 3");
+    expect(newsMarkdownSetup(setup)).toBe("Oldest answer.");
 
     setup.mockInput.pressArrow("right");
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("2 / 3");
-    expect(setup.captureCharFrame()).toContain("Older answer.");
+    expect(newsMarkdownSetup(setup)).toBe("Older answer.");
   });
 
-  test("Space marks the current answer as read", async () => {
+  test("Space toggles the current answer read and unread", async () => {
     const session = fakeSession();
     saveNewsItems(session.sessionFile, [newsItem("a1", "Unseen answer.", T0)]);
     const setup = await renderApp(session);
@@ -181,6 +181,15 @@ describe("news keyboard shortcuts", () => {
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("✓");
     expect(setup.captureCharFrame()).not.toContain("◦");
+
+    await setup.mockInput.typeText(" ");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("◦");
+    expect(setup.captureCharFrame()).not.toContain("✓");
+
+    await setup.mockInput.typeText(" ");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("✓");
   });
 
   test("Enter replies with a prefilled quote and closes the popup", async () => {
@@ -244,4 +253,27 @@ function expectSetupInput(setup: Awaited<ReturnType<typeof createTestRenderer>>,
   expect(
     setup.captureCharFrame().split("\n").some((line) => line.includes(`❯ ${text}`)),
   ).toBe(true);
+}
+
+function descendants<T extends BaseRenderable>(
+  root: BaseRenderable,
+  type: abstract new (...args: any[]) => T,
+): T[] {
+  const found: T[] = [];
+  const visit = (node: BaseRenderable) => {
+    if (node instanceof type) found.push(node);
+    for (const child of node.getChildren()) visit(child);
+  };
+  visit(root);
+  return found;
+}
+
+/** The news popup body is a single MarkdownRenderable with the answer text. */
+function newsMarkdownSetup(setup: Awaited<ReturnType<typeof createTestRenderer>>): string {
+  const rows = descendants(setup.renderer.root, MarkdownRenderable);
+  expect(rows.length).toBeGreaterThan(0);
+  const row = rows[rows.length - 1]!;
+  expect(row.width).toBeGreaterThan(0);
+  expect(row.height).toBeGreaterThan(0);
+  return row.content;
 }
