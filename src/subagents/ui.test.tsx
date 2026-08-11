@@ -201,6 +201,66 @@ async function press(
 }
 
 describe("subagent transcript UI", () => {
+  test("moves an idle-open reminder from queued to the durable transcript row", async () => {
+    const setup = await createTestRenderer({ width: 90, height: 24, kittyKeyboard: true });
+    destroy = () => setup.renderer.destroy();
+    let listener: ((event: any) => void) | undefined;
+    const manager = {
+      getAgents: () => [],
+      subscribe(callback: (event: any) => void) {
+        listener = callback;
+        return () => { listener = undefined; };
+      },
+      bindMainSession: async () => {},
+      persistToolEvent() {},
+      createStandaloneWorktree: async () => snapshot.worktree,
+    } as any;
+    const session = fakeSession();
+    flushSync(() => createRoot(setup.renderer).render(
+      <App
+        session={session}
+        modelRuntime={{ getAvailableSnapshot: () => [] } as any}
+        onNewSession={async () => session}
+        loadSessions={async () => []}
+        onSwitchSession={async () => session}
+        settings={{
+          showThinking: false,
+          theme: "tokyonight",
+          animations: false,
+          workingRuleAnimation: "off",
+          webSearch: false,
+          writingStyle: "none",
+          explanationStrength: "simple",
+          checkMode: "off",
+          checkModel: "mock/check",
+          maxActiveSubagents: 10,
+        }}
+        searchProviders={[]}
+        subagentManager={manager}
+      />,
+    ));
+    await settle(setup);
+    const pending = {
+      id: "idle-open-reminder-main-1",
+      line: {
+        kind: "agent-message" as const,
+        sender: "pum",
+        recipient: "main",
+        text: "Reminder: managed subagents remain open.",
+      },
+    };
+
+    listener?.({ type: "main-pending-add", pending });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("pum → main · queued");
+    expect(setup.captureCharFrame()).toContain("managed subagents remain open");
+
+    listener?.({ type: "main-pending-resolve", id: pending.id });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("pum → main");
+    expect(setup.captureCharFrame()).not.toContain("pum → main · queued");
+  });
+
   test("restores main usage and resets it for a new session", async () => {
     const setup = await createTestRenderer({ width: 120, height: 24, kittyKeyboard: true });
     destroy = () => setup.renderer.destroy();
