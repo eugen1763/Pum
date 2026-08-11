@@ -91,6 +91,8 @@ bun run start
 
 PUM opens the login panel automatically when no provider is available. Use `/login` later to add or update a provider. During browser-based login, PUM opens credential-free HTTP(S) authentication URLs with the platform browser. The URL remains selectable when automatic launch is unavailable.
 
+Custom OpenAI-compatible provider fields accept terminal bracketed paste and local `Ctrl+V` clipboard paste for endpoint URLs and API keys. PUM routes pasted API keys directly to the login controller and renders only a length mask. Remote sessions do not invoke a local host clipboard command.
+
 Resume the latest session for the current directory:
 
 ```bash

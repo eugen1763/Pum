@@ -2,6 +2,15 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.5-beta.1] - 2026-08-11
+
+### Fixed
+- Removed the special background from Check mode rejected tool and reason rows, while keeping all rejection text orange and rendering the exact `Check mode hard block:` prefix with a visible bold attribute.
+- Added bracketed-paste and local `Ctrl+V` support for custom-provider endpoint and API-key fields without exposing secret text in React state, labels, logs, errors, or sessions.
+
+### Security
+- Bounded local clipboard text capture, used direct process arguments, and blocked host clipboard fallback in remote sessions.
+
 ## [0.2.4-beta.1] - 2026-08-10
 
 ### Fixed
