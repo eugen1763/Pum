@@ -13,6 +13,7 @@ import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { installWebSearch, webSearch } from "./web-search";
+import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
 import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-prompt";
 import {
@@ -24,7 +25,6 @@ import {
   createExternalTriggerSafetyChecker,
   setCheckModeConfig,
 } from "./check-mode";
-import { CheckApprovalCoordinator, CheckApprovalStore } from "./check-approvals";
 import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
 import { shutdownSignals } from "./platform";
@@ -80,17 +80,10 @@ export async function start(options: StartupOptions): Promise<void> {
     model: settings.checkModel,
     additionalPaths: checkPathsForProject(settings, process.cwd()),
   });
-  const checkApprovalCoordinator = new CheckApprovalCoordinator();
-  const checkApprovalStore = new CheckApprovalStore();
-  const mainCheckModeExtension = createCheckModeExtension(modelRuntime, undefined, {
-    coordinator: checkApprovalCoordinator,
-    approvals: checkApprovalStore,
+  const mainCheckModeExtension = createCheckModeExtension(modelRuntime, {
     identity: { kind: "main" },
   });
-  const externalTriggerSafety = createExternalTriggerSafetyChecker(modelRuntime, {
-    coordinator: checkApprovalCoordinator,
-    approvals: checkApprovalStore,
-  });
+  const externalTriggerSafety = createExternalTriggerSafetyChecker(modelRuntime);
   let subagentManager!: SubagentManager;
   const triggerManager = new TriggerManager({
     process: new NodeTriggerProcessAdapter(),
@@ -143,14 +136,13 @@ export async function start(options: StartupOptions): Promise<void> {
     messageCacheController,
     triggerManager,
     childExtensionFactories: [
+      identityExtension,
       writingStyleExtension,
       explanationStrengthExtension,
       checkModePromptExtension,
     ],
     childExtensionFactoriesForAgent: [
-      (agentId) => createCheckModeExtension(modelRuntime, undefined, {
-        coordinator: checkApprovalCoordinator,
-        approvals: checkApprovalStore,
+      (agentId) => createCheckModeExtension(modelRuntime, {
         identity: { kind: "subagent", agentId },
       }),
       (_agentId, isReadonly) => sandboxController.extension({ readonly: isReadonly }),
@@ -173,6 +165,7 @@ export async function start(options: StartupOptions): Promise<void> {
         modelRuntime,
         resourceLoaderOptions: {
           extensionFactories: [
+            identityExtension,
             writingStyleExtension,
             explanationStrengthExtension,
             checkModePromptExtension,
@@ -265,8 +258,6 @@ export async function start(options: StartupOptions): Promise<void> {
       }}
       sandboxWarningSource={sandboxController}
       loginRequired={loginRequired}
-      checkApprovalCoordinator={checkApprovalCoordinator}
-      checkApprovalStore={checkApprovalStore}
       triggerManager={triggerManager}
       onExit={() => shutdown(0)}
     />,

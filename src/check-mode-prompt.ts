@@ -21,31 +21,26 @@ export const HARD_BLOCKED_RULES = [
   "Delete broadly.",
 ] as const;
 
-const PERMITTED_RULES: Record<Exclude<CheckModeProfile, "off">, readonly string[]> = {
-  strict: [
-    "Run only complete project-local calls.",
-    "Read and edit project files, and apply_patch, only after the verifier returns SAFE.",
-    "Unclear, error, and unavailable verifier results block.",
-  ],
-  balanced: [
-    "Run complete project-local bash calls.",
-    "Read project files and explicit external files.",
-    "Edit and apply_patch inside the project.",
-    "Deterministic validation must be complete before a call is allowed.",
-  ],
-  ask: [
-    "Nothing is auto-allowed in ask mode.",
-    "Every checked bash, edit, and apply_patch call presents a preview for explicit user approval.",
-  ],
-};
+/** What on-mode permits. On-mode runs the former balanced behavior. */
+const PERMITTED_RULES: readonly string[] = [
+  "Run complete project-local bash calls.",
+  "Read project files and explicit external files.",
+  "Edit and apply_patch inside the project.",
+  "Deterministic validation must be complete before a call is allowed.",
+];
 
 /** Build the concise allowed-and-denied block for one active Check mode state. */
 export function buildCheckModePrompt(state: CheckModePromptState): string {
   const roots = state.additionalPaths.length > 0
     ? state.additionalPaths.join(", ")
     : "none";
-  const header = "## Allowed and denied under the active Check mode profile\n\n"
-    + `Active profile: ${state.profile}. Sandbox: ${state.sandboxMode}. `
+  // Sandbox enforcement requires Check mode to be on (src/sandbox/index.ts),
+  // so the off state reports the resolved state, not the configured mode.
+  const sandboxLabel = state.profile === "off"
+    ? "not enforced (Check mode off)"
+    : state.sandboxMode;
+  const header = "## Allowed and denied under Check mode\n\n"
+    + `Check mode: ${state.profile}. Sandbox: ${sandboxLabel}. `
     + `Additional approved roots: ${roots}.`;
   if (state.profile === "off") {
     return `${header}\n\nCheck mode is off. Bash, edit, and apply_patch run without approval checks.`;
@@ -53,14 +48,13 @@ export function buildCheckModePrompt(state: CheckModePromptState): string {
   const lines = [
     header,
     "",
-    `Permitted by ${state.profile}:`,
-    ...PERMITTED_RULES[state.profile].map((rule) => `- ${rule}`),
+    "Permitted when Check mode is on:",
+    ...PERMITTED_RULES.map((rule) => `- ${rule}`),
     "",
-    "Hard-blocked in every active profile:",
+    "Hard-blocked when Check mode is on:",
     ...HARD_BLOCKED_RULES.map((rule) => `- ${rule}`),
     "",
-    "Ask mode presents each checked call for explicit user approval.",
-    "A verifier UNSAFE result blocks without the popup.",
+    "A verifier UNSAFE result blocks the call. The only exception is a direct npm publish or npm dist-tag add from the main agent, which is allowed.",
     "Do not retry a blocked call.",
   ];
   return lines.join("\n");

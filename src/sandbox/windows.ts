@@ -129,11 +129,21 @@ function uniqueWindowsPaths(paths: readonly string[]): string[] {
 	return result;
 }
 
+/** A drive root (C:\) or a UNC share root is its own parent directory. */
+function isBroadWindowsRoot(path: string): boolean {
+	return win32.dirname(path) === path;
+}
+
 function windowsRuntimePaths(executable: string): string[] {
 	const executableDirectory = win32.dirname(executable);
-	return win32.basename(executableDirectory).toLowerCase() === "bin"
-		? [win32.dirname(executableDirectory)]
-		: [executableDirectory];
+	// A tool inside a bin directory usually references sibling lib/share trees,
+	// so grant its parent. Never grant a drive or UNC root: C:\bin\bash.exe
+	// would otherwise expose the whole volume. Fall back to the bin directory.
+	const candidate = win32.basename(executableDirectory).toLowerCase() === "bin"
+		&& !isBroadWindowsRoot(win32.dirname(executableDirectory))
+		? win32.dirname(executableDirectory)
+		: executableDirectory;
+	return isBroadWindowsRoot(candidate) ? [] : [candidate];
 }
 
 function sandboxEnvironment(policy: SandboxPolicy): string[] {
@@ -270,10 +280,14 @@ function startSandboxProcess(
 				reject(new Error("aborted"));
 				return;
 			}
-			if (
-				timedOut ||
-				(exitCode !== 0 && /(?:script|process|command) timed out after \d+ms/iu.test(stderrTail))
-			) {
+			// The watchdog timer is the real timeout signal. The stderr sniff only
+			// recognizes MXC's internal enforcement, so gate it on an actually
+			// configured timeout. Otherwise a plain non-zero exit whose stderr
+			// happens to contain "process timed out after Nms" is misreported.
+			const stderrTimeout = options.timeoutSeconds !== undefined
+				&& exitCode !== 0
+				&& /(?:script|process|command) timed out after \d+ms/iu.test(stderrTail);
+			if (timedOut || stderrTimeout) {
 				reject(new Error(`timeout:${options.timeoutSeconds}`));
 				return;
 			}

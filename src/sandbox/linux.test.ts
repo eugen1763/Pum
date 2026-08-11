@@ -128,6 +128,38 @@ describe("Linux Bubblewrap sandbox", () => {
     expect(host).not.toContain("--unshare-net");
   });
 
+  test("mounts the shell executable directory read-only when no mount covers it", () => {
+    const args = buildBubblewrapArgv(policy({
+      executable: "/run/current-system/sw/bin/bash",
+      args: ["-lc", "git status --short"],
+      readOnlyPaths: [],
+      readWritePaths: ["/work/project"],
+      deniedPaths: [],
+    }), { systemMounts: ["/usr", "/bin"], pathKind: () => undefined });
+
+    const roIndex = args.findIndex(
+      (value, index) => value === "--ro-bind"
+        && args[index + 1] === "/run/current-system/sw/bin"
+        && args[index + 2] === "/run/current-system/sw/bin",
+    );
+    const writableIndex = args.indexOf("--bind");
+    expect(roIndex).toBeGreaterThan(-1);
+    // Read-only executable mount stays before the writable project mount.
+    expect(roIndex).toBeLessThan(writableIndex);
+    expect(args.slice(-3)).toEqual(["/run/current-system/sw/bin/bash", "-lc", "git status --short"]);
+  });
+
+  test("does not add a redundant executable mount when a system mount covers it", () => {
+    const args = buildBubblewrapArgv(policy({ deniedPaths: [] }), {
+      systemMounts: ["/usr"],
+      pathKind: () => undefined,
+    });
+    const executableDirMounts = args.filter(
+      (value, index) => value === "--ro-bind" && args[index + 1] === "/usr/bin",
+    );
+    expect(executableDirMounts).toHaveLength(0);
+  });
+
   test("rejects a working directory that is outside every mount", () => {
     expect(() => buildBubblewrapArgv(policy({
       cwd: "/outside",

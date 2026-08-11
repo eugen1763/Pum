@@ -12,8 +12,22 @@ import type { SandboxMode } from "./sandbox/types";
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
-export const CHECK_MODE_PROFILES = ["off", "strict", "balanced", "ask"] as const;
+export const CHECK_MODE_PROFILES = ["off", "on"] as const;
 export type CheckModeProfile = (typeof CHECK_MODE_PROFILES)[number];
+
+/**
+ * Map any stored checkMode value to the current on/off model.
+ *
+ * Check mode was slimmed from four profiles to a single toggle. "on" runs the
+ * former balanced behavior. Legacy strict, balanced, and ask values, and the
+ * legacy boolean true, all migrate to "on". off and false migrate to "off".
+ */
+export function migrateCheckMode(value: unknown): CheckModeProfile {
+  if (value === "off" || value === false) return "off";
+  if (value === "on" || value === true
+    || value === "strict" || value === "balanced" || value === "ask") return "on";
+  return "off";
+}
 export const SANDBOX_MODES = ["auto", "require", "off"] as const;
 export const MIN_ACTIVE_SUBAGENTS = 1;
 export const MAX_ACTIVE_SUBAGENTS = 25;
@@ -126,13 +140,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     explanationStrength: isExplanationStrength(merged.explanationStrength)
       ? merged.explanationStrength
       : DEFAULTS.explanationStrength,
-    checkMode: isCheckModeProfile(merged.checkMode)
-      ? merged.checkMode
-      : merged.checkMode === true
-        ? "strict"
-        : merged.checkMode === false
-          ? "off"
-          : DEFAULTS.checkMode,
+    checkMode: migrateCheckMode(merged.checkMode),
     checkModel:
       typeof merged.checkModel === "string" && merged.checkModel.includes("/")
         ? merged.checkModel

@@ -17,7 +17,6 @@ export type SettingRowId =
   | "sandboxMode"
   | "checkModel"
   | "checkPaths"
-  | "clearCheckApprovals"
   | "thinkingLevel"
   | "showThinking"
   | "maxActiveSubagents"
@@ -44,11 +43,10 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose ste simplified technical english", description: "Add per-turn response guidance. STE requests concise Simplified Technical English." },
   { id: "explanationStrength", label: "Explanations", category: "Agent", keywords: "progress updates output none simple detailed rationale", description: "Choose how much regular output explains the agent plan, actions, decisions, and results." },
   { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },
-  { id: "checkMode", label: "Check mode", category: "Safety", keywords: "profile strict balanced ask verify tools hard block approval bash edit patch", description: "Choose off, strict, balanced, or ask. Hard security rules apply to every active profile." },
+  { id: "checkMode", label: "Check mode", category: "Safety", keywords: "on off verify tools hard block bash edit patch", description: "Turn Check mode on or off. On verifies bash, edit, and apply_patch and applies hard security rules." },
   { id: "sandboxMode", label: "Sandbox", category: "Safety", keywords: "os isolation auto require off enforcement fallback bash", description: "Choose automatic fallback, required OS enforcement, or no OS sandbox for Bash commands." },
   { id: "checkModel", label: "Check model", category: "Safety", keywords: "verifier tools safety structured verdict model", description: "Select the separate verifier model used for ambiguous Check mode calls." },
   { id: "checkPaths", label: "Allowed paths", category: "Safety", keywords: "additional directories roots boundary sandbox command", description: "Use /check-path to manage extra directory roots allowed by the filesystem sandbox and Check mode for this project." },
-  { id: "clearCheckApprovals", label: "Clear approvals", category: "Safety", keywords: "remove reset exact project approvals ask", description: "Remove exact Check mode approvals stored for this project." },
 ];
 
 export function filterSettingsRows(query: string): SettingRow[] {

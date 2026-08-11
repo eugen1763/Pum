@@ -116,16 +116,6 @@ import { providerLoginMethods, refreshAndSelectModel } from "./login-flow";
 import { questionnaireDetail, QuestionnaireManager } from "./questionnaire";
 import { QuestionnairePopup } from "./questionnaire-popup";
 import {
-  CheckApprovalPopup,
-  invokeCheckApprovalDecision,
-  type CheckApprovalDecision,
-} from "./check-approval-popup";
-import type {
-  CheckApprovalCoordinator,
-  CheckApprovalRequest,
-  CheckApprovalStore,
-} from "./check-approvals";
-import {
   moveTriggerSelection,
   sortTriggers,
   triggerActionForKey,
@@ -411,8 +401,6 @@ export function App({
   stagePastedText = stagePastedTextDefault,
   copyNewsAnswerText = copyTextToClipboard,
   onExit = () => process.exit(0),
-  checkApprovalCoordinator,
-  checkApprovalStore,
   triggerManager,
   messageCacheController,
   terminalTitle,
@@ -441,8 +429,6 @@ export function App({
   /** Copies the selected news answer for the popup. */
   copyNewsAnswerText?: typeof copyTextToClipboard;
   onExit?: () => void | Promise<void>;
-  checkApprovalCoordinator?: CheckApprovalCoordinator;
-  checkApprovalStore?: CheckApprovalStore;
   triggerManager?: TriggerManagerLike;
   messageCacheController?: MessageCacheController;
   terminalTitle?: TerminalTitleController;
@@ -496,6 +482,10 @@ export function App({
   const [settingsSearchFocused, setSettingsSearchFocused] = useState(true);
   const [selectedSettingId, setSelectedSettingId] = useState<SettingRowId | null>(SETTINGS_ROWS[0]!.id);
   const [settings, setSettings] = useState(initial);
+  // Mirrors settings for update(): a keypress or an async .then can fire a
+  // second update before React commits the first, so update() must build the
+  // next value from the latest pending settings, not the render closure.
+  const settingsRef = useRef(settings);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(
     session.agent.state.thinkingLevel as ThinkingLevel,
   );
@@ -529,8 +519,6 @@ export function App({
   }));
   const [modelQuery, setModelQuery] = useState("");
   const [modelSearchFocused, setModelSearchFocused] = useState(false);
-  const [checkApproval, setCheckApproval] = useState<CheckApprovalRequest | null>(null);
-  const [checkApprovalDecision, setCheckApprovalDecision] = useState<CheckApprovalDecision>("allowOnce");
   const [, setAgentRevision] = useState(0);
   const [triggersOpen, setTriggersOpen] = useState(false);
   const [triggerCursor, setTriggerCursor] = useState(0);
@@ -755,6 +743,13 @@ export function App({
     else if (editingIndex !== null && editingIndex > index) {
       editingStashIndex.current = editingIndex - 1;
     }
+    // The stash is shared across agent views, so a delete shifts the indices
+    // that every other view checked out. Reindex the saved per-view values too,
+    // or a later submit in another view would overwrite the wrong cached row.
+    for (const [key, value] of viewEditingStashIndices.current) {
+      if (value === index) viewEditingStashIndices.current.set(key, null);
+      else if (value !== null && value > index) viewEditingStashIndices.current.set(key, value - 1);
+    }
 
     if (next.length === 0) setStashMode(false);
     else setSelectedStash(Math.min(index, next.length - 1));
@@ -971,6 +966,7 @@ export function App({
       agentSelectorOpen ||
       helpOpen ||
       historyOpen ||
+      newsOpenRef.current ||
       settingsOpenRef.current
     ) return;
     const input = inputRef.current;
@@ -1026,10 +1022,6 @@ export function App({
     append({ kind: "text", role: "system", text: warning });
   }), [sandboxWarningSource]);
 
-  useEffect(() => checkApprovalCoordinator?.subscribe((request) => {
-    setCheckApproval(request);
-    setCheckApprovalDecision("allowOnce");
-  }), [checkApprovalCoordinator]);
 
   useEffect(() => triggerManager?.subscribe(() => {
     setTriggerRevision((revision) => revision + 1);
@@ -1346,7 +1338,8 @@ export function App({
   }, [activeAgent?.id, activeAgent?.status, activeAgent?.runStartedAt, visibleBusy]);
 
   const update = (patch: Partial<PumSettings>) => {
-    const next = { ...settings, ...patch };
+    const next = { ...settingsRef.current, ...patch };
+    settingsRef.current = next;
     setSettings(next);
     if (patch.webSearch !== undefined) webSearch.enabled = patch.webSearch;
     if (patch.writingStyle !== undefined) setWritingStyle(patch.writingStyle);
@@ -1656,7 +1649,12 @@ export function App({
     const restore = queued.length ? queued[queued.length - 1]! : inFlight.current;
     if (inputRef.current && !inputRef.current.plainText) setEditorText(restore);
     histCursor.current = null;
-    session.abort().finally(() => setWorking(false));
+    // clearQueue may have dropped a subagent completion notice queued to the
+    // streaming main agent; re-arm undelivered notices so a merge is not stuck.
+    session.abort().finally(() => {
+      setWorking(false);
+      void subagentManager.resendUndeliveredMainSettlements();
+    });
   };
 
   const recallQueuedUserMessage = async (target: string | null) => {
@@ -1664,7 +1662,12 @@ export function App({
       ? await subagentManager.recallQueuedUserMessage(target)
       : await recallNewestQueuedUserMessage(session, tx.pending);
     if (!recalled) return;
-    if (!target) dropPending(recalled.id);
+    // Recalling from the main queue clears it, which can drop a queued subagent
+    // completion notice; re-arm undelivered notices so a merge is not stuck.
+    if (!target) {
+      dropPending(recalled.id);
+      void subagentManager.resendUndeliveredMainSettlements();
+    }
     const key = target ?? "main";
     viewDrafts.current.set(key, recalled.text);
     if (activeAgentIdRef.current === target) {
@@ -1856,6 +1859,11 @@ export function App({
   };
 
   const submitPrompt = (value?: string, stashIndex?: number) => {
+    // Read the selected agent from the ref, not the state. A view switch updates
+    // the ref synchronously, but a switch-then-send in one input chunk runs
+    // before React commits the new state, so the state would still name the
+    // previous agent and deliver the prompt to the wrong session.
+    const selectedAgentId = activeAgentIdRef.current;
     const displayText = value ?? inputRef.current?.plainText ?? "";
     const attachments = value === undefined ? [...pendingImages.current] : [];
     const pastedTexts = value === undefined ? [...pendingPastedTexts.current] : [];
@@ -1884,7 +1892,7 @@ export function App({
     // The temp files must survive until the turn that reads them settles, so
     // move them out of the draft tracking before the editor is cleared below.
     if (value === undefined && pastedTexts.length > 0) {
-      const targetKey = activeAgentId ?? "main";
+      const targetKey = selectedAgentId ?? "main";
       const existing = postTurnPastedTexts.current.get(targetKey) ?? [];
       postTurnPastedTexts.current.set(targetKey, [...existing, ...pastedTexts]);
       pendingPastedTexts.current = [];
@@ -1899,9 +1907,9 @@ export function App({
       return;
     }
 
-    if (activeAgentId) {
+    if (selectedAgentId) {
       void subagentManager
-        .sendUserMessage(activeAgentId, promptText, images, displayText.trim())
+        .sendUserMessage(selectedAgentId, promptText, images, displayText.trim())
         .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
       return;
     }
@@ -2008,18 +2016,6 @@ export function App({
     }));
   };
 
-  const resolveCheckApproval = (decision: CheckApprovalDecision) => {
-    if (!checkApproval || !checkApprovalCoordinator) return;
-    const choice = decision === "allowOnce"
-      ? "allow-once"
-      : decision === "allowSession"
-        ? "allow-session"
-        : decision === "allowProject"
-          ? "allow-project"
-          : "deny";
-    checkApprovalCoordinator.resolve(checkApproval.id, choice);
-  };
-
   const stepCheckMode = (step: number) => {
     const index = CHECK_MODE_PROFILES.indexOf(settings.checkMode);
     update({ checkMode: CHECK_MODE_PROFILES[(index + step + CHECK_MODE_PROFILES.length) % CHECK_MODE_PROFILES.length]! });
@@ -2052,12 +2048,6 @@ export function App({
       role: "system",
       text: "use /check-path [list|add <directory>|remove <directory>|clear]",
     }) },
-    clearCheckApprovals: { enter: () => {
-      const removed = checkApprovalStore?.clearProject(cwd) ?? 0;
-      append({ kind: "text", role: "system", text: removed > 0
-        ? `cleared ${removed} Check mode project approval${removed === 1 ? "" : "s"}`
-        : "no Check mode project approvals were stored" });
-    } },
     thinkingLevel: { step: stepThinking },
     showThinking: { step: () => update({ showThinking: !settings.showThinking }) },
     maxActiveSubagents: { step: (step) => update({
@@ -2091,7 +2081,6 @@ export function App({
     sandboxMode: `‹ ${settings.sandboxMode ?? "auto"} ›`,
     checkModel: `${settings.checkModel} ›`,
     checkPaths: `${checkPathsForProject(settings, cwd).length} additional · /check-path ›`,
-    clearCheckApprovals: "clear ›",
     thinkingLevel: `‹ ${thinkingLevel} ›`,
     showThinking: `‹ ${settings.showThinking ? "on" : "off"} ›`,
     maxActiveSubagents: `‹ ${settings.maxActiveSubagents} ›`,
@@ -2185,40 +2174,19 @@ export function App({
   });
 
   useKeyboard((key) => {
-    if (checkApproval) {
-      key.stopPropagation();
-      if (key.name === "escape" || (key.ctrl && key.name === "c")) {
-        resolveCheckApproval("deny");
-        return;
-      }
-      const decisions: CheckApprovalDecision[] = ["allowOnce", "allowSession", "allowProject", "deny"];
-      const index = decisions.indexOf(checkApprovalDecision);
-      if (["left", "up"].includes(key.name)) {
-        setCheckApprovalDecision(decisions[(index - 1 + decisions.length) % decisions.length]!);
-      } else if (["right", "down", "tab"].includes(key.name)) {
-        setCheckApprovalDecision(decisions[(index + 1) % decisions.length]!);
-      } else if (["return", "enter", "kpenter", "linefeed"].includes(key.name)) {
-        invokeCheckApprovalDecision(checkApprovalDecision, {
-          onAllowOnce: () => resolveCheckApproval("allowOnce"),
-          onAllowSession: () => resolveCheckApproval("allowSession"),
-          onAllowProject: () => resolveCheckApproval("allowProject"),
-          onDeny: () => resolveCheckApproval("deny"),
-        });
-      }
-      return;
-    }
-
     if (spawnPreview) {
       const isPreviewReturn = ["return", "enter", "kpenter", "linefeed"].includes(key.name);
       if (key.name === "escape" || (key.ctrl && key.name === "c")) {
         key.stopPropagation();
         spawnPreviewInputRef.current?.setText("");
-        spawnPreviewManager?.cancel();
+        // Bind the action to the request the popup rendered; if the active
+        // request changed under it, this is a no-op instead of hitting another.
+        spawnPreviewManager?.cancel("cancelled", spawnPreview.id);
       } else if (isPreviewReturn && !key.shift && !key.ctrl && !key.meta && !key.option) {
         key.stopPropagation();
         const note = spawnPreviewInputRef.current?.plainText ?? "";
         spawnPreviewInputRef.current?.setText("");
-        spawnPreviewManager?.approve(note);
+        spawnPreviewManager?.approve(note, spawnPreview.id);
       }
       return;
     }
@@ -2761,10 +2729,13 @@ export function App({
       } else if ((activeAgentId && visibleBusy) || (!activeAgentId && busyRef.current)) {
         key.stopPropagation();
         const now = Date.now();
-        const target = activeAgentId ?? "main";
+        // Cancel the agent named by the ref, not the state: a switch-then-Esc in
+        // one input chunk must abort the newly selected agent, not the previous.
+        const selected = activeAgentIdRef.current;
+        const target = selected ?? "main";
         if (confirmsCancellation(lastCancelPress.current, cancelTarget.current, target, now)) {
           resetCancelArm();
-          if (activeAgentId) void subagentManager.abortAgent(activeAgentId);
+          if (selected) void subagentManager.abortAgent(selected);
           else cancel();
         } else {
           lastCancelPress.current = now;
@@ -2990,7 +2961,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="word"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !newsOpen && !loginOpen && !questionnaire && !spawnPreview && !checkApproval}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !newsOpen}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -3078,32 +3049,6 @@ export function App({
             cursor={newsCursor}
             terminalWidth={width}
             terminalHeight={height}
-          />
-        ) : null}
-        {checkApproval ? (
-          <CheckApprovalPopup
-            theme={theme}
-            request={{
-              tool: checkApproval.toolName,
-              summary: checkApproval.summary,
-              reason: checkApproval.reason,
-              paths: checkApproval.paths,
-              preview: { kind: checkApproval.toolName === "bash" ? "command" : "diff", text: checkApproval.preview },
-              agentLabel: checkApproval.target?.agentId
-                ? agents.find((agent) => agent.id === checkApproval.target?.agentId)?.name ?? "subagent"
-                : checkApproval.target?.sessionId
-                  ? "main"
-                  : checkApproval.cwd === cwd
-                    ? "main"
-                    : agents.find((agent) => agent.worktree.path === checkApproval.cwd)?.name ?? "subagent",
-            }}
-            selectedDecision={checkApprovalDecision}
-            terminalWidth={width}
-            terminalHeight={height}
-            onAllowOnce={() => resolveCheckApproval("allowOnce")}
-            onAllowSession={() => resolveCheckApproval("allowSession")}
-            onAllowProject={() => resolveCheckApproval("allowProject")}
-            onDeny={() => resolveCheckApproval("deny")}
           />
         ) : null}
         {settingsOpen ? (

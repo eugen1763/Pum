@@ -60,6 +60,51 @@ describe("CLI argument parsing", () => {
     });
   });
 
+  test("parses the one-shot prompt option", () => {
+    expect(parseCliArgs(["-p", "write hello world"])).toEqual({
+      kind: "start",
+      options: { login: false, resume: false, prompt: "write hello world" },
+    });
+    expect(parseCliArgs(["--prompt", "task", "-r"])).toEqual({
+      kind: "start",
+      options: { login: false, resume: true, prompt: "task" },
+    });
+  });
+
+  test("treats a prompt value that looks like a flag as prompt text", () => {
+    expect(parseCliArgs(["-p", "--help"])).toEqual({
+      kind: "start", options: { login: false, resume: false, prompt: "--help" },
+    });
+    expect(parseCliArgs(["--prompt", "-v"])).toEqual({
+      kind: "start", options: { login: false, resume: false, prompt: "-v" },
+    });
+    // A real --help flag still short-circuits.
+    expect(parseCliArgs(["--help", "-p", "x"])).toEqual({ kind: "help" });
+  });
+
+  test("rejects invalid prompt option forms", () => {
+    expect(parseCliArgs(["-p"])).toEqual({
+      kind: "error",
+      message: "Missing prompt text after -p",
+    });
+    expect(parseCliArgs(["--prompt"])).toEqual({
+      kind: "error",
+      message: "Missing prompt text after --prompt",
+    });
+    expect(parseCliArgs(["-p", "one", "-p", "two"])).toEqual({
+      kind: "error",
+      message: "Only one --prompt is supported",
+    });
+    expect(parseCliArgs(["login", "-p", "task"])).toEqual({
+      kind: "error",
+      message: "Cannot combine login with --prompt",
+    });
+    expect(parseCliArgs(["-p", "   "])).toEqual({
+      kind: "error",
+      message: "The prompt text is empty",
+    });
+  });
+
   test("rejects unknown options and commands", () => {
     expect(parseCliArgs(["--unknown"])).toEqual({
       kind: "error",
@@ -97,6 +142,14 @@ describe("non-interactive CLI", () => {
       await expectNoStartup(result);
     }
   });
+
+  test("one-shot prompt without a provider fails fast and never opens the TUI", async () => {
+    const result = await runCli("-p", "say hi");
+    expect(result.timedOut).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("no provider is available");
+  }, 20_000);
 
   test("unknown long and short options fail with a concise help hint", async () => {
     for (const option of ["--unknown", "-x"]) {

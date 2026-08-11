@@ -119,6 +119,23 @@ test("buildWindowsMxcConfig maps the complete restrictive policy", () => {
 	expect(config.network?.enforcementMode).toBe("capabilities");
 });
 
+test("buildWindowsMxcConfig never exposes a drive root for a bin shell", () => {
+	let received: { filesystem: { readonlyPaths: string[] } } | undefined;
+	buildWindowsMxcConfig(
+		{
+			createConfigFromPolicy: (input) => {
+				received = input as typeof received;
+				return configFactory(input);
+			},
+		},
+		{ ...policy, executable: "C:\\bin\\bash.exe", readOnlyPaths: [] },
+		undefined,
+	);
+	expect(received?.filesystem.readonlyPaths).toContain("C:\\bin");
+	expect(received?.filesystem.readonlyPaths).not.toContain("C:\\");
+	expect(received?.filesystem.readonlyPaths.some((path) => /^[A-Za-z]:\\?$/u.test(path))).toBe(false);
+});
+
 test("probe does not import MXC away from Windows", async () => {
 	let loaded = false;
 	const result = await probeWindowsSandbox(
@@ -280,6 +297,39 @@ test("backend cancellation kills the MXC executor and rejects as aborted", async
 	controller.abort();
 	await expect(handle.completed).rejects.toThrow("aborted");
 	expect(child.killCalls).toBe(1);
+});
+
+test("does not misreport a plain non-zero exit as a timeout without a configured timeout", async () => {
+	class FakeChild extends EventEmitter {
+		stdout = new PassThrough();
+		stderr = new PassThrough();
+		stdin = new PassThrough();
+		killCalls = 0;
+		kill() {
+			this.killCalls += 1;
+			return true;
+		}
+	}
+	const child = new FakeChild();
+	const backend = new MxcSandboxBackend({
+		platform: "win32",
+		loader: async () =>
+			({
+				getPlatformSupport: () => supported,
+				createConfigFromPolicy: configFactory,
+				spawnSandboxFromConfig: () => child,
+			}) as never,
+	});
+	const handle = backend.spawn(policy, {
+		onStdout: () => {},
+		onStderr: () => {},
+	});
+	await Bun.sleep(0);
+	// A build tool prints this text on its own failure; no timeout was configured.
+	child.stderr.write("error: the process timed out after 500ms waiting for a lock\n");
+	child.emit("close", 1, null);
+	expect(await handle.completed).toEqual({ exitCode: 1, signal: null });
+	expect(child.killCalls).toBe(0);
 });
 
 test("backend maps the native MXC timeout envelope to pi timeout semantics", async () => {

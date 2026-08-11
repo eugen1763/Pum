@@ -270,7 +270,8 @@ describe("SubagentManager extension", () => {
     const result = beforeStart?.({ systemPrompt: "base prompt" });
     expect(result.systemPrompt).toContain(SUBAGENT_COORDINATION_SYSTEM_PROMPT);
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
-    expect(result.systemPrompt).toContain("0/10 active; 10 slots available");
+    expect(result.systemPrompt).toContain("Subagent capacity: slots are available (limit 10)");
+    expect(result.systemPrompt).toContain("call enable_tools with Subagents first");
     expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
     expect(definitions.get("spawn_subagent").parameters.properties.preview).toBeDefined();
     expect(definitions.get("spawn_subagent").parameters.properties.readonly).toBeUndefined();
@@ -287,6 +288,8 @@ describe("SubagentManager extension", () => {
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("stop the exchange immediately");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("A normal 'Message from <agent>' is not a completion notification");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("An idle settlement is not completion");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("Never use force removal on a managed agent");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("non-force worktree remove");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).not.toContain("as soon as it settles");
 
     handlers.get("message_start")?.[0]?.({
@@ -1249,7 +1252,7 @@ describe("SubagentManager extension", () => {
     });
 
     const result = handlers.get("before_agent_start")?.({ systemPrompt: "base" });
-    expect(result.systemPrompt).toContain("0/14 active; 14 slots available");
+    expect(result.systemPrompt).toContain("Subagent capacity: slots are available (limit 14)");
     expect(result.systemPrompt).toContain("recursively merge or resolve every retained descendant");
     expect(result.systemPrompt).toContain("Before finish_subagent");
   });
@@ -1259,15 +1262,26 @@ describe("SubagentManager extension", () => {
     addTestAgent(manager, "failed-child", "failed");
     await expect((manager as any).worktreeAction("/tmp", "remove", "failed-child", undefined, true))
       .rejects.toThrow("Cannot force-remove managed subagent failed-child");
+    // The rejection names the valid close path for a completed empty agent.
+    await expect((manager as any).worktreeAction("/tmp", "remove", "failed-child", undefined, true))
+      .rejects.toThrow("retry the remove without force");
     expect(manager.getAgent("failed-child")).toBeDefined();
   });
 
   test("changes follow-up guidance at the configured capacity", () => {
-    expect(buildSubagentCapacityPrompt(3, 4)).toContain("3/4 active; 1 slot available");
+    expect(buildSubagentCapacityPrompt(3, 4)).toContain("slots are available (limit 4)");
     expect(buildSubagentCapacityPrompt(3, 4)).toContain("Prefer spawn_subagent");
     expect(buildSubagentCapacityPrompt(4, 4)).toContain("no slots available");
     expect(buildSubagentCapacityPrompt(4, 4)).toContain("appropriate related running subagent");
     expect(buildSubagentCapacityPrompt(4, 4)).toContain("keep the work pending");
+  });
+
+  test("keeps the capacity prompt cache-stable while slots remain available", () => {
+    // Exact active counts stay out of the text so the system prompt does not
+    // change on every agent transition and invalidate provider prompt caches.
+    expect(buildSubagentCapacityPrompt(0, 10)).toBe(buildSubagentCapacityPrompt(9, 10));
+    expect(buildSubagentCapacityPrompt(3, 4)).not.toContain("3");
+    expect(buildSubagentCapacityPrompt(10, 10)).toBe(buildSubagentCapacityPrompt(12, 10));
   });
 
   test("rejects another active subagent at a custom lower limit", async () => {
@@ -1303,7 +1317,7 @@ describe("SubagentManager extension", () => {
     (manager.mainExtension() as { factory: (api: any) => void }).factory(pi);
 
     const result = handlers.get("before_agent_start")?.[0]?.({ systemPrompt: "base prompt" });
-    expect(result.systemPrompt).toContain("12/12 active; no slots available");
+    expect(result.systemPrompt).toContain("all 12 slots are active; no slots available");
     expect(result.systemPrompt).toContain("Queue follow-up work with message_agent");
     expect(result.systemPrompt).toContain("keep the work pending for deliberate routing");
   });

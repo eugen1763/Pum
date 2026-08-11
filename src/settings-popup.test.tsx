@@ -26,13 +26,12 @@ describe("settings search and navigation", () => {
   test("filters labels, categories, and useful keywords", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual([
-      "checkMode", "sandboxMode", "checkModel", "checkPaths", "clearCheckApprovals",
+      "checkMode", "sandboxMode", "checkModel", "checkPaths",
     ]);
     expect(filterSettingsRows("reasoning visible").map((row) => row.id)).toEqual(["showThinking"]);
     expect(filterSettingsRows("progress detailed").map((row) => row.id)).toEqual(["explanationStrength"]);
     expect(filterSettingsRows("parallel capacity").map((row) => row.id)).toEqual(["maxActiveSubagents"]);
-    expect(filterSettingsRows("strict balanced ask").map((row) => row.id)).toEqual(["checkMode"]);
-    expect(filterSettingsRows("exact project approvals").map((row) => row.id)).toEqual(["clearCheckApprovals"]);
+    expect(filterSettingsRows("verify tools bash").map((row) => row.id)).toEqual(["checkMode"]);
     expect(SETTINGS_ROWS.every((row) => row.description.length > 20)).toBe(true);
   });
 
@@ -51,8 +50,7 @@ describe("settings search and navigation", () => {
     const rows = filterSettingsRows("check");
     expect(moveSettingSelection(rows, "checkMode", 1)).toBe("checkModel");
     expect(moveSettingSelection(rows, "checkModel", 1)).toBe("checkPaths");
-    expect(moveSettingSelection(rows, "checkPaths", 1)).toBe("clearCheckApprovals");
-    expect(moveSettingSelection(rows, "clearCheckApprovals", 1)).toBe("checkMode");
+    expect(moveSettingSelection(rows, "checkPaths", 1)).toBe("checkMode");
     expect(moveSettingSelection([], "checkMode", 1)).toBeNull();
   });
 
@@ -106,7 +104,7 @@ describe("settings popup layout", () => {
             theme={theme}
             page="main"
             rows={SETTINGS_ROWS}
-            selectedId="clearCheckApprovals"
+            selectedId="checkPaths"
             values={values}
             query=""
             searchFocused={false}
@@ -130,7 +128,7 @@ describe("settings popup layout", () => {
 
       const frame = setup.captureCharFrame();
       const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
-      expect(frame).toContain("Clear approvals");
+      expect(frame).toContain("Allowed paths");
       expect(frame).toContain("/ search");
       expect(spans.some((span) => span.fg.equals(parseColor(theme.popupShadow)))).toBe(true);
       expect(frame.split("\n").slice(0, -1)).toHaveLength(height);

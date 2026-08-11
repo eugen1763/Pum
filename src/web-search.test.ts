@@ -1,8 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   SearchCallRouter,
   SearchCallTracker,
+  webSearch,
   webSearchArgument,
+  wrapProvider,
 } from "./web-search";
 
 describe("web search arguments", () => {
@@ -82,5 +84,84 @@ describe("web search routing", () => {
 
     expect(main).toEqual(["main-search"]);
     expect(child).toEqual(["child-search"]);
+  });
+});
+
+/** Fake base provider that records the options each stream method receives. */
+function recordingProvider(received: any[]): any {
+  return {
+    stream: (_m: any, _c: any, options: any) => {
+      received.push(options);
+      return {};
+    },
+    streamSimple: (_m: any, _c: any, options: any) => {
+      received.push(options);
+      return {};
+    },
+  };
+}
+
+describe("web search provider wrapping", () => {
+  afterEach(() => {
+    webSearch.enabled = false;
+  });
+
+  // Defect 1: the wrapper must chain, not overwrite, a pre-existing onPayload,
+  // so pi's before_provider_request extension hook still runs on Codex.
+  test("chains a provided onPayload and appends the search tool after it", async () => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const wrapped = wrapProvider(recordingProvider(received));
+
+    let baseCalled = false;
+    const baseHook = (payload: any) => {
+      baseCalled = true;
+      return { ...payload, tagged: true };
+    };
+    wrapped.streamSimple({} as any, {} as any, { onPayload: baseHook } as any);
+
+    const chained = received[0].onPayload as (p: unknown, m: unknown) => Promise<any>;
+    expect(typeof chained).toBe("function");
+    const out = await chained({ tools: [] }, {});
+
+    expect(baseCalled).toBe(true); // the user extension hook still ran
+    expect(out.tagged).toBe(true); // its transform survived
+    expect(out.tools).toEqual([{ type: "web_search" }]); // tool appended around it
+  });
+
+  // The base hook must still run (and its result be preserved) even when search
+  // is off, so the extension hook is never disabled by the toggle.
+  test("preserves the base hook result when search is off", async () => {
+    webSearch.enabled = false;
+    const received: any[] = [];
+    const wrapped = wrapProvider(recordingProvider(received));
+
+    const baseHook = (payload: any) => ({ ...payload, tagged: true });
+    wrapped.streamSimple({} as any, {} as any, { onPayload: baseHook } as any);
+
+    const chained = received[0].onPayload as (p: unknown, m: unknown) => Promise<any>;
+    const out = await chained({ tools: [] }, {});
+    expect(out.tagged).toBe(true);
+    expect(out.tools).toEqual([]); // no hosted tool while search is off
+  });
+
+  // Defect 2: verifier/safety requests reach the provider through completeSimple
+  // with NO onPayload hook. They must never receive the hosted web_search tool,
+  // even while search is enabled for chat turns.
+  test("does not attach the search tool to hook-less (verifier) requests", () => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const wrapped = wrapProvider(recordingProvider(received));
+
+    // Mirrors check-mode's completeSimple options: no onPayload.
+    wrapped.streamSimple({} as any, {} as any, {
+      temperature: 0,
+      maxTokens: 180,
+      maxRetries: 0,
+    } as any);
+
+    // With no agent hook present, no onPayload is installed, so the request body
+    // is never rewritten to include { type: "web_search" }.
+    expect(received[0].onPayload).toBeUndefined();
   });
 });

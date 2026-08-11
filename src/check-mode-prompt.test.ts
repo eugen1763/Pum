@@ -23,45 +23,43 @@ afterEach(() => {
 });
 
 describe("buildCheckModePrompt", () => {
-  test("reports an off profile with no approval checks", () => {
+  test("reports Check mode off with no approval checks", () => {
     const block = buildCheckModePrompt({ profile: "off", sandboxMode: "off", additionalPaths: [] });
-    expect(block).toContain("Active profile: off");
+    expect(block).toContain("Check mode: off");
     expect(block).toContain("run without approval checks");
     expect(block).not.toContain("Hard-blocked");
   });
 
-  test("reports the strict profile and fail-closed verifier gate", () => {
-    const block = buildCheckModePrompt({ profile: "strict", sandboxMode: "auto", additionalPaths: [] });
-    expect(block).toContain("Active profile: strict");
-    expect(block).toContain("Sandbox: auto");
-    expect(block).toContain("Permitted by strict");
-    expect(block).toContain("after the verifier returns SAFE");
-    expect(block).toContain("Hard-blocked in every active profile");
-    expect(block).toContain("A verifier UNSAFE result blocks without the popup");
+  test("reports the sandbox as not enforced while Check mode is off", () => {
+    // Sandbox enforcement requires Check mode to be on, so the configured mode
+    // must not suggest an active sandbox when Check mode is off.
+    const block = buildCheckModePrompt({ profile: "off", sandboxMode: "auto", additionalPaths: [] });
+    expect(block).toContain("Sandbox: not enforced (Check mode off)");
+    expect(block).not.toContain("Sandbox: auto");
   });
 
-  test("reports the balanced profile and its project-local grants", () => {
-    const block = buildCheckModePrompt({ profile: "balanced", sandboxMode: "auto", additionalPaths: [] });
-    expect(block).toContain("Active profile: balanced");
-    expect(block).toContain("Permitted by balanced");
+  test("reports Check mode on with its project-local grants and hard blocks", () => {
+    const block = buildCheckModePrompt({ profile: "on", sandboxMode: "auto", additionalPaths: [] });
+    expect(block).toContain("Check mode: on");
+    expect(block).toContain("Sandbox: auto");
+    expect(block).toContain("Permitted when Check mode is on:");
     expect(block).toContain("complete project-local bash calls");
     expect(block).toContain("Edit and apply_patch inside the project");
-    expect(block).toContain("Hard-blocked in every active profile");
-    expect(block).not.toMatch(/npm (publish|install|pack)/);
+    expect(block).toContain("Hard-blocked when Check mode is on:");
+    // The narrow npm pack/install rules stay out of the prompt. The npm publish
+    // sentence is the documented UNSAFE allow exception.
+    expect(block).not.toMatch(/npm (install|pack)/);
   });
 
-  test("reports the ask profile with explicit approval for every checked call", () => {
-    const block = buildCheckModePrompt({ profile: "ask", sandboxMode: "require", additionalPaths: [] });
-    expect(block).toContain("Active profile: ask");
-    expect(block).toContain("Sandbox: require");
-    expect(block).toContain("explicit user approval");
-    expect(block).toContain("Ask mode presents each checked call for explicit user approval");
-    expect(block).toContain("Hard-blocked in every active profile");
-    expect(block).toContain("A verifier UNSAFE result blocks without the popup");
+  test("states the UNSAFE block and the main npm publish allow exception", () => {
+    const block = buildCheckModePrompt({ profile: "on", sandboxMode: "require", additionalPaths: [] });
+    expect(block).toContain("A verifier UNSAFE result blocks the call.");
+    expect(block).toContain("npm publish or npm dist-tag add from the main agent, which is allowed");
+    expect(block).toContain("Do not retry a blocked call.");
   });
 
   test("lists every always-blocked rule", () => {
-    const block = buildCheckModePrompt({ profile: "strict", sandboxMode: "auto", additionalPaths: [] });
+    const block = buildCheckModePrompt({ profile: "on", sandboxMode: "auto", additionalPaths: [] });
     for (const rule of HARD_BLOCKED_RULES) {
       expect(block).toContain(rule);
     }
@@ -69,33 +67,33 @@ describe("buildCheckModePrompt", () => {
 
   test("lists the additional approved project roots", () => {
     const block = buildCheckModePrompt({
-      profile: "balanced",
+      profile: "on",
       sandboxMode: "auto",
       additionalPaths: ["C:/data/one", "D:/data/two"],
     });
     expect(block).toContain("Additional approved roots: C:/data/one, D:/data/two.");
   });
 
-  test("regenerates when the profile or roots change", () => {
-    const before = buildCheckModePrompt({
-      profile: "balanced",
+  test("regenerates when the toggle or roots change", () => {
+    const on = buildCheckModePrompt({
+      profile: "on",
       sandboxMode: "auto",
       additionalPaths: ["C:/data/one"],
     });
-    const afterProfile = buildCheckModePrompt({
-      profile: "ask",
+    const off = buildCheckModePrompt({
+      profile: "off",
       sandboxMode: "auto",
       additionalPaths: ["C:/data/one"],
     });
-    const afterRoots = buildCheckModePrompt({
-      profile: "balanced",
+    const onMoreRoots = buildCheckModePrompt({
+      profile: "on",
       sandboxMode: "auto",
       additionalPaths: ["C:/data/one", "D:/data/two"],
     });
-    expect(afterProfile).not.toBe(before);
-    expect(afterProfile).toContain("Active profile: ask");
-    expect(afterRoots).not.toBe(before);
-    expect(afterRoots).toContain("C:/data/one, D:/data/two");
+    expect(off).not.toBe(on);
+    expect(off).toContain("Check mode: off");
+    expect(onMoreRoots).not.toBe(on);
+    expect(onMoreRoots).toContain("C:/data/one, D:/data/two");
   });
 });
 
@@ -104,33 +102,33 @@ describe("checkModePromptExtension", () => {
     const handler = beforeAgentStart();
     setSandboxModeSource(() => "auto");
     setCheckModeConfig({
-      profile: "balanced",
+      profile: "on",
       model: "test/verifier",
       additionalPaths: ["C:/data/one"],
     });
     const result = handler({ systemPrompt: "base" });
     expect(result).toBeDefined();
     expect(result!.systemPrompt.startsWith("base\n\n## Allowed and denied")).toBe(true);
-    expect(result!.systemPrompt).toContain("Active profile: balanced");
+    expect(result!.systemPrompt).toContain("Check mode: on");
     expect(result!.systemPrompt).toContain("C:/data/one");
   });
 
-  test("reflects live config so the block follows profile and root changes", () => {
+  test("reflects live config so the block follows the toggle and root changes", () => {
     const handler = beforeAgentStart();
     setSandboxModeSource(() => "require");
 
-    setCheckModeConfig({ profile: "strict", model: "test/verifier", additionalPaths: [] });
-    const strict = handler({ systemPrompt: "base" })!;
-    expect(strict.systemPrompt).toContain("Active profile: strict");
+    setCheckModeConfig({ profile: "on", model: "test/verifier", additionalPaths: [] });
+    const on = handler({ systemPrompt: "base" })!;
+    expect(on.systemPrompt).toContain("Check mode: on");
 
     setCheckModeConfig({
-      profile: "ask",
+      profile: "on",
       model: "test/verifier",
       additionalPaths: ["D:/data/two"],
     });
-    const ask = handler({ systemPrompt: "base" })!;
-    expect(ask.systemPrompt).toContain("Active profile: ask");
-    expect(ask.systemPrompt).toContain("Sandbox: require");
-    expect(ask.systemPrompt).toContain("D:/data/two");
+    const withRoot = handler({ systemPrompt: "base" })!;
+    expect(withRoot.systemPrompt).toContain("Check mode: on");
+    expect(withRoot.systemPrompt).toContain("Sandbox: require");
+    expect(withRoot.systemPrompt).toContain("D:/data/two");
   });
 });

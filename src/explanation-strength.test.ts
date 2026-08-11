@@ -33,6 +33,7 @@ describe("explanation strength", () => {
     setExplanationStrength("detailed");
     const detailed = handler({ systemPrompt: "base" });
     expect(detailed?.systemPrompt).toContain("actions, decisions, tradeoffs, and validation");
+    expect(detailed?.systemPrompt).toContain('takes precedence over the general "Be concise" guideline');
     expect(detailed?.systemPrompt).toContain("Do not reveal private chain-of-thought");
   });
 

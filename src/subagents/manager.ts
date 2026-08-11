@@ -92,7 +92,7 @@ const CLOSED_TRIGGER_STATES = new Set(["expired", "cancelled", "unavailable"]);
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
-- Use finish_subagent as the only final completion report. Call it only after every retained descendant closes. Complete exactly one successful finish_subagent call; rejected attempts do not count as completion. It sends the sole completion notification to the direct spawner after the status changes.
+- Use finish_subagent as the only final completion report and put the final summary in it. Call it only after every retained descendant closes. Complete exactly one successful finish_subagent call; rejected attempts do not count as completion. It sends the sole completion notification to the direct spawner after the status changes.
 - Before finish_subagent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
 - Every retained descendant blocks finish_subagent regardless of status. Completion does not close a descendant.
 - Do not send a final summary, test report, done message, or completion status through message_agent.
@@ -105,15 +105,16 @@ export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communicatio
 
 export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coordination
 
+- spawn_subagent, message_agent, and list_subagents live in the hidden Subagents tool group. When they are not in the tool list, call enable_tools with Subagents first.
 - spawn_subagent returns after setup. The subagent continues in the background.
-- Count only starting and running subagents as active. Use the current capacity shown below.
+- Count only starting and running subagents as active. The capacity line below reports whether a slot is available.
 - For follow-up implementation work, prefer a new managed worktree subagent while capacity is available.
 - At capacity, use message_agent to queue follow-up work for an appropriate related running subagent.
 - message_agent uses the durable recipient-side message and steering queue. Do not create a shell queue or another hidden queue.
 - Do not send unrelated work to an arbitrary subagent. If no appropriate recipient is clear, state the capacity issue and keep the work pending for deliberate routing.
 - Never wait for subagents with bash sleep, shell polling loops, repeated list_subagents calls, or repeated worktree status calls.
-- After you spawn all currently independent subagents, finish the current turn and yield the main agent loop.
-- A directly spawned subagent completion notification will automatically start or steer a later main-agent turn.
+- After you spawn all currently independent subagents, finish the current turn and yield your agent loop.
+- A directly spawned subagent completion notification will automatically start or steer a later turn of its spawner.
 - A normal 'Message from <agent>' is not a completion notification. Do not merge until the agent status is completed.
 - Treat "wait for every subagent" as yielding until completion notifications arrive, not as active polling.
 - Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
@@ -121,15 +122,19 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Merge each successful agent after its completion notification arrives and its status is completed. An idle settlement is not completion.
 - Before merging a managed parent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
 - Every retained descendant blocks its parent regardless of status. Completion does not close a descendant.
+- Never use force removal on a managed agent; it is always rejected. Close a completed agent whose branch adds no new commits with a non-force worktree remove.
 - Wait to merge only when another unfinished task has a concrete dependency, a known conflict risk, or a required integration order. State that reason explicitly.
 - If a notification does not arrive, report the notification fault instead of creating a sleep loop.`;
 
 export function buildSubagentCapacityPrompt(activeCount: number, maxActive = DEFAULT_MAX_ACTIVE_SUBAGENTS): string {
+  // Exact active counts stay out of the system prompt: a per-turn changing
+  // number would invalidate provider prompt caches on every agent transition.
+  // Only the available/full boundary changes the text.
   const available = Math.max(0, maxActive - activeCount);
   if (available > 0) {
-    return `Current subagent capacity: ${activeCount}/${maxActive} active; ${available} slot${available === 1 ? "" : "s"} available. Prefer spawn_subagent for follow-up implementation work that can run in parallel.`;
+    return `Subagent capacity: slots are available (limit ${maxActive}). Prefer spawn_subagent for follow-up implementation work that can run in parallel.`;
   }
-  return `Current subagent capacity: ${activeCount}/${maxActive} active; no slots available. Queue follow-up work with message_agent only when an appropriate related running subagent is clear. Otherwise, state the capacity issue and keep the work pending for deliberate routing.`;
+  return `Subagent capacity: all ${maxActive} slots are active; no slots available. Queue follow-up work with message_agent only when an appropriate related running subagent is clear. Otherwise, state the capacity issue and keep the work pending for deliberate routing.`;
 }
 
 export function countActiveSubagents(agents: Iterable<Pick<SubagentSnapshot, "status">>): number {
@@ -173,6 +178,13 @@ type RuntimeRecord = {
   toolGroups?: ToolGroupsController;
   activityGeneration: number;
   idleNotifiedGeneration: number;
+  /**
+   * The terminal status (completed/failed/stopped) captured just before a turn
+   * clobbered it to "running". Lets the settle preserve a completed agent when a
+   * turn did no new work (e.g. a bare acknowledgement), instead of downgrading
+   * it to idle and blocking its managed merge.
+   */
+  statusBeforeTurn?: SubagentStatus;
 };
 
 type IdleOpenReminderState = {
@@ -186,6 +198,8 @@ type OpenReminderResources = {
   subagents: RuntimeRecord[];
   triggers: ReturnType<TriggerRuntimeManager["getTriggers"]>;
 };
+
+const TERMINAL_SUBAGENT_STATUSES: readonly SubagentStatus[] = ["completed", "failed", "stopped"];
 
 type ManagerOptions = {
   modelRuntime: ModelRuntime;
@@ -791,6 +805,11 @@ export class SubagentManager {
         });
         break;
       case "agent_start":
+        // Remember a terminal status before the turn overwrites it, so a
+        // no-work turn can restore it at settle instead of downgrading to idle.
+        if (TERMINAL_SUBAGENT_STATUSES.includes(record.snapshot.status)) {
+          record.statusBeforeTurn = record.snapshot.status;
+        }
         this.updateStatus(record, "running");
         break;
       case "turn_end": {
@@ -828,15 +847,19 @@ export class SubagentManager {
           });
         }
         const error = record.session?.agent?.state?.errorMessage;
-        const priorStatus = record.snapshot.status;
+        // A turn clobbers a terminal status to "running", so the status that
+        // matters for preservation and settlement is the one captured before
+        // the turn, falling back to the current status when nothing was captured.
+        const priorTerminal = record.statusBeforeTurn ?? record.snapshot.status;
         const status: SubagentStatus = error
           ? "failed"
           : record.finishRequested !== undefined
             ? "completed"
-            : ["completed", "failed", "stopped"].includes(priorStatus)
+            : TERMINAL_SUBAGENT_STATUSES.includes(priorTerminal)
                 && record.activityGeneration === record.idleNotifiedGeneration
-              ? priorStatus
+              ? priorTerminal
               : "idle";
+        record.statusBeforeTurn = undefined;
         const summary = record.finishRequested || error || record.snapshot.summary;
         this.updateStatus(record, status, summary);
         if (record.session && !AVAILABLE_TRIGGER_TARGET_STATUSES.has(status)) {
@@ -860,7 +883,7 @@ export class SubagentManager {
             record.idleNotifiedGeneration = record.activityGeneration;
             this.persistActivity(record);
           }
-          if (priorStatus !== status || record.finishRequested !== undefined) {
+          if (priorTerminal !== status || record.finishRequested !== undefined) {
             void this.recordSettlement(record, status, summary);
           }
         }
@@ -908,10 +931,10 @@ export class SubagentManager {
             };
           }
           return {
+            // Identity and worktree boundary only. The finish_subagent and
+            // message_agent rules live once, in the communication block below.
             systemPrompt: identity
-              + "Use message_agent only for questions, blockers, coordination, or intermediate information that needs action. "
-              + "Never send the final summary through message_agent. "
-              + "Commit completed changes before finishing. Call finish_subagent only after every retained descendant closes. Complete exactly one successful finish_subagent call with the final summary; rejected attempts do not count as completion. It sends the sole completion notification after status changes.\n\n"
+              + "Commit completed changes before finishing.\n\n"
               + SUBAGENT_COMMUNICATION_SYSTEM_PROMPT + "\n\n"
               + SUBAGENT_COORDINATION_SYSTEM_PROMPT + "\n\n"
               + buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
@@ -1554,7 +1577,15 @@ export class SubagentManager {
   }
 
   private findRecord(target: string): RuntimeRecord | undefined {
-    return this.records.get(target) ?? [...this.records.values()].find((record) => record.snapshot.name === target);
+    // Match by id, name, OR worktree branch. A managed agent is often referred
+    // to by its branch (the spawn result and list output print it), and the raw
+    // git fallback in worktreeAction also accepts a branch. Without matching the
+    // branch here, a branch-shaped target would skip every managed guard (the
+    // running-status check, descendant check, and force-removal rejection) and
+    // reach the destructive git calls directly.
+    return this.records.get(target)
+      ?? [...this.records.values()].find((record) =>
+        record.snapshot.name === target || record.snapshot.worktree.branch === target);
   }
 
   private retainedDescendants(parentId: string): RetainedDescendant[] {
@@ -1800,6 +1831,9 @@ export class SubagentManager {
         withSearchRoute(recipient.session!.sessionId, () => {
           recipient.api!.sendMessage(customMessage, { deliverAs: "steer", triggerTurn: true });
         });
+        if (TERMINAL_SUBAGENT_STATUSES.includes(recipient.snapshot.status)) {
+          recipient.statusBeforeTurn = recipient.snapshot.status;
+        }
         this.updateStatus(recipient, "running");
       } catch (error) {
         this.dropPending(recipient, pending.id);
@@ -2028,6 +2062,24 @@ export class SubagentManager {
     }
   }
 
+  /**
+   * Re-deliver main-bound completion notices that a queue clear may have
+   * dropped. Cancelling the main turn or recalling a queued message calls
+   * session.clearQueue(), which silently discards a completion notice queued to
+   * a streaming main agent. That notice is marked in-flight, so a later retry
+   * would skip it and the merge would stay blocked. Clearing the in-flight mark
+   * for unacknowledged main settlements lets the retry resend them. A notice
+   * that pi already inserted is acknowledged and is left untouched.
+   */
+  async resendUndeliveredMainSettlements(): Promise<void> {
+    for (const settlement of this.settlements.values()) {
+      if (settlement.parentAgentId === null && settlement.acknowledgedAt === undefined) {
+        this.settlementDeliveriesInFlight.delete(settlement.messageId);
+      }
+    }
+    await this.retrySettlementsForParent(null);
+  }
+
   private formatAgentList(): string {
     const agents = this.getAgents();
     if (!agents.length) return "No subagents.";
@@ -2117,8 +2169,20 @@ export class SubagentManager {
         const output = (await mergeWorktree(cwd, record)) || `Merged ${record.branch}`;
         if (!managedAgent) return textResult(output, record);
 
+        // The branch is now merged. The session is stopped first so it releases
+        // the worktree files before removal (Windows locks them otherwise). If
+        // removal then fails, the merge is done but the agent stays retained;
+        // name the exact recovery step instead of surfacing a raw git error.
         await this.stop(managedAgent.snapshot.id, "stopped");
-        await removeWorktree(cwd, record);
+        try {
+          await removeWorktree(cwd, record);
+        } catch (error) {
+          throw new Error(
+            `${output}\nBranch ${record.branch} is merged, but removing the worktree failed. `
+              + `Run "worktree remove ${managedAgent.snapshot.name}" to finish. `
+              + (error instanceof Error ? error.message : String(error)),
+          );
+        }
         this.forgetManagedAgent(managedAgent);
         return textResult(`${output}\nClosed ${managedAgent.snapshot.name} and removed its worktree.`, record);
       });
@@ -2134,7 +2198,8 @@ export class SubagentManager {
           if (force) {
             throw new Error(
               `Cannot force-remove managed subagent ${managedAgent.snapshot.name}. ` +
-                "Failed or unmerged managed subagents must remain retained until a valid merge or removal flow closes them.",
+                "Failed or unmerged managed subagents must remain retained until a valid merge or removal flow closes them. " +
+                "When the agent is completed and its branch adds no new commits, retry the remove without force.",
             );
           }
         }

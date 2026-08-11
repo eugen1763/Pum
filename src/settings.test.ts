@@ -67,13 +67,16 @@ describe("PUM settings migration", () => {
     }
   });
 
-  test("migrates the legacy Check mode boolean and accepts profiles", () => {
-    expect(normalizeSettings({ checkMode: true } as any).checkMode).toBe("strict");
-    expect(normalizeSettings({ checkMode: false } as any).checkMode).toBe("off");
-    expect(CHECK_MODE_PROFILES).toEqual(["off", "strict", "balanced", "ask"]);
-    for (const checkMode of CHECK_MODE_PROFILES) {
-      expect(normalizeSettings({ checkMode }).checkMode).toBe(checkMode);
+  test("migrates every legacy Check mode value to the on/off toggle", () => {
+    expect(CHECK_MODE_PROFILES).toEqual(["off", "on"]);
+    // Legacy profiles and the legacy boolean true all become "on".
+    for (const legacy of ["strict", "balanced", "ask", true]) {
+      expect(normalizeSettings({ checkMode: legacy } as any).checkMode).toBe("on");
     }
+    // off and false stay off; unknown values default to off.
+    expect(normalizeSettings({ checkMode: false } as any).checkMode).toBe("off");
+    expect(normalizeSettings({ checkMode: "off" }).checkMode).toBe("off");
+    expect(normalizeSettings({ checkMode: "on" }).checkMode).toBe("on");
     expect(normalizeSettings({ checkMode: "permissive" } as any).checkMode).toBe("off");
   });
 
@@ -131,7 +134,7 @@ describe("PUM settings persistence", () => {
       `  webSearch: false,`,
       `  writingStyle: "none",`,
       `  explanationStrength: "detailed",`,
-      `  checkMode: "balanced",`,
+      `  checkMode: "on",`,
       `  checkModel: "anthropic/claude-3.7-sonnet",`,
       `  sandboxMode: "off",`,
       `  checkPaths: {},`,
@@ -153,7 +156,7 @@ describe("PUM settings persistence", () => {
       webSearch: false,
       writingStyle: "none",
       explanationStrength: "detailed",
-      checkMode: "balanced",
+      checkMode: "on",
       checkModel: "anthropic/claude-3.7-sonnet",
       sandboxMode: "off",
       checkPaths: {},

@@ -156,6 +156,19 @@ function policyMounts(policy: SandboxPolicy, systemMounts?: readonly string[]): 
   for (const path of policy.readOnlyPaths) {
     addMount(mounts, targetIndexes, { source: path, mode: "read-only" });
   }
+  // The shell executable must be reachable, or every sandboxed command fails
+  // with an exec error while PUM reports enforcement. A shell outside the
+  // system mounts (for example /run/current-system/sw/bin/bash on NixOS or
+  // /home/linuxbrew/.linuxbrew/bin/bash) needs its directory bound read-only.
+  // Add it before the writable roots: mount order is security policy, so
+  // system and read-only mounts stay first.
+  const executable = normalizeAbsolutePath("Command executable", policy.executable);
+  const coveredByWritable = policy.readWritePaths.some(
+    (path) => isWithin(normalizeAbsolutePath("Writable root", path), executable),
+  );
+  if (!coveredByWritable && !mounts.some((mount) => isWithin(mount.source, executable))) {
+    addMount(mounts, targetIndexes, { source: posix.dirname(executable), mode: "read-only" });
+  }
   for (const path of policy.readWritePaths) {
     addMount(mounts, targetIndexes, { source: path, mode: "read-write" });
   }

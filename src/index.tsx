@@ -11,6 +11,12 @@ if (result.kind === "help") {
 } else if (result.kind === "error") {
   process.stderr.write(formatCliError(result.message));
   process.exitCode = 2;
+} else if (result.options.prompt !== undefined) {
+  const { runPrompt } = await import("./headless");
+  process.exitCode = await runPrompt({
+    prompt: result.options.prompt,
+    resume: result.options.resume,
+  });
 } else {
   const { start } = await import("./main");
   await start(result.options);

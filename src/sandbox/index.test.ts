@@ -51,7 +51,7 @@ function registeredBash(controller: SandboxController, options: { readonly?: boo
 
 describe("sandbox Bash override", () => {
   test("recomputes a canonical policy and preserves pi output and safe PI environment", async () => {
-    setCheckModeConfig({ profile: "balanced", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
     const mock = backend({ state: "enforced", backend: process.platform === "win32" ? "mxc" : "bubblewrap" });
     const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: process.platform });
     const result = await registeredBash(controller).execute(
@@ -129,7 +129,7 @@ describe("sandbox Bash override", () => {
   });
 
   test("blocks readonly Bash instead of using automatic direct fallback", async () => {
-    setCheckModeConfig({ profile: "balanced", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
     const mock = backend({ state: "unavailable", backend: "bubblewrap", reason: "bwrap was not found" });
     const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: "linux" });
     await expect(registeredBash(controller, { readonly: true }).execute(
@@ -143,7 +143,7 @@ describe("sandbox Bash override", () => {
   });
 
   test("blocks checked Bash in require mode when enforcement is unavailable", async () => {
-    setCheckModeConfig({ profile: "balanced", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
     const mock = backend({ state: "unavailable", backend: "mxc", reason: "CreateProcessInSandbox unavailable" });
     const controller = new SandboxController({ backend: mock.value, mode: "require", platform: "win32" });
     await expect(registeredBash(controller).execute(
@@ -157,7 +157,7 @@ describe("sandbox Bash override", () => {
   });
 
   test("emits one late automatic fallback warning after Sandbox changes from off", async () => {
-    setCheckModeConfig({ profile: "balanced", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
     const mock = backend({ state: "unavailable", backend: "bubblewrap", reason: "bwrap was not found" });
     const controller = new SandboxController({ backend: mock.value, mode: "off", platform: "linux" });
     const warnings: string[] = [];
@@ -174,11 +174,34 @@ describe("sandbox Bash override", () => {
     expect(warnings[0]).toContain("deterministic Check mode only");
   });
 
+  test("startup Require block does not suppress a later Auto fallback warning", async () => {
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    const mock = backend({ state: "unavailable", backend: "bubblewrap", reason: "bwrap was not found" });
+    const controller = new SandboxController({ backend: mock.value, mode: "require", platform: "linux" });
+    const warnings: string[] = [];
+    controller.subscribeWarnings((warning) => warnings.push(warning));
+
+    const startup = await controller.startupWarning("on");
+    expect(startup).toContain("Checked Bash commands will be blocked");
+
+    controller.setMode("auto");
+    await registeredBash(controller).execute(
+      "call",
+      { command: "printf fallback" },
+      undefined,
+      undefined,
+      context(process.cwd()),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("deterministic Check mode only");
+    expect(mock.policies).toHaveLength(0);
+  });
+
   test("uses one concise automatic fallback warning", async () => {
     const mock = backend({ state: "unavailable", backend: "bubblewrap", reason: "bwrap was not found" });
     const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: "linux" });
-    const first = await controller.startupWarning("balanced");
-    const second = await controller.startupWarning("balanced");
+    const first = await controller.startupWarning("on");
+    const second = await controller.startupWarning("on");
     expect(first).toBe(second);
     expect(first).toContain("deterministic Check mode only");
     expect(first).toContain("bwrap was not found");

@@ -127,11 +127,15 @@ export class SandboxController {
     const capability = await this.probe();
     const decision = decideSandboxMode(this.#mode, capability);
     if (decision.warning) {
+      // The startup fallback warning is the same text #emitWarning would send.
+      // Suppress the later duplicate so PUM shows one concise warning.
       this.#warningEmitted = true;
       return decision.warning;
     }
     if (decision.action === "block") {
-      this.#warningEmitted = true;
+      // The Require-mode block message is not the Auto-mode fallback warning.
+      // Do not set #warningEmitted here, or a genuine later fallback warning
+      // (after setMode("auto")) would be permanently suppressed.
       return `${decision.reason}. Checked Bash commands will be blocked.`;
     }
     return undefined;
@@ -189,7 +193,8 @@ export class SandboxController {
                 const result = analyzeCheckPolicy({
                   command: executionCommand,
                   cwd: executionCwd,
-                  profile: (check.profile === "off" ? "balanced" : check.profile) as Exclude<typeof check.profile, "off">,
+                  // Check mode on runs the deterministic policy's balanced mode.
+                  profile: "balanced",
                   allowedPaths: check.additionalPaths,
                   protectedPaths: [controller.#agentDir],
                 });

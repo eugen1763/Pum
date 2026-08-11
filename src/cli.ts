@@ -7,6 +7,8 @@ export interface PackageMetadata {
 export interface StartupOptions {
   login: boolean;
   resume: boolean;
+  /** Non-interactive one-shot prompt for `pum -p "<text>"`. */
+  prompt?: string;
 }
 
 export type CliResult =
@@ -25,18 +27,39 @@ export async function readPackageMetadata(): Promise<PackageMetadata> {
 }
 
 export function parseCliArgs(args: string[]): CliResult {
-  if (args.includes("--help") || args.includes("-h")) return { kind: "help" };
-  if (args.includes("--version") || args.includes("-v")) return { kind: "version" };
-
+  // Single pass so a --prompt value is consumed before it can be mistaken for a
+  // flag. A prompt text of exactly "--help" or "-v" must run, not print help.
   let login = false;
   let resume = false;
-  for (const arg of args) {
-    if (arg === "login") login = true;
+  let prompt: string | undefined;
+  let help = false;
+  let version = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--help" || arg === "-h") help = true;
+    else if (arg === "--version" || arg === "-v") version = true;
+    else if (arg === "login") login = true;
     else if (arg === "--resume" || arg === "-r") resume = true;
+    else if (arg === "--prompt" || arg === "-p") {
+      const value = args[index + 1];
+      if (value === undefined) return { kind: "error", message: `Missing prompt text after ${arg}` };
+      if (prompt !== undefined) return { kind: "error", message: "Only one --prompt is supported" };
+      prompt = value;
+      index += 1;
+    }
     else if (arg.startsWith("-")) return { kind: "error", message: `Unknown option: ${arg}` };
     else return { kind: "error", message: `Unknown command: ${arg}` };
   }
-  return { kind: "start", options: { login, resume } };
+  // Help and version short-circuit only when given as their own flags.
+  if (help) return { kind: "help" };
+  if (version) return { kind: "version" };
+  if (login && prompt !== undefined) {
+    return { kind: "error", message: "Cannot combine login with --prompt" };
+  }
+  if (prompt !== undefined && prompt.trim() === "") {
+    return { kind: "error", message: "The prompt text is empty" };
+  }
+  return { kind: "start", options: { login, resume, ...(prompt !== undefined ? { prompt } : {}) } };
 }
 
 export function formatCliError(message: string): string {
@@ -51,12 +74,19 @@ Usage:
   pum login [options]
 
 Options:
-  -h, --help       Show this help and exit.
-  -v, --version    Print the ${metadata.name} package version and exit.
-  -r, --resume     Resume the latest session for the current directory.
+  -h, --help           Show this help and exit.
+  -v, --version        Print the ${metadata.name} package version and exit.
+  -r, --resume         Resume the latest session for the current directory.
+  -p, --prompt <text>  Run one prompt without the TUI, print the answer, and exit.
 
 Commands:
   login            Open PUM with the provider login panel.
+
+Non-interactive mode:
+  "pum -p" runs the coding tools (read, write, edit, apply_patch, bash) with
+  the configured Check mode. Interactive tools stay off. Ask-mode approvals
+  deny automatically because no approval popup exists. Combine with -r to
+  continue the latest session for the current directory.
 
 Start PUM in a project directory with "pum". If no provider is available,
 PUM opens the login panel automatically. Inside PUM, enter ? on an empty prompt
