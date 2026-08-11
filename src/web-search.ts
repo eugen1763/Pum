@@ -50,6 +50,63 @@ export type SearchCallRecord = {
   state: "running" | "ok" | "error";
 };
 
+function nonEmptyString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Return only the documented argument for a hosted web-search action. */
+export function webSearchArgument(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  const action = record.action && typeof record.action === "object"
+    ? record.action as Record<string, unknown>
+    : record;
+  const type = nonEmptyString(action.type);
+
+  if (!type || type === "search") {
+    const queries = Array.isArray(action.queries)
+      ? action.queries.map(nonEmptyString).filter(Boolean)
+      : [];
+    if (queries.length > 0) return queries.join(" · ");
+    return nonEmptyString(action.query);
+  }
+  if (type === "open_page") return nonEmptyString(action.url);
+  if (type === "find_in_page") {
+    const pattern = nonEmptyString(action.pattern);
+    const url = nonEmptyString(action.url);
+    return pattern && url ? `${pattern} · ${url}` : pattern || url;
+  }
+  return "";
+}
+
+/** Decode output-item events while retaining an argument seen in an earlier frame. */
+export class SearchCallTracker {
+  private readonly seen = new Map<string, string>();
+
+  accept(event: any): SearchCall | undefined {
+    const item = event?.item;
+    if (item?.type !== "web_search_call") return undefined;
+    const id = nonEmptyString(item.id);
+    if (!id) return undefined;
+    const argument = webSearchArgument(item) || this.seen.get(id) || "";
+    if (argument) this.seen.set(id, argument);
+
+    if (event.type === "response.output_item.added") {
+      return { phase: "start", id, query: argument };
+    }
+    if (event.type === "response.output_item.done") {
+      this.seen.delete(id);
+      return {
+        phase: "end",
+        id,
+        query: argument,
+        ok: item.status !== "failed",
+      };
+    }
+    return undefined;
+  }
+}
+
 export class SearchCallRouter {
   private readonly listeners = new Map<string, Set<(call: SearchCall) => void>>();
 
@@ -111,28 +168,14 @@ function installSocketObserver(): void {
     construct(target, args: any[]) {
       const route = searchRoute.getStore();
       const socket = new (target as any)(...args);
-      const seen = new Map<string, string>();
+      const tracker = new SearchCallTracker();
       socket.addEventListener?.("message", (ev: any) => {
         try {
           const raw = ev?.data;
           if (!route || typeof raw !== "string" || !raw.includes("web_search_call")) return;
           const event = JSON.parse(raw);
-          const item = event?.item;
-          if (item?.type !== "web_search_call") return;
-          const id = String(item.id ?? "");
-          const query = String(item.action?.query ?? seen.get(id) ?? "");
-          if (query) seen.set(id, query);
-          if (event.type === "response.output_item.added") {
-            searchCalls.emit(route, { phase: "start", id, query });
-          } else if (event.type === "response.output_item.done") {
-            searchCalls.emit(route, {
-              phase: "end",
-              id,
-              query,
-              ok: item.status !== "failed",
-            });
-            seen.delete(id);
-          }
+          const call = tracker.accept(event);
+          if (call) searchCalls.emit(route, call);
         } catch {
           // Search observation must never break an agent turn.
         }
