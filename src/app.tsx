@@ -1,4 +1,10 @@
-import { decodePasteBytes, type ScrollBoxRenderable, type TextareaRenderable } from "@opentui/core";
+import {
+  decodePasteBytes,
+  stripAnsiSequences,
+  type PasteEvent,
+  type ScrollBoxRenderable,
+  type TextareaRenderable,
+} from "@opentui/core";
 import { randomUUID } from "node:crypto";
 import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
@@ -81,6 +87,14 @@ import {
   removePendingImage,
   type PendingImage,
 } from "./image-paste";
+import {
+  cleanupPendingPastedTexts,
+  MAX_PASTED_TEXT_BYTES,
+  pastedTextReadBlock,
+  removePendingPastedText,
+  stagePastedText as stagePastedTextDefault,
+  type PendingPastedText,
+} from "./pasted-text";
 import { countActiveSubagents, type SubagentManager } from "./subagents/manager";
 import type { SpawnPreviewManager } from "./subagents/spawn-preview";
 import { SpawnPreviewPopup } from "./subagents/spawn-preview-popup";
@@ -140,9 +154,11 @@ const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup"
 
 export function historyOpenBlockReason(options: {
   hasPendingImages: boolean;
+  hasPendingPastedText?: boolean;
   busy: boolean;
 }): string | null {
   if (options.hasPendingImages) return "send or remove attached images before switching sessions";
+  if (options.hasPendingPastedText) return "send or remove attached pasted text before switching sessions";
   if (options.busy) return "wait for the current turn to finish before opening history";
   return null;
 }
@@ -350,6 +366,7 @@ export function App({
   promptStashStore = DEFAULT_PROMPT_STASH_STORE,
   captureImage = captureClipboardImage,
   readPastedText = readClipboardText,
+  stagePastedText = stagePastedTextDefault,
   onExit = () => process.exit(0),
   checkApprovalCoordinator,
   checkApprovalStore,
@@ -376,6 +393,8 @@ export function App({
   promptStashStore?: PromptStashStore;
   captureImage?: typeof captureClipboardImage;
   readPastedText?: typeof readClipboardText;
+  /** Store oversized pasted text in a temp file and show a marker in its place. */
+  stagePastedText?: typeof stagePastedTextDefault;
   onExit?: () => void | Promise<void>;
   checkApprovalCoordinator?: CheckApprovalCoordinator;
   checkApprovalStore?: CheckApprovalStore;
@@ -531,6 +550,11 @@ export function App({
   const pendingImages = useRef<PendingImage[]>([]);
   const nextImageId = useRef(1);
   const lastInputValue = useRef("");
+  const pendingPastedTexts = useRef<PendingPastedText[]>([]);
+  const nextPastedTextId = useRef(1);
+  /** Pasted-text files consumed by a send whose turn has not settled yet. */
+  const postTurnPastedTexts = useRef(new Map<string, PendingPastedText[]>());
+  const previousSubagentStatus = useRef(new Map<string, string>());
   const imagePasteBusy = useRef(false);
   const loginTextPasteBusy = useRef(false);
   const viewDrafts = useRef(new Map<string, string>());
@@ -684,6 +708,19 @@ export function App({
     nextImageId.current = 1;
   };
 
+  const clearPendingPastedTexts = () => {
+    for (const pasted of pendingPastedTexts.current) removePendingPastedText(pasted);
+    pendingPastedTexts.current = [];
+    nextPastedTextId.current = 1;
+  };
+
+  const releasePostTurnPastedTexts = (targetKey: string) => {
+    const files = postTurnPastedTexts.current.get(targetKey);
+    if (!files) return;
+    postTurnPastedTexts.current.delete(targetKey);
+    for (const pasted of files) removePendingPastedText(pasted);
+  };
+
   const syncInputMetrics = () => {
     const input = inputRef.current;
     if (!input) return;
@@ -706,6 +743,7 @@ export function App({
     preserveImages = false,
   ) => {
     if (!preserveImages && pendingImages.current.length > 0) clearPendingImages();
+    if (!preserveImages && pendingPastedTexts.current.length > 0) clearPendingPastedTexts();
     const input = inputRef.current;
     if (input) {
       input.setText(value);
@@ -755,6 +793,37 @@ export function App({
         return [];
       }
       return [{ ...image, start, end: start + image.marker.length }];
+    });
+
+    // Pasted-text markers follow the same atomic lifecycle as image markers:
+    // editing or removing the marker deletes the temp file immediately.
+    const keptPasted: PendingPastedText[] = [];
+    for (const pasted of pendingPastedTexts.current) {
+      const exactStart = value.indexOf(pasted.marker);
+      if (exactStart >= 0) {
+        keptPasted.push({ ...pasted, start: exactStart, end: exactStart + pasted.marker.length });
+        continue;
+      }
+      let prefix = 0;
+      while (
+        prefix < previous.length &&
+        prefix < nextValue.length &&
+        previous[prefix] === nextValue[prefix]
+      ) prefix++;
+      const delta = nextValue.length - previous.length;
+      const start = Math.max(0, Math.min(value.length, Math.min(pasted.start, prefix)));
+      const fragmentEnd = Math.max(start, Math.min(value.length, pasted.end + delta));
+      value = value.slice(0, start) + value.slice(fragmentEnd);
+      cleanupCursor = cleanupCursor === null ? start : Math.min(cleanupCursor, start);
+      removePendingPastedText(pasted);
+    }
+    pendingPastedTexts.current = keptPasted.flatMap((pasted) => {
+      const start = value.indexOf(pasted.marker);
+      if (start < 0) {
+        removePendingPastedText(pasted);
+        return [];
+      }
+      return [{ ...pasted, start, end: start + pasted.marker.length }];
     });
 
     if (value !== nextValue && inputRef.current) {
@@ -830,6 +899,45 @@ export function App({
     } finally {
       loginTextPasteBusy.current = false;
     }
+  };
+
+  /**
+   * Replace one oversized paste with a `[Pasted text #n]` marker. The text is
+   * written to a private temp file that the agent can `read` during the turn.
+   */
+  const stageLargePastedText = (event: PasteEvent) => {
+    if (
+      questionnaire ||
+      spawnPreview ||
+      triggersOpenRef.current ||
+      agentSelectorOpen ||
+      helpOpen ||
+      historyOpen ||
+      settingsOpenRef.current
+    ) return;
+    const input = inputRef.current;
+    if (!input?.focused) return;
+    const text = stripAnsiSequences(decodePasteBytes(event.bytes));
+    if (Buffer.byteLength(text, "utf8") <= MAX_PASTED_TEXT_BYTES) return;
+
+    event.stopPropagation();
+    const id = nextPastedTextId.current++;
+    const marker = `[Pasted text #${id}]`;
+    const staged = stagePastedText(text);
+    const current = input.plainText;
+    const selection = input.hasSelection() ? input.getSelection() : null;
+    const start = selection ? selection.start : input.cursorOffset;
+    const end = selection ? selection.end : start;
+    const value = `${current.slice(0, start)}${marker}${current.slice(end)}`;
+    pendingPastedTexts.current.push({
+      id,
+      marker,
+      path: staged.path,
+      bytes: staged.bytes,
+      start,
+      end: start + marker.length,
+    });
+    setEditorText(value, start + marker.length, true);
   };
 
   const append = (line: Line) =>
@@ -1065,6 +1173,7 @@ export function App({
           }
           answerBufRef.current = "";
           userTurnActiveRef.current = false;
+          releasePostTurnPastedTexts("main");
           setWorking(false);
           break;
         }
@@ -1078,6 +1187,12 @@ export function App({
       clearTimeout(cancelTimer.current);
       clearPendingImages();
       cleanupPendingImages();
+      const pastedTempFiles = [...pendingPastedTexts.current];
+      for (const files of postTurnPastedTexts.current.values()) pastedTempFiles.push(...files);
+      for (const pasted of pastedTempFiles) removePendingPastedText(pasted);
+      pendingPastedTexts.current = [];
+      postTurnPastedTexts.current.clear();
+      cleanupPendingPastedTexts();
       spawnPreviewManager?.cancelAll("shutdown");
     },
     [spawnPreviewManager],
@@ -1086,6 +1201,21 @@ export function App({
   useEffect(() => {
     resetCancelArm();
   }, [activeAgentId, visibleBusy]);
+
+  // Release pasted-text temp files once the subagent turn that consumed them settles.
+  useEffect(() => {
+    for (const agent of agents) {
+      const previous = previousSubagentStatus.current.get(agent.id);
+      previousSubagentStatus.current.set(agent.id, agent.status);
+      if (
+        (previous === "starting" || previous === "running") &&
+        agent.status !== "starting" &&
+        agent.status !== "running"
+      ) {
+        releasePostTurnPastedTexts(agent.id);
+      }
+    }
+  }, [agents.map((agent) => `${agent.id}:${agent.status}`).join("|")]);
 
   // Recalculate visual rows after wrapping, terminal resizes, or editor height changes.
   useEffect(() => {
@@ -1251,6 +1381,7 @@ export function App({
   const openHistory = () => {
     const blocked = historyOpenBlockReason({
       hasPendingImages: pendingImages.current.length > 0,
+      hasPendingPastedText: pendingPastedTexts.current.length > 0,
       busy: busyRef.current,
     });
     if (blocked) {
@@ -1588,11 +1719,20 @@ export function App({
   const submitPrompt = (value?: string, stashIndex?: number) => {
     const displayText = value ?? inputRef.current?.plainText ?? "";
     const attachments = value === undefined ? [...pendingImages.current] : [];
+    const pastedTexts = value === undefined ? [...pendingPastedTexts.current] : [];
     let promptText = displayText;
     for (const image of attachments) promptText = promptText.replace(image.marker, "");
+    for (const pasted of pastedTexts) {
+      promptText = promptText.replace(pasted.marker, pastedTextReadBlock(pasted));
+    }
     promptText = promptText.replace(/[ \t]{2,}/g, " ").trim();
 
-    if (!promptText && attachments.length === 0) return;
+    // History and stash keep the draft form, never the ephemeral temp path.
+    let persistedPrompt = displayText;
+    for (const pasted of pastedTexts) persistedPrompt = persistedPrompt.replace(pasted.marker, "");
+    persistedPrompt = persistedPrompt.replace(/[ \t]{2,}/g, " ").trim();
+
+    if (!promptText && attachments.length === 0 && pastedTexts.length === 0) return;
 
     let images;
     try {
@@ -1600,6 +1740,16 @@ export function App({
     } catch (error) {
       append({ kind: "text", role: "error", text: `image attachment failed: ${String(error)}` });
       return;
+    }
+
+    // The temp files must survive until the turn that reads them settles, so
+    // move them out of the draft tracking before the editor is cleared below.
+    if (value === undefined && pastedTexts.length > 0) {
+      const targetKey = activeAgentId ?? "main";
+      const existing = postTurnPastedTexts.current.get(targetKey) ?? [];
+      postTurnPastedTexts.current.set(targetKey, [...existing, ...pastedTexts]);
+      pendingPastedTexts.current = [];
+      nextPastedTextId.current = 1;
     }
 
     setEditorText("");
@@ -1619,11 +1769,11 @@ export function App({
 
     if (attachments.length === 0 && runCommand(promptText)) return;
 
-    if (promptText) history.current = promptHistoryStore.append(cwd, promptText);
-    if (promptText && stashIndex === undefined) {
+    if (persistedPrompt) history.current = promptHistoryStore.append(cwd, persistedPrompt);
+    if (persistedPrompt && stashIndex === undefined) {
       const editingIndex = editingStashIndex.current;
-      if (editingIndex === null) addToStash(promptText, true);
-      else replaceStashedPrompt(editingIndex, promptText, true);
+      if (editingIndex === null) addToStash(persistedPrompt, true);
+      else replaceStashedPrompt(editingIndex, persistedPrompt, true);
     }
     editingStashIndex.current = null;
     histCursor.current = null;
@@ -1822,6 +1972,10 @@ export function App({
       append({ kind: "text", role: "error", text: "send or remove attached images before switching agents" });
       return false;
     }
+    if (pendingPastedTexts.current.length > 0) {
+      append({ kind: "text", role: "error", text: "send or remove attached pasted text before switching agents" });
+      return false;
+    }
     const current = activeAgentIdRef.current;
     if (target === current) return true;
     const currentKey = current ?? "main";
@@ -1881,9 +2035,14 @@ export function App({
 
   usePaste((event) => {
     const controller = loginControllerRef.current;
-    if (!loginOpen || !controller?.acceptsTextPaste()) return;
-    event.stopPropagation();
-    controller.pasteText(decodePasteBytes(event.bytes));
+    if (loginOpen) {
+      if (controller?.acceptsTextPaste()) {
+        event.stopPropagation();
+        controller.pasteText(decodePasteBytes(event.bytes));
+      }
+      return;
+    }
+    stageLargePastedText(event);
   });
 
   useKeyboard((key) => {

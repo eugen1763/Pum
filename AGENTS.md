@@ -33,6 +33,7 @@ bun run start    # open the TUI in the current directory
 | `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/text-paste.ts` | Bounded local clipboard text capture for secure login fields |
+| `src/pasted-text.ts` | Oversized prompt text becomes a `[Pasted text #n]` marker backed by a system-temp file |
 | `src/clipboard.ts` | Completed text selection copy routes for native clipboards and OSC 52 |
 | `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
