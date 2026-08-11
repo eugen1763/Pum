@@ -120,6 +120,7 @@ describe("PUM worktrees", () => {
 
     const listed = await listWorktrees(root);
     expect(listed.some((item) => item.branch === record.branch)).toBe(true);
+    expect(await worktreeStatus(root, record, true)).toContain(`## ${record.branch}`);
     await expect(worktreeStatus(root, { ...record, path: root }))
       .rejects.toThrow("outside the managed directory");
 

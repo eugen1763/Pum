@@ -64,7 +64,12 @@ export function SpawnPreviewPopup({
       padding={geometry.compact ? 0 : 1}
     >
       {!geometry.compact ? (
-        <text content="Child task" fg={theme.accent} bg={theme.popupBg} style={{ height: 1, flexShrink: 0 }} />
+        <text
+          content={request.options.readonly ? "Child task · readonly" : "Child task"}
+          fg={theme.accent}
+          bg={theme.popupBg}
+          style={{ height: 1, flexShrink: 0 }}
+        />
       ) : null}
       <scrollbox
         ref={scrollRef}

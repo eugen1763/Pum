@@ -87,6 +87,13 @@ describe("apply_patch tool metadata", () => {
     }, "/repo")).toBe("");
   });
 
+  test("marks readonly subagent spawns", () => {
+    expect(toolArg("spawn_subagent", { task: "Inspect the parser", readonly: true }, "/repo"))
+      .toBe("readonly · Inspect the parser");
+    expect(toolArg("spawn_subagent", { task: "Inspect", name: "reviewer", readonly: true }, "/repo"))
+      .toBe("readonly · reviewer · Inspect");
+  });
+
   test("summarizes message cache actions without exposing cached text", () => {
     expect(toolArg("message_cache_list", {}, "/repo")).toBe("list");
     expect(toolArg("message_cache_add", { text: "large private cached task" }, "/repo")).toBe("add");

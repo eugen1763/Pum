@@ -49,6 +49,7 @@ import {
   DEFAULT_MAX_ACTIVE_SUBAGENTS,
   normalizeMaxActiveSubagents,
 } from "../settings";
+import type { SandboxMode } from "../sandbox/types";
 import {
   resolvePendingDelivery,
   settleTranscriptMessage,
@@ -80,6 +81,7 @@ import {
   type SubagentStatus,
 } from "./types";
 import type { SpawnPreviewManager, SpawnPreviewRequester } from "./spawn-preview";
+import { readonlySubagentExtension } from "./readonly";
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
@@ -190,7 +192,8 @@ type ManagerOptions = {
   agentDir: string;
   maxActiveSubagents?: number;
   childExtensionFactories?: InlineExtension[];
-  childExtensionFactoriesForAgent?: Array<(agentId: string) => InlineExtension>;
+  childExtensionFactoriesForAgent?: Array<(agentId: string, readonly: boolean) => InlineExtension>;
+  sandboxModeSource?: () => SandboxMode;
   questionnaireManager?: QuestionnaireManager;
   spawnPreviewManager?: SpawnPreviewManager;
   triggerManager?: TriggerRuntimeManager;
@@ -238,13 +241,29 @@ function textResult(text: string, details: unknown = {}) {
   return { content: [{ type: "text" as const, text }], details };
 }
 
+function readonlySpawnParameter() {
+  return Type.Optional(Type.Boolean({
+    description: "Run the child with read-only filesystem tools and native Bash sandbox roots",
+  }));
+}
+
+export function spawnSubagentParameters(readonlyAvailable: boolean) {
+  return Type.Object({
+    task: Type.String({ description: "Complete task for the subagent" }),
+    name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
+    preview: Type.Optional(Type.Boolean({ description: "Ask the user to approve before spawning" })),
+    ...(readonlyAvailable ? { readonly: readonlySpawnParameter() } : {}),
+  }, { additionalProperties: false });
+}
+
 type RetainedDescendant = { record: RuntimeRecord; depth: number };
 
 export class SubagentManager {
   private readonly modelRuntime: ModelRuntime;
   private readonly agentDir: string;
   private readonly childExtensionFactories: InlineExtension[];
-  private readonly childExtensionFactoriesForAgent: Array<(agentId: string) => InlineExtension>;
+  private readonly childExtensionFactoriesForAgent: Array<(agentId: string, readonly: boolean) => InlineExtension>;
+  private readonly sandboxModeSource: () => SandboxMode;
   private readonly questionnaireManager?: QuestionnaireManager;
   private readonly spawnPreviewManager?: SpawnPreviewManager;
   private readonly triggerManager?: TriggerRuntimeManager;
@@ -263,6 +282,7 @@ export class SubagentManager {
   private readonly acceptedSettlementMessageIds = new Set<string>();
   private readonly settlementDeliveriesInFlight = new Set<string>();
   private readonly idleOpenReminderStates = new Map<string, IdleOpenReminderState>();
+  private readonly spawnParameterSchemas = new Set<ReturnType<typeof spawnSubagentParameters>>();
 
   constructor(options: ManagerOptions) {
     this.modelRuntime = options.modelRuntime;
@@ -270,6 +290,7 @@ export class SubagentManager {
     this.maxActiveSubagents = normalizeMaxActiveSubagents(options.maxActiveSubagents);
     this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
     this.childExtensionFactoriesForAgent = options.childExtensionFactoriesForAgent ?? [];
+    this.sandboxModeSource = options.sandboxModeSource ?? (() => "off");
     this.questionnaireManager = options.questionnaireManager;
     this.spawnPreviewManager = options.spawnPreviewManager;
     this.triggerManager = options.triggerManager;
@@ -377,6 +398,7 @@ export class SubagentManager {
       const snapshot = {
         ...restoredSnapshot,
         parentAgentId: restoredSnapshot.parentAgentId ?? null,
+        readonly: restoredSnapshot.readonly === true,
         usage: normalizeAgentUsage(restoredSnapshot.usage),
       } as SubagentSnapshot;
       let transcript = emptyTranscript();
@@ -876,15 +898,23 @@ export class SubagentManager {
         pi.on("before_agent_start", (event) => {
           const record = this.records.get(agentId);
           if (!record) return;
+          const identity = `${event.systemPrompt}\n\nYou are subagent ${record.snapshot.name} (${agentId}). `
+            + `Work only in ${record.snapshot.worktree.path} on branch ${record.snapshot.worktree.branch}. `;
+          if (record.snapshot.readonly) {
+            return {
+              systemPrompt: identity
+                + "This is a readonly inspection task. Do not change files, commit, delegate work, or start external processes. "
+                + "Use finish_subagent exactly once for the final inspection summary. It sends the sole completion notification after status changes.",
+            };
+          }
           return {
-            systemPrompt: `${event.systemPrompt}\n\nYou are subagent ${record.snapshot.name} (${agentId}). ` +
-              `Work only in ${record.snapshot.worktree.path} on branch ${record.snapshot.worktree.branch}. ` +
-              "Use message_agent only for questions, blockers, coordination, or intermediate information that needs action. " +
-              "Never send the final summary through message_agent. " +
-              "Commit completed changes before finishing. Call finish_subagent only after every retained descendant closes. Complete exactly one successful finish_subagent call with the final summary; rejected attempts do not count as completion. It sends the sole completion notification after status changes.\n\n" +
-              SUBAGENT_COMMUNICATION_SYSTEM_PROMPT + "\n\n" +
-              SUBAGENT_COORDINATION_SYSTEM_PROMPT + "\n\n" +
-              buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
+            systemPrompt: identity
+              + "Use message_agent only for questions, blockers, coordination, or intermediate information that needs action. "
+              + "Never send the final summary through message_agent. "
+              + "Commit completed changes before finishing. Call finish_subagent only after every retained descendant closes. Complete exactly one successful finish_subagent call with the final summary; rejected attempts do not count as completion. It sends the sole completion notification after status changes.\n\n"
+              + SUBAGENT_COMMUNICATION_SYSTEM_PROMPT + "\n\n"
+              + SUBAGENT_COORDINATION_SYSTEM_PROMPT + "\n\n"
+              + buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
           };
         });
 
@@ -926,19 +956,23 @@ export class SubagentManager {
           label: "Spawn Subagent",
           description: "Start a nonblocking child subagent in a new Git worktree.",
           promptSnippet: "Start a child subagent in an isolated Git worktree",
-          parameters: Type.Object({
-            task: Type.String({ description: "Complete task for the child subagent" }),
-            name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
-            preview: Type.Optional(Type.Boolean({ description: "Ask the user to approve before spawning" })),
-          }),
+          parameters: this.trackedSpawnSubagentParameters(),
           execute: async (_id, params, signal, _update, ctx) => {
             const parent = this.records.get(agentId);
             if (!parent) throw new Error("Spawner subagent no longer exists");
+            if (parent.snapshot.readonly) {
+              throw new Error("Readonly subagents cannot spawn child agents");
+            }
+            const readonlyRequested = (params as { readonly?: boolean }).readonly === true;
+            if (readonlyRequested && this.sandboxModeSource() === "off") {
+              throw new Error("Readonly subagents require the PUM Sandbox setting to be Auto or Require");
+            }
             const options: SpawnSubagentOptions = {
               task: params.task,
               name: params.name,
               modelId: parent.snapshot.modelId,
               thinkingLevel: parent.snapshot.thinkingLevel,
+              readonly: readonlyRequested,
               parentAgentId: agentId,
             };
             if (params.preview) {
@@ -1021,8 +1055,20 @@ export class SubagentManager {
             name: Type.Optional(Type.String({ description: "Name for a new worktree" })),
             force: Type.Optional(Type.Boolean({ description: "Force removal of a standalone unmerged worktree" })),
           }),
-          execute: async (_id, params) =>
-            this.worktreeAction(this.mainCwd, params.action, params.target, params.name, params.force),
+          execute: async (_id, params) => {
+            const record = this.records.get(agentId);
+            if (record?.snapshot.readonly && !["list", "status"].includes(params.action)) {
+              throw new Error(`Readonly subagents cannot run worktree ${params.action}`);
+            }
+            return this.worktreeAction(
+              this.mainCwd,
+              params.action,
+              params.target,
+              params.name,
+              params.force,
+              record?.snapshot.readonly === true,
+            );
+          },
         });
       },
     };
@@ -1112,19 +1158,20 @@ export class SubagentManager {
             "Merge each successful agent only after its completion notification arrives and its status is completed, unless a concrete dependency or conflict requires waiting. Idle is not completion.",
             "Recursively close every retained descendant before merging a managed parent. Close the deepest descendants first.",
           ],
-          parameters: Type.Object({
-            task: Type.String({ description: "Complete task for the subagent" }),
-            name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
-            preview: Type.Optional(Type.Boolean({ description: "Ask the user to approve before spawning" })),
-          }),
+          parameters: this.trackedSpawnSubagentParameters(),
           execute: async (_id, params, signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
             if (!ctx.model) throw new Error("No model is selected");
+            const readonlyRequested = (params as { readonly?: boolean }).readonly === true;
+            if (readonlyRequested && this.sandboxModeSource() === "off") {
+              throw new Error("Readonly subagents require the PUM Sandbox setting to be Auto or Require");
+            }
             const options: SpawnSubagentOptions = {
               task: params.task,
               name: params.name,
               modelId: `${ctx.model.provider}/${ctx.model.id}`,
               thinkingLevel: ctx.thinkingLevel ?? "off",
+              readonly: readonlyRequested,
             };
             if (params.preview) {
               const preview = await this.requestSpawnPreview({
@@ -1248,6 +1295,22 @@ export class SubagentManager {
     this.maxActiveSubagents = normalizeMaxActiveSubagents(value);
   }
 
+  private trackedSpawnSubagentParameters() {
+    const schema = spawnSubagentParameters(this.sandboxModeSource() !== "off");
+    this.spawnParameterSchemas.add(schema);
+    return schema;
+  }
+
+  /** Keep already registered spawn tool schemas aligned with the live Sandbox setting. */
+  refreshSandboxMode(): void {
+    const available = this.sandboxModeSource() !== "off";
+    for (const schema of this.spawnParameterSchemas) {
+      const properties = schema.properties as Record<string, unknown>;
+      if (available) properties.readonly = readonlySpawnParameter();
+      else delete properties.readonly;
+    }
+  }
+
   private requestSpawnPreview(
     requester: SpawnPreviewRequester,
     options: SpawnSubagentOptions,
@@ -1258,6 +1321,9 @@ export class SubagentManager {
   }
 
   async spawn(options: SpawnSubagentOptions): Promise<SubagentSnapshot> {
+    if (options.readonly === true && this.sandboxModeSource() === "off") {
+      throw new Error("Readonly subagents require the PUM Sandbox setting to be Auto or Require");
+    }
     const record = await this.withWorktreeLock(async () => {
       if (this.activeCount() >= this.maxActiveSubagents) throw activeLimitError(this.maxActiveSubagents);
       if (this.records.size >= MAX_RETAINED_AGENTS) throw new Error(`At most ${MAX_RETAINED_AGENTS} subagents can be retained`);
@@ -1279,6 +1345,7 @@ export class SubagentManager {
         parentAgentId: options.parentAgentId ?? null,
         modelId: options.modelId,
         thinkingLevel: options.thinkingLevel,
+        readonly: options.readonly === true,
         transcript: emptyTranscript(),
         startedAt: now,
         updatedAt: now,
@@ -1326,7 +1393,7 @@ export class SubagentManager {
       : SessionManagerClass.create(record.snapshot.worktree.path, sessionDir);
     // Each child tracks its own enabled tool groups, persisted next to its
     // session file. Restore before the child's enable_tools tool registers.
-    record.toolGroups = new ToolGroupsController("subagent");
+    record.toolGroups = new ToolGroupsController("subagent", undefined, record.snapshot.readonly);
     record.toolGroups.load(sessionManager.getSessionFile());
     const services = await createAgentSessionServices({
       cwd: record.snapshot.worktree.path,
@@ -1335,7 +1402,11 @@ export class SubagentManager {
       resourceLoaderOptions: {
         extensionFactories: [
           ...this.childExtensionFactories,
-          ...this.childExtensionFactoriesForAgent.map((factory) => factory(record.snapshot.id)),
+          readonlySubagentExtension(record.snapshot.readonly === true),
+          ...this.childExtensionFactoriesForAgent.map((factory) => factory(
+            record.snapshot.id,
+            record.snapshot.readonly === true,
+          )),
           this.childExtension(record.snapshot.id),
         ],
       },
@@ -1345,7 +1416,7 @@ export class SubagentManager {
       sessionManager,
       model,
       thinkingLevel: record.snapshot.thinkingLevel as any,
-      tools: childAllowedToolNames(),
+      tools: childAllowedToolNames(record.snapshot.readonly),
     });
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
@@ -1399,7 +1470,7 @@ export class SubagentManager {
     if (requesterSessionId !== this.parentSessionId) return false;
     if (target.agentId === null) return target.sessionId === this.parentSessionId;
     const record = this.records.get(target.agentId);
-    if (!record) return false;
+    if (!record || record.snapshot.readonly) return false;
     await this.ensureRuntime(record);
     return record.session?.sessionId === target.sessionId;
   }
@@ -1418,6 +1489,9 @@ export class SubagentManager {
     if (selector.kind !== "subagent") throw new Error("Invalid main-session trigger target");
     const record = this.findRecord(selector.agent);
     if (!record) throw new Error(`Unknown subagent: ${selector.agent}`);
+    if (record.snapshot.readonly) {
+      throw new Error(`Readonly subagent cannot be an external trigger target: ${record.snapshot.name}`);
+    }
     if (!AVAILABLE_TRIGGER_TARGET_STATUSES.has(record.snapshot.status)) {
       throw new Error(`Subagent target is unavailable: ${record.snapshot.name}`);
     }
@@ -1451,6 +1525,15 @@ export class SubagentManager {
     }
     const record = this.findRecord(agent);
     if (!record) throw new Error(`Unknown subagent: ${agent}`);
+    if (record.snapshot.readonly) {
+      return {
+        sessionId: record.session?.sessionId ?? "unavailable",
+        agentId: record.snapshot.id,
+        label: record.snapshot.name,
+        cwd: record.snapshot.worktree.path,
+        available: false,
+      };
+    }
     if (!AVAILABLE_TRIGGER_TARGET_STATUSES.has(record.snapshot.status)) {
       return {
         sessionId: record.session?.sessionId ?? "unavailable",
@@ -1949,7 +2032,7 @@ export class SubagentManager {
     const agents = this.getAgents();
     if (!agents.length) return "No subagents.";
     return agents.map((agent) =>
-      `${agent.id}  ${agent.name}  ${agent.status}\n  ${agent.worktree.branch}\n  ${agent.worktree.path}`,
+      `${agent.id}  ${agent.name}  ${agent.status}${agent.readonly ? "  readonly" : ""}\n  ${agent.worktree.branch}\n  ${agent.worktree.path}`,
     ).join("\n");
   }
 
@@ -2003,6 +2086,7 @@ export class SubagentManager {
     target?: string,
     name?: string,
     force = false,
+    readonly = false,
   ) {
     if (action === "create") {
       const record = await this.withWorktreeLock(() => createWorktree(cwd, name));
@@ -2018,7 +2102,7 @@ export class SubagentManager {
       const record = managedAgent?.snapshot.worktree
         ?? (await listWorktrees(cwd)).find((item) => item.name === target || item.branch === target);
       if (!record) throw new Error(`Unknown worktree: ${target}`);
-      return textResult(await worktreeStatus(cwd, record), record);
+      return textResult(await worktreeStatus(cwd, record, readonly), record);
     }
     if (action === "merge") {
       return this.withWorktreeLock(async () => {

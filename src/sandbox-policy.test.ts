@@ -62,6 +62,38 @@ describe("sandbox policy generation", () => {
     }));
   });
 
+  test("mounts project and additional roots read-only for readonly children", () => {
+    const command = "git status --short";
+    const result = analyzeCheckPolicy({
+      command,
+      cwd: "/repo",
+      allowedPaths: ["/shared"],
+      profile: "balanced",
+      fileSystem: inertFileSystem,
+    });
+    const policy = buildSandboxPolicy({
+      command,
+      cwd: "/repo",
+      additionalRoots: ["/shared"],
+      result,
+      executable: "/bin/sh",
+      args: ["-c", command],
+      privateTemp: "/tmp/pum-private",
+      pumConfigRoot: "/pum",
+      home: "/home/user",
+      platform: "linux",
+      environment: {},
+      readonlyRoots: true,
+      additionalReadOnlyRoots: ["/repo/.git"],
+    });
+
+    expect(policy.readWritePaths).toEqual([]);
+    expect(policy.readOnlyPaths).toEqual(["/repo", "/shared"]);
+    expect(policy.deniedPaths).toContain("/repo/.env");
+    expect(policy.deniedPaths).toContain("/shared/.env");
+    expect(policy.network).toBe("deny");
+  });
+
   test("does not turn approved roots or denied paths into external read grants", () => {
     const command = "cat /shared/data.txt";
     const result = analyzeCheckPolicy({

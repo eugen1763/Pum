@@ -139,37 +139,52 @@ function toolPath(toolName: FilesystemSandboxToolName, input: Record<string, unk
 }
 
 /** Enforce the process-local filesystem sandbox before built-in tool execution. */
-export const filesystemSandboxExtension: InlineExtension = {
-  name: "pum-filesystem-sandbox",
-  factory(pi) {
-    pi.on("before_agent_start", (event) => ({
-      systemPrompt: `${event.systemPrompt}\n\n## Filesystem sandbox\n\n`
-        + "- The read, write, and edit tools are limited to the project and configured allowed roots.\n"
-        + "- The apply_patch tool is limited to the project and validates every patch path.\n"
-        + "- Do not access credential-sensitive paths or paths through symbolic links or junctions.\n"
-        + "- Do not attempt to bypass the filesystem sandbox with alternate path spellings.",
-    }));
-
-    pi.on("tool_call", async (event, ctx) => {
-      if (!(FILESYSTEM_SANDBOX_TOOL_NAMES as readonly string[]).includes(event.toolName)) return;
-      const toolName = event.toolName as FilesystemSandboxToolName;
-      try {
-        const allowedPaths = getCheckModeConfig().additionalPaths;
-        if (toolName === "apply_patch") {
-          const patch = (event.input as Record<string, unknown>).patch;
-          if (typeof patch !== "string") throw new Error("apply_patch requires a patch string");
-          await validateSandboxPatch(ctx.cwd, patch);
-        } else {
-          const path = toolPath(toolName, event.input);
-          if (!path) throw new Error(`${toolName} requires a path`);
-          await validateSandboxPath(ctx.cwd, path, allowedPaths);
-        }
-      } catch (error) {
-        return {
-          block: true,
-          reason: `Filesystem sandbox blocked ${toolName}: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
-    });
-  },
+export type FilesystemSandboxExtensionOptions = {
+  readonly?: boolean;
 };
+
+export function createFilesystemSandboxExtension(
+  options: FilesystemSandboxExtensionOptions = {},
+): InlineExtension {
+  const readonly = options.readonly === true;
+  return {
+    name: readonly ? "pum-readonly-filesystem-sandbox" : "pum-filesystem-sandbox",
+    factory(pi) {
+      pi.on("before_agent_start", (event) => ({
+        systemPrompt: `${event.systemPrompt}\n\n## Filesystem sandbox\n\n`
+          + "- The read, write, and edit tools are limited to the project and configured allowed roots.\n"
+          + "- The apply_patch tool is limited to the project and validates every patch path.\n"
+          + (readonly ? "- This readonly child cannot use write, edit, or apply_patch.\n" : "")
+          + "- Do not access credential-sensitive paths or paths through symbolic links or junctions.\n"
+          + "- Do not attempt to bypass the filesystem sandbox with alternate path spellings.",
+      }));
+
+      pi.on("tool_call", async (event, ctx) => {
+        if (!(FILESYSTEM_SANDBOX_TOOL_NAMES as readonly string[]).includes(event.toolName)) return;
+        const toolName = event.toolName as FilesystemSandboxToolName;
+        try {
+          if (readonly && toolName !== "read") {
+            throw new Error(`readonly child cannot use ${toolName}`);
+          }
+          const allowedPaths = getCheckModeConfig().additionalPaths;
+          if (toolName === "apply_patch") {
+            const patch = (event.input as Record<string, unknown>).patch;
+            if (typeof patch !== "string") throw new Error("apply_patch requires a patch string");
+            await validateSandboxPatch(ctx.cwd, patch);
+          } else {
+            const path = toolPath(toolName, event.input);
+            if (!path) throw new Error(`${toolName} requires a path`);
+            await validateSandboxPath(ctx.cwd, path, allowedPaths);
+          }
+        } catch (error) {
+          return {
+            block: true,
+            reason: `Filesystem sandbox blocked ${toolName}: ${error instanceof Error ? error.message : String(error)}`,
+          };
+        }
+      });
+    },
+  };
+}
+
+export const filesystemSandboxExtension = createFilesystemSandboxExtension();

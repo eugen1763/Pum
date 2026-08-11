@@ -43,6 +43,8 @@ export type SubagentSnapshot = {
   parentAgentId: string | null;
   modelId: string;
   thinkingLevel: string;
+  /** True when the child must not mutate files or delegate filesystem mutation. Missing legacy values mean false. */
+  readonly?: boolean;
   transcript: AgentTranscript;
   summary?: string;
   startedAt: number;
@@ -111,6 +113,7 @@ export type SpawnSubagentOptions = {
   name?: string;
   modelId: string;
   thinkingLevel: string;
+  readonly?: boolean;
   createWorktree?: boolean;
   parentAgentId?: string | null;
 };

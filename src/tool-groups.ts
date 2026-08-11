@@ -32,6 +32,21 @@ export const CORE_TOOL_NAMES = [
 /** Extra always-sent tools that exist only in child (subagent) sessions. */
 export const CHILD_EXTRA_TOOL_NAMES = ["finish_subagent"] as const;
 
+/** Tools omitted from readonly child schemas because they can mutate files or start mutating work. */
+export const READONLY_CHILD_OMITTED_TOOL_NAMES = [
+  "write",
+  "edit",
+  "apply_patch",
+  "spawn_subagent",
+  "message_agent",
+  "create_trigger",
+  "resume_trigger",
+  "invoke_trigger",
+  "message_cache_add",
+  "message_cache_delete",
+  "message_cache_send",
+] as const;
+
 /**
  * Admin group: all trigger tools plus all message-cache tools.
  */
@@ -99,13 +114,16 @@ export function mainAllowedToolNames(): string[] {
 }
 
 /** The child session allowlist adds the child-only core tool. */
-export function childAllowedToolNames(): string[] {
-  return [
+export function childAllowedToolNames(readonly = false): string[] {
+  const names = [
     ...CORE_TOOL_NAMES,
     ...CHILD_EXTRA_TOOL_NAMES,
     ENABLE_TOOLS,
     ...ALL_GROUP_TOOL_NAMES,
   ];
+  if (!readonly) return names;
+  const omitted = new Set<string>(READONLY_CHILD_OMITTED_TOOL_NAMES);
+  return names.filter((name) => !omitted.has(name));
 }
 
 /** Tool names inside one group, or an empty list for an unknown group. */
@@ -128,6 +146,7 @@ export function hiddenGroupNames(enabled: readonly string[]): string[] {
 export function activeToolNames(
   enabledGroups: Iterable<string>,
   audience: ToolGroupAudience,
+  readonly = false,
 ): string[] {
   const active = new Set<string>([...CORE_TOOL_NAMES, ENABLE_TOOLS]);
   if (audience === "subagent") {
@@ -136,7 +155,9 @@ export function activeToolNames(
   for (const group of enabledGroups) {
     for (const name of toolNamesInGroup(group)) active.add(name);
   }
-  return [...active];
+  if (audience !== "subagent" || !readonly) return [...active];
+  const omitted = new Set<string>(READONLY_CHILD_OMITTED_TOOL_NAMES);
+  return [...active].filter((name) => !omitted.has(name));
 }
 
 const isGroupName = (value: unknown): value is ToolGroupName =>
@@ -197,11 +218,11 @@ export function describeToolGroups(enabled: readonly string[]): string {
 }
 
 function buildEnableToolsDescription(controller: ToolGroupsController): string {
-  const always = [
+  const always = controller.availableToolNames([
     ...CORE_TOOL_NAMES,
     ENABLE_TOOLS,
     ...(controller.audience === "subagent" ? CHILD_EXTRA_TOOL_NAMES : []),
-  ];
+  ]);
   const lines = [
     "Reveal one or more hidden tool groups in this thread. The real tool schemas of a revealed group start being sent from the next request onward.",
     "",
@@ -209,7 +230,8 @@ function buildEnableToolsDescription(controller: ToolGroupsController): string {
     "Hidden groups:",
   ];
   for (const name of TOOL_GROUP_NAMES) {
-    lines.push(`- ${name}: ${TOOL_GROUPS[name].toolNames.join(", ")}`);
+    const available = controller.availableToolNames(TOOL_GROUPS[name].toolNames);
+    if (available.length > 0) lines.push(`- ${name}: ${available.join(", ")}`);
   }
   const enabled = controller.enabledGroups();
   lines.push("", `Currently enabled: ${enabled.length > 0 ? enabled.join(", ") : "(none)"}`);
@@ -225,12 +247,14 @@ function buildEnableToolsDescription(controller: ToolGroupsController): string {
  */
 export class ToolGroupsController {
   readonly audience: ToolGroupAudience;
+  readonly isReadonly: boolean;
   private enabled = new Set<ToolGroupName>();
   private file: string | undefined;
 
-  constructor(audience: ToolGroupAudience, sessionFile?: string) {
+  constructor(audience: ToolGroupAudience, sessionFile?: string, isReadonly = false) {
     this.audience = audience;
     this.file = sessionFile;
+    this.isReadonly = audience === "subagent" && isReadonly;
   }
 
   /** The companion file currently bound, if any. */
@@ -251,7 +275,13 @@ export class ToolGroupsController {
 
   /** The outgoing tool list for this controller's current state. */
   activeTools(): string[] {
-    return activeToolNames(this.enabled, this.audience);
+    return activeToolNames(this.enabled, this.audience, this.isReadonly);
+  }
+
+  availableToolNames(names: readonly string[]): string[] {
+    if (!this.isReadonly) return [...names];
+    const omitted = new Set<string>(READONLY_CHILD_OMITTED_TOOL_NAMES);
+    return names.filter((name) => !omitted.has(name));
   }
 
   /** Enable one group, persist, and report the resulting state. */

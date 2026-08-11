@@ -73,6 +73,13 @@ describe("agent selector tree", () => {
     });
   });
 
+  test("marks readonly children in selector labels", () => {
+    const readonly = agent("reviewer", null, 1);
+    readonly.readonly = true;
+    const layout = agentSelectorRowLayout(buildAgentTree([readonly])[1]!, 80);
+    expect(layout.label).toBe("reviewer · readonly · idle");
+  });
+
   test("normalizes legacy usage and omits zero values from row metadata", () => {
     const legacy = agent("legacy", null, 1);
     legacy.usage = { tokens: 700, cost: 0.2, contextPct: 35 } as any;
