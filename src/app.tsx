@@ -121,6 +121,14 @@ import {
 } from "./triggers/popup";
 import type { TerminalTitleController } from "./terminal-title";
 import { readClipboardText } from "./text-paste";
+import { NewsPopup } from "./news-popup";
+import {
+  NEWS_CAPACITY,
+  loadNewsItems,
+  saveNewsItems,
+  tagNewsLines,
+  type NewsItem,
+} from "./news";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -447,9 +455,24 @@ export function App({
   const [triggerCursor, setTriggerCursor] = useState(0);
   const [, setTriggerRevision] = useState(0);
 
+  const newsRef = useRef<NewsItem[]>([]);
+  const [news, setNews] = useState<NewsItem[]>(() => {
+    const items = loadNewsItems(initialSession.sessionFile);
+    newsRef.current = items;
+    return items;
+  });
+  const [newsOpen, setNewsOpen] = useState(false);
+  const newsOpenRef = useRef(false);
+  const [newsCursor, setNewsCursor] = useState(0);
+  const newsCursorRef = useRef(0);
+
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
   const { width, height } = useTerminalDimensions();
   const syntaxStyle = useMemo(() => buildSyntaxStyle(theme), [theme]);
+  const newsReadById = useMemo(
+    () => new Map(news.map((item) => [item.id, item.read || item.answered])),
+    [news],
+  );
   const animations = settings.animations && supportsTrueColor();
   const agents = subagentManager.getAgents();
   const activeSubagentCount = countActiveSubagents(agents);
@@ -533,6 +556,10 @@ export function App({
   // Mirrors `busy` for the keyboard handler: a keypress can land before React
   // has re-rendered, and the handler's closure would still read the old value.
   const busyRef = useRef(false);
+  /** True while the running main-agent turn started from a direct user prompt. */
+  const userTurnActiveRef = useRef(false);
+  /** Text of the final assistant message; reset at each assistant message start. */
+  const answerBufRef = useRef("");
   const resetQuitArm = () => {
     lastQuitPress.current = 0;
     clearTimeout(quitTimer.current);
@@ -564,6 +591,8 @@ export function App({
     setHelpOpen(false);
     setHistoryOpen(false);
     setAgentSelectorOpen(false);
+    setNewsOpen(false);
+    newsOpenRef.current = false;
     setStashMode(false);
     const nextCursor = Math.min(triggerCursorRef.current, Math.max(0, triggers.length - 1));
     triggerCursorRef.current = nextCursor;
@@ -877,6 +906,8 @@ export function App({
         setAgentSelectorOpen(false);
         setTriggerPopup(false, false);
         setLoginOpen(false);
+        setNewsOpen(false);
+        newsOpenRef.current = false;
       }
       setQuestionnaireRevision((revision) => revision + 1);
     });
@@ -911,11 +942,18 @@ export function App({
     setModelId(session.agent.state.model.id);
     const visibleStartupWarnings = startupWarningsRef.current;
     startupWarningsRef.current = [];
+    const replayedLines = [
+      ...replayEntries(session.sessionManager.buildContextEntries(), cwd, showThinkingRef.current),
+      ...visibleStartupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
+    ];
+    const loadedNews = loadNewsItems(session.sessionFile);
+    newsRef.current = loadedNews;
+    setNews(loadedNews);
+    setNewsOpen(false);
+    setNewsCursor(0);
+    newsCursorRef.current = 0;
     setTx({
-      lines: [
-        ...replayEntries(session.sessionManager.buildContextEntries(), cwd, showThinkingRef.current),
-        ...visibleStartupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
-      ],
+      lines: tagNewsLines(replayedLines, loadedNews),
       stream: null,
       pending: [],
     });
@@ -928,7 +966,9 @@ export function App({
     return session.subscribe((event) => {
       switch (event.type) {
         case "message_start": {
-          if (event.message.role === "user") {
+          if (event.message.role === "assistant") {
+            answerBufRef.current = "";
+          } else if (event.message.role === "user") {
             const text = messageText(event.message);
             if (text) resolvePendingText(text);
           }
@@ -941,7 +981,10 @@ export function App({
           break;
         case "message_update": {
           const update = event.assistantMessageEvent;
-          if (update.type === "text_delta") delta("assistant", update.delta);
+          if (update.type === "text_delta") {
+            delta("assistant", update.delta);
+            answerBufRef.current += update.delta;
+          }
           else if (update.type === "thinking_delta" && showThinkingRef.current)
             delta("thinking", update.delta);
           break;
@@ -992,11 +1035,39 @@ export function App({
         case "thinking_level_changed":
           setThinkingLevel(event.level as ThinkingLevel);
           break;
-        // agent_end fires before auto-retries; agent_settled means truly done.
-        case "agent_settled":
-          setTx(flushed);
+        case "agent_settled": {
+          const answer = answerBufRef.current;
+          if (userTurnActiveRef.current && answer.trim()) {
+            const item: NewsItem = {
+              id: randomUUID().slice(0, 12),
+              text: answer.trim(),
+              at: Date.now(),
+              read: false,
+              answered: false,
+            };
+            const nextNews = [item, ...newsRef.current].slice(0, NEWS_CAPACITY);
+            newsRef.current = nextNews;
+            setNews(nextNews);
+            saveNewsItems(session.sessionFile, nextNews);
+            setTx((value) => {
+              const next = flushed(value);
+              const index = next.lines.findLastIndex(
+                (line) => line.kind === "text" && line.role === "assistant",
+              );
+              if (index < 0) return next;
+              const lines = next.lines.map((line, i) =>
+                i === index ? { ...line, newsId: item.id } as Line : line,
+              );
+              return { ...next, lines };
+            });
+          } else {
+            setTx(flushed);
+          }
+          answerBufRef.current = "";
+          userTurnActiveRef.current = false;
           setWorking(false);
           break;
+        }
       }
     });
   }, [session]);
@@ -1137,6 +1208,8 @@ export function App({
     setHistoryOpen(false);
     setAgentSelectorOpen(false);
     setTriggerPopup(false, false);
+    setNewsOpen(false);
+    newsOpenRef.current = false;
     setLoginOpen(true);
     loginControllerRef.current?.open();
   };
@@ -1188,12 +1261,91 @@ export function App({
     setSettingsOpen(false);
     setHelpOpen(false);
     setTriggerPopup(false, false);
+    setNewsOpen(false);
+    newsOpenRef.current = false;
     loadSessions()
       .then((sessions) => {
         setHistorySessions(sessions);
         setHistoryOpen(true);
       })
       .catch((err) => append({ kind: "text", role: "error", text: String(err) }));
+  };
+
+  const commitNews = (next: NewsItem[]) => {
+    newsRef.current = next;
+    setNews(next);
+    saveNewsItems(session.sessionFile, next);
+  };
+
+  const openNews = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setTriggerPopup(false, false);
+    setLoginOpen(false);
+    newsCursorRef.current = 0;
+    setNewsCursor(0);
+    newsOpenRef.current = true;
+    setNewsOpen(true);
+  };
+
+  const closeNews = () => {
+    newsOpenRef.current = false;
+    setNewsOpen(false);
+    queueMicrotask(() => inputRef.current?.focus());
+  };
+
+  const moveNewsCursor = (direction: number) => {
+    const count = newsRef.current.length;
+    if (count === 0) return;
+    const next = Math.max(0, Math.min(count - 1, newsCursorRef.current + direction));
+    newsCursorRef.current = next;
+    setNewsCursor(next);
+  };
+
+  const markCurrentNewsRead = () => {
+    const item = newsRef.current[newsCursorRef.current];
+    if (!item || item.read || item.answered) return;
+    commitNews(
+      newsRef.current.map((entry) =>
+        entry.id === item.id ? { ...entry, read: true } : entry,
+      ),
+    );
+  };
+
+  const markNewestNewsAnswered = () => {
+    const first = newsRef.current[0];
+    if (!first || (first.read && first.answered)) return;
+    commitNews(
+      newsRef.current.map((entry, index) =>
+        index === 0 ? { ...entry, read: true, answered: true } : entry,
+      ),
+    );
+  };
+
+  const replyToCurrentNews = () => {
+    const item = newsRef.current[newsCursorRef.current];
+    if (!item) return;
+    commitNews(
+      newsRef.current.map((entry) =>
+        entry.id === item.id ? { ...entry, read: true, answered: true } : entry,
+      ),
+    );
+    newsOpenRef.current = false;
+    setNewsOpen(false);
+    const firstLine = item.text.split("\n")[0] ?? item.text;
+    const preview = firstLine.length > 240 ? `${firstLine.slice(0, 240)} …` : firstLine;
+    const quote = `> ${preview}\n\n`;
+    viewDrafts.current.set("main", quote);
+    if (activeAgentIdRef.current !== null) selectAgentView(null);
+    else setEditorText(quote);
+    queueMicrotask(() => {
+      inputRef.current?.focus();
+      const transcriptScroll = transcriptScrollRef.current;
+      if (transcriptScroll) transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
+    });
   };
 
   const selectHistorySession = (path: string) => {
@@ -1307,8 +1459,9 @@ export function App({
     const loginCommand = trimmed === "/login";
     const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
+    const newsCommand = trimmed === "/news";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !newsCommand && !worktreeCommand) return false;
     editingStashIndex.current = null;
 
     if (historyCommand) {
@@ -1324,6 +1477,11 @@ export function App({
     if (triggersCommand) {
       setEditorText("");
       openTriggers();
+      return true;
+    }
+    if (newsCommand) {
+      setEditorText("");
+      openNews();
       return true;
     }
 
@@ -1385,6 +1543,10 @@ export function App({
     images: ReturnType<typeof imageContent>[] = [],
     recallable = images.length === 0,
   ): Promise<void> => {
+    // A direct user prompt starts a user-initiated main turn, so its settled
+    // answer becomes a news item. A reply also marks the newest answer seen.
+    userTurnActiveRef.current = true;
+    markNewestNewsAnswered();
     const userLine: Extract<Line, { kind: "text" }> = {
       kind: "text",
       role: "user",
@@ -1692,6 +1854,8 @@ export function App({
       setAgentSelectorOpen(false);
       setTriggerPopup(false, false);
       setLoginOpen(false);
+      setNewsOpen(false);
+      newsOpenRef.current = false;
       const target = spawnPreview.requester.agentId;
       if (target && !agents.some((agent) => agent.id === target)) {
         spawnPreviewManager?.cancel("unavailable");
@@ -1885,6 +2049,8 @@ export function App({
         setHelpOpen(false);
         setHistoryOpen(false);
         setTriggerPopup(false, false);
+        setNewsOpen(false);
+        newsOpenRef.current = false;
         const selected = Math.max(
           0,
           agentTreeRows.findIndex((row) => row.id === activeAgentIdRef.current),
@@ -1946,6 +2112,23 @@ export function App({
     if (key.ctrl && key.name === "h") {
       key.stopPropagation();
       openHistory();
+      return;
+    }
+
+    if (key.ctrl && key.name === "n") {
+      key.stopPropagation();
+      if (newsOpenRef.current) closeNews();
+      else openNews();
+      return;
+    }
+    if (newsOpenRef.current) {
+      key.stopPropagation();
+      if (key.name === "escape") closeNews();
+      else if (key.name === "left") moveNewsCursor(1);
+      else if (key.name === "right") moveNewsCursor(-1);
+      else if (key.name === "space" || key.sequence === " ") markCurrentNewsRead();
+      else if (key.name === "return" || key.name === "enter" || key.name === "kpenter")
+        replyToCurrentNews();
       return;
     }
 
@@ -2353,6 +2536,11 @@ export function App({
                   role={line.role as Role}
                   text={line.text}
                   workingCaret={workingCaret}
+                  news={
+                    line.kind === "text" && line.role === "assistant" && line.newsId
+                      ? (newsReadById.get(line.newsId) ? "seen" : "unseen")
+                      : undefined
+                  }
                 />
               );
             const gapBefore = needsTranscriptGap(visibleTx.lines[i - 1], line);
@@ -2555,6 +2743,15 @@ export function App({
             terminalWidth={width}
             terminalHeight={height}
             onSelect={selectHistorySession}
+          />
+        ) : null}
+        {newsOpen ? (
+          <NewsPopup
+            theme={theme}
+            items={news}
+            cursor={newsCursor}
+            terminalWidth={width}
+            terminalHeight={height}
           />
         ) : null}
         {checkApproval ? (

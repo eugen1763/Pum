@@ -18,7 +18,7 @@ import type { ToolCall } from "./tool-line";
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
 export type Line =
-  | { kind: "text"; role: Role; text: string }
+  | { kind: "text"; role: Role; text: string; newsId?: string }
   | { kind: "tool"; call: ToolCall }
   | { kind: "agent-message"; sender: string; recipient: string; text: string };
 
@@ -175,12 +175,15 @@ export function TextLine({
   role,
   text,
   workingCaret = false,
+  news,
 }: {
   theme: Theme;
   syntaxStyle: SyntaxStyle;
   role: Role;
   text: string;
   workingCaret?: boolean;
+  /** News marker for a recorded final answer: unseen circle or seen check. */
+  news?: "unseen" | "seen";
 }) {
   const color = roleColor(theme, role);
   const isUser = role === "user";
@@ -198,10 +201,19 @@ export function TextLine({
   // finalizes Markdown parsing and does not swap through a plain-text phase.
   // User messages are static Markdown. They never get a streaming caret.
   if (isAssistant || isUser) {
+    const isNews = isAssistant && news !== undefined;
+    const glyph = isNews
+      ? news === "seen" ? "✓ " : "◦ "
+      : isUser
+        ? PROMPT
+        : GUTTER;
+    const glyphColor = isNews
+      ? news === "seen" ? theme.success : theme.dim
+      : color;
     return (
       <Row
-        glyph={isUser ? PROMPT : GUTTER}
-        glyphColor={color}
+        glyph={glyph}
+        glyphColor={glyphColor}
         background={isUser ? theme.userBg : undefined}
       >
         <SelectableMarkdown

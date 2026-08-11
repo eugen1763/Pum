@@ -70,10 +70,11 @@ describe("Help popup layout", () => {
     expect(helpLayout(100, 28).twoColumns).toBe(false);
     const firstPage = await renderHelp(100, 28, 0);
     const lastPage = await renderHelp(100, 28, maxHelpScrollOffset(28));
+    const commandsPage = await renderHelp(100, 28, Math.max(0, maxHelpScrollOffset(28) - 5));
 
     expect(firstPage).toContain("Prompt");
     expect(firstPage).toContain("Cache and agents");
-    expect(lastPage).toContain("Commands");
+    expect(commandsPage).toContain("Commands");
     expect(lastPage).toContain("Application");
     expect(lastPage).toContain("↑↓ scroll");
     for (const line of `${firstPage}\n${lastPage}`.split("\n")) {
