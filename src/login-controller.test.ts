@@ -85,6 +85,59 @@ describe("login controller", () => {
     expect(pages.at(-1)?.kind).toBe("success");
   });
 
+  test("pastes provider secrets without exposing them in pages, entries, or errors", async () => {
+    const pages: LoginPage[] = [];
+    const entries: unknown[] = [];
+    let submitted = "";
+    const runtime = {
+      getProviders: () => [{ id: "api", name: "API", auth: { apiKey: { name: "API key", login() {}, resolve() {} } } }],
+      login: async (_id: string, _type: string, interaction: any) => {
+        submitted = await interaction.prompt({ type: "secret", message: "Enter API key" });
+        throw new Error(`Rejected ${submitted}`);
+      },
+    } as any;
+    const controller = new LoginController(
+      runtime,
+      () => ({ sessionManager: { getEntries: () => entries } }) as any,
+      (page) => pages.push(page),
+      () => {},
+      () => {},
+    );
+    controller.open();
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    await settle();
+
+    const key = "pasted-test-key";
+    expect(controller.acceptsTextPaste()).toBe(true);
+    expect(controller.pasteText(`${key}\r\n`)).toBe(true);
+    expect(pages.at(-1)).toMatchObject({ kind: "prompt", secretLength: key.length });
+    expect(JSON.stringify(pages)).not.toContain(key);
+    controller.handleKey({ name: "enter" });
+    await settle();
+    expect(submitted).toBe(key);
+    expect(entries).toEqual([]);
+    expect(pages.at(-1)).toMatchObject({ kind: "error" });
+    expect(JSON.stringify(pages)).not.toContain(key);
+    expect((pages.at(-1) as Extract<LoginPage, { kind: "error" }>).message).toContain("[redacted]");
+  });
+
+  test("pastes a custom endpoint and masks a custom API key", () => {
+    const pages: LoginPage[] = [];
+    const controller = new LoginController({ getProviders: () => [] } as any, () => ({}) as any, (page) => pages.push(page), () => {}, () => {});
+    controller.open();
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    expect(controller.pasteText("https://local.example.test/v1\r\n")).toBe(true);
+    expect(pages.at(-1)).toMatchObject({ kind: "custom-endpoint", endpoint: "https://local.example.test/v1" });
+    controller.handleKey({ name: "enter" });
+
+    const key = "custom-pasted-key";
+    expect(controller.pasteText(key)).toBe(true);
+    expect(pages.at(-1)).toMatchObject({ kind: "custom-key", secretLength: key.length });
+    expect(JSON.stringify(pages)).not.toContain(key);
+  });
+
   test("shows device details and cancels an OAuth flow without starting a browser process", async () => {
     const pages: LoginPage[] = [];
     const launched: string[] = [];

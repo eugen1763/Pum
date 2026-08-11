@@ -46,7 +46,7 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.flush();
 }
 
-async function renderApp(width = 58, height = 14) {
+async function renderApp(width = 58, height = 14, readPastedText?: () => Promise<string>) {
   const setup = await createTestRenderer({ width, height, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const session = fakeSession();
@@ -66,6 +66,7 @@ async function renderApp(width = 58, height = 14) {
       searchProviders={[]}
       subagentManager={{ getAgents: () => [], subscribe: () => () => {}, bindMainSession: async () => {} } as any}
       loginRequired
+      readPastedText={readPastedText}
     />,
   );
   await settle(setup);
@@ -112,5 +113,55 @@ describe("provider search App keyboard flow", () => {
     expect(frame).toContain("OpenAI");
     expect(frame).toContain("/ search");
     expect(frame.split("\n").every((line) => Array.from(line).length <= 36)).toBe(true);
+  });
+  test("leaves bracketed provider-search paste with the focused input", async () => {
+    const setup = await renderApp();
+    setup.mockInput.pasteBracketedText("openai");
+    await settle(setup);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("OpenAI");
+    expect(frame).not.toContain("Anthropic");
+    expect(frame).not.toContain("Local Models");
+  });
+
+  test("uses the Windows Ctrl+V fallback for custom URL and secret fields", async () => {
+    const values = ["https://local.example.test/v1\r\n", "ui-pasted-secret"];
+    const setup = await renderApp(58, 14, async () => values.shift() ?? "");
+    for (let index = 0; index < 4; index++) setup.mockInput.pressArrow("down");
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    setup.mockInput.pressKey("v", { ctrl: true });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("https://local.example.test/v1");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    setup.mockInput.pressKey("v", { ctrl: true });
+    await settle(setup);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("••••••••••••••••");
+    expect(frame).not.toContain("ui-pasted-secret");
+  });
+
+  test("accepts bracketed paste in custom URL and secret fields", async () => {
+    const setup = await renderApp();
+    for (let index = 0; index < 4; index++) setup.mockInput.pressArrow("down");
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    setup.mockInput.pasteBracketedText("https://bracketed.example.test/v1\r\n");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("https://bracketed.example.test/v1");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    setup.mockInput.pasteBracketedText("bracketed-secret");
+    await settle(setup);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("••••••••••••••••");
+    expect(frame).not.toContain("bracketed-secret");
   });
 });

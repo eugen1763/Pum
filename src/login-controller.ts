@@ -20,6 +20,10 @@ export type LoginKey = {
   option?: boolean;
 };
 
+function pastedSingleLine(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f]/g, "");
+}
+
 export function filterLoginMethods(methods: readonly LoginMethod[], query: string): LoginMethod[] {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [...methods];
@@ -249,6 +253,41 @@ export class LoginController {
     const text = key.sequence ?? "";
     if (!key.ctrl && !key.meta && !key.option && text.length > 0 && !/[\u0000-\u001f\u007f]/.test(text)) {
       setValue(value + text);
+      return true;
+    }
+    return false;
+  }
+
+  acceptsTextPaste(): boolean {
+    return this.page.kind === "custom-endpoint" ||
+      this.page.kind === "custom-key" ||
+      (this.page.kind === "prompt" && this.page.prompt.type !== "select");
+  }
+
+  pasteText(text: string): boolean {
+    if (!this.acceptsTextPaste()) return false;
+    const pasted = pastedSingleLine(text);
+    if (!pasted) return true;
+
+    if (this.page.kind === "prompt") {
+      const current = this.page;
+      if (current.prompt.type === "secret") {
+        this.secret += pasted;
+        this.setPage({ ...current, secretLength: this.secret.length });
+      } else {
+        this.setPage({ ...current, value: current.value + pasted });
+      }
+      return true;
+    }
+    if (this.page.kind === "custom-endpoint") {
+      this.endpoint = this.page.endpoint + pasted;
+      this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint });
+      return true;
+    }
+    if (this.page.kind === "custom-key") {
+      const current = this.page;
+      this.customKey += pasted;
+      this.setPage({ ...current, secretLength: this.customKey.length });
       return true;
     }
     return false;

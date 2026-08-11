@@ -1,6 +1,6 @@
-import type { ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
+import { decodePasteBytes, type ScrollBoxRenderable, type TextareaRenderable } from "@opentui/core";
 import { randomUUID } from "node:crypto";
-import { useKeyboard, useTerminalDimensions } from "@opentui/react";
+import { useKeyboard, usePaste, useTerminalDimensions } from "@opentui/react";
 import type { Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -121,6 +121,7 @@ import {
   type TriggerManagerLike,
 } from "./triggers/popup";
 import type { TerminalTitleController } from "./terminal-title";
+import { readClipboardText } from "./text-paste";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -341,6 +342,7 @@ export function App({
   promptHistoryStore = DEFAULT_PROMPT_HISTORY_STORE,
   promptStashStore = DEFAULT_PROMPT_STASH_STORE,
   captureImage = captureClipboardImage,
+  readPastedText = readClipboardText,
   onExit = () => process.exit(0),
   checkApprovalCoordinator,
   checkApprovalStore,
@@ -366,6 +368,7 @@ export function App({
   promptHistoryStore?: PromptHistoryStore;
   promptStashStore?: PromptStashStore;
   captureImage?: typeof captureClipboardImage;
+  readPastedText?: typeof readClipboardText;
   onExit?: () => void | Promise<void>;
   checkApprovalCoordinator?: CheckApprovalCoordinator;
   checkApprovalStore?: CheckApprovalStore;
@@ -507,6 +510,7 @@ export function App({
   const nextImageId = useRef(1);
   const lastInputValue = useRef("");
   const imagePasteBusy = useRef(false);
+  const loginTextPasteBusy = useRef(false);
   const viewDrafts = useRef(new Map<string, string>());
   const viewEditingStashIndices = useRef(new Map<string, number | null>());
   const spawnPreviewRestoreView = useRef<{ active: boolean; agentId: string | null }>({
@@ -784,6 +788,19 @@ export function App({
       append({ kind: "text", role: "error", text: `image paste failed: ${String(error)}` });
     } finally {
       imagePasteBusy.current = false;
+    }
+  };
+
+  const pasteLoginClipboardText = async () => {
+    if (loginTextPasteBusy.current) return;
+    loginTextPasteBusy.current = true;
+    try {
+      const text = await readPastedText();
+      loginControllerRef.current?.pasteText(text);
+    } catch {
+      append({ kind: "text", role: "error", text: "text paste failed" });
+    } finally {
+      loginTextPasteBusy.current = false;
     }
   };
 
@@ -1698,6 +1715,13 @@ export function App({
     selectAgentView(ids[next] ?? null);
   };
 
+  usePaste((event) => {
+    const controller = loginControllerRef.current;
+    if (!loginOpen || !controller?.acceptsTextPaste()) return;
+    event.stopPropagation();
+    controller.pasteText(decodePasteBytes(event.bytes));
+  });
+
   useKeyboard((key) => {
     if (checkApproval) {
       key.stopPropagation();
@@ -1814,6 +1838,11 @@ export function App({
     }
 
     if (loginOpen) {
+      if (key.ctrl && key.name === "v" && loginControllerRef.current?.acceptsTextPaste()) {
+        key.stopPropagation();
+        void pasteLoginClipboardText();
+        return;
+      }
       if (loginControllerRef.current?.handleKey(key)) key.stopPropagation();
       return;
     }
