@@ -1679,6 +1679,58 @@ describe("SubagentManager extension", () => {
       .rejects.toThrow("Cannot merge worker while retained descendants remain:\n- worker (idle)");
   });
 
+  test("prepares main stats before registering restored child files", async () => {
+    const calls: string[] = [];
+    const statsManager = {
+      prepareMainSession(path: string) { calls.push(`prepare:${path}`); },
+      registerAgentFile(id: string, path: string) { calls.push(`child:${id}:${path}`); },
+    };
+    const childPath = join(process.cwd(), "restored-child.jsonl");
+    const entries = [{
+      type: "custom",
+      customType: "pum.subagent",
+      data: {
+        event: "spawned",
+        id: "child",
+        snapshot: {
+          id: "child",
+          name: "worker",
+          task: "task",
+          status: "idle",
+          worktree: {
+            name: "worker",
+            path: "/tmp/worker",
+            branch: "pum/worker",
+            baseBranch: "main",
+            baseCommit: "abc",
+          },
+          sessionFile: childPath,
+          parentAgentId: null,
+          modelId: "mock/model",
+          thinkingLevel: "off",
+          startedAt: 1,
+          updatedAt: 1,
+          usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
+        },
+      },
+    }];
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      statsManager: statsManager as any,
+    });
+    await manager.attachMain({ appendEntry() {} } as any, {
+      getSessionId: () => "main-session",
+      getSessionFile: () => "/tmp/main.jsonl",
+      getEntries: () => entries,
+    } as any, "/repo");
+
+    expect(calls).toEqual([
+      "prepare:/tmp/main.jsonl",
+      `child:child:${childPath}`,
+    ]);
+  });
+
   test("binds the main session even when session_start was missed", async () => {
     const pi = {
       on() {},

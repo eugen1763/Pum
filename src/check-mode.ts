@@ -422,6 +422,12 @@ export async function prepareCheck(
 }
 
 export type CheckerRuntime = Pick<ModelRuntime, "getAvailableSnapshot" | "completeSimple">;
+export type CheckRequestObservation = {
+  requester?: CheckApprovalIdentity;
+  model: string;
+  usage?: AssistantMessage["usage"];
+};
+export type CheckRequestObserver = (observation: CheckRequestObservation) => void;
 export type ToolCheck = {
   toolName: CheckedToolName;
   input: unknown;
@@ -434,6 +440,8 @@ export type ToolCheck = {
   requester?: CheckApprovalIdentity;
   /** Exact PUM settings files enabled by the owning scope. Empty for managed subagents. */
   settingsFiles?: readonly string[];
+  /** Records each explicit verifier request without persisting its prompt. */
+  observeRequest?: CheckRequestObserver;
 };
 export type ProcessCheckCall = Omit<ToolCheck, "toolName" | "input" | "cwd"> & {
   proposal: ProcessCheckProposal;
@@ -604,20 +612,28 @@ export async function evaluateToolCall(runtime: CheckerRuntime, call: ToolCheck)
     const deadline = Date.now() + timeoutMs;
     const verdict = await withHardTimeout(async (signal) => {
       const request = async (prompt: string) => {
-        const result = await runtime.completeSimple(model, {
-          systemPrompt: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-        }, {
-          signal,
-          temperature: 0,
-          maxTokens: 180,
-          timeoutMs: Math.max(1, deadline - Date.now()),
-          maxRetries: 0,
-        });
-        if (signal.aborted) throw signal.reason;
-        if (result.stopReason === "error") throw new Error(result.errorMessage ?? "verifier request error");
-        if (result.stopReason === "aborted") throw new SafetyCheckAbortError(result.errorMessage ?? "Safety check aborted");
-        return { result, verdict: safetyDecision(responseText(result)) };
+        let observed = false;
+        try {
+          const result = await runtime.completeSimple(model, {
+            systemPrompt: SYSTEM_PROMPT,
+            messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+          }, {
+            signal,
+            temperature: 0,
+            maxTokens: 180,
+            timeoutMs: Math.max(1, deadline - Date.now()),
+            maxRetries: 0,
+          });
+          call.observeRequest?.({ requester: call.requester, model: config.model, usage: result.usage });
+          observed = true;
+          if (signal.aborted) throw signal.reason;
+          if (result.stopReason === "error") throw new Error(result.errorMessage ?? "verifier request error");
+          if (result.stopReason === "aborted") throw new SafetyCheckAbortError(result.errorMessage ?? "Safety check aborted");
+          return { result, verdict: safetyDecision(responseText(result)) };
+        } catch (error) {
+          if (!observed) call.observeRequest?.({ requester: call.requester, model: config.model });
+          throw error;
+        }
       };
       const first = await request(prepared.prompt);
       if (first.verdict.decision !== "unclear") return first.verdict;
@@ -697,6 +713,7 @@ export type ExternalTriggerSafetyChecker = (
 /** Create the process safety callback used by TriggerManager. */
 export function createExternalTriggerSafetyChecker(
   runtime: CheckerRuntime,
+  observeRequest?: CheckRequestObserver,
 ): ExternalTriggerSafetyChecker {
   return async (proposal, requester, signal) => {
     const config = getCheckModeConfig();
@@ -709,6 +726,7 @@ export function createExternalTriggerSafetyChecker(
       config,
       signal,
       requester: identity,
+      observeRequest,
     });
     if (evaluation.decision === "allow") return;
     throw new Error(redactApprovalPreview(evaluation.reason));
@@ -747,6 +765,7 @@ export function redactApprovalPreview(text: string): string {
 
 type CheckExtensionOptions = {
   identity?: CheckApprovalIdentity;
+  observeRequest?: CheckRequestObserver;
 };
 
 export function createCheckModeExtension(
@@ -781,6 +800,7 @@ export function createCheckModeExtension(
           signal: ctx.signal,
           config: current,
           requester: identity,
+          observeRequest: options.observeRequest,
           context: {
             currentUserRequest,
             agentRationale: event.input && typeof event.input === "object" && typeof (event.input as any).rationale === "string"

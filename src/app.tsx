@@ -135,6 +135,8 @@ import {
   type NewsItem,
   type NewsPrompt,
 } from "./news";
+import { statsFromEntries, type SessionStatsManager } from "./session-stats";
+import { maxStatsScrollOffset, StatsPopup } from "./stats-popup";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -391,6 +393,7 @@ export function App({
   settings: initial,
   searchProviders,
   subagentManager,
+  statsManager,
   questionnaireManager,
   spawnPreviewManager,
   loginRequired = false,
@@ -417,6 +420,7 @@ export function App({
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
   subagentManager: SubagentManager;
+  statsManager?: SessionStatsManager;
   questionnaireManager?: QuestionnaireManager;
   spawnPreviewManager?: SpawnPreviewManager;
   loginRequired?: boolean;
@@ -476,6 +480,9 @@ export function App({
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpScrollOffset, setHelpScrollOffset] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [statsScrollOffset, setStatsScrollOffset] = useState(0);
+  const [statsRevision, setStatsRevision] = useState(0);
   const [historySessions, setHistorySessions] = useState<SessionHistoryItem[]>([]);
   const [page, setPage] = useState<"main" | "models" | "checkModels">("main");
   const [settingsQuery, setSettingsQuery] = useState("");
@@ -528,6 +535,7 @@ export function App({
   const newsOpenRef = useRef(false);
   const [newsCursor, setNewsCursor] = useState(0);
   const newsCursorRef = useRef(0);
+  const statsOpenRef = useRef(false);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
   const { width, height } = useTerminalDimensions();
@@ -555,6 +563,10 @@ export function App({
   const visibleUsage = activeAgent?.usage ?? usage;
   const agentTreeRows = buildAgentTree(agents);
   const triggers = sortTriggers(triggerManager?.getTriggers() ?? []);
+  const statsSnapshot = useMemo(() => statsManager?.snapshot() ?? statsFromEntries(
+    (session.sessionManager as any).getEntries?.() ?? session.sessionManager.buildContextEntries(),
+    `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
+  ), [statsManager, session, statsRevision]);
   const inputHint = cancelArmed
     ? " esc again to cancel "
     : quitArmed
@@ -663,6 +675,8 @@ export function App({
     setAgentSelectorOpen(false);
     setNewsOpen(false);
     newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
     setStashMode(false);
     const nextCursor = Math.min(triggerCursorRef.current, Math.max(0, triggers.length - 1));
     triggerCursorRef.current = nextCursor;
@@ -967,6 +981,7 @@ export function App({
       helpOpen ||
       historyOpen ||
       newsOpenRef.current ||
+      statsOpenRef.current ||
       settingsOpenRef.current
     ) return;
     const input = inputRef.current;
@@ -1022,6 +1037,11 @@ export function App({
     append({ kind: "text", role: "system", text: warning });
   }), [sandboxWarningSource]);
 
+  useEffect(() => {
+    setStatsRevision((revision) => revision + 1);
+    return statsManager?.subscribe(() => setStatsRevision((revision) => revision + 1));
+  }, [statsManager, session]);
+
 
   useEffect(() => triggerManager?.subscribe(() => {
     setTriggerRevision((revision) => revision + 1);
@@ -1072,6 +1092,8 @@ export function App({
         setLoginOpen(false);
         setNewsOpen(false);
         newsOpenRef.current = false;
+        setStatsOpen(false);
+        statsOpenRef.current = false;
       }
       setQuestionnaireRevision((revision) => revision + 1);
     });
@@ -1419,6 +1441,8 @@ export function App({
     setTriggerPopup(false, false);
     setNewsOpen(false);
     newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
     setLoginOpen(true);
     loginControllerRef.current?.open();
   };
@@ -1473,6 +1497,8 @@ export function App({
     setTriggerPopup(false, false);
     setNewsOpen(false);
     newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
     loadSessions()
       .then((sessions) => {
         setHistorySessions(sessions);
@@ -1495,6 +1521,8 @@ export function App({
     setAgentSelectorOpen(false);
     setTriggerPopup(false, false);
     setLoginOpen(false);
+    setStatsOpen(false);
+    statsOpenRef.current = false;
     newsCursorRef.current = 0;
     setNewsCursor(0);
     newsOpenRef.current = true;
@@ -1504,6 +1532,27 @@ export function App({
   const closeNews = () => {
     newsOpenRef.current = false;
     setNewsOpen(false);
+    queueMicrotask(() => inputRef.current?.focus());
+  };
+
+  const openStats = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setTriggerPopup(false, false);
+    setLoginOpen(false);
+    setNewsOpen(false);
+    newsOpenRef.current = false;
+    setStatsScrollOffset(0);
+    statsOpenRef.current = true;
+    setStatsOpen(true);
+  };
+
+  const closeStats = () => {
+    statsOpenRef.current = false;
+    setStatsOpen(false);
     queueMicrotask(() => inputRef.current?.focus());
   };
 
@@ -1766,8 +1815,9 @@ export function App({
     const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
     const newsCommand = trimmed === "/news";
+    const statsCommand = trimmed === "/stats";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !newsCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !newsCommand && !statsCommand && !worktreeCommand) return false;
     editingStashIndex.current = null;
 
     if (historyCommand) {
@@ -1788,6 +1838,11 @@ export function App({
     if (newsCommand) {
       setEditorText("");
       openNews();
+      return true;
+    }
+    if (statsCommand) {
+      setEditorText("");
+      openStats();
       return true;
     }
 
@@ -2236,6 +2291,7 @@ export function App({
         !agentSelectorOpen &&
         !helpOpen &&
         !historyOpen &&
+        !statsOpenRef.current &&
         !settingsOpenRef.current;
       const inputValue = inputRef.current?.plainText ?? "";
       if (promptOwnsInput && (inputValue.length > 0 || pendingImages.current.length > 0)) {
@@ -2308,6 +2364,20 @@ export function App({
         return;
       }
       if (loginControllerRef.current?.handleKey(key)) key.stopPropagation();
+      return;
+    }
+
+    if (statsOpenRef.current || statsOpen) {
+      key.stopPropagation();
+      const maxOffset = maxStatsScrollOffset(statsSnapshot, width, height);
+      if (key.name === "escape") closeStats();
+      else if (key.name === "home") setStatsScrollOffset(0);
+      else if (key.name === "end") setStatsScrollOffset(maxOffset);
+      else if (key.name === "up" || key.name === "down" || key.name === "pageup" || key.name === "pagedown") {
+        const amount = key.name === "pageup" || key.name === "pagedown" ? 5 : 1;
+        const direction = key.name === "up" || key.name === "pageup" ? -1 : 1;
+        setStatsScrollOffset((offset) => Math.max(0, Math.min(maxOffset, offset + direction * amount)));
+      }
       return;
     }
 
@@ -2995,7 +3065,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="word"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !newsOpen}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !newsOpen}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -3083,6 +3153,15 @@ export function App({
             cursor={newsCursor}
             terminalWidth={width}
             terminalHeight={height}
+          />
+        ) : null}
+        {statsOpen ? (
+          <StatsPopup
+            theme={theme}
+            snapshot={statsSnapshot}
+            terminalWidth={width}
+            terminalHeight={height}
+            scrollOffset={statsScrollOffset}
           />
         ) : null}
         {settingsOpen ? (

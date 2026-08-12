@@ -89,6 +89,7 @@ import {
 } from "./types";
 import type { SpawnPreviewManager, SpawnPreviewRequester } from "./spawn-preview";
 import { readonlySubagentExtension } from "./readonly";
+import type { SessionStatsManager } from "../session-stats";
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
@@ -221,6 +222,7 @@ type ManagerOptions = {
   spawnPreviewManager?: SpawnPreviewManager;
   triggerManager?: TriggerRuntimeManager;
   messageCacheController?: MessageCacheController;
+  statsManager?: SessionStatsManager;
 };
 
 const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
@@ -291,6 +293,7 @@ export class SubagentManager {
   private readonly spawnPreviewManager?: SpawnPreviewManager;
   private readonly triggerManager?: TriggerRuntimeManager;
   private readonly messageCacheController?: MessageCacheController;
+  private readonly statsManager?: SessionStatsManager;
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly listeners = new Set<(event: SubagentManagerEvent) => void>();
   private mainApi?: ExtensionAPI;
@@ -320,6 +323,7 @@ export class SubagentManager {
     this.spawnPreviewManager = options.spawnPreviewManager;
     this.triggerManager = options.triggerManager;
     this.messageCacheController = options.messageCacheController;
+    this.statsManager = options.statsManager;
   }
 
   subscribe(listener: (event: SubagentManagerEvent) => void): () => void {
@@ -378,6 +382,8 @@ export class SubagentManager {
     this.mainRunning = false;
     this.mainCompletionMessageIds.clear();
     this.mainCompletionResponse = "";
+    const mainSessionFile = (sessionManager as any).getSessionFile?.();
+    if (typeof mainSessionFile === "string") this.statsManager?.prepareMainSession(mainSessionFile);
     this.emit({
       type: "trigger-target",
       sessionId,
@@ -467,6 +473,9 @@ export class SubagentManager {
         idleNotifiedGeneration,
         finishRequested: restoredFinish.get(snapshot.id),
       });
+      if (snapshot.sessionFile) {
+        this.statsManager?.registerAgentFile(snapshot.id, snapshot.sessionFile, snapshot.modelId);
+      }
       if (status === "interrupted" && snapshot.status !== "interrupted") {
         this.persist({
           event: "status",
@@ -1504,6 +1513,7 @@ export class SubagentManager {
     });
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
+    this.statsManager?.attach(record.snapshot.id, result.session, record.snapshot.modelId);
     // Narrow the outgoing tool list to core plus enabled groups for this child.
     result.session.setActiveToolsByName(record.toolGroups.activeTools());
     record.unsubscribe = result.session.subscribe((event) => this.processSessionEvent(record, event));
@@ -2277,6 +2287,7 @@ export class SubagentManager {
   }
 
   private forgetManagedAgent(record: RuntimeRecord): void {
+    this.statsManager?.closeAgent(record.snapshot.id);
     this.records.delete(record.snapshot.id);
     this.persist({ event: "removed", id: record.snapshot.id, at: Date.now() });
     this.emit();
