@@ -2,6 +2,14 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.12-beta.1] - 2026-08-12
+
+### Added
+- Added managed subagent completions to News. Direct and nested completion entries include the finishing agent, requester, finish summary, and final response. Stable settlement identities prevent duplicates across delivery, acknowledgement, and session resume. News navigation now targets the relevant completion transcript rows while preserving read, reply, and copy behavior.
+
+### Fixed
+- Fixed Check mode parsing for valid Bash `case` patterns. Pattern terminators such as `success|failed)` no longer produce an unmatched-parenthesis error, and pattern alternatives are no longer classified as pipelines.
+
 ## [0.2.11-beta.1] - 2026-08-12
 
 ### Fixed
