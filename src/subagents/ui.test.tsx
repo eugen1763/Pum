@@ -183,8 +183,9 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
 async function settleUntil(
   setup: Awaited<ReturnType<typeof createTestRenderer>>,
   condition: () => boolean,
+  maxAttempts = 20,
 ) {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await settle(setup);
     if (condition()) return;
     await new Promise((resolve) => setTimeout(resolve, 1));
@@ -251,13 +252,22 @@ describe("subagent transcript UI", () => {
     };
 
     flushSync(() => listener!({ type: "main-pending-add", pending }));
-    await settleUntil(setup, () => setup.captureCharFrame().includes("pum → main · queued"));
+    await settleUntil(setup, () => {
+      const frame = setup.captureCharFrame();
+      return frame.includes("pum → main · queued")
+        && frame.includes("managed subagents remain open");
+    }, 100);
     const queuedFrame = setup.captureCharFrame();
     expect(queuedFrame).toContain("pum → main · queued");
     expect(queuedFrame).toContain("managed subagents remain open");
 
     flushSync(() => listener!({ type: "main-pending-resolve", id: pending.id }));
-    await settleUntil(setup, () => !setup.captureCharFrame().includes("pum → main · queued"));
+    await settleUntil(setup, () => {
+      const frame = setup.captureCharFrame();
+      return frame.includes("pum → main")
+        && frame.includes("managed subagents remain open")
+        && !frame.includes("pum → main · queued");
+    }, 100);
     const durableFrame = setup.captureCharFrame();
     expect(durableFrame).toContain("pum → main");
     expect(durableFrame).toContain("managed subagents remain open");
