@@ -505,17 +505,22 @@ These were chosen deliberately. Change them only on purpose.
   command analysis or verifier review. On-mode allows a structured process only
   when the deterministic policy and the advisory verifier both clear it;
   otherwise the trigger check throws and the process never starts.
-- **News answers persist the user prompt and steers that produced them.** The
-  news companion file stores `prompts` (`text` plus a `steer` flag) with each
-  answer; the popup renders them above the answer with the transcript's
-  user-row style. An answer is marked read only when a new user prompt follows
-  it directly in the transcript. Any interleaved line (agent message, trigger
-  event, stream, or queued message) leaves it unread. Resumed transcripts are
-  tagged with news ids at launch as well as on session switch. A resumed
-  answer whose text no longer matches a replayed line stays unread by design.
-  The popup copies the selected answer to the clipboard on `c`. Its controls stay
-  inside the popup frame. Press `n` to jump to the answer and `p` to jump to the
-  user prompt.
+- **News persists user turns and managed completion responses.** The news
+  companion file stores `prompts` (`text` plus a `steer` flag) with each answer.
+  Completed `finish_subagent` settlements project into the same file only after
+  the direct requester produces a non-acknowledgement response. The canonical
+  News id is `subagent-finish:<settlement.messageId>`. Registry reconciliation
+  preserves read and answered state and prevents duplicates after resume,
+  delivery retries, replay, or acknowledgement. Completion items store the
+  finishing agent and direct requester names and ids. The popup renders this
+  identity above the finish notice and response. `n` jumps to the requester
+  response. `p` uses the stable agent-message id to jump to the completion
+  notice. A normal answer is marked read only when a new user prompt follows it
+  directly in the transcript. Any interleaved line leaves the answer unread.
+  Resumed transcripts are tagged with News ids at launch and session switch.
+  A resumed answer whose text no longer matches a replayed line stays unread by
+  design. The popup copies the selected answer on `c`. Its controls stay inside
+  the popup frame.
 
 ## Things that bite
 

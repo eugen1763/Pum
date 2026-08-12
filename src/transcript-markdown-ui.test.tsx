@@ -408,7 +408,13 @@ describe("transcript Markdown rows", () => {
 
     expect(lines).toEqual([
       { kind: "text", role: "user", text: markdownText },
-      { kind: "agent-message", sender: "main", recipient: "worker", text: markdownText },
+      {
+        kind: "agent-message",
+        sender: "main",
+        recipient: "worker",
+        text: markdownText,
+        messageId: "message-1",
+      },
     ]);
     const markdownRows = descendants(setup.renderer.root, MarkdownRenderable);
     expect(markdownRows.map((row) => row.content)).toEqual([markdownText, markdownText]);

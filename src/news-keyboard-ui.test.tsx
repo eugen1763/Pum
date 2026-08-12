@@ -241,6 +241,75 @@ describe("news keyboard shortcuts", () => {
     expectTranscriptTargetVisible(transcript, promptIndex);
   });
 
+  test("shows finish identity and uses the stable completion message for prompt navigation", async () => {
+    const notice = "Subagent worker completed.\nsummary: Child tests passed.";
+    const answer = "Main merged the child result.";
+    const before = Array.from({ length: 24 }, (_, index) => ({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: `Earlier answer ${index}` }],
+      },
+    }));
+    const promptIndex = before.length + 1;
+    const session = fakeSession(undefined, [
+      ...before,
+      {
+        type: "custom_message",
+        customType: "pum.agent_message",
+        content: notice,
+        details: {
+          id: "wrong-settlement",
+          sender: "worker",
+          recipient: "main",
+          text: notice,
+          at: T0 - 1,
+          kind: "completion",
+        },
+      },
+      {
+        type: "custom_message",
+        customType: "pum.agent_message",
+        content: notice,
+        details: {
+          id: "settlement-worker:1:completed",
+          sender: "worker",
+          recipient: "main",
+          text: notice,
+          at: T0,
+          kind: "completion",
+        },
+      },
+      { type: "message", message: { role: "assistant", content: [{ type: "text", text: answer }] } },
+    ]);
+    saveNewsItems(session.sessionFile, [{
+      ...newsItem("subagent-finish:settlement-worker:1:completed", answer, T0),
+      prompts: [{ text: notice, steer: false }],
+      completion: {
+        settlementId: "worker:1:completed",
+        messageId: "settlement-worker:1:completed",
+        agentId: "worker",
+        agentName: "worker",
+        requesterAgentId: null,
+        requesterName: "main",
+        summary: "Child tests passed.",
+      },
+    }]);
+    const setup = await renderApp(session);
+    const transcript = setup.renderer.root.findDescendantById("transcript-scrollbox") as ScrollBoxRenderable;
+
+    setup.mockInput.pressKey("n", { ctrl: true });
+    await settle(setup);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("worker → main · finish_subagent");
+    expect(newsMarkdownSetup(setup)).toBe(answer);
+
+    await setup.mockInput.typeText("p");
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("1 / 1");
+    expectTranscriptTargetVisible(transcript, promptIndex);
+  });
+
   test("Space toggles the current answer read and unread", async () => {
     const session = fakeSession();
     saveNewsItems(session.sessionFile, [newsItem("a1", "Unseen answer.", T0)]);

@@ -1037,9 +1037,15 @@ export function App({
       else if (event.type === "main-pending-add") addPending(event.pending);
       else if (event.type === "main-pending-resolve") resolvePending(event.id);
       else if (event.type === "main-pending-drop") dropPending(event.id);
+      else if (event.type === "news-changed") {
+        const loaded = loadNewsItems(session.sessionFile);
+        newsRef.current = loaded;
+        setNews(loaded);
+        setTx((value) => ({ ...value, lines: tagNewsLines(value.lines, loaded) }));
+      }
       setAgentRevision((revision) => revision + 1);
     }),
-    [subagentManager],
+    [subagentManager, session],
   );
 
   useEffect(() => {
@@ -1506,29 +1512,47 @@ export function App({
   const jumpFromNews = (target: "answer" | "prompt") => {
     const item = newsRef.current[newsCursorRef.current];
     if (!item) return;
-    const lines = txRef.current.lines;
-    const answerIndex = lines.findIndex((line) =>
-      line.kind === "text" && line.role === "assistant" && line.newsId === item.id,
-    );
+    const requesterAgentId = item.completion?.requesterAgentId ?? null;
+    const lines = requesterAgentId === null
+      ? txRef.current.lines
+      : subagentManager.getAgent(requesterAgentId)?.transcript.lines;
+    if (!lines) return;
+    const completionPromptIndex = item.completion
+      ? lines.findIndex((line) =>
+        line.kind === "agent-message" && line.messageId === item.completion?.messageId,
+      )
+      : -1;
+    const answerIndex = item.completion
+      ? lines.findIndex((line, index) =>
+        index > completionPromptIndex
+          && line.kind === "text"
+          && line.role === "assistant"
+          && line.text === item.text,
+      )
+      : lines.findIndex((line) =>
+        line.kind === "text" && line.role === "assistant" && line.newsId === item.id,
+      );
     let targetIndex = answerIndex;
     if (target === "prompt") {
-      const promptText = item.prompts?.find((prompt) => !prompt.steer)?.text
-        ?? item.prompts?.[0]?.text;
-      targetIndex = -1;
-      if (promptText) {
-        const end = answerIndex >= 0 ? answerIndex : lines.length;
-        for (let index = end - 1; index >= 0; index--) {
-          const line = lines[index];
-          if (line?.kind === "text" && line.role === "user" && line.text === promptText) {
-            targetIndex = index;
-            break;
+      targetIndex = completionPromptIndex;
+      if (!item.completion) {
+        const promptText = item.prompts?.find((prompt) => !prompt.steer)?.text
+          ?? item.prompts?.[0]?.text;
+        if (promptText) {
+          const end = answerIndex >= 0 ? answerIndex : lines.length;
+          for (let index = end - 1; index >= 0; index--) {
+            const line = lines[index];
+            if (line?.kind === "text" && line.role === "user" && line.text === promptText) {
+              targetIndex = index;
+              break;
+            }
           }
         }
       }
     }
     if (targetIndex < 0) return;
 
-    if (activeAgentIdRef.current !== null && !selectAgentView(null)) return;
+    if (activeAgentIdRef.current !== requesterAgentId && !selectAgentView(requesterAgentId)) return;
     newsOpenRef.current = false;
     setNewsOpen(false);
     const scrollToTarget = () => {
@@ -1590,8 +1614,12 @@ export function App({
     const firstLine = item.text.split("\n")[0] ?? item.text;
     const preview = firstLine.length > 240 ? `${firstLine.slice(0, 240)} …` : firstLine;
     const quote = `> ${preview}\n\n`;
-    viewDrafts.current.set("main", quote);
-    if (activeAgentIdRef.current !== null) selectAgentView(null);
+    const requesterAgentId = item.completion?.requesterAgentId ?? null;
+    const targetAgentId = requesterAgentId && subagentManager.getAgent(requesterAgentId)
+      ? requesterAgentId
+      : null;
+    viewDrafts.current.set(targetAgentId ?? "main", quote);
+    if (activeAgentIdRef.current !== targetAgentId) selectAgentView(targetAgentId);
     else setEditorText(quote);
     queueMicrotask(() => {
       inputRef.current?.focus();

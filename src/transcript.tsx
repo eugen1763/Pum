@@ -20,7 +20,7 @@ export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 export type Line =
   | { kind: "text"; role: Role; text: string; newsId?: string }
   | { kind: "tool"; call: ToolCall }
-  | { kind: "agent-message"; sender: string; recipient: string; text: string };
+  | { kind: "agent-message"; sender: string; recipient: string; text: string; messageId?: string };
 
 export type PendingLine = {
   id: string;

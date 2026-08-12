@@ -66,6 +66,7 @@ describe("subagent transcript replay", () => {
       sender: "worker-a",
       recipient: "worker-b",
       text: "Review the parser change",
+      messageId: "message-1",
     });
     expect(lines[1]).toEqual({
       kind: "tool",
@@ -136,6 +137,7 @@ describe("subagent transcript replay", () => {
       sender: "pum",
       recipient: "main",
       text: reminder.text,
+      messageId: reminder.id,
     }]);
   });
 

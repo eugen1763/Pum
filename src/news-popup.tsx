@@ -69,6 +69,15 @@ export function NewsPopup({
             <box style={{ flexGrow: 1, width: 1 }} />
             <text content={formatAge(current.at)} fg={theme.dim} bg={theme.popupBg} wrapMode="none" />
           </box>
+          {current.completion ? (
+            <text
+              content={`${current.completion.agentName} → ${current.completion.requesterName} · finish_subagent`}
+              fg={theme.dim}
+              bg={theme.popupBg}
+              wrapMode="none"
+              style={{ height: 1, flexShrink: 0 }}
+            />
+          ) : null}
           <box style={{ height: 1, flexShrink: 0 }} />
           <scrollbox
             id="news-scrollbox"
