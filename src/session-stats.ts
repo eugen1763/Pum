@@ -428,6 +428,7 @@ export class SessionStatsManager {
   }
 
   prepareMainSession(sessionFile: string | undefined): void {
+    if (this.mainSessionFile === sessionFile) return;
     for (const unsubscribe of this.unsubscribers.values()) unsubscribe();
     this.unsubscribers.clear();
     this.sessions.clear();

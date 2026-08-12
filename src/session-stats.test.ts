@@ -198,6 +198,41 @@ describe("session statistics aggregation", () => {
     }));
   });
 
+  test("same-path preparation preserves live main observation and restored children", () => {
+    const root = join(process.cwd(), `.stats-rebind-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    roots.push(root);
+    mkdirSync(root);
+    const mainPath = join(root, "main.jsonl");
+    const childPath = join(root, "child.jsonl");
+    const mainEntries: any[] = [];
+    const childEntries = [assistant("child", "beta", { input: 5, output: 2, cacheRead: 0, cacheWrite: 1, cost: { total: 0 } })];
+    writeJsonl(mainPath, mainEntries);
+    writeJsonl(childPath, childEntries);
+    const main = fakeSession(mainPath, mainEntries, "mock/alpha");
+    const manager = new SessionStatsManager();
+
+    manager.prepareMainSession(mainPath);
+    manager.registerAgentFile("restored-child", childPath, "mock/beta");
+    manager.bindMainSession(main.session);
+    manager.prepareMainSession(mainPath);
+
+    main.emit({ type: "turn_start" });
+    mainEntries.push(assistant("main", "alpha", { input: 3, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } }));
+    const stats = manager.snapshot();
+    expect(stats.models).toContainEqual(expect.objectContaining({
+      model: "mock/alpha",
+      role: "Agent",
+      attempts: 1,
+      outgoing: 3,
+    }));
+    expect(stats.models).toContainEqual(expect.objectContaining({
+      model: "mock/beta",
+      role: "Agent",
+      outgoing: 6,
+      incoming: 2,
+    }));
+  });
+
   test("counts a persisted branch-summary initial request once on the active model", () => {
     const root = join(process.cwd(), `.stats-branch-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     roots.push(root);
