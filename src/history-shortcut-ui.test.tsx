@@ -254,8 +254,8 @@ describe("session history keyboard shortcuts", () => {
           cost: 0,
           compressions: 0,
         })),
-        tools: [{ tool: "last-tool", successful: 1, failed: 0, blocked: 0, runningInterrupted: 0, total: 1 }],
-        outcomes: { successful: 1, failed: 0, blocked: 0, runningInterrupted: 0 },
+        tools: [{ tool: "last-tool", successful: 1, failed: 0, blocked: 0, running: 0, interrupted: 0, total: 1 }],
+        outcomes: { successful: 1, failed: 0, blocked: 0, running: 0, interrupted: 0 },
       }),
     };
     const { setup } = await renderApp({ width: 62, height: 14, statsManager });

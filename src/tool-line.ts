@@ -9,8 +9,12 @@ export type ToolCall = {
   state: "running" | "ok" | "error" | "rejected";
   /** "+3 −1" for edits, or an error note. */
   detail?: string;
-  /** Cumulative output shown only while a Bash call is running. */
+  /** Cumulative live output, or the final displayed Bash output line. */
   output?: string;
+  /** Start time used to delay live Bash output without delaying the tool row. */
+  startedAt?: number;
+  /** Nonzero Bash process exit code, when the result provides one. */
+  exitCode?: number;
 };
 
 /** Extract the cumulative text payload from a Bash progress result. */
@@ -36,6 +40,39 @@ export function bashOutputWindow(output: string, limit = 4): BashOutputWindow {
   return {
     hidden: Math.max(0, lines.length - visible),
     lines: visible ? lines.slice(-visible) : [],
+  };
+}
+
+export type BashResultDisplay = {
+  output?: string;
+  exitCode?: number;
+};
+
+/** Extract the last real output line and a nonzero process exit code. */
+export function bashResultDisplay(result: any): BashResultDisplay {
+  const text = bashOutput(result);
+  const explicitExitCode = typeof result?.details?.exitCode === "number"
+    && Number.isInteger(result.details.exitCode)
+    ? result.details.exitCode
+    : undefined;
+  if (!text) return explicitExitCode === undefined ? {} : { exitCode: explicitExitCode };
+
+  const lines = text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+  let exitCode = explicitExitCode;
+  for (const line of lines) {
+    const match = line.match(/Command exited with code (-?\d+)/i);
+    if (match) exitCode = Number(match[1]);
+  }
+  const output = lines.reverse().find((line) => {
+    const value = line.trim();
+    return value
+      && value !== "(no output)"
+      && !/^(?:Error:\s*)?Command (?:exited with code|timed out|aborted)\b/i.test(value)
+      && !/^\[Showing .*Full output:/i.test(value);
+  })?.trim();
+  return {
+    ...(output ? { output } : {}),
+    ...(exitCode === undefined ? {} : { exitCode }),
   };
 }
 

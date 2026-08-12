@@ -3,7 +3,19 @@ import { PopupFrame } from "./popup-frame";
 import { chartBarWidths, type SessionStatsSnapshot, type ToolOutcome } from "./session-stats";
 import { formatCost, formatTokens } from "./status-metadata";
 
-export type StatsLine = { text: string; tone: "fg" | "dim" | "accent" | "success" | "error" | "blocked" | "warn" };
+export type StatsLine = { text: string; tone: "fg" | "dim" | "accent" | "success" | "error" | "blocked" | "warn" | "running" | "interrupted" };
+
+export function statsToneColor(theme: Theme, tone: StatsLine["tone"]): string {
+  return tone === "fg" ? theme.fg
+    : tone === "accent" ? theme.accent
+      : tone === "success" ? theme.success
+        : tone === "error" ? theme.error
+          : tone === "blocked" ? theme.rejection
+            : tone === "warn" ? theme.warn
+              : tone === "running" ? theme.statsRunning
+                : tone === "interrupted" ? theme.statsInterrupted
+                  : theme.dim;
+}
 
 export function statsPopupGeometry(width: number, height: number) {
   const compact = width < 58 || height < 18;
@@ -46,7 +58,8 @@ const OUTCOME_LABELS: Array<[ToolOutcome, string, StatsLine["tone"]]> = [
   ["successful", "Successful", "success"],
   ["failed", "Failed", "error"],
   ["blocked", "Blocked", "blocked"],
-  ["runningInterrupted", "Running/Interrupted", "warn"],
+  ["running", "Running", "running"],
+  ["interrupted", "Interrupted", "interrupted"],
 ];
 
 export function statsLines(snapshot: SessionStatsSnapshot, width: number): StatsLine[] {
@@ -81,7 +94,7 @@ export function statsLines(snapshot: SessionStatsSnapshot, width: number): Stats
   const barWidth = Math.max(1, contentWidth - chartLabelWidth - 8);
   const bars = chartBarWidths(snapshot.outcomes, barWidth);
   for (const [outcome, label, tone] of OUTCOME_LABELS) {
-    const short = contentWidth < 50 ? label.replace("Running/Interrupted", "Run/Int") : label;
+    const short = contentWidth < 50 ? label.replace("Interrupted", "Interrupt") : label;
     lines.push({
       text: `${short.padEnd(chartLabelWidth)} ${"█".repeat(bars[outcome])} ${snapshot.outcomes[outcome]}`,
       tone,
@@ -90,19 +103,19 @@ export function statsLines(snapshot: SessionStatsSnapshot, width: number): Stats
 
   lines.push({ text: "", tone: "dim" });
   if (snapshot.tools.length === 0) lines.push({ text: "No tool calls.", tone: "dim" });
-  else if (contentWidth >= 72) {
-    const toolWidth = Math.max(12, contentWidth - 48);
-    lines.push({ text: `${"Tool".padEnd(toolWidth)} ${"Successful".padStart(10)} ${"Failed".padStart(7)} ${"Blocked".padStart(8)} ${"Run/Int".padStart(8)} ${"Total".padStart(6)}`, tone: "dim" });
+  else if (contentWidth >= 82) {
+    const toolWidth = Math.max(12, contentWidth - 57);
+    lines.push({ text: `${"Tool".padEnd(toolWidth)} ${"Successful".padStart(10)} ${"Failed".padStart(7)} ${"Blocked".padStart(8)} ${"Running".padStart(8)} ${"Interrupt".padStart(9)} ${"Total".padStart(6)}`, tone: "dim" });
     for (const row of snapshot.tools) {
       lines.push({
-        text: `${fit(row.tool, toolWidth).padEnd(toolWidth)} ${String(row.successful).padStart(10)} ${String(row.failed).padStart(7)} ${String(row.blocked).padStart(8)} ${String(row.runningInterrupted).padStart(8)} ${String(row.total).padStart(6)}`,
+        text: `${fit(row.tool, toolWidth).padEnd(toolWidth)} ${String(row.successful).padStart(10)} ${String(row.failed).padStart(7)} ${String(row.blocked).padStart(8)} ${String(row.running).padStart(8)} ${String(row.interrupted).padStart(9)} ${String(row.total).padStart(6)}`,
         tone: "fg",
       });
     }
   } else {
     for (const row of snapshot.tools) {
       lines.push({
-        text: fit(`${row.tool}  ok ${row.successful}  fail ${row.failed}  block ${row.blocked}  run/int ${row.runningInterrupted}  total ${row.total}`, contentWidth),
+        text: fit(`${row.tool}  ok ${row.successful}  fail ${row.failed}  block ${row.blocked}  run ${row.running}  int ${row.interrupted}  total ${row.total}`, contentWidth),
         tone: "fg",
       });
     }
@@ -133,13 +146,6 @@ export function StatsPopup({
   const innerWidth = Math.max(1, geometry.width - (geometry.compact ? 0 : 4));
   const lines = statsLines(snapshot, innerWidth);
   const visible = lines.slice(scrollOffset, scrollOffset + geometry.pageSize);
-  const color = (tone: StatsLine["tone"]): string => tone === "fg" ? theme.fg
-    : tone === "accent" ? theme.accent
-      : tone === "success" ? theme.success
-        : tone === "error" ? theme.error
-          : tone === "blocked" ? theme.rejection
-            : tone === "warn" ? theme.warn
-              : theme.dim;
   return (
     <PopupFrame
       theme={theme}
@@ -157,7 +163,7 @@ export function StatsPopup({
           <text
             key={`${scrollOffset + index}:${line.text}`}
             content={line.text}
-            fg={color(line.tone)}
+            fg={statsToneColor(theme, line.tone)}
             bg={theme.popupBg}
             wrapMode="none"
             style={{ width: "100%", height: 1, flexShrink: 0 }}

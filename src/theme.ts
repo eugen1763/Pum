@@ -24,6 +24,9 @@ export type Theme = {
   toolArg: string;
   /** Dark gray foreground for output streamed by a running Bash tool. */
   bashOutput: string;
+  /** Blue and dark gray outcome colours in the session statistics popup. */
+  statsRunning: string;
+  statsInterrupted: string;
   success: string;
   error: string;
   warn: string;
@@ -62,6 +65,8 @@ const tokyonight: Theme = {
   tool: "#e0af68",
   toolArg: "#9ece6a",
   bashOutput: "#565f89",
+  statsRunning: "#7aa2f7",
+  statsInterrupted: "#565f89",
   success: "#9ece6a",
   error: "#f7768e",
   warn: "#ff9e64",
@@ -96,6 +101,8 @@ const gruvbox: Theme = {
   tool: "#fabd2f",
   toolArg: "#b8bb26",
   bashOutput: "#928374",
+  statsRunning: "#83a598",
+  statsInterrupted: "#928374",
   success: "#b8bb26",
   error: "#fb4934",
   warn: "#fe8019",
@@ -130,6 +137,8 @@ const catppuccin: Theme = {
   tool: "#f9e2af",
   toolArg: "#a6e3a1",
   bashOutput: "#6c7086",
+  statsRunning: "#89b4fa",
+  statsInterrupted: "#6c7086",
   success: "#a6e3a1",
   error: "#f38ba8",
   warn: "#fab387",
@@ -164,6 +173,8 @@ const nord: Theme = {
   tool: "#ebcb8b",
   toolArg: "#a3be8c",
   bashOutput: "#616e88",
+  statsRunning: "#81a1c1",
+  statsInterrupted: "#616e88",
   success: "#a3be8c",
   error: "#bf616a",
   warn: "#d08770",
@@ -198,6 +209,8 @@ const dracula: Theme = {
   tool: "#f1fa8c",
   toolArg: "#50fa7b",
   bashOutput: "#6272a4",
+  statsRunning: "#8be9fd",
+  statsInterrupted: "#6272a4",
   success: "#50fa7b",
   error: "#ff5555",
   warn: "#ffb86c",
@@ -232,6 +245,8 @@ const rosepine: Theme = {
   tool: "#f6c177",
   toolArg: "#9ccfd8",
   bashOutput: "#6e6a86",
+  statsRunning: "#31748f",
+  statsInterrupted: "#6e6a86",
   success: "#31748f",
   error: "#eb6f92",
   warn: "#f6c177",
@@ -266,6 +281,8 @@ const solarized: Theme = {
   tool: "#b58900",
   toolArg: "#859900",
   bashOutput: "#586e75",
+  statsRunning: "#268bd2",
+  statsInterrupted: "#586e75",
   success: "#859900",
   error: "#dc322f",
   warn: "#cb4b16",
@@ -300,6 +317,8 @@ const kanagawa: Theme = {
   tool: "#e6c384",
   toolArg: "#98bb6c",
   bashOutput: "#727169",
+  statsRunning: "#7e9cd8",
+  statsInterrupted: "#727169",
   success: "#98bb6c",
   error: "#e46876",
   warn: "#ffa066",
@@ -334,6 +353,8 @@ const githubLight: Theme = {
   tool: "#9a6700",
   toolArg: "#1a7f37",
   bashOutput: "#57606a",
+  statsRunning: "#0969da",
+  statsInterrupted: "#57606a",
   success: "#1a7f37",
   error: "#cf222e",
   warn: "#bc4c00",

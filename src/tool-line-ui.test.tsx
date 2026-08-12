@@ -6,7 +6,7 @@ import { rejectedToolDetails } from "./check-mode";
 import { replayEntries } from "./replay";
 import { ToolLine, toolStateGlyph } from "./transcript";
 import { loadTheme } from "./theme";
-import { bashOutput, bashOutputWindow, type ToolCall } from "./tool-line";
+import { bashOutput, bashOutputWindow, bashResultDisplay, type ToolCall } from "./tool-line";
 
 let destroy: (() => void) | undefined;
 afterEach(() => destroy?.());
@@ -88,6 +88,12 @@ describe("tool line state", () => {
       hidden: 1,
       lines: ["two", "three", "four", "five"],
     });
+    expect(bashResultDisplay({
+      content: [{ type: "text", text: "first\nlast output\n\nCommand exited with code 7" }],
+    })).toEqual({ output: "last output", exitCode: 7 });
+    expect(bashResultDisplay({
+      content: [{ type: "text", text: "first\nlast output\n" }],
+    })).toEqual({ output: "last output" });
   });
 
   test("uses a distinct marker for rejected calls", () => {
@@ -272,7 +278,7 @@ describe("tool line state", () => {
     const outputRows = frameLines.filter((line) =>
       line.includes("more lines") || line.includes("new three") || line.includes("that also wraps")
     );
-    expect(outputRows.every((line) => line.search(/\S/) === commandColumn)).toBe(true);
+    expect(outputRows.every((line) => line.search(/\S/) === commandColumn + 1)).toBe(true);
 
     const outputSpans = setup.captureSpans().lines.flatMap((line) => line.spans)
       .filter((span) => span.text.includes("more lines") || span.text.includes("new three"));
@@ -280,7 +286,7 @@ describe("tool line state", () => {
     expect(outputSpans.every((span) => span.fg.equals(parseColor(theme.bashOutput)))).toBe(true);
   });
 
-  test("hides Bash output after the call settles", async () => {
+  test("delays running Bash output until half a second", async () => {
     const setup = await createTestRenderer({ width: 40, height: 8 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
@@ -288,12 +294,76 @@ describe("tool line state", () => {
     createRoot(setup.renderer).render(
       <ToolLine
         theme={theme}
-        call={{ id: "settled-bash", name: "bash", arg: "done", state: "ok", output: "must not remain" }}
+        call={{
+          id: "delayed-bash",
+          name: "bash",
+          arg: "slow",
+          state: "running",
+          output: "delayed output",
+          startedAt: Date.now(),
+        }}
       />,
     );
     await settle(setup);
 
-    expect(setup.captureCharFrame()).not.toContain("must not remain");
+    expect(setup.captureCharFrame()).not.toContain("delayed output");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await setup.renderOnce();
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain("delayed output");
+  });
+
+  test("shows the last Bash output line after settlement", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "settled-bash",
+          name: "bash",
+          arg: "done",
+          state: "ok",
+          output: "last output that is deliberately much wider than the available terminal row and must not wrap",
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const lines = setup.captureCharFrame().split("\n");
+    const commandColumn = lines.find((line) => line.includes("bash ·"))!.search(/\S/);
+    const outputRows = lines.filter((line) => line.includes("last output"));
+    const outputColumn = outputRows[0]!.search(/\S/);
+    expect(outputRows).toHaveLength(1);
+    expect(outputColumn).toBe(commandColumn + 1);
+    expect(setup.captureCharFrame()).not.toContain("must not wrap");
+  });
+
+  test("shows a failed Bash exit code after a dot separator", async () => {
+    const setup = await createTestRenderer({ width: 48, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "failed-bash",
+          name: "bash",
+          arg: "failing command",
+          state: "error",
+          output: "last failure output",
+          exitCode: 7,
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("bash · failing command · exit 7");
+    expect(frame).toContain("last failure output");
   });
 
   test("aligns wrapped read ranges under the path argument", async () => {

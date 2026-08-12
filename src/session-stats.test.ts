@@ -5,6 +5,7 @@ import {
   chartBarWidths,
   mergeSessionStats,
   SessionStatsManager,
+  sessionStatsFile,
   statsFromEntries,
 } from "./session-stats";
 
@@ -86,12 +87,12 @@ describe("session statistics aggregation", () => {
       expect.objectContaining({ model: "mock/beta", role: "Agent", attempts: null, outgoing: 14, incoming: 8, cacheRead: 12, cost: 0.27, compressions: 2 }),
     ]);
     expect(stats.tools).toEqual([
-      { tool: "bash", successful: 0, failed: 1, blocked: 0, runningInterrupted: 0, total: 1 },
-      { tool: "edit", successful: 0, failed: 0, blocked: 1, runningInterrupted: 0, total: 1 },
-      { tool: "read", successful: 1, failed: 0, blocked: 0, runningInterrupted: 0, total: 1 },
-      { tool: "web_search", successful: 0, failed: 1, blocked: 0, runningInterrupted: 0, total: 1 },
-      { tool: "worktree", successful: 1, failed: 0, blocked: 0, runningInterrupted: 0, total: 1 },
-      { tool: "write", successful: 0, failed: 0, blocked: 0, runningInterrupted: 1, total: 1 },
+      { tool: "bash", successful: 0, failed: 1, blocked: 0, running: 0, interrupted: 0, total: 1 },
+      { tool: "edit", successful: 0, failed: 0, blocked: 1, running: 0, interrupted: 0, total: 1 },
+      { tool: "read", successful: 1, failed: 0, blocked: 0, running: 0, interrupted: 0, total: 1 },
+      { tool: "web_search", successful: 0, failed: 1, blocked: 0, running: 0, interrupted: 0, total: 1 },
+      { tool: "worktree", successful: 1, failed: 0, blocked: 0, running: 0, interrupted: 0, total: 1 },
+      { tool: "write", successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 1, total: 1 },
     ]);
   });
 
@@ -101,7 +102,7 @@ describe("session statistics aggregation", () => {
       {
         models: [{ model: "mock/same", role: "Check", attempts: 2, outgoing: 4, incoming: 2, cacheRead: 1, cost: 0.01, compressions: 0 }],
         tools: [],
-        outcomes: { successful: 0, failed: 0, blocked: 0, runningInterrupted: 0 },
+        outcomes: { successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 0 },
       },
     ]);
     expect(merged.models.map((row) => `${row.model}:${row.role}`)).toEqual([
@@ -110,11 +111,63 @@ describe("session statistics aggregation", () => {
     ]);
   });
 
-  test("scales four chart bars against all outcomes", () => {
-    expect(chartBarWidths({ successful: 5, failed: 3, blocked: 1, runningInterrupted: 1 }, 20))
-      .toEqual({ successful: 10, failed: 6, blocked: 2, runningInterrupted: 2 });
-    expect(chartBarWidths({ successful: 0, failed: 0, blocked: 0, runningInterrupted: 0 }, 20))
-      .toEqual({ successful: 0, failed: 0, blocked: 0, runningInterrupted: 0 });
+  test("scales five chart bars against all outcomes", () => {
+    expect(chartBarWidths({ successful: 4, failed: 2, blocked: 1, running: 1, interrupted: 2 }, 20))
+      .toEqual({ successful: 8, failed: 4, blocked: 2, running: 2, interrupted: 4 });
+    expect(chartBarWidths({ successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 0 }, 20))
+      .toEqual({ successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 0 });
+  });
+
+  test("keeps live running tools separate from interrupted tools", () => {
+    const root = join(process.cwd(), `.stats-running-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    roots.push(root);
+    mkdirSync(root);
+    const path = join(root, "main.jsonl");
+    writeJsonl(path, []);
+    const main = fakeSession(path, [], "mock/alpha");
+    const manager = new SessionStatsManager();
+
+    manager.bindMainSession(main.session);
+    main.emit({ type: "tool_execution_start", toolCallId: "live", toolName: "bash" });
+    expect(manager.snapshot().tools).toContainEqual(expect.objectContaining({
+      tool: "bash", running: 1, interrupted: 0,
+    }));
+
+    manager.bindMainSession(main.session);
+    expect(manager.snapshot().tools).toContainEqual(expect.objectContaining({
+      tool: "bash", running: 0, interrupted: 1,
+    }));
+  });
+
+  test("migrates legacy combined fallback outcomes to interrupted", () => {
+    const root = join(process.cwd(), `.stats-legacy-outcome-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    roots.push(root);
+    mkdirSync(root);
+    const path = join(root, "main.jsonl");
+    writeJsonl(path, []);
+    writeFileSync(sessionStatsFile(path), JSON.stringify({
+      version: 1,
+      agents: [{
+        id: "closed",
+        initialModel: "mock/alpha",
+        attemptsExact: true,
+        observations: [],
+        runningTools: [],
+        countedBranchSummaryIds: [],
+        fallback: {
+          models: [],
+          tools: [{ tool: "read", successful: 0, failed: 0, blocked: 0, runningInterrupted: 2, total: 2 }],
+          outcomes: { successful: 0, failed: 0, blocked: 0, runningInterrupted: 2 },
+        },
+      }],
+    }));
+    const manager = new SessionStatsManager();
+
+    manager.prepareMainSession(path);
+
+    expect(manager.snapshot().tools).toEqual([
+      { tool: "read", successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 2, total: 2 },
+    ]);
   });
 
   test("tracks attempts, retries, Check requests, compression attribution, and closed children", () => {

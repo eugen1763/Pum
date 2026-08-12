@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { MarkdownRenderable, type BaseRenderable } from "@opentui/core";
+import { destroyTreeSitterClient, MarkdownRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { buildSyntaxStyle } from "./syntax";
+import { buildSyntaxStyle, settleSyntaxHighlighting } from "./syntax";
 import { loadTheme } from "./theme";
 import {
   AgentMessageLine,
@@ -11,8 +11,8 @@ import {
   ToolLine,
 } from "./transcript";
 
-let destroy: (() => void) | undefined;
-afterEach(() => destroy?.());
+let destroy: (() => void | Promise<void>) | undefined;
+afterEach(async () => { await destroy?.(); });
 
 const long = "alpha beta gamma delta epsilon zeta eta theta omega END";
 const markdownLong = "alpha beta gamma delta epsilon zeta eta theta omega TAIL";
@@ -33,10 +33,18 @@ function descendants<T extends BaseRenderable>(
 describe("transcript wrapping", () => {
   test("wraps every transcript column within a narrow terminal", async () => {
     const setup = await createTestRenderer({ width: 28, height: 48 });
-    destroy = () => setup.renderer.destroy();
+    const root = createRoot(setup.renderer);
+    destroy = async () => {
+      await settleSyntaxHighlighting(setup.renderer.root);
+      root.unmount();
+      await setup.flush();
+      await setup.renderer.idle();
+      setup.renderer.destroy();
+      await destroyTreeSitterClient();
+    };
     const theme = loadTheme("tokyonight");
     const syntaxStyle = buildSyntaxStyle(theme);
-    createRoot(setup.renderer).render(
+    root.render(
       <box style={{ flexDirection: "column", width: "100%" }}>
         <TextLine theme={theme} syntaxStyle={syntaxStyle} role="assistant" text={markdownLong} />
         <TextLine theme={theme} syntaxStyle={syntaxStyle} role="thinking" text={long} />

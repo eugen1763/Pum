@@ -223,6 +223,45 @@ describe("subagent transcript replay", () => {
     });
   });
 
+  test("restores the final Bash output line and exit code", () => {
+    const lines = replayEntries([
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "bash-1",
+            name: "bash",
+            arguments: { command: "printf first; printf last; exit 7" },
+          }],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "bash-1",
+          toolName: "bash",
+          content: [{ type: "text", text: "first\nlast\n\nCommand exited with code 7" }],
+          isError: true,
+        },
+      },
+    ], process.cwd(), true);
+
+    expect(lines[0]).toEqual({
+      kind: "tool",
+      call: {
+        id: "bash-1",
+        name: "bash",
+        arg: "printf first; printf last; exit 7",
+        state: "error",
+        output: "last",
+        exitCode: 7,
+      },
+    });
+  });
+
   test("restores the best persisted web search argument", () => {
     const lines = replayEntries([
       {

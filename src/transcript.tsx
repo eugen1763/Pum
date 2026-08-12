@@ -6,6 +6,7 @@ import {
   type SyntaxStyle,
 } from "@opentui/core";
 import type { MarkdownProps } from "@opentui/react";
+import { useEffect, useState } from "react";
 import {
   useBlinkingText,
   useMarkdownCaret,
@@ -372,6 +373,28 @@ export function toolStateGlyph(state: ToolCall["state"]): string {
 }
 
 const CHECK_MODE_HARD_BLOCK_PREFIX = "Check mode hard block:";
+const BASH_OUTPUT_DELAY_MS = 500;
+
+function useLiveBashOutputReady(call: ToolCall): boolean {
+  const [ready, setReady] = useState(() => (
+    call.startedAt === undefined || Date.now() - call.startedAt >= BASH_OUTPUT_DELAY_MS
+  ));
+  useEffect(() => {
+    if (call.name !== "bash" || call.state !== "running" || call.startedAt === undefined) {
+      setReady(call.startedAt === undefined);
+      return;
+    }
+    const delay = BASH_OUTPUT_DELAY_MS - (Date.now() - call.startedAt);
+    if (delay <= 0) {
+      setReady(true);
+      return;
+    }
+    setReady(false);
+    const timer = setTimeout(() => setReady(true), delay);
+    return () => clearTimeout(timer);
+  }, [call.id, call.name, call.state, call.startedAt]);
+  return ready;
+}
 
 function rejectedDetail(theme: Theme, detail: string): StyledText {
   if (!detail.startsWith(CHECK_MODE_HARD_BLOCK_PREFIX)) {
@@ -398,6 +421,7 @@ export function ToolLine({
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
   const rejected = call.state === "rejected";
+  const liveBashOutputReady = useLiveBashOutputReady(call);
   const toolColor = failed ? theme.error : rejected ? theme.rejection : theme.tool;
   const argColor = failed ? theme.error : rejected ? theme.rejection : theme.toolArg;
   const detailColor = failed ? theme.error : rejected ? theme.rejection : theme.dim;
@@ -409,6 +433,9 @@ export function ToolLine({
     ? [fg(argColor)(call.arg)]
     : [fg(toolColor)(call.name)];
   if (call.detail && !rejected) bodyChunks.push(fg(detailColor)(`  ${call.detail}`));
+  if (failed && call.name === "bash" && call.exitCode !== undefined) {
+    bodyChunks.push(fg(detailColor)(` · exit ${call.exitCode}`));
+  }
 
   const caret = useBlinkingText({
     chunks: bodyChunks,
@@ -416,8 +443,12 @@ export function ToolLine({
     caretColor: failed ? theme.error : rejected ? theme.rejection : theme.accent,
     active: workingCaret,
   });
-  const output = call.name === "bash" && call.state === "running" && call.output
-    ? bashOutputWindow(call.output)
+  const output = call.name === "bash" && call.output
+    ? call.state === "running"
+      ? liveBashOutputReady ? bashOutputWindow(call.output) : null
+      : call.state === "ok" || call.state === "error"
+        ? bashOutputWindow(call.output, 1)
+        : null
     : null;
 
   return (
@@ -461,6 +492,7 @@ export function ToolLine({
       ) : null}
       {output && (output.hidden > 0 || output.lines.length > 0) ? (
         <Row glyph={GUTTER} glyphColor={theme.bashOutput}>
+          <box style={{ width: 1, flexShrink: 0 }} />
           <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
             {output.hidden > 0 ? (
               <text
@@ -477,8 +509,13 @@ export function ToolLine({
                 content={line}
                 fg={theme.bashOutput}
                 selectable
-                wrapMode="word"
-                style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+                wrapMode={call.state === "running" ? "word" : "none"}
+                style={{
+                  width: "100%",
+                  height: call.state === "running" ? undefined : 1,
+                  flexShrink: 1,
+                  minWidth: 0,
+                }}
               />
             ) : (
               <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />

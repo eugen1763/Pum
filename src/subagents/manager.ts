@@ -32,7 +32,7 @@ import {
   persistSearchCall,
   withSearchRoute,
 } from "../web-search";
-import { bashOutput, editCounts, toolArg, type ToolCall } from "../tool-line";
+import { bashOutput, bashResultDisplay, editCounts, toolArg, type ToolCall } from "../tool-line";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
@@ -819,6 +819,7 @@ export class SubagentManager {
             name: event.toolName,
             arg: toolArg(event.toolName, event.args, record.snapshot.worktree.path),
             state: "running",
+            startedAt: Date.now(),
           },
         });
         break;
@@ -827,7 +828,8 @@ export class SubagentManager {
           this.patchTool(record, event.toolCallId, { output: bashOutput(event.partialResult) });
         }
         break;
-      case "tool_execution_end":
+      case "tool_execution_end": {
+        const bashResult = event.toolName === "bash" ? bashResultDisplay(event.result) : {};
         this.patchTool(record, event.toolCallId, {
           state: isRejectedToolResult(event.result, event.toolCallId)
             ? "rejected"
@@ -843,9 +845,11 @@ export class SubagentManager {
                 : event.toolName.startsWith("message_cache_")
                   ? messageCacheDetail(event.result)
                   : undefined,
-          output: undefined,
+          output: bashResult.output,
+          exitCode: bashResult.exitCode,
         });
         break;
+      }
       case "agent_start":
         // Remember a terminal status before the turn overwrites it, so a
         // no-work turn can restore it at settle instead of downgrading to idle.

@@ -1,6 +1,6 @@
 import type { Line } from "./transcript";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
-import { editCounts, toolArg, type ToolCall } from "./tool-line";
+import { bashResultDisplay, editCounts, toolArg, type ToolCall } from "./tool-line";
 import { questionnaireDetail } from "./questionnaire";
 import { messageCacheDetail } from "./message-cache";
 import {
@@ -211,6 +211,11 @@ export function replayEntries(
           : message.isError
             ? "error"
             : "ok";
+        if (call.name === "bash" && call.state !== "rejected") {
+          const bashResult = bashResultDisplay(message);
+          call.output = bashResult.output;
+          call.exitCode = bashResult.exitCode;
+        }
         if (call.state === "rejected") call.detail = rejectedToolReason(message);
         else if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
         else if (call.name === "questionnaire") call.detail = questionnaireDetail(message);

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { loadTheme } from "./theme";
-import { maxStatsScrollOffset, StatsPopup, statsLines, statsPopupGeometry } from "./stats-popup";
+import { maxStatsScrollOffset, StatsPopup, statsLines, statsPopupGeometry, statsToneColor } from "./stats-popup";
 import type { SessionStatsSnapshot } from "./session-stats";
 
 let destroy: (() => void) | undefined;
@@ -15,10 +15,10 @@ const snapshot: SessionStatsSnapshot = {
     { model: "legacy/model", role: "Agent", attempts: null, outgoing: 5, incoming: 1, cacheRead: 0, cost: 0, compressions: 0 },
   ],
   tools: [
-    { tool: "read", successful: 5, failed: 0, blocked: 0, runningInterrupted: 0, total: 5 },
-    { tool: "bash", successful: 1, failed: 2, blocked: 1, runningInterrupted: 1, total: 5 },
+    { tool: "read", successful: 5, failed: 0, blocked: 0, running: 0, interrupted: 0, total: 5 },
+    { tool: "bash", successful: 1, failed: 2, blocked: 1, running: 1, interrupted: 1, total: 6 },
   ],
-  outcomes: { successful: 6, failed: 2, blocked: 1, runningInterrupted: 1 },
+  outcomes: { successful: 6, failed: 2, blocked: 1, running: 1, interrupted: 1 },
 };
 
 async function render(width: number, height: number, offset = 0) {
@@ -50,7 +50,8 @@ describe("statistics popup", () => {
     expect(frame).toContain("Model / role");
     expect(frame).toContain("mock/check-model · Check");
     expect(frame).toContain("—");
-    expect(frame).toContain("Running/Interrupted");
+    expect(frame).toContain("Running");
+    expect(frame).toContain("Interrupted");
   });
 
   test("keeps narrow rows within the available content width", async () => {
@@ -69,5 +70,13 @@ describe("statistics popup", () => {
     const frame = await render(50, 10, offset);
     expect(frame).toContain("bash");
     expect(frame).toContain("esc close");
+  });
+
+  test("renders running blue and interrupted dark gray", async () => {
+    const theme = loadTheme("tokyonight");
+    expect(statsToneColor(theme, "running")).toBe(theme.statsRunning);
+    expect(statsToneColor(theme, "interrupted")).toBe(theme.statsInterrupted);
+    expect(theme.statsRunning).toBe("#7aa2f7");
+    expect(theme.statsInterrupted).toBe("#565f89");
   });
 });

@@ -4,7 +4,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isRejectedToolResult } from "./check-mode";
 
 export type StatsRole = "Agent" | "Check";
-export type ToolOutcome = "successful" | "failed" | "blocked" | "runningInterrupted";
+export type ToolOutcome = "successful" | "failed" | "blocked" | "running" | "interrupted";
 
 export type SessionStatsModelRow = {
   model: string;
@@ -70,7 +70,8 @@ const emptyOutcomes = (): Record<ToolOutcome, number> => ({
   successful: 0,
   failed: 0,
   blocked: 0,
-  runningInterrupted: 0,
+  running: 0,
+  interrupted: 0,
 });
 
 function finite(value: unknown): number | null {
@@ -175,6 +176,7 @@ function policyBlockedResult(message: any): boolean {
 export function statsFromEntries(
   entries: readonly any[],
   initialModel = "unknown",
+  runningCallIds: ReadonlySet<string> = new Set(),
 ): SessionStatsSnapshot {
   const models = new Map<string, SessionStatsModelRow>();
   const calls = new Map<string, { tool: string; outcome: ToolOutcome }>();
@@ -193,7 +195,7 @@ export function statsFromEntries(
             ? "failed"
             : state === "rejected"
               ? "blocked"
-              : "runningInterrupted";
+              : runningCallIds.has(id) ? "running" : "interrupted";
         calls.set(id, { tool, outcome });
       }
       continue;
@@ -205,7 +207,12 @@ export function statsFromEntries(
     if (entry?.type === "message") {
       const message = entry.message;
       for (const call of toolCalls(message)) {
-        if (!calls.has(call.id)) calls.set(call.id, { tool: call.tool, outcome: "runningInterrupted" });
+        if (!calls.has(call.id)) {
+          calls.set(call.id, {
+            tool: call.tool,
+            outcome: runningCallIds.has(call.id) ? "running" : "interrupted",
+          });
+        }
       }
       if (message?.role === "assistant") {
         const model = modelRef(message, activeModel);
@@ -347,10 +354,36 @@ function normalizePersisted(value: unknown): PersistedStats | undefined {
         .filter((id: unknown): id is string => typeof id === "string")
         .slice(-MAX_COUNTED_BRANCH_SUMMARIES),
       ...(typeof raw.sessionFile === "string" ? { sessionFile: raw.sessionFile } : {}),
-      ...(raw.fallback && typeof raw.fallback === "object" ? { fallback: raw.fallback as SessionStatsSnapshot } : {}),
+      ...(raw.fallback && typeof raw.fallback === "object"
+        ? { fallback: normalizeSnapshot(raw.fallback) }
+        : {}),
     });
   }
   return { version: 1, agents };
+}
+
+function normalizeSnapshot(raw: any): SessionStatsSnapshot {
+  const tools = (Array.isArray(raw?.tools) ? raw.tools : []).map((row: any) => ({
+    tool: typeof row?.tool === "string" ? row.tool : "unknown",
+    successful: finite(row?.successful) ?? 0,
+    failed: finite(row?.failed) ?? 0,
+    blocked: finite(row?.blocked) ?? 0,
+    running: finite(row?.running) ?? 0,
+    interrupted: (finite(row?.interrupted) ?? 0) + (finite(row?.runningInterrupted) ?? 0),
+    total: finite(row?.total) ?? 0,
+  }));
+  return {
+    models: Array.isArray(raw?.models) ? raw.models : [],
+    tools,
+    outcomes: {
+      successful: finite(raw?.outcomes?.successful) ?? 0,
+      failed: finite(raw?.outcomes?.failed) ?? 0,
+      blocked: finite(raw?.outcomes?.blocked) ?? 0,
+      running: finite(raw?.outcomes?.running) ?? 0,
+      interrupted: (finite(raw?.outcomes?.interrupted) ?? 0)
+        + (finite(raw?.outcomes?.runningInterrupted) ?? 0),
+    },
+  };
 }
 
 function readEntries(path: string | undefined): any[] | undefined {
@@ -363,18 +396,21 @@ function readEntries(path: string | undefined): any[] | undefined {
 }
 
 function observationSnapshot(agent: PersistedAgent): SessionStatsSnapshot {
+  const tools = agent.runningTools.map(({ id, tool }) => ({
+    tool,
+    ...emptyOutcomes(),
+    [id.startsWith("interrupted:") ? "interrupted" : "running"]: 1,
+    total: 1,
+  }));
+  const outcomes = emptyOutcomes();
+  for (const row of tools) {
+    outcomes.running += row.running;
+    outcomes.interrupted += row.interrupted;
+  }
   return {
     models: agent.observations.map((row) => ({ ...row })),
-    tools: agent.runningTools.map(({ tool }) => ({
-      tool,
-      ...emptyOutcomes(),
-      runningInterrupted: 1,
-      total: 1,
-    })),
-    outcomes: {
-      ...emptyOutcomes(),
-      runningInterrupted: agent.runningTools.length,
-    },
+    tools,
+    outcomes,
   };
 }
 
@@ -562,7 +598,10 @@ export class SessionStatsManager {
     includeRunning: boolean,
   ): SessionStatsSnapshot {
     this.reconcileBranchSummaryAttempts(agent, entries);
-    const legacy = statsFromEntries(entries, agent.initialModel);
+    const activeRunningIds = new Set(agent.runningTools
+      .filter((tool) => !tool.id.startsWith("interrupted:"))
+      .map((tool) => tool.id));
+    const legacy = statsFromEntries(entries, agent.initialModel, activeRunningIds);
     const persistedCallIds = entryToolCallIds(entries);
     const observations = observationSnapshot({
       ...agent,
@@ -576,7 +615,7 @@ export class SessionStatsManager {
     ));
     if (includeRunning && interrupted.length) {
       observations.tools.push(...interrupted.map(({ tool }) => ({
-        tool, ...emptyOutcomes(), runningInterrupted: 1, total: 1,
+        tool, ...emptyOutcomes(), interrupted: 1, total: 1,
       })));
     }
     const combined = mergeSessionStats([legacy, observations]);
