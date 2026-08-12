@@ -9,7 +9,35 @@ export type ToolCall = {
   state: "running" | "ok" | "error" | "rejected";
   /** "+3 −1" for edits, or an error note. */
   detail?: string;
+  /** Cumulative output shown only while a Bash call is running. */
+  output?: string;
 };
+
+/** Extract the cumulative text payload from a Bash progress result. */
+export function bashOutput(result: any): string | undefined {
+  if (!Array.isArray(result?.content)) return undefined;
+  const text = result.content
+    .filter((block: any) => block?.type === "text" && typeof block.text === "string")
+    .map((block: any) => block.text)
+    .join("");
+  return text || undefined;
+}
+
+export type BashOutputWindow = {
+  hidden: number;
+  lines: string[];
+};
+
+/** Keep the newest logical lines without counting a final newline as an empty line. */
+export function bashOutputWindow(output: string, limit = 4): BashOutputWindow {
+  const lines = output.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  const visible = Math.max(0, limit);
+  return {
+    hidden: Math.max(0, lines.length - visible),
+    lines: visible ? lines.slice(-visible) : [],
+  };
+}
 
 function isWindowsAbsolute(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");

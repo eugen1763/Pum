@@ -13,7 +13,7 @@ import {
   useSpinner,
 } from "./animation";
 import type { Theme } from "./theme";
-import type { ToolCall } from "./tool-line";
+import { bashOutputWindow, type ToolCall } from "./tool-line";
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
@@ -416,6 +416,9 @@ export function ToolLine({
     caretColor: failed ? theme.error : rejected ? theme.rejection : theme.accent,
     active: workingCaret,
   });
+  const output = call.name === "bash" && call.state === "running" && call.output
+    ? bashOutputWindow(call.output)
+    : null;
 
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
@@ -454,6 +457,33 @@ export function ToolLine({
             wrapMode="word"
             style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
           />
+        </Row>
+      ) : null}
+      {output && (output.hidden > 0 || output.lines.length > 0) ? (
+        <Row glyph={GUTTER} glyphColor={theme.bashOutput}>
+          <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+            {output.hidden > 0 ? (
+              <text
+                content={`... ${output.hidden} more line${output.hidden === 1 ? "" : "s"}`}
+                fg={theme.bashOutput}
+                selectable
+                wrapMode="word"
+                style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+              />
+            ) : null}
+            {output.lines.map((line, index) => line ? (
+              <text
+                key={`${index}:${line}`}
+                content={line}
+                fg={theme.bashOutput}
+                selectable
+                wrapMode="word"
+                style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+              />
+            ) : (
+              <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
+            ))}
+          </box>
         </Row>
       ) : null}
     </box>
