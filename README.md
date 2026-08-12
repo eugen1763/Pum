@@ -47,7 +47,7 @@ The following screens are real OpenTUI renders captured through `tmux`. A local 
 - **External triggers:** Supervise background commands such as `gh run watch` and automatically wake the exact target agent when they exit.
 - **Provider choice:** Search the providers exposed by pi, or add an OpenAI-compatible custom endpoint.
 - **Filesystem boundary:** `read`, `write`, and `edit` stay inside the project and configured allowed roots. `apply_patch` stays project-local.
-- **Optional safeguards:** Use strict, balanced, or ask Check mode for `bash`, `edit`, `apply_patch`, and external-trigger process proposals. Supported hosts can also use native Bash sandboxing through Bubblewrap or Windows CreateProcessInSandbox.
+- **Optional safeguards:** Turn on Check mode to gate `bash`, `edit`, `apply_patch`, and external-trigger process proposals. Supported hosts can also use native Bash sandboxing through Bubblewrap or Windows CreateProcessInSandbox.
 - **Terminal-first appearance:** Nine themes, semantic color overrides, Unicode glyphs, and optional animation.
 
 PUM uses [pi](https://github.com/earendil-works/pi) for the agent loop and [OpenTUI](https://github.com/anomalyco/opentui) for rendering.
@@ -250,21 +250,22 @@ This boundary does not isolate `bash`, package scripts, extensions, or trigger p
 
 ### Check mode
 
-Select a Check mode profile in `Ctrl+P`. It applies to `bash`, `edit`, `apply_patch`, and external-trigger process execution:
+Select Check mode in `Ctrl+P` — either **Off** or **On**. It applies to `bash`, `edit`, `apply_patch`, and external-trigger process execution:
 
-- **Strict:** Run deterministic hard rules, then require a clear verifier approval.
-- **Balanced:** Block deterministic hard-rule or suspicious findings. Allow ordinary complete project-local calls, explicit non-sensitive external reads, and narrow lifecycle-disabled npm release verification operations whose writes stay in approved roots. Verifier review is non-blocking unless the verifier returns explicit `UNSAFE`.
-- **Ask:** Show the approval popup for every checked call that passes hard rules, unless an exact session or project approval already matches. A verifier `SAFE`, unclear, error, or unavailable result still requires approval.
+- **Off:** Checked tools run without the deterministic policy or the advisory verifier.
+- **On:** The deterministic policy runs first, then an advisory verifier reviews the complete proposal.
 
-Every active profile hard-blocks external writes, location changes, execution operands, ambiguous path access, escaping links, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. Balanced permits explicit, deterministically classified, non-sensitive external reads. It accepts one direct `npm pack` only when lifecycle scripts are disabled, an explicit cache stays in an approved root, output stays in an approved root, and any package operand is one exact registry version. Balanced also accepts one direct `npm install` of one exact registry version only when `--ignore-scripts`, an approved `--prefix`, and an approved `--cache` are explicit. File, Git, URL, tag, range, composed, general install, and global-install forms remain blocked. These hard blocks cannot be overridden and do not open the popup. An explicit verifier `UNSAFE` verdict also blocks without a popup. The only publication exception is a deterministic match for direct main-agent `npm publish` or `npm dist-tag add`. The verifier category does not control this exception. The exception still requires explicit popup approval. Managed subagents cannot use it.
+On allows ordinary complete project-local calls, explicit on-mode external reads (read-only), and project-local edits. It accepts one direct `npm pack` only when lifecycle scripts are disabled, an explicit cache stays in an approved root, output stays in an approved root, and any package operand is one exact registry version. On also accepts one direct `npm install` of one exact registry version only when `--ignore-scripts`, an approved `--prefix`, and an approved `--cache` are explicit. File, Git, URL, tag, range, composed, general install, and global-install forms remain blocked. On hard-blocks external writes, location changes, execution operands, ambiguous path access, escaping links or junctions, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion. These hard blocks cannot be overridden and never open a popup.
+
+On blocks an explicit verifier verdict of `UNSAFE`. An unclear, unavailable, failed, or timed-out review does not block a fully validated call. The only exception outside the verifier verdict is a deterministic match for a direct main-agent `npm publish` or `npm dist-tag add ... latest`, which On allows outright. The verifier category does not control this exception. Managed subagents cannot use it.
+
+There is no approval popup and no approval store. Check mode is off by default.
 
 Use `/check-path list`, `/check-path add <directory>`, `/check-path remove <directory>`, or `/check-path clear` to manage up to 16 additional directory roots for the current launch project. The filesystem sandbox applies these roots to `read`, `write`, and `edit`. Bash, edit, and external-trigger checks also use these roots; `apply_patch` remains project-local. Added roots are canonicalized and remain subject to credential, traversal, symlink or junction, broad-deletion, and other hard blocks.
 
-For `edit` and `apply_patch`, PUM validates the complete proposed change before any mutation. Review data includes the unified diff, changed paths, line counts, sensitivity flags, project containment, and full-content SHA-256. Invalid, stale, malformed, escaping, or incompletely analyzed input blocks the call. Patch length alone does not block a valid Balanced call.
+For `edit` and `apply_patch`, PUM validates the complete proposed change before any mutation. Review data includes the unified diff, changed paths, line counts, sensitivity flags, project containment, and full-content SHA-256. Invalid, stale, malformed, escaping, or incompletely analyzed input blocks the call. Patch length alone does not block a complete validated on-mode call.
 
-Ask mode can allow an exact call once, for the current session, or for the current project. Approvals match the authoritative main or child identity, tool, verifier model, project, and canonical complete input. Chat text is not approval. Use **Clear approvals** in Settings to remove project approvals.
-
-The verifier uses a structured decision schema. One unclear response can receive one adjudication under the shared 15-second watchdog. Strict blocks malformed replies, errors, aborts, and timeouts. Balanced allows a fully validated call after an unclear, unavailable, failed, or timed-out review. Balanced still blocks explicit verifier `UNSAFE`, aborts, deterministic suspicious findings, malformed structures, and incomplete analysis. Ask requires the popup after hard rules for verifier `SAFE`, unclear, error, and unavailable results. Check mode is off by default.
+The verifier uses a structured decision schema. One unclear response can receive one bounded adjudication under the shared 15-second watchdog. On blocks aborts, malformed verifier replies, and incomplete analysis, and it blocks any explicit `UNSAFE` verdict. Check mode is off by default.
 
 #### Native Bash sandbox
 
@@ -276,7 +277,7 @@ The **Sandbox** setting has three modes:
 
 Check mode **Off** always uses pi's normal unsandboxed Bash backend. For an active Check mode, PUM recomputes the sandbox policy from the exact approved command, authoritative working directory, configured additional roots, and deterministic access analysis. Model input cannot supply policy fields.
 
-The project and configured additional roots are writable. Explicit Balanced external reads are mounted read-only. PUM configuration and common credential paths are denied, and credential-shaped or process-injection environment variables are removed. A private temporary directory is supplied for the command. Safe pi metadata such as `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` remains available; session paths and identifiers are withheld.
+The project and configured additional roots are writable. Explicit on-mode external reads are mounted read-only. PUM configuration and common credential paths are denied, and credential-shaped or process-injection environment variables are removed. A private temporary directory is supplied for the command. Safe pi metadata such as `PI_PROVIDER`, `PI_MODEL`, and `PI_REASONING_LEVEL` remains available; session paths and identifiers are withheld.
 
 Network access is denied unless deterministic analysis recognizes an approved network operation. Bubblewrap's host-network mode is all-or-nothing and is **not domain-filtered**. Windows similarly grants or withholds the SDK's broad network capabilities; it does not provide hostname allowlists.
 
@@ -286,7 +287,7 @@ External triggers preserve direct executable/argument boundaries and continue to
 
 The filesystem sandbox is a process-local path guard for `read`, `write`, `edit`, and `apply_patch`. It does not replace native Bash isolation and does not cover scripts, extensions, or trigger processes.
 
-Verifier prompts stay bounded. For an oversized Balanced review, PUM sends complete validation metadata, counts, findings, and SHA-256 digests. PUM does not send a raw prefix or suffix as if it were complete. Strict and Ask keep their fail-closed oversized-input behavior.
+Verifier prompts stay bounded. For an oversized On-mode review, PUM sends complete validation metadata, counts, findings, and SHA-256 digests. PUM does not send a raw prefix or suffix as if it were complete.
 
 ### Hosted web search
 
@@ -328,8 +329,6 @@ Set `PUM_DIR` to override the complete PUM data directory.
 | `prompt-stash.json` | Stashed prompts by working directory |
 | `sessions/` | Main conversation sessions |
 | `subagents/` | Persistent subagent sessions |
-| `check-mode-cache.json` | Accepted checks for eligible read-only Git commands |
-| `check-mode-approvals.json` | Exact project approvals created in Ask mode |
 
 PUM preserves all stashed prompt occurrences. PUM also keeps the 100 most recent additional sent-history occurrences for each working directory.
 

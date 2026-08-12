@@ -2,6 +2,11 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.11-beta.1] - 2026-08-12
+
+### Fixed
+- Stopped the transcript from crashing when a slash command set the busy state over an existing text or tool row. Text and tool rows now keep a defined content value while the working-caret hooks own the renderable, so OpenTUI no longer receives an undefined `content` update, which crashed in `setStyledText`.
+
 ## [0.2.10-beta.1] - 2026-08-12
 
 ### Added

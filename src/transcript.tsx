@@ -232,7 +232,7 @@ export function TextLine({
     <Row glyph={GUTTER} glyphColor={color}>
       <text
         ref={workingCaret ? textCaret : undefined}
-        content={workingCaret ? undefined : displayText}
+        content={workingCaret ? "" : displayText}
         fg={color}
         selectable
         wrapMode="word"
@@ -424,7 +424,7 @@ export function ToolLine({
           {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
           <text
             ref={workingCaret ? caret : undefined}
-            content={workingCaret ? undefined : new StyledText(bodyChunks)}
+            content={workingCaret ? "" : new StyledText(bodyChunks)}
             selectable
             wrapMode="word"
             style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}

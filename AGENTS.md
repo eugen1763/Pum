@@ -554,6 +554,12 @@ Each of these cost real debugging. They are not obvious from the docs.
   measured one column narrower once the neighbouring text wrapped, so indents
   drifted between wrapped and unwrapped rows. Use a `<box>` with a *numeric*
   `width` — numeric sizes also set `flexShrink: 0`, string ones do not.
+- **Never pass `content={undefined}` to an OpenTUI `<text>` from React.**
+  OpenTUI 0.5.1 crashes in `setStyledText` (`text.chunks`) when a retained
+  renderable's `content` changes from text to `undefined`. The working-caret
+  rows hit this when a slash command set the busy state beneath an existing
+  last row. Keep the value defined (an empty string works) and let the caret
+  hook paint over it after React commits.
 - **Auto-sized boxes shrink.** Anything that must keep its height needs
   `flexShrink: 0`, or a taller sibling steals its rows and overdraws it.
 - **The scrollbar auto-shows and re-wraps everything.** Once the transcript
