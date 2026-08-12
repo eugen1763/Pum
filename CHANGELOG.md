@@ -6,7 +6,7 @@ All notable changes to PUM are documented in this file.
 
 ### Changed
 - Split the `/stats` tool outcome for running and interrupted calls. Running uses blue, and interrupted uses dark gray.
-- Delay live Bash output until a command runs for 500 ms. Settled Bash rows keep the final output line, and failed rows show the exit code after a `·` separator.
+- Delay live Bash output until a command runs for 500 ms. Failed Bash rows show the exit code after a `·` separator.
 
 ## [0.2.12-beta.1] - 2026-08-12
 

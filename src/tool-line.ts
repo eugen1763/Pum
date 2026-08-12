@@ -44,11 +44,10 @@ export function bashOutputWindow(output: string, limit = 4): BashOutputWindow {
 }
 
 export type BashResultDisplay = {
-  output?: string;
   exitCode?: number;
 };
 
-/** Extract the last real output line and a nonzero process exit code. */
+/** Extract a nonzero process exit code from the Bash result. */
 export function bashResultDisplay(result: any): BashResultDisplay {
   const text = bashOutput(result);
   const explicitExitCode = typeof result?.details?.exitCode === "number"
@@ -63,17 +62,7 @@ export function bashResultDisplay(result: any): BashResultDisplay {
     const match = line.match(/Command exited with code (-?\d+)/i);
     if (match) exitCode = Number(match[1]);
   }
-  const output = lines.reverse().find((line) => {
-    const value = line.trim();
-    return value
-      && value !== "(no output)"
-      && !/^(?:Error:\s*)?Command (?:exited with code|timed out|aborted)\b/i.test(value)
-      && !/^\[Showing .*Full output:/i.test(value);
-  })?.trim();
-  return {
-    ...(output ? { output } : {}),
-    ...(exitCode === undefined ? {} : { exitCode }),
-  };
+  return exitCode === undefined ? {} : { exitCode };
 }
 
 function isWindowsAbsolute(path: string): boolean {

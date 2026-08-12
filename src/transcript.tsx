@@ -443,12 +443,8 @@ export function ToolLine({
     caretColor: failed ? theme.error : rejected ? theme.rejection : theme.accent,
     active: workingCaret,
   });
-  const output = call.name === "bash" && call.output
-    ? call.state === "running"
-      ? liveBashOutputReady ? bashOutputWindow(call.output) : null
-      : call.state === "ok" || call.state === "error"
-        ? bashOutputWindow(call.output, 1)
-        : null
+  const output = call.name === "bash" && call.state === "running" && call.output && liveBashOutputReady
+    ? bashOutputWindow(call.output)
     : null;
 
   return (
@@ -492,7 +488,7 @@ export function ToolLine({
       ) : null}
       {output && (output.hidden > 0 || output.lines.length > 0) ? (
         <Row glyph={GUTTER} glyphColor={theme.bashOutput}>
-          <box style={{ width: 1, flexShrink: 0 }} />
+          <box style={{ width: call.arg ? Bun.stringWidth(`${call.name} · `) : 0, flexShrink: 0 }} />
           <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
             {output.hidden > 0 ? (
               <text
@@ -509,13 +505,8 @@ export function ToolLine({
                 content={line}
                 fg={theme.bashOutput}
                 selectable
-                wrapMode={call.state === "running" ? "word" : "none"}
-                style={{
-                  width: "100%",
-                  height: call.state === "running" ? undefined : 1,
-                  flexShrink: 1,
-                  minWidth: 0,
-                }}
+                wrapMode="word"
+                style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
               />
             ) : (
               <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />

@@ -90,10 +90,10 @@ describe("tool line state", () => {
     });
     expect(bashResultDisplay({
       content: [{ type: "text", text: "first\nlast output\n\nCommand exited with code 7" }],
-    })).toEqual({ output: "last output", exitCode: 7 });
+    })).toEqual({ exitCode: 7 });
     expect(bashResultDisplay({
       content: [{ type: "text", text: "first\nlast output\n" }],
-    })).toEqual({ output: "last output" });
+    })).toEqual({});
   });
 
   test("uses a distinct marker for rejected calls", () => {
@@ -278,7 +278,7 @@ describe("tool line state", () => {
     const outputRows = frameLines.filter((line) =>
       line.includes("more lines") || line.includes("new three") || line.includes("that also wraps")
     );
-    expect(outputRows.every((line) => line.search(/\S/) === commandColumn + 1)).toBe(true);
+    expect(outputRows.every((line) => line.search(/\S/) === commandColumn + "bash · ".length)).toBe(true);
 
     const outputSpans = setup.captureSpans().lines.flatMap((line) => line.spans)
       .filter((span) => span.text.includes("more lines") || span.text.includes("new three"));
@@ -313,7 +313,7 @@ describe("tool line state", () => {
     expect(setup.captureCharFrame()).toContain("delayed output");
   });
 
-  test("shows the last Bash output line after settlement", async () => {
+  test("hides Bash output after settlement", async () => {
     const setup = await createTestRenderer({ width: 40, height: 8 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
@@ -332,13 +332,7 @@ describe("tool line state", () => {
     );
     await settle(setup);
 
-    const lines = setup.captureCharFrame().split("\n");
-    const commandColumn = lines.find((line) => line.includes("bash ·"))!.search(/\S/);
-    const outputRows = lines.filter((line) => line.includes("last output"));
-    const outputColumn = outputRows[0]!.search(/\S/);
-    expect(outputRows).toHaveLength(1);
-    expect(outputColumn).toBe(commandColumn + 1);
-    expect(setup.captureCharFrame()).not.toContain("must not wrap");
+    expect(setup.captureCharFrame()).not.toContain("last output");
   });
 
   test("shows a failed Bash exit code after a dot separator", async () => {
@@ -363,7 +357,7 @@ describe("tool line state", () => {
 
     const frame = setup.captureCharFrame();
     expect(frame).toContain("bash · failing command · exit 7");
-    expect(frame).toContain("last failure output");
+    expect(frame).not.toContain("last failure output");
   });
 
   test("aligns wrapped read ranges under the path argument", async () => {

@@ -213,7 +213,6 @@ export function replayEntries(
             : "ok";
         if (call.name === "bash" && call.state !== "rejected") {
           const bashResult = bashResultDisplay(message);
-          call.output = bashResult.output;
           call.exitCode = bashResult.exitCode;
         }
         if (call.state === "rejected") call.detail = rejectedToolReason(message);

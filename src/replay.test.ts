@@ -223,7 +223,7 @@ describe("subagent transcript replay", () => {
     });
   });
 
-  test("restores the final Bash output line and exit code", () => {
+  test("restores the Bash exit code without settled output", () => {
     const lines = replayEntries([
       {
         type: "message",
@@ -256,7 +256,6 @@ describe("subagent transcript replay", () => {
         name: "bash",
         arg: "printf first; printf last; exit 7",
         state: "error",
-        output: "last",
         exitCode: 7,
       },
     });
