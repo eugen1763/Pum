@@ -32,7 +32,7 @@ import {
   persistSearchCall,
   withSearchRoute,
 } from "../web-search";
-import { editCounts, toolArg, type ToolCall } from "../tool-line";
+import { bashOutput, editCounts, toolArg, type ToolCall } from "../tool-line";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
@@ -813,6 +813,11 @@ export class SubagentManager {
           },
         });
         break;
+      case "tool_execution_update":
+        if (event.toolName === "bash") {
+          this.patchTool(record, event.toolCallId, { output: bashOutput(event.partialResult) });
+        }
+        break;
       case "tool_execution_end":
         this.patchTool(record, event.toolCallId, {
           state: isRejectedToolResult(event.result, event.toolCallId)
@@ -829,6 +834,7 @@ export class SubagentManager {
                 : event.toolName.startsWith("message_cache_")
                   ? messageCacheDetail(event.result)
                   : undefined,
+          output: undefined,
         });
         break;
       case "agent_start":

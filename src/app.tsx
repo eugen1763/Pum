@@ -47,7 +47,7 @@ import {
   type PendingLine,
   type Role,
 } from "./transcript";
-import { editCounts, toolArg, type ToolCall } from "./tool-line";
+import { bashOutput, editCounts, toolArg, type ToolCall } from "./tool-line";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
 import { appendHistory, loadHistory, removeHistory } from "./history";
@@ -1164,6 +1164,11 @@ export function App({
             },
           });
           break;
+        case "tool_execution_update":
+          if (event.toolName === "bash") {
+            patchTool(event.toolCallId, { output: bashOutput(event.partialResult) });
+          }
+          break;
         case "tool_execution_end":
           patchTool(event.toolCallId, {
             state: isRejectedToolResult(event.result, event.toolCallId)
@@ -1180,6 +1185,7 @@ export function App({
                   : event.toolName.startsWith("message_cache_")
                     ? messageCacheDetail(event.result)
                     : undefined,
+            output: undefined,
           });
           break;
         case "agent_start":

@@ -22,6 +22,7 @@ describe("rejection theme tokens", () => {
       expect(theme.rejectionBg).not.toBe(theme.bg);
       expect(theme.statusCwd).toBeTruthy();
       expect(theme.statusCwd).not.toBe(theme.dim);
+      expect(theme.bashOutput).toBeTruthy();
       expect(theme.popupShadow).toBeTruthy();
       expect(theme.popupShadow).not.toBe(theme.popupBg);
     }

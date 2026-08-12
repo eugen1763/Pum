@@ -6,7 +6,7 @@ import { rejectedToolDetails } from "./check-mode";
 import { replayEntries } from "./replay";
 import { ToolLine, toolStateGlyph } from "./transcript";
 import { loadTheme } from "./theme";
-import type { ToolCall } from "./tool-line";
+import { bashOutput, bashOutputWindow, type ToolCall } from "./tool-line";
 
 let destroy: (() => void) | undefined;
 afterEach(() => destroy?.());
@@ -75,6 +75,21 @@ function replayedReadCall(): ToolCall {
 }
 
 describe("tool line state", () => {
+  test("extracts cumulative Bash progress and keeps the newest four logical lines", () => {
+    const output = bashOutput({
+      content: [
+        { type: "text", text: "one\r\ntwo\n" },
+        { type: "image", data: "ignored" },
+        { type: "text", text: "three\rfour\nfive\n" },
+      ],
+    });
+    expect(output).toBe("one\r\ntwo\nthree\rfour\nfive\n");
+    expect(bashOutputWindow(output!)).toEqual({
+      hidden: 1,
+      lines: ["two", "three", "four", "five"],
+    });
+  });
+
   test("uses a distinct marker for rejected calls", () => {
     expect(toolStateGlyph("rejected")).toBe("!");
     expect(toolStateGlyph("error")).toBe("✗");
@@ -223,6 +238,62 @@ describe("tool line state", () => {
       "          o",
       "   read · abcdefghijklmno✓",
     ]);
+  });
+
+  test("shows the newest four running Bash output lines below and aligned with the command", async () => {
+    const setup = await createTestRenderer({ width: 34, height: 12 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "streaming-bash",
+          name: "bash",
+          arg: "a command that wraps automatically",
+          state: "running",
+          output: "old one\nold two\nnew three\nnew four\nnew five\na newest output line that also wraps\n",
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frameLines = setup.captureCharFrame().split("\n").map((line) => line.trimEnd());
+    expect(frameLines.some((line) => line.includes("... 2 more lines"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("old one"))).toBe(false);
+    expect(frameLines.some((line) => line.includes("old two"))).toBe(false);
+    expect(frameLines.some((line) => line.includes("new three"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("new four"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("new five"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("a newest output"))).toBe(true);
+
+    const commandColumn = frameLines.find((line) => line.includes("bash ·"))!.search(/\S/);
+    const outputRows = frameLines.filter((line) =>
+      line.includes("more lines") || line.includes("new three") || line.includes("that also wraps")
+    );
+    expect(outputRows.every((line) => line.search(/\S/) === commandColumn)).toBe(true);
+
+    const outputSpans = setup.captureSpans().lines.flatMap((line) => line.spans)
+      .filter((span) => span.text.includes("more lines") || span.text.includes("new three"));
+    expect(outputSpans.length).toBeGreaterThan(0);
+    expect(outputSpans.every((span) => span.fg.equals(parseColor(theme.bashOutput)))).toBe(true);
+  });
+
+  test("hides Bash output after the call settles", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{ id: "settled-bash", name: "bash", arg: "done", state: "ok", output: "must not remain" }}
+      />,
+    );
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).not.toContain("must not remain");
   });
 
   test("aligns wrapped read ranges under the path argument", async () => {
