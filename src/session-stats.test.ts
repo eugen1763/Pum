@@ -171,6 +171,69 @@ describe("session statistics aggregation", () => {
     expect(stats.tools).toContainEqual(expect.objectContaining({ tool: "read", successful: 1, total: 1 }));
   });
 
+  test("preserves restored child registration when main binds without an existing companion", () => {
+    const root = join(process.cwd(), `.stats-resume-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    roots.push(root);
+    mkdirSync(root);
+    const mainPath = join(root, "main.jsonl");
+    const childPath = join(root, "child.jsonl");
+    const mainEntries = [assistant("main", "alpha", { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } })];
+    const childEntries = [assistant("child", "beta", { input: 7, output: 3, cacheRead: 1, cacheWrite: 2, cost: { total: 0.1 } })];
+    writeJsonl(mainPath, mainEntries);
+    writeJsonl(childPath, childEntries);
+    const main = fakeSession(mainPath, mainEntries, "mock/alpha");
+    const manager = new SessionStatsManager();
+
+    manager.prepareMainSession(mainPath);
+    manager.registerAgentFile("restored-child", childPath, "mock/beta");
+    manager.bindMainSession(main.session);
+
+    expect(manager.snapshot().models).toContainEqual(expect.objectContaining({
+      model: "mock/beta",
+      role: "Agent",
+      outgoing: 9,
+      incoming: 3,
+      cacheRead: 1,
+      cost: 0.1,
+    }));
+  });
+
+  test("counts a persisted branch-summary initial request once on the active model", () => {
+    const root = join(process.cwd(), `.stats-branch-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    roots.push(root);
+    mkdirSync(root);
+    const path = join(root, "main.jsonl");
+    const entries: any[] = [];
+    writeJsonl(path, entries);
+    const main = fakeSession(path, entries, "mock/alpha");
+    const manager = new SessionStatsManager();
+
+    manager.bindMainSession(main.session);
+    main.emit({ type: "turn_start" });
+    entries.push(
+      assistant("a", "alpha", { input: 2, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } }),
+      { type: "model_change", provider: "mock", modelId: "beta" },
+      {
+        type: "branch_summary",
+        id: "summary-1",
+        fromHook: false,
+        usage: { input: 3, output: 2, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+      },
+    );
+    main.session.agent.state.model = { provider: "mock", id: "beta", contextWindow: 100_000 };
+    main.emit({ type: "entry_appended", entry: entries.at(-1) });
+    main.emit({ type: "summarization_retry_attempt_start", source: "branchSummary" });
+
+    const snapshot = manager.snapshot();
+    expect(snapshot.models).toContainEqual(expect.objectContaining({
+      model: "mock/beta",
+      role: "Agent",
+      attempts: 2,
+      compressions: 1,
+    }));
+    expect(snapshot.models.find((row) => row.model === "mock/beta")?.attempts).toBe(2);
+  });
+
   test("keeps legacy attempts and incomplete usage unavailable", () => {
     const stats = statsFromEntries([
       assistant("legacy", "old", { tokens: 700, cost: { total: 0.2 } }),

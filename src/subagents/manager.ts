@@ -382,6 +382,8 @@ export class SubagentManager {
     this.mainRunning = false;
     this.mainCompletionMessageIds.clear();
     this.mainCompletionResponse = "";
+    const mainSessionFile = (sessionManager as any).getSessionFile?.();
+    if (typeof mainSessionFile === "string") this.statsManager?.prepareMainSession(mainSessionFile);
     this.emit({
       type: "trigger-target",
       sessionId,

@@ -220,6 +220,7 @@ export async function start(options: StartupOptions): Promise<void> {
     },
   );
 
+  statsManager.bindMainSession(sessionRuntime.session);
   if (sessionRuntime.modelFallbackMessage) console.error(sessionRuntime.modelFallbackMessage);
 
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
@@ -253,6 +254,7 @@ export async function start(options: StartupOptions): Promise<void> {
       session={sessionRuntime.session}
       onNewSession={async () => {
         const result = await sessionRuntime.newSession();
+        if (!result.cancelled) statsManager.bindMainSession(sessionRuntime.session);
         return result.cancelled ? null : sessionRuntime.session;
       }}
       loadSessions={async () => sessionHistoryIndex.load(
@@ -260,6 +262,7 @@ export async function start(options: StartupOptions): Promise<void> {
       )}
       onSwitchSession={async (path) => {
         const result = await sessionRuntime.switchSession(path);
+        if (!result.cancelled) statsManager.bindMainSession(sessionRuntime.session);
         return result.cancelled ? null : sessionRuntime.session;
       }}
       modelRuntime={modelRuntime}

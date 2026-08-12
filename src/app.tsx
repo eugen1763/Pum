@@ -1038,7 +1038,6 @@ export function App({
   }), [sandboxWarningSource]);
 
   useEffect(() => {
-    statsManager?.bindMainSession(session);
     setStatsRevision((revision) => revision + 1);
     return statsManager?.subscribe(() => setStatsRevision((revision) => revision + 1));
   }, [statsManager, session]);

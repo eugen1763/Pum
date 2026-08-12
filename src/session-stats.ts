@@ -55,6 +55,7 @@ type PersistedAgent = {
   attemptsExact: boolean;
   observations: PersistedModelObservation[];
   runningTools: Array<{ id: string; tool: string }>;
+  countedBranchSummaryIds: string[];
   fallback?: SessionStatsSnapshot;
 };
 
@@ -63,6 +64,7 @@ type PersistedStats = { version: 1; agents: PersistedAgent[] };
 const MAX_AGENTS = 100;
 const MAX_MODELS_PER_AGENT = 64;
 const MAX_RUNNING_TOOLS = 256;
+const MAX_COUNTED_BRANCH_SUMMARIES = 512;
 
 const emptyOutcomes = (): Record<ToolOutcome, number> => ({
   successful: 0,
@@ -341,6 +343,9 @@ function normalizePersisted(value: unknown): PersistedStats | undefined {
       attemptsExact: raw.attemptsExact === true,
       observations,
       runningTools,
+      countedBranchSummaryIds: (Array.isArray(raw.countedBranchSummaryIds) ? raw.countedBranchSummaryIds : [])
+        .filter((id: unknown): id is string => typeof id === "string")
+        .slice(-MAX_COUNTED_BRANCH_SUMMARIES),
       ...(typeof raw.sessionFile === "string" ? { sessionFile: raw.sessionFile } : {}),
       ...(raw.fallback && typeof raw.fallback === "object" ? { fallback: raw.fallback as SessionStatsSnapshot } : {}),
     });
@@ -422,13 +427,12 @@ export class SessionStatsManager {
     for (const listener of this.listeners) listener();
   }
 
-  bindMainSession(session: AgentSession): void {
+  prepareMainSession(sessionFile: string | undefined): void {
     for (const unsubscribe of this.unsubscribers.values()) unsubscribe();
     this.unsubscribers.clear();
     this.sessions.clear();
-    this.mainSessionFile = session.sessionFile;
+    this.mainSessionFile = sessionFile;
     this.data = { version: 1, agents: [] };
-    let loaded = false;
     if (this.mainSessionFile) {
       try {
         const file = sessionStatsFile(this.mainSessionFile);
@@ -436,14 +440,18 @@ export class SessionStatsManager {
           const parsed = normalizePersisted(JSON.parse(readFileSync(file, "utf8")));
           if (parsed) {
             this.data = parsed;
-            loaded = true;
           }
         }
       } catch {
         this.data = { version: 1, agents: [] };
       }
     }
-    this.attach("main", session, modelRef(session.agent.state.model), loaded);
+  }
+
+  bindMainSession(session: AgentSession): void {
+    if (this.mainSessionFile !== session.sessionFile) this.prepareMainSession(session.sessionFile);
+    const retained = this.data.agents.some((agent) => agent.id === "main");
+    this.attach("main", session, modelRef(session.agent.state.model), retained);
   }
 
   attach(agentId: string, session: AgentSession, initialModel?: string, retained = false): void {
@@ -517,6 +525,8 @@ export class SessionStatsManager {
       this.ensureObservation(agent, "Agent", activeModel).compressions += 1;
     } else if (event.type === "summarization_retry_attempt_start") {
       this.ensureObservation(agent, "Agent", activeModel).attempts += 1;
+    } else if (event.type === "entry_appended" && this.countBranchSummaryAttempt(agent, event.entry, activeModel)) {
+      // countBranchSummaryAttempt mutates the active model row and stable-id set.
     } else if (event.type === "tool_execution_start") {
       if (!agent.runningTools.some((tool) => tool.id === event.toolCallId)) {
         agent.runningTools.push({ id: event.toolCallId, tool: event.toolName });
@@ -550,6 +560,7 @@ export class SessionStatsManager {
     entries: readonly any[],
     includeRunning: boolean,
   ): SessionStatsSnapshot {
+    this.reconcileBranchSummaryAttempts(agent, entries);
     const legacy = statsFromEntries(entries, agent.initialModel);
     const persistedCallIds = entryToolCallIds(entries);
     const observations = observationSnapshot({
@@ -582,13 +593,49 @@ export class SessionStatsManager {
   private ensureAgent(id: string, initialModel: string, attemptsExact = true): PersistedAgent {
     let agent = this.data.agents.find((item) => item.id === id);
     if (!agent) {
-      agent = { id, initialModel, attemptsExact, observations: [], runningTools: [] };
+      agent = {
+        id,
+        initialModel,
+        attemptsExact,
+        observations: [],
+        runningTools: [],
+        countedBranchSummaryIds: [],
+      };
       this.data.agents.push(agent);
       this.data.agents = this.data.agents.slice(-MAX_AGENTS);
     } else if (agent.attemptsExact !== true) {
       agent.attemptsExact = false;
     }
     return agent;
+  }
+
+  private reconcileBranchSummaryAttempts(agent: PersistedAgent, entries: readonly any[]): void {
+    let activeModel = agent.initialModel;
+    let changed = false;
+    for (const entry of entries) {
+      if (entry?.type === "model_change") {
+        activeModel = modelRef({ provider: entry.provider, modelId: entry.modelId }, activeModel);
+        continue;
+      }
+      if (entry?.type === "message" && entry.message?.role === "assistant") {
+        activeModel = modelRef(entry.message, activeModel);
+        continue;
+      }
+      if (this.countBranchSummaryAttempt(agent, entry, activeModel)) changed = true;
+    }
+    if (!changed) return;
+    this.persist();
+  }
+
+  private countBranchSummaryAttempt(agent: PersistedAgent, entry: any, activeModel: string): boolean {
+    if (entry?.type !== "branch_summary" || entry.fromHook === true || !entry.usage || typeof entry.id !== "string") {
+      return false;
+    }
+    if (agent.countedBranchSummaryIds.includes(entry.id)) return false;
+    agent.countedBranchSummaryIds.push(entry.id);
+    agent.countedBranchSummaryIds = agent.countedBranchSummaryIds.slice(-MAX_COUNTED_BRANCH_SUMMARIES);
+    if (agent.attemptsExact) this.ensureObservation(agent, "Agent", activeModel).attempts += 1;
+    return true;
   }
 
   private ensureObservation(agent: PersistedAgent, role: StatsRole, model: string): PersistedModelObservation {
