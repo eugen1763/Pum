@@ -19,6 +19,13 @@ import {
   usageFromEntries,
 } from "../agent-usage";
 import { replayEntries } from "../replay";
+import {
+  loadNewsItems,
+  mergeNewsItems,
+  newsItemFromFinishSettlement,
+  saveNewsItems,
+  tagNewsLines,
+} from "../news";
 import { isRejectedToolResult, rejectedToolReason } from "../check-mode";
 import {
   observeSearchCalls,
@@ -185,6 +192,8 @@ type RuntimeRecord = {
    * it to idle and blocking its managed merge.
    */
   statusBeforeTurn?: SubagentStatus;
+  completionMessageIds?: Set<string>;
+  completionResponse?: string;
 };
 
 type IdleOpenReminderState = {
@@ -289,6 +298,8 @@ export class SubagentManager {
   private mainCwd = process.cwd();
   private parentSessionId = "detached";
   private mainRunning = false;
+  private readonly mainCompletionMessageIds = new Set<string>();
+  private mainCompletionResponse = "";
   private maxActiveSubagents: number;
   private worktreeQueue: Promise<void> = Promise.resolve();
   private readonly messageTimes = new Map<string, number[]>();
@@ -365,6 +376,8 @@ export class SubagentManager {
     this.mainCwd = cwd;
     this.parentSessionId = sessionId;
     this.mainRunning = false;
+    this.mainCompletionMessageIds.clear();
+    this.mainCompletionResponse = "";
     this.emit({
       type: "trigger-target",
       sessionId,
@@ -374,6 +387,7 @@ export class SubagentManager {
     });
 
     const restored = new Map<string, Omit<SubagentSnapshot, "transcript">>();
+    const restoredEntries = new Map<string, readonly any[]>();
     const restoredActivity = new Map<string, { activityGeneration: number; idleNotifiedGeneration: number }>();
     const restoredFinish = new Map<string, string>();
     for (const entry of sessionManager.getEntries()) {
@@ -421,6 +435,7 @@ export class SubagentManager {
           const childManager = (await import("@earendil-works/pi-coding-agent")).SessionManager.open(
             snapshot.sessionFile,
           );
+          restoredEntries.set(snapshot.id, childManager.getEntries());
           transcript = {
             lines: replayEntries(childManager.buildContextEntries(), snapshot.worktree.path, true),
             stream: null,
@@ -463,6 +478,8 @@ export class SubagentManager {
         this.persistActivity(this.records.get(snapshot.id)!);
       }
     }
+    this.restoreSettlementResponses(sessionManager.getEntries(), restoredEntries);
+    this.reconcileFinishNews();
     await this.retrySettlementsForParent(null);
     this.emit();
   }
@@ -733,7 +750,14 @@ export class SubagentManager {
           if (typeof id === "string") {
             this.resolvePending(record, id);
             this.acknowledgeSettlementMessage(id);
+            if (message.customType === AGENT_MESSAGE_CUSTOM_TYPE
+              && message.details?.kind === "completion") {
+              record.completionMessageIds ??= new Set<string>();
+              record.completionMessageIds.add(id);
+            }
           }
+        } else if (message?.role === "assistant" && record.completionMessageIds?.size) {
+          record.completionResponse = "";
         } else if (message?.role === "user") {
           const text = typeof message.content === "string"
             ? message.content
@@ -766,6 +790,9 @@ export class SubagentManager {
         const update = event.assistantMessageEvent;
         const kind = update.type === "text_delta" ? "assistant" : update.type === "thinking_delta" ? "thinking" : null;
         if (!kind) return;
+        if (kind === "assistant" && record.completionMessageIds?.size) {
+          record.completionResponse = (record.completionResponse ?? "") + update.delta;
+        }
         this.updateTranscript(record, (value) => {
           if (value.stream?.kind === kind) {
             return { ...value, stream: { kind, text: value.stream.text + update.delta } };
@@ -833,6 +860,13 @@ export class SubagentManager {
       case "agent_settled": {
         this.messageCacheController?.releaseRequester({ kind: "subagent", id: record.snapshot.id });
         this.updateTranscript(record, flushTranscript);
+        if (record.completionMessageIds?.size) {
+          for (const messageId of record.completionMessageIds) {
+            this.recordSettlementResponse(messageId, record.completionResponse ?? "");
+          }
+          record.completionMessageIds.clear();
+          record.completionResponse = "";
+        }
         if (record.session) {
           void this.triggerManager?.markTargetSettled(
             record.session.sessionId,
@@ -1112,6 +1146,13 @@ export class SubagentManager {
         });
         pi.on("agent_settled", () => {
           this.mainRunning = false;
+          if (this.mainCompletionMessageIds.size > 0) {
+            for (const messageId of this.mainCompletionMessageIds) {
+              this.recordSettlementResponse(messageId, this.mainCompletionResponse);
+            }
+            this.mainCompletionMessageIds.clear();
+            this.mainCompletionResponse = "";
+          }
           this.messageCacheController?.releaseRequester({ kind: "main", id: this.parentSessionId });
           void this.triggerManager?.markTargetSettled(this.parentSessionId, null);
           this.emit({
@@ -1126,12 +1167,26 @@ export class SubagentManager {
         pi.on("message_start", (event) => {
           const message = event.message;
           this.acceptIdleOpenReminder(null, message);
+          if (message.role === "assistant" && this.mainCompletionMessageIds.size > 0) {
+            this.mainCompletionResponse = "";
+            return;
+          }
           if (message.role !== "custom"
             || ![AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) return;
-          const id = (message.details as AgentMessageData | undefined)?.id;
+          const details = message.details as AgentMessageData | undefined;
+          const id = details?.id;
           if (typeof id === "string") {
             this.acknowledgeSettlementMessage(id);
             this.emit({ type: "main-pending-resolve", id });
+            if (message.customType === AGENT_MESSAGE_CUSTOM_TYPE && details?.kind === "completion") {
+              this.mainCompletionMessageIds.add(id);
+            }
+          }
+        });
+        pi.on("message_update", (event) => {
+          const update = event.assistantMessageEvent;
+          if (this.mainCompletionMessageIds.size > 0 && update.type === "text_delta") {
+            this.mainCompletionResponse += update.delta;
           }
         });
         pi.on("session_start", async (_event, ctx) => {
@@ -1719,6 +1774,7 @@ export class SubagentManager {
       sender: data.sender,
       recipient: data.recipient,
       text: data.text,
+      messageId: data.id,
     };
   }
 
@@ -1893,6 +1949,89 @@ export class SubagentManager {
     if (!delivered) this.emit({ type: "main-pending-drop", id: pending.id });
   }
 
+  private responseAfterSettlement(entries: readonly any[], messageId: string): string {
+    let active = false;
+    let response = "";
+    for (const entry of entries) {
+      const message = entry?.type === "message"
+        ? entry.message
+        : entry?.type === "custom_message"
+          ? { ...entry, role: "custom" }
+          : entry;
+      if (message?.role === "custom") {
+        if (message.customType === AGENT_MESSAGE_CUSTOM_TYPE && message.details?.id === messageId) {
+          active = true;
+        }
+        continue;
+      }
+      if (!active) continue;
+      if (message?.role === "user") break;
+      if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+      const text = message.content
+        .filter((block: any) => block?.type === "text" && typeof block.text === "string")
+        .map((block: any) => block.text)
+        .join("")
+        .trim();
+      if (text) response = text;
+    }
+    return response;
+  }
+
+  private restoreSettlementResponses(
+    mainEntries: readonly any[],
+    childEntries: ReadonlyMap<string, readonly any[]>,
+  ): void {
+    for (const settlement of this.settlements.values()) {
+      if (settlement.status !== "completed" || settlement.response?.trim()) continue;
+      const entries = settlement.parentAgentId === null
+        ? mainEntries
+        : childEntries.get(settlement.parentAgentId) ?? [];
+      const response = this.responseAfterSettlement(entries, settlement.messageId);
+      if (response) this.recordSettlementResponse(settlement.messageId, response, false);
+    }
+  }
+
+  private recordSettlementResponse(messageId: string, response: string, reconcile = true): void {
+    const settlement = [...this.settlements.values()].find((item) => item.messageId === messageId);
+    if (!settlement || settlement.status !== "completed" || !response.trim()) return;
+    if (settlement.response === response.trim()) return;
+    settlement.response = response.trim();
+    settlement.respondedAt = Date.now();
+    this.persist({
+      event: "settlement",
+      id: settlement.agentId,
+      at: settlement.respondedAt,
+      settlement: { ...settlement },
+    });
+    if (reconcile) this.reconcileFinishNews();
+  }
+
+  private reconcileFinishNews(): void {
+    const sessionFile = this.mainSessionManager?.getSessionFile?.();
+    if (!sessionFile) return;
+    const incoming = [...this.settlements.values()]
+      .map((settlement) => newsItemFromFinishSettlement({
+        ...settlement,
+        agentName: settlement.agentName
+          ?? this.records.get(settlement.agentId)?.snapshot.name
+          ?? settlement.agentId,
+        requesterName: settlement.requesterName
+          ?? (settlement.parentAgentId
+            ? this.records.get(settlement.parentAgentId)?.snapshot.name ?? settlement.parentAgentId
+            : "main"),
+      }))
+      .filter((item): item is NonNullable<typeof item> => item !== undefined);
+    const next = mergeNewsItems(loadNewsItems(sessionFile), incoming);
+    saveNewsItems(sessionFile, next);
+    for (const record of this.records.values()) {
+      record.snapshot.transcript = {
+        ...record.snapshot.transcript,
+        lines: tagNewsLines(record.snapshot.transcript.lines, next, record.snapshot.id),
+      };
+    }
+    this.emit({ type: "news-changed" });
+  }
+
   private settlementId(record: RuntimeRecord, status: "idle" | "completed" | "failed"): string {
     return `${record.snapshot.id}:${record.activityGeneration}:${status}`;
   }
@@ -1912,11 +2051,16 @@ export class SubagentManager {
         `worktree: ${record.snapshot.worktree.path}`,
         summary ? `summary: ${summary}` : "",
       ].filter(Boolean).join("\n");
+      const requester = record.snapshot.parentAgentId
+        ? this.records.get(record.snapshot.parentAgentId)?.snapshot.name ?? record.snapshot.parentAgentId
+        : "main";
       settlement = {
         id,
         messageId: `settlement-${id}`,
         agentId: record.snapshot.id,
+        agentName: record.snapshot.name,
         parentAgentId: record.snapshot.parentAgentId,
+        requesterName: requester,
         status,
         summary,
         activityGeneration: record.activityGeneration,

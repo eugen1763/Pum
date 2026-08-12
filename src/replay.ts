@@ -120,6 +120,7 @@ export function replayEntries(
           sender: agentMessage.sender,
           recipient: agentMessage.recipient,
           text: agentMessage.text,
+          messageId: agentMessage.id,
         });
       }
       continue;

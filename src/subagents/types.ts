@@ -60,9 +60,13 @@ export type SubagentSettlement = {
   parentAgentId: string | null;
   status: "idle" | "completed" | "failed";
   summary?: string;
+  agentName?: string;
+  requesterName?: string;
   activityGeneration: number;
   content: string;
   createdAt: number;
+  response?: string;
+  respondedAt?: number;
   acknowledgedAt?: number;
 };
 
@@ -96,6 +100,7 @@ export type TriggerEventData = ExternalTriggerEventData & {
 
 export type SubagentManagerEvent =
   | { type: "changed" }
+  | { type: "news-changed" }
   | { type: "main-line"; line: Line }
   | { type: "main-pending-add"; pending: PendingLine }
   | { type: "main-pending-resolve"; id: string }

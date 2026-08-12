@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadNewsItems, saveNewsItems } from "../news";
 import {
   SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
   SUBAGENT_COORDINATION_SYSTEM_PROMPT,
@@ -612,6 +616,8 @@ describe("SubagentManager extension", () => {
       },
     };
     (manager as any).parentSessionId = "main-session";
+    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-finish-news-")), "main.jsonl");
+    (manager as any).mainSessionManager = { getSessionFile: () => sessionFile };
 
     const tools = new Map<string, any>();
     (manager as any).childExtension("child").factory({
@@ -630,6 +636,29 @@ describe("SubagentManager extension", () => {
     expect(deliveries[0].message.content).toContain("summary: Child work passed.");
     expect(deliveries[0].message.details.recipient).toBe("main");
     expect(events.filter((event) => event.type === "main-line")).toHaveLength(1);
+
+    (manager as any).recordSettlementResponse(
+      deliveries[0].message.details.id,
+      "Main integrated the child change.",
+    );
+    const news = loadNewsItems(sessionFile);
+    expect(news).toHaveLength(1);
+    expect(news[0]).toMatchObject({
+      id: `subagent-finish:${deliveries[0].message.details.id}`,
+      text: "Main integrated the child change.",
+      completion: {
+        agentId: "child",
+        agentName: "child",
+        requesterAgentId: null,
+        requesterName: "main",
+        summary: "Child work passed.",
+      },
+    });
+    (manager as any).recordSettlementResponse(
+      deliveries[0].message.details.id,
+      "Main integrated the child change.",
+    );
+    expect(loadNewsItems(sessionFile)).toHaveLength(1);
   });
 
   test("finish_subagent notifies only the direct subagent spawner", async () => {
@@ -644,10 +673,13 @@ describe("SubagentManager extension", () => {
       appendEntry() {},
       sendMessage(message: any) { mainDeliveries.push(message); },
     };
+    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-nested-finish-news-")), "main.jsonl");
+    (manager as any).mainSessionManager = { getSessionFile: () => sessionFile };
     const parent = (manager as any).records.get("parent");
     parent.session = {
       sessionId: "parent-session",
       isStreaming: false,
+      agent: { state: {} },
     };
     parent.api = {
       sendMessage(message: any, options: any) {
@@ -675,6 +707,35 @@ describe("SubagentManager extension", () => {
     expect(manager.getAgent("parent")?.transcript.pending).toHaveLength(1);
     expect(mainDeliveries).toEqual([]);
     expect(events.some((event) => event.type === "main-line")).toBe(false);
+
+    processAgentEvent(manager, "parent", {
+      type: "message_start",
+      message: { role: "custom", ...parentDeliveries[0].message },
+    });
+    processAgentEvent(manager, "parent", {
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    processAgentEvent(manager, "parent", {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "Parent accepted the nested result." },
+    });
+    settleAgent(manager, "parent");
+
+    const news = loadNewsItems(sessionFile);
+    expect(news).toHaveLength(1);
+    expect(news[0]).toMatchObject({
+      text: "Parent accepted the nested result.",
+      completion: {
+        agentId: "child",
+        requesterAgentId: "parent",
+        requesterName: "parent",
+        summary: "Nested child passed.",
+      },
+    });
+    expect(manager.getAgent("parent")?.transcript.lines.some((line) =>
+      line.kind === "text" && line.role === "assistant" && line.newsId === news[0]?.id,
+    )).toBe(true);
   });
 
   test("sends one initial idle notice and suppresses duplicate settles", async () => {
@@ -936,6 +997,62 @@ describe("SubagentManager extension", () => {
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0].content).toContain("summary: Persisted summary.");
     expect(entries.some((entry) => entry.data?.event === "finish" && entry.data.finishSummary === null)).toBe(true);
+  });
+
+  test("reconciles one completed finish News item from the registry on resume", async () => {
+    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-resume-finish-news-")), "main.jsonl");
+    const messageId = "settlement-worker:1:completed";
+    saveNewsItems(sessionFile, [{
+      id: `subagent-finish:${messageId}`,
+      text: "Old response text.",
+      at: 1,
+      read: true,
+      answered: true,
+    }]);
+    const entries = [{
+      type: "custom",
+      customType: "pum.subagent",
+      data: {
+        event: "settlement",
+        id: "worker",
+        settlement: {
+          id: "worker:1:completed",
+          messageId,
+          agentId: "worker",
+          agentName: "worker-one",
+          parentAgentId: null,
+          requesterName: "main",
+          status: "completed",
+          summary: "All tests passed.",
+          activityGeneration: 1,
+          content: "Subagent worker-one completed.\nsummary: All tests passed.",
+          createdAt: 2,
+          response: "Main merged the restored result.",
+          acknowledgedAt: 3,
+        },
+      },
+    }];
+    const restored = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    await restored.attachMain({ appendEntry() {}, sendMessage() {} } as any, {
+      getSessionId: () => "main-session",
+      getSessionFile: () => sessionFile,
+      getEntries: () => entries,
+    } as any, "/repo");
+
+    const news = loadNewsItems(sessionFile);
+    expect(news).toHaveLength(1);
+    expect(news[0]).toMatchObject({
+      id: `subagent-finish:${messageId}`,
+      text: "Main merged the restored result.",
+      read: true,
+      answered: true,
+      completion: {
+        agentId: "worker",
+        agentName: "worker-one",
+        requesterAgentId: null,
+        requesterName: "main",
+      },
+    });
   });
 
   test("restores persisted readonly state and defaults legacy snapshots to mutable", async () => {
