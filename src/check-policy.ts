@@ -549,6 +549,12 @@ export function analyzeBashCommand(command: string, requestedLimits?: Partial<Ch
   let pipeline = 0;
   let annotations = 0;
   let truncated = false;
+  let commandStart = true;
+  const caseContexts: Array<{
+    phase: "subject" | "pattern" | "body";
+    parenDepth: number;
+    braceDepth: number;
+  }> = [];
 
   const addAnnotation = <T>(list: T[], value: T) => {
     annotations++;
@@ -607,9 +613,37 @@ export function analyzeBashCommand(command: string, requestedLimits?: Partial<Ch
       index++;
       continue;
     }
-    if (char === "'" || char === "\"") { quote = char; index++; continue; }
-    if (char === "(") { parenDepth++; index++; continue; }
-    if (char === ")") { if (parenDepth === 0) errors.push(`unexpected ) at ${index}`); else parenDepth--; index++; continue; }
+    if (char === "'" || char === "\"") { quote = char; commandStart = false; index++; continue; }
+
+    const word = command.slice(index).match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+    if (word) {
+      const next = command[index + word.length];
+      const reservedBoundary = next === undefined || /[\s;&|(){}<>]/.test(next);
+      const activeCase = caseContexts.at(-1);
+      const atCaseLevel = activeCase?.parenDepth === parenDepth && activeCase.braceDepth === braceDepth;
+      if (commandStart && word === "case" && reservedBoundary) {
+        caseContexts.push({ phase: "subject", parenDepth, braceDepth });
+      } else if (activeCase?.phase === "subject" && atCaseLevel && word === "in" && reservedBoundary) {
+        activeCase.phase = "pattern";
+      } else if (commandStart && activeCase && atCaseLevel && word === "esac" && reservedBoundary) {
+        caseContexts.pop();
+      }
+      commandStart = commandStart && reservedBoundary && new Set(["do", "then", "else", "elif"]).has(word);
+      index += word.length;
+      continue;
+    }
+
+    if (char === "(") { parenDepth++; commandStart = true; index++; continue; }
+    if (char === ")") {
+      const activeCase = caseContexts.at(-1);
+      if (activeCase?.phase === "pattern" && activeCase.parenDepth === parenDepth && activeCase.braceDepth === braceDepth) {
+        activeCase.phase = "body";
+        commandStart = true;
+      } else if (parenDepth === 0) errors.push(`unexpected ) at ${index}`);
+      else parenDepth--;
+      index++;
+      continue;
+    }
     if (char === "{") { braceDepth++; index++; continue; }
     if (char === "}") { if (braceDepth === 0) errors.push(`unexpected } at ${index}`); else braceDepth--; index++; continue; }
 
@@ -632,6 +666,15 @@ export function analyzeBashCommand(command: string, requestedLimits?: Partial<Ch
       index = newline + 1;
       continue;
     }
+    const activeCase = caseContexts.at(-1);
+    const inCasePattern = activeCase?.phase === "pattern"
+      && activeCase.parenDepth === parenDepth
+      && activeCase.braceDepth === braceDepth;
+    if (char === "|" && inCasePattern && !command.startsWith("||", index) && !command.startsWith("|&", index)) {
+      commandStart = false;
+      index++;
+      continue;
+    }
     const rawOperator = [";;&", "&&", "||", "|&", ";;", ";&", ";", "|", "&", "\n"].find((item) => command.startsWith(item, index));
     if (rawOperator) {
       const normalized = rawOperator === "\n" ? "newline" : rawOperator as BashOperator["operator"];
@@ -643,9 +686,15 @@ export function analyzeBashCommand(command: string, requestedLimits?: Partial<Ch
         stageStart = index + rawOperator.length;
         operatorBefore = normalized;
       }
+      if (activeCase?.phase === "body" && activeCase.parenDepth === parenDepth && activeCase.braceDepth === braceDepth
+        && (rawOperator === ";;" || rawOperator === ";&" || rawOperator === ";;&")) {
+        activeCase.phase = "pattern";
+      }
+      commandStart = true;
       index += rawOperator.length;
       continue;
     }
+    if (!/\s/.test(char)) commandStart = false;
     index++;
   }
   addStage(command.length);
@@ -655,6 +704,7 @@ export function analyzeBashCommand(command: string, requestedLimits?: Partial<Ch
   if (backtickStart !== undefined) errors.push(`unterminated backtick substitution at ${backtickStart}`);
   if (parenDepth) errors.push("unbalanced parentheses");
   if (braceDepth) errors.push("unbalanced braces");
+  if (caseContexts.length) errors.push("unterminated case statement");
   if (truncated) errors.push("analysis annotation limit exceeded");
 
   const stages: BashStage[] = stageRanges.map((range, index) => {
