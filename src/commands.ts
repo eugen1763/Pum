@@ -30,6 +30,10 @@ export const COMMANDS: Command[] = [
     description: "Open recent answers (News)",
   },
   {
+    name: "/stats",
+    description: "Show session statistics",
+  },
+  {
     name: "/check-path",
     description: "Manage additional Check mode directory roots",
   },

@@ -18,6 +18,7 @@ import { installWebSearch, webSearch } from "./web-search";
 import { SandboxController } from "./sandbox";
 import { toolArg } from "./tool-line";
 import { shutdownSignals } from "./platform";
+import { SessionStatsManager } from "./session-stats";
 
 /**
  * Tools exposed to a headless run. The interactive-only tools stay out:
@@ -70,8 +71,14 @@ export async function runPrompt(options: HeadlessOptions): Promise<number> {
     model: settings.checkModel,
     additionalPaths: checkPathsForProject(settings, process.cwd()),
   });
+  const statsManager = new SessionStatsManager();
   const checkModeExtension = createCheckModeExtension(modelRuntime, {
     identity: { kind: "main" },
+    observeRequest: (observation) => statsManager.observeCheck({
+      agentId: null,
+      model: observation.model,
+      usage: observation.usage,
+    }),
   });
 
   webSearch.enabled = settings.webSearch;
@@ -117,6 +124,7 @@ export async function runPrompt(options: HeadlessOptions): Promise<number> {
   }
 
   const session = sessionRuntime.session;
+  statsManager.bindMainSession(session);
   let exitCode = 0;
   let wroteText = false;
   // Stream assistant text to stdout and one safe tool label to stderr. The tool

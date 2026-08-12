@@ -50,6 +50,7 @@ import {
   createFilesystemSandboxExtension,
   filesystemSandboxExtension,
 } from "./filesystem-sandbox";
+import { SessionStatsManager } from "./session-stats";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -75,6 +76,7 @@ export async function start(options: StartupOptions): Promise<void> {
   const mainToolGroups = new ToolGroupsController("main");
   const sessionHistoryIndex = new SessionHistoryIndex();
   const messageCacheController = new MessageCacheController(process.cwd());
+  const statsManager = new SessionStatsManager();
   setCheckModeConfig({
     profile: settings.checkMode,
     model: settings.checkModel,
@@ -82,8 +84,19 @@ export async function start(options: StartupOptions): Promise<void> {
   });
   const mainCheckModeExtension = createCheckModeExtension(modelRuntime, {
     identity: { kind: "main" },
+    observeRequest: (observation) => statsManager.observeCheck({
+      agentId: observation.requester?.kind === "subagent" ? observation.requester.agentId : null,
+      model: observation.model,
+      usage: observation.usage,
+    }),
   });
-  const externalTriggerSafety = createExternalTriggerSafetyChecker(modelRuntime);
+  const externalTriggerSafety = createExternalTriggerSafetyChecker(modelRuntime, (observation) => {
+    statsManager.observeCheck({
+      agentId: observation.requester?.kind === "subagent" ? observation.requester.agentId : null,
+      model: observation.model,
+      usage: observation.usage,
+    });
+  });
   let subagentManager!: SubagentManager;
   const triggerManager = new TriggerManager({
     process: new NodeTriggerProcessAdapter(),
@@ -134,6 +147,7 @@ export async function start(options: StartupOptions): Promise<void> {
     questionnaireManager,
     spawnPreviewManager,
     messageCacheController,
+    statsManager,
     triggerManager,
     childExtensionFactories: [
       identityExtension,
@@ -144,6 +158,11 @@ export async function start(options: StartupOptions): Promise<void> {
     childExtensionFactoriesForAgent: [
       (agentId) => createCheckModeExtension(modelRuntime, {
         identity: { kind: "subagent", agentId },
+        observeRequest: (observation) => statsManager.observeCheck({
+          agentId,
+          model: observation.model,
+          usage: observation.usage,
+        }),
       }),
       (_agentId, isReadonly) => sandboxController.extension({ readonly: isReadonly }),
       (_agentId, isReadonly) => createFilesystemSandboxExtension({ readonly: isReadonly }),
@@ -247,6 +266,7 @@ export async function start(options: StartupOptions): Promise<void> {
       settings={settings}
       searchProviders={searchProviders}
       subagentManager={subagentManager}
+      statsManager={statsManager}
       questionnaireManager={questionnaireManager}
       spawnPreviewManager={spawnPreviewManager}
       messageCacheController={messageCacheController}

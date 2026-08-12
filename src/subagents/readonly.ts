@@ -1,4 +1,5 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
+import { rejectedToolDetails } from "../check-mode";
 
 const SAFE_TOOLS = new Set([
   "read",
@@ -36,6 +37,7 @@ export function readonlySubagentExtension(readonly: boolean): InlineExtension {
     name: "pum-readonly-subagent-guard",
     factory(pi) {
       if (!readonly) return;
+      const rejected = new Map<string, string>();
       pi.on("before_agent_start", (event) => ({
         systemPrompt: `${event.systemPrompt}\n\n## Readonly child\n\n`
           + "- Inspect files and run non-mutating commands only.\n"
@@ -48,9 +50,23 @@ export function readonlySubagentExtension(readonly: boolean): InlineExtension {
           event.toolName,
           event.input as Record<string, unknown>,
         );
-        return reason
-          ? { block: true, reason: `Readonly subagent blocked ${event.toolName}: ${reason}` }
-          : undefined;
+        if (!reason) return;
+        const visibleReason = `Readonly subagent blocked ${event.toolName}: ${reason}`;
+        rejected.set(event.toolCallId, visibleReason);
+        return { block: true, reason: visibleReason };
+      });
+      pi.on("tool_result", (event) => {
+        const reason = rejected.get(event.toolCallId);
+        if (!reason) return;
+        return { details: rejectedToolDetails(event.details, reason) };
+      });
+      pi.on("message_end", (event) => {
+        const message = event.message as any;
+        if (message?.role !== "toolResult" || typeof message.toolCallId !== "string") return;
+        const reason = rejected.get(message.toolCallId);
+        if (!reason) return;
+        rejected.delete(message.toolCallId);
+        return { message: { ...message, details: rejectedToolDetails(message.details, reason) } };
       });
     },
   };

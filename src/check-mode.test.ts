@@ -280,6 +280,27 @@ describe("on-mode verifier outcomes", () => {
     expect(verifier.options[1].timeoutMs).toBeLessThanOrEqual(verifier.options[0].timeoutMs);
   });
 
+  test("observes first and clarification verifier requests separately", async () => {
+    const verifier = runtime([
+      result("unclear"),
+      result('{"decision":"safe","category":"cfg","confidence":1,"reason":"safe"}'),
+    ]);
+    const observations: any[] = [];
+    const cwd = tempProject("pum-check-observe-");
+    await Bun.write(join(cwd, "package.json"), "{\"name\":\"old\"}\n");
+    await evaluateToolCall(verifier, {
+      toolName: "edit",
+      input: { path: "package.json", edits: [{ oldText: "old", newText: "new" }] },
+      cwd,
+      config,
+      requester: { kind: "subagent", agentId: "child" },
+      observeRequest: (observation) => observations.push(observation),
+    });
+    expect(observations).toHaveLength(2);
+    expect(observations.map((item) => item.model)).toEqual(["test/verifier", "test/verifier"]);
+    expect(observations[0].requester).toEqual({ kind: "subagent", agentId: "child" });
+  });
+
   test("fails open on an unclear verdict after adjudication (allows; deterministic gate stood)", async () => {
     const verifier = runtime([result("maybe"), result("still maybe")]);
     const evaluation = await configEdit(verifier, "unclear");
