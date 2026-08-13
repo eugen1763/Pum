@@ -19,6 +19,7 @@ import { SandboxController } from "./sandbox";
 import { toolArg } from "./tool-line";
 import { shutdownSignals } from "./platform";
 import { SessionStatsManager } from "./session-stats";
+import { prepareHeadlessStatsOutput, type HeadlessStatsOutput } from "./headless-stats";
 
 /**
  * Tools exposed to a headless run. The interactive-only tools stay out:
@@ -31,6 +32,9 @@ const HEADLESS_TOOL_NAMES = ["read", "write", "edit", "apply_patch", "bash"];
 export interface HeadlessOptions {
   prompt: string;
   resume: boolean;
+  statsFile?: string;
+  overrideStatsFile: boolean;
+  pumVersion: string;
 }
 
 /**
@@ -45,6 +49,63 @@ export interface HeadlessOptions {
  * coordinator denies every request when no popup is attached.
  */
 export async function runPrompt(options: HeadlessOptions): Promise<number> {
+  let statsOutput: HeadlessStatsOutput | undefined;
+  if (options.statsFile) {
+    try {
+      statsOutput = prepareHeadlessStatsOutput(options.statsFile, options.overrideStatsFile);
+    } catch (error) {
+      const message = error instanceof Error && (error as NodeJS.ErrnoException).code === "EEXIST"
+        ? `stats file already exists: ${options.statsFile}. Use --override to replace it.`
+        : `cannot prepare stats file ${options.statsFile}: ${error instanceof Error ? error.message : String(error)}`;
+      process.stderr.write(`pum: ${message}\n`);
+      return 2;
+    }
+  }
+
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
+  const statsManager = new SessionStatsManager();
+  let statsWritten = false;
+  const writeStats = (exitCode: number): number => {
+    if (!statsOutput || statsWritten) return exitCode;
+    statsWritten = true;
+    const finishedAtMs = Date.now();
+    try {
+      statsOutput.write({
+        schemaVersion: 1,
+        pumVersion: options.pumVersion,
+        run: {
+          prompt: options.prompt,
+          cwd: process.cwd(),
+          resume: options.resume,
+          startedAt,
+          finishedAt: new Date(finishedAtMs).toISOString(),
+          durationMs: Math.max(0, finishedAtMs - startedAtMs),
+          exitCode,
+        },
+        stats: statsManager.snapshot(),
+      });
+      return exitCode;
+    } catch (error) {
+      process.stderr.write(`pum: cannot write stats file ${statsOutput.path}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return exitCode === 0 ? 1 : exitCode;
+    }
+  };
+
+  let exitCode = 1;
+  try {
+    exitCode = await runPromptSession(options, statsManager, writeStats);
+  } catch (error) {
+    process.stderr.write(`pum: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+  return writeStats(exitCode);
+}
+
+async function runPromptSession(
+  options: HeadlessOptions,
+  statsManager: SessionStatsManager,
+  writeStats: (exitCode: number) => number,
+): Promise<number> {
   mkdirSync(AGENT_DIR, { recursive: true });
 
   const modelRuntime = await ModelRuntime.create({
@@ -71,7 +132,6 @@ export async function runPrompt(options: HeadlessOptions): Promise<number> {
     model: settings.checkModel,
     additionalPaths: checkPathsForProject(settings, process.cwd()),
   });
-  const statsManager = new SessionStatsManager();
   const checkModeExtension = createCheckModeExtension(modelRuntime, {
     identity: { kind: "main" },
     observeRequest: (observation) => statsManager.observeCheck({
@@ -165,7 +225,7 @@ export async function runPrompt(options: HeadlessOptions): Promise<number> {
       process.stderr.write(`pum: shutdown error: ${error instanceof Error ? error.message : String(error)}\n`);
     }
   };
-  const onSignal = () => { void dispose().finally(() => process.exit(130)); };
+  const onSignal = () => { void dispose().finally(() => process.exit(writeStats(130))); };
   const signals = shutdownSignals();
   for (const signal of signals) process.on(signal, onSignal);
 

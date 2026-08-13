@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,37 +52,62 @@ describe("CLI argument parsing", () => {
   test("preserves login and resume startup arguments", () => {
     expect(parseCliArgs(["login", "--resume"])).toEqual({
       kind: "start",
-      options: { login: true, resume: true },
+      options: { login: true, resume: true, overrideStatsFile: false },
     });
     expect(parseCliArgs(["-r"])).toEqual({
       kind: "start",
-      options: { login: false, resume: true },
+      options: { login: false, resume: true, overrideStatsFile: false },
     });
   });
 
   test("parses the one-shot prompt option", () => {
     expect(parseCliArgs(["-p", "write hello world"])).toEqual({
       kind: "start",
-      options: { login: false, resume: false, prompt: "write hello world" },
+      options: { login: false, resume: false, overrideStatsFile: false, prompt: "write hello world" },
     });
     expect(parseCliArgs(["--prompt", "task", "-r"])).toEqual({
       kind: "start",
-      options: { login: false, resume: true, prompt: "task" },
+      options: { login: false, resume: true, overrideStatsFile: false, prompt: "task" },
+    });
+  });
+
+  test("parses headless statistics options", () => {
+    expect(parseCliArgs(["-p", "task", "--statsFile", "D:\\tmp\\stats.json"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: false,
+        overrideStatsFile: false,
+        prompt: "task",
+        statsFile: "D:\\tmp\\stats.json",
+      },
+    });
+    expect(parseCliArgs(["--stats-file", "stats.json", "--override", "-p", "task"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: false,
+        overrideStatsFile: true,
+        prompt: "task",
+        statsFile: "stats.json",
+      },
     });
   });
 
   test("treats a prompt value that looks like a flag as prompt text", () => {
     expect(parseCliArgs(["-p", "--help"])).toEqual({
-      kind: "start", options: { login: false, resume: false, prompt: "--help" },
+      kind: "start",
+      options: { login: false, resume: false, overrideStatsFile: false, prompt: "--help" },
     });
     expect(parseCliArgs(["--prompt", "-v"])).toEqual({
-      kind: "start", options: { login: false, resume: false, prompt: "-v" },
+      kind: "start",
+      options: { login: false, resume: false, overrideStatsFile: false, prompt: "-v" },
     });
     // A real --help flag still short-circuits.
     expect(parseCliArgs(["--help", "-p", "x"])).toEqual({ kind: "help" });
   });
 
-  test("rejects invalid prompt option forms", () => {
+  test("rejects invalid prompt and stats option forms", () => {
     expect(parseCliArgs(["-p"])).toEqual({
       kind: "error",
       message: "Missing prompt text after -p",
@@ -102,6 +127,14 @@ describe("CLI argument parsing", () => {
     expect(parseCliArgs(["-p", "   "])).toEqual({
       kind: "error",
       message: "The prompt text is empty",
+    });
+    expect(parseCliArgs(["--statsFile", "stats.json"])).toEqual({
+      kind: "error",
+      message: "--statsFile requires --prompt",
+    });
+    expect(parseCliArgs(["-p", "task", "--override"])).toEqual({
+      kind: "error",
+      message: "--override requires --statsFile",
     });
   });
 
@@ -137,6 +170,7 @@ describe("non-interactive CLI", () => {
       expect(result.stdout).toBe(expected);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Usage:\n");
+      expect(result.stdout).toContain("--statsFile");
       expect(result.stdout).toContain("PUM_DIR");
       expect(result.stdout).toContain("Executable: pum");
       await expectNoStartup(result);
@@ -150,6 +184,32 @@ describe("non-interactive CLI", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("no provider is available");
   }, 20_000);
+
+  test("writes a failure stats artifact without a provider", async () => {
+    const statsPath = join(temporaryRoot, `stats-${crypto.randomUUID()}`, "result.json");
+    const result = await runCli("-p", "say hi", "--statsFile", statsPath);
+    expect(result.exitCode).toBe(1);
+    const artifact = JSON.parse(readFileSync(statsPath, "utf8"));
+    expect(artifact).toMatchObject({
+      schemaVersion: 1,
+      run: { prompt: "say hi", exitCode: 1, resume: false },
+      stats: {
+        models: [],
+        tools: [],
+        outcomes: { successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 0 },
+      },
+    });
+  }, 20_000);
+
+  test("rejects an existing stats file before startup", async () => {
+    const statsPath = join(temporaryRoot, `existing-${crypto.randomUUID()}.json`);
+    writeFileSync(statsPath, "keep me");
+    const result = await runCli("-p", "say hi", "--statsFile", statsPath);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("stats file already exists");
+    expect(readFileSync(statsPath, "utf8")).toBe("keep me");
+    await expectNoStartup(result);
+  });
 
   test("unknown long and short options fail with a concise help hint", async () => {
     for (const option of ["--unknown", "-x"]) {

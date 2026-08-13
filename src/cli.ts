@@ -9,6 +9,10 @@ export interface StartupOptions {
   resume: boolean;
   /** Non-interactive one-shot prompt for `pum -p "<text>"`. */
   prompt?: string;
+  /** Optional benchmark statistics output for headless mode. */
+  statsFile?: string;
+  /** Permit replacement of an existing statistics output file. */
+  overrideStatsFile: boolean;
 }
 
 export type CliResult =
@@ -27,11 +31,12 @@ export async function readPackageMetadata(): Promise<PackageMetadata> {
 }
 
 export function parseCliArgs(args: string[]): CliResult {
-  // Single pass so a --prompt value is consumed before it can be mistaken for a
-  // flag. A prompt text of exactly "--help" or "-v" must run, not print help.
+  // Single pass so option values are consumed before they can be mistaken for flags.
   let login = false;
   let resume = false;
   let prompt: string | undefined;
+  let statsFile: string | undefined;
+  let overrideStatsFile = false;
   let help = false;
   let version = false;
   for (let index = 0; index < args.length; index += 1) {
@@ -46,7 +51,13 @@ export function parseCliArgs(args: string[]): CliResult {
       if (prompt !== undefined) return { kind: "error", message: "Only one --prompt is supported" };
       prompt = value;
       index += 1;
-    }
+    } else if (arg === "--statsFile" || arg === "--stats-file") {
+      const value = args[index + 1];
+      if (value === undefined) return { kind: "error", message: `Missing file path after ${arg}` };
+      if (statsFile !== undefined) return { kind: "error", message: "Only one --statsFile is supported" };
+      statsFile = value;
+      index += 1;
+    } else if (arg === "--override") overrideStatsFile = true;
     else if (arg.startsWith("-")) return { kind: "error", message: `Unknown option: ${arg}` };
     else return { kind: "error", message: `Unknown command: ${arg}` };
   }
@@ -59,7 +70,25 @@ export function parseCliArgs(args: string[]): CliResult {
   if (prompt !== undefined && prompt.trim() === "") {
     return { kind: "error", message: "The prompt text is empty" };
   }
-  return { kind: "start", options: { login, resume, ...(prompt !== undefined ? { prompt } : {}) } };
+  if (statsFile !== undefined && statsFile.trim() === "") {
+    return { kind: "error", message: "The stats file path is empty" };
+  }
+  if (statsFile !== undefined && prompt === undefined) {
+    return { kind: "error", message: "--statsFile requires --prompt" };
+  }
+  if (overrideStatsFile && statsFile === undefined) {
+    return { kind: "error", message: "--override requires --statsFile" };
+  }
+  return {
+    kind: "start",
+    options: {
+      login,
+      resume,
+      overrideStatsFile,
+      ...(prompt !== undefined ? { prompt } : {}),
+      ...(statsFile !== undefined ? { statsFile } : {}),
+    },
+  };
 }
 
 export function formatCliError(message: string): string {
@@ -78,6 +107,8 @@ Options:
   -v, --version        Print the ${metadata.name} package version and exit.
   -r, --resume         Resume the latest session for the current directory.
   -p, --prompt <text>  Run one prompt without the TUI, print the answer, and exit.
+  --statsFile <path>   Write a versioned JSON statistics artifact after a headless run.
+  --override           Permit --statsFile to replace an existing file.
 
 Commands:
   login            Open PUM with the provider login panel.
@@ -86,7 +117,9 @@ Non-interactive mode:
   "pum -p" runs the coding tools (read, write, edit, apply_patch, bash) with
   the configured Check mode. Interactive tools stay off. Ask-mode approvals
   deny automatically because no approval popup exists. Combine with -r to
-  continue the latest session for the current directory.
+  continue the latest session for the current directory. --statsFile creates
+  missing parent directories and fails before startup when the file exists,
+  unless --override is present. --stats-file is also accepted.
 
 Start PUM in a project directory with "pum". If no provider is available,
 PUM opens the login panel automatically. Inside PUM, enter ? on an empty prompt

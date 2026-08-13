@@ -152,6 +152,8 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `
 
 Useful commands include `/login`, `/history`, `/news`, `/triggers`, `/check-path`, `/clear`, `/compress`, and `/worktree`.
 
+For automated benchmarks, add `--statsFile <path>` to a headless `-p` run. PUM writes a versioned JSON artifact with run metadata and all `/stats` data. PUM creates missing parent directories. PUM rejects an existing file before startup unless `--override` is present. The alias `--stats-file` is also accepted.
+
 ### Copy transcript text
 
 Drag across transcript text with the left mouse button. PUM copies the completed selection when you release the button.

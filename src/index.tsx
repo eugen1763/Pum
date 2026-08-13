@@ -16,6 +16,9 @@ if (result.kind === "help") {
   process.exitCode = await runPrompt({
     prompt: result.options.prompt,
     resume: result.options.resume,
+    statsFile: result.options.statsFile,
+    overrideStatsFile: result.options.overrideStatsFile,
+    pumVersion: metadata.version,
   });
 } else {
   const { start } = await import("./main");
