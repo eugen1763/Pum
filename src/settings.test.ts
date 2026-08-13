@@ -11,6 +11,7 @@ import {
   SANDBOX_MODES,
   WORKING_RULE_ANIMATION_MODES,
 } from "./settings";
+import { DEFAULT_BASH_OUTPUT } from "./bash-output";
 
 describe("PUM settings migration", () => {
   test("preserves migration defaults for old files", () => {
@@ -21,6 +22,7 @@ describe("PUM settings migration", () => {
     expect(settings.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
     expect(settings.checkPaths).toEqual({});
     expect(settings.sandboxMode).toBe("auto");
+    expect(settings.bashOutput).toEqual(DEFAULT_BASH_OUTPUT);
   });
 
   test("normalizes bounded additional Check mode paths", () => {
@@ -161,6 +163,7 @@ describe("PUM settings persistence", () => {
       sandboxMode: "off",
       checkPaths: {},
       maxActiveSubagents: 7,
+      bashOutput: DEFAULT_BASH_OUTPUT,
     });
   });
 

@@ -9,6 +9,7 @@ import {
   type ExplanationStrength,
 } from "./explanation-strength";
 import type { SandboxMode } from "./sandbox/types";
+import { DEFAULT_BASH_OUTPUT, normalizeBashOutput, type BashOutputSettings } from "./bash-output";
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
@@ -108,6 +109,8 @@ export type PumSettings = {
   /** Additional canonical directory roots allowed by the filesystem sandbox and Check mode, keyed by launch project. */
   checkPaths?: CheckPathsByProject;
   maxActiveSubagents: number;
+  /** Bash output summarization policy (context-length control). */
+  bashOutput?: BashOutputSettings;
 };
 
 const SETTINGS_PATH = join(AGENT_DIR, "pum.json");
@@ -125,6 +128,7 @@ const DEFAULTS: PumSettings = {
   sandboxMode: "auto",
   checkPaths: {},
   maxActiveSubagents: DEFAULT_MAX_ACTIVE_SUBAGENTS,
+  bashOutput: { ...DEFAULT_BASH_OUTPUT },
 };
 
 export function normalizeSettings(parsed: unknown): PumSettings {
@@ -148,6 +152,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     sandboxMode: isSandboxMode(merged.sandboxMode) ? merged.sandboxMode : DEFAULTS.sandboxMode,
     checkPaths: normalizeCheckPathsByProject(merged.checkPaths),
     maxActiveSubagents: normalizeMaxActiveSubagents(merged.maxActiveSubagents),
+    bashOutput: normalizeBashOutput(merged.bashOutput),
   };
 }
 

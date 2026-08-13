@@ -13,6 +13,7 @@ import { setWritingStyle, writingStyleExtension } from "./writing-style";
 import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-prompt";
 import { explanationStrengthExtension, setExplanationStrength } from "./explanation-strength";
 import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
+import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { applyPatchExtension } from "./apply-patch";
 import { installWebSearch, webSearch } from "./web-search";
 import { SandboxController } from "./sandbox";
@@ -127,6 +128,7 @@ async function runPromptSession(
   if (sandboxWarning) process.stderr.write(`pum: ${sandboxWarning}\n`);
   setWritingStyle(settings.writingStyle);
   setExplanationStrength(settings.explanationStrength);
+  setBashOutputSettingsIfPresent(settings.bashOutput);
   setCheckModeConfig({
     profile: settings.checkMode,
     model: settings.checkModel,

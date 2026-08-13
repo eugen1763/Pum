@@ -13,6 +13,11 @@ import { AGENT_DIR } from "../config";
 import { analyzeCheckPolicy } from "../check-policy";
 import { getCheckModeConfig } from "../check-mode";
 import { buildSandboxPolicy, decideSandboxMode } from "../sandbox-policy";
+import {
+  bashOutputDescription,
+  bashOutputParameters,
+  executeBashWithOutput,
+} from "../bash-output";
 import type { CheckModeProfile } from "../settings";
 import type { SandboxBackend, SandboxCapability, SandboxMode } from "./types";
 import { createBubblewrapBackend } from "./linux";
@@ -150,8 +155,11 @@ export class SandboxController {
       factory: (pi) => {
         pi.registerTool({
           ...base,
-          description: `${base.description} PUM applies native OS sandboxing when Check mode and Sandbox settings require it.`
-            + (readonly ? " This readonly child receives no writable project or additional roots." : ""),
+          parameters: bashOutputParameters,
+          description: bashOutputDescription(
+            `${base.description} PUM applies native OS sandboxing when Check mode and Sandbox settings require it.`
+              + (readonly ? " This readonly child receives no writable project or additional roots." : ""),
+          ),
           execute: async (id, params, signal, onUpdate, ctx) => {
             const cwd = ctx.cwd;
             let settings = controller.#settings.get(cwd);
@@ -166,8 +174,15 @@ export class SandboxController {
               throw new Error("Readonly Bash is blocked while the PUM Sandbox setting is Off");
             }
             if (!readonly && (check.profile === "off" || controller.#mode === "off")) {
-              const local = createBashTool(cwd, { shellPath, commandPrefix });
-              return (local.execute as any)(id, params, signal, onUpdate, ctx);
+              return executeBashWithOutput(
+                cwd,
+                { shellPath, commandPrefix },
+                id,
+                params as any,
+                signal,
+                onUpdate as any,
+                ctx,
+              );
             }
 
             const capability = await controller.probe();
@@ -180,8 +195,15 @@ export class SandboxController {
                 );
               }
               if (decision.warning) controller.#emitWarning(decision.warning);
-              const local = createBashTool(cwd, { shellPath, commandPrefix });
-              return (local.execute as any)(id, params, signal, onUpdate, ctx);
+              return executeBashWithOutput(
+                cwd,
+                { shellPath, commandPrefix },
+                id,
+                params as any,
+                signal,
+                onUpdate as any,
+                ctx,
+              );
             }
             if (!controller.#backend) throw new Error("Sandbox backend is unavailable");
 
@@ -241,8 +263,15 @@ export class SandboxController {
                 }
               },
             };
-            const sandboxed = createBashTool(cwd, { operations });
-            return (sandboxed.execute as any)(id, params, signal, onUpdate, ctx);
+            return executeBashWithOutput(
+              cwd,
+              { operations },
+              id,
+              params as any,
+              signal,
+              onUpdate as any,
+              ctx,
+            );
           },
         });
       },

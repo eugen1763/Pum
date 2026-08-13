@@ -58,6 +58,7 @@ bun run start    # open the TUI in the current directory
 | `src/check-policy.ts` | Deterministic shell and structured-process hard rules |
 | `src/check-mutation.ts` | Pre-execution edit and patch diff proposals |
 | `src/check-approvals.ts` | Check mode identity model and canonical-input serializer |
+| `src/bash-output.ts` | Bash output summarization: bounded head+tail view, filters, `patterns`/`full_output` args |
 | `src/sandbox/types.ts` | Shared native sandbox capability, policy, and process contracts |
 | `src/sandbox-policy.ts` | Canonical policy derivation, environment filtering, and fallback decisions |
 | `src/sandbox/index.ts` | pi Bash override, backend selection, probing, and enforcement controller |
@@ -198,6 +199,16 @@ These were chosen deliberately. Change them only on purpose.
   commit. Credential-sensitive paths and symbolic-link or junction components
   are blocked. This is a process-local path guard, not operating-system
   isolation for bash, scripts, extensions, or trigger processes.
+- **Bash output is summarized to a bounded head+tail view.** `src/bash-output.ts`
+  wraps pi's bash tool in main and managed child sessions. The default keeps
+  first 30 / last 40 lines within 3KB, strips ANSI, drops progress-only lines,
+  compresses repeated and similar runs, and re-injects FAIL/error/warning lines
+  from the elided middle. PUM tees the exact stream to its own trusted private
+  temp file before execution; the marker points at it whenever output is changed
+  or elided. Never parse a file path from command output. The tool schema
+  gains `full_output` (return pi's native output), `strategy`, `max_bytes`, and
+  `patterns` (regexes whose matching lines survive elision). The `bashOutput`
+  setting in `pum.json` tunes or disables it. See `research/bash-output/`.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,

@@ -50,6 +50,20 @@ function registeredBash(controller: SandboxController, options: { readonly?: boo
 }
 
 describe("sandbox Bash override", () => {
+  test("registers PUM Bash output controls in the model-visible schema", () => {
+    const controller = new SandboxController({ mode: "off", platform: process.platform });
+    const tool = registeredBash(controller);
+    expect(Object.keys(tool.parameters.properties)).toEqual(expect.arrayContaining([
+      "command",
+      "timeout",
+      "full_output",
+      "strategy",
+      "max_bytes",
+      "patterns",
+    ]));
+    expect(tool.description).toContain("patterns=[regex]");
+  });
+
   test("recomputes a canonical policy and preserves pi output and safe PI environment", async () => {
     setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
     const mock = backend({ state: "enforced", backend: process.platform === "win32" ? "mxc" : "bubblewrap" });

@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { checkPathsForProject, loadSettings } from "./settings";
+import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { installWebSearch, webSearch } from "./web-search";
 import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
@@ -71,6 +72,7 @@ export async function start(options: StartupOptions): Promise<void> {
   const sandboxExtension = sandboxController.extension();
   setWritingStyle(settings.writingStyle);
   setExplanationStrength(settings.explanationStrength);
+  setBashOutputSettingsIfPresent(settings.bashOutput);
   const questionnaireManager = new QuestionnaireManager();
   const spawnPreviewManager = new SpawnPreviewManager();
   const mainToolGroups = new ToolGroupsController("main");
