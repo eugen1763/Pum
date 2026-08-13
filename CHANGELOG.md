@@ -2,7 +2,21 @@
 
 All notable changes to PUM are documented in this file.
 
-## Unreleased
+## [0.2.13-beta.1] - 2026-08-13
+
+### Added
+- Added configurable Bash output summarization (`src/bash-output.ts`). The default
+  keeps the first 30 / last 40 lines within 3KB, strips ANSI, drops progress-only
+  lines, compresses repeated and similar runs, and re-injects FAIL/error/warning
+  lines from the elided middle. PUM tees the exact stream to its own trusted
+  private temp file, so elided output stays recoverable below pi's 50KB limit,
+  and never reads a file path parsed from command output.
+- The Bash tool schema gains `full_output` (return pi's native output),
+  `strategy`, `max_bytes`, and `patterns` (regexes whose matching raw lines
+  survive elision). Extracted lines and the marker share one final hard byte
+  budget.
+- Added the `bashOutput` setting in `pum.json`, with defaults, extreme-value
+  clamping, and normalization.
 
 ### Changed
 - Split the `/stats` tool outcome for running and interrupted calls. Running uses blue, and interrupted uses dark gray.
