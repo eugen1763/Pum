@@ -6,7 +6,7 @@ import {
   type SyntaxStyle,
 } from "@opentui/core";
 import type { MarkdownProps } from "@opentui/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useBlinkingText,
   useMarkdownCaret,
@@ -374,26 +374,62 @@ export function toolStateGlyph(state: ToolCall["state"]): string {
 
 const CHECK_MODE_HARD_BLOCK_PREFIX = "Check mode hard block:";
 const BASH_OUTPUT_DELAY_MS = 500;
+const BASH_OUTPUT_MIN_VISIBLE_MS = 2_000;
 
-function useLiveBashOutputReady(call: ToolCall): boolean {
-  const [ready, setReady] = useState(() => (
-    call.startedAt === undefined || Date.now() - call.startedAt >= BASH_OUTPUT_DELAY_MS
-  ));
+function useBashOutputVisible(call: ToolCall): boolean {
+  const initiallyVisible = call.name === "bash"
+    && call.state === "running"
+    && Boolean(call.output)
+    && (call.startedAt === undefined || Date.now() - call.startedAt >= BASH_OUTPUT_DELAY_MS);
+  const [visible, setVisible] = useState(initiallyVisible);
+  const visibleSince = useRef<number | undefined>(initiallyVisible ? Date.now() : undefined);
+
   useEffect(() => {
-    if (call.name !== "bash" || call.state !== "running" || call.startedAt === undefined) {
-      setReady(call.startedAt === undefined);
+    if (call.name !== "bash" || !call.output) {
+      visibleSince.current = undefined;
+      setVisible(false);
       return;
     }
-    const delay = BASH_OUTPUT_DELAY_MS - (Date.now() - call.startedAt);
-    if (delay <= 0) {
-      setReady(true);
+
+    const show = () => {
+      visibleSince.current ??= Date.now();
+      setVisible(true);
+    };
+
+    if (call.state === "running") {
+      if (call.startedAt === undefined) {
+        show();
+        return;
+      }
+      const delay = BASH_OUTPUT_DELAY_MS - (Date.now() - call.startedAt);
+      if (delay <= 0) {
+        show();
+        return;
+      }
+      visibleSince.current = undefined;
+      setVisible(false);
+      const timer = setTimeout(show, delay);
+      return () => clearTimeout(timer);
+    }
+
+    if (visibleSince.current === undefined) {
+      if (call.startedAt === undefined || Date.now() - call.startedAt < BASH_OUTPUT_DELAY_MS) {
+        setVisible(false);
+        return;
+      }
+      show();
+    }
+
+    const remaining = BASH_OUTPUT_MIN_VISIBLE_MS - (Date.now() - visibleSince.current!);
+    if (remaining <= 0) {
+      setVisible(false);
       return;
     }
-    setReady(false);
-    const timer = setTimeout(() => setReady(true), delay);
+    const timer = setTimeout(() => setVisible(false), remaining);
     return () => clearTimeout(timer);
-  }, [call.id, call.name, call.state, call.startedAt]);
-  return ready;
+  }, [call.id, call.name, call.output, call.startedAt, call.state]);
+
+  return visible;
 }
 
 function rejectedDetail(theme: Theme, detail: string): StyledText {
@@ -421,7 +457,7 @@ export function ToolLine({
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
   const rejected = call.state === "rejected";
-  const liveBashOutputReady = useLiveBashOutputReady(call);
+  const bashOutputVisible = useBashOutputVisible(call);
   const toolColor = failed ? theme.error : rejected ? theme.rejection : theme.tool;
   const argColor = failed ? theme.error : rejected ? theme.rejection : theme.toolArg;
   const detailColor = failed ? theme.error : rejected ? theme.rejection : theme.dim;
@@ -443,7 +479,7 @@ export function ToolLine({
     caretColor: failed ? theme.error : rejected ? theme.rejection : theme.accent,
     active: workingCaret,
   });
-  const output = call.name === "bash" && call.state === "running" && call.output && liveBashOutputReady
+  const output = call.name === "bash" && call.output && bashOutputVisible
     ? bashOutputWindow(call.output)
     : null;
 

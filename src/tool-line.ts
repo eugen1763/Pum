@@ -9,7 +9,7 @@ export type ToolCall = {
   state: "running" | "ok" | "error" | "rejected";
   /** "+3 −1" for edits, or an error note. */
   detail?: string;
-  /** Cumulative live output, or the final displayed Bash output line. */
+  /** Cumulative live output retained until the Bash output display period ends. */
   output?: string;
   /** Start time used to delay live Bash output without delaying the tool row. */
   startedAt?: number;

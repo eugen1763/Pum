@@ -1209,7 +1209,6 @@ export function App({
                   : event.toolName.startsWith("message_cache_")
                     ? messageCacheDetail(event.result)
                     : undefined,
-            output: undefined,
             exitCode: bashResult.exitCode,
           });
           break;

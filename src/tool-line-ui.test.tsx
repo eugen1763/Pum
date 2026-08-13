@@ -335,6 +335,41 @@ describe("tool line state", () => {
     expect(setup.captureCharFrame()).not.toContain("last output");
   });
 
+  test("keeps visible Bash output for at least two seconds after settlement", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const root = createRoot(setup.renderer);
+    const startedAt = Date.now() - 500;
+    const output = "brief command output";
+
+    root.render(
+      <ToolLine
+        theme={theme}
+        call={{ id: "brief-bash", name: "bash", arg: "brief", state: "running", output, startedAt }}
+      />,
+    );
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain(output);
+
+    root.render(
+      <ToolLine
+        theme={theme}
+        call={{ id: "brief-bash", name: "bash", arg: "brief", state: "ok", output, startedAt }}
+      />,
+    );
+    await settle(setup);
+    await new Promise((resolve) => setTimeout(resolve, 1_850));
+    await setup.renderOnce();
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain(output);
+
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await setup.renderOnce();
+    await setup.flush();
+    expect(setup.captureCharFrame()).not.toContain(output);
+  });
+
   test("shows a failed Bash exit code after a dot separator", async () => {
     const setup = await createTestRenderer({ width: 48, height: 8 });
     destroy = () => setup.renderer.destroy();
