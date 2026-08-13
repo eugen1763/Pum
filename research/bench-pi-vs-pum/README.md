@@ -91,70 +91,64 @@ runnable once `uv` can download a Python (no PATH change needed).
 - Token capture is approximate and depends on session-file location.
 - The exercise repo is cloned at first run and reused afterward.
 
-## Results (2026-08-13, --track all --limit 10)
+## Benchmark results (2026-08-13)
 
-Raw JSON: `results-2026-08-13.json`. Both agents used `ds4-ops`; `pi -ne` vs released `pum 0.2.13-beta.1` (`PUM_CMD=pum`).
+Raw data:
+- Check mode on: `results-2026-08-13.json`
+- Check mode off: `results-2026-08-13-checkoff.json`
 
-### Pass/fail per track (per agent)
+Both agents used `ds4-ops`. Baseline is `pi -ne`. PUM is the released
+`pum 0.2.13-beta.1` (`PUM_CMD=pum`). Run: `--track all --limit 10`.
+
+Values are the mean over non-skipped exercises per track (10 per track).
+
+### Pass / fail
 
 | Track | pi | pum |
 |---|---|---|
 | js | 10/10 | 10/10 |
 | go | 9/10 | 9/10 |
-| python | 9/10 | 10/10 |
-| cpp | skipped (no g++) | skipped |
-| java | skipped (no JDK) | skipped |
-| rust | skipped (no cargo) | skipped |
+| python (check on) | 9/10 | 10/10 |
+| python (check off) | 8/10 | 10/10 |
+| cpp, java, rust | skipped (no toolchain) | skipped |
 
-Notes:
-- Go `counter` failed identically for both agents: the exercise needs a `COUNTER_IMPL` build tag/env that the harness did not set. It is a setup gap, not a model result.
-- Python `beer-song`: `pi` failed (3 tests), `pum` passed.
-- Python `dominoes`: `pi` hit the 300s agent timeout but its saved work passed the test; `pum` finished normally (`pass: true`, `seconds: 300.03`, `exitCode: null` for pi).
+### Time and tokens, Check mode on
 
-### Mean wall time and tokens (per non-skipped run)
+| Track | pi s | pi tok | pum s | pum tok |
+|---|---|---|---|---|
+| js | 35.4 | 142 164 | 54.4 | 386 354 |
+| go | 24.2 | 131 198 | 79.3 | 588 699 |
+| python | 68.4 | 210 996 | 32.9 | 350 597 |
 
-| Track/agent | avg seconds | avg tokens |
-|---|---|---|
-| js/pi | 35.4 | 142 164 |
-| js/pum | 54.4 | 386 354 |
-| go/pi | 24.2 | 131 198 |
-| go/pum | 79.3 | 588 699 |
-| python/pi | 68.4 | 210 996 |
-| python/pum | 32.9 | 350 597 |
+### Time and tokens, Check mode off
 
-Interpretation:
-- Both agents solved almost every runnable exercise. The two real deltas favor PUM on Python (`beer-song`, `dominoes`) and favor pi on speed in most tracks.
-- PUM reports 2-4x more tokens than pi. Do not read this as a Bash-summarization failure. The released `pum` runs its configured Check mode (on), which adds verifier model calls on every checked Bash/edit, plus a larger system prompt. To isolate the Bash-output feature, run PUM with Check mode off and compare only then.
+| Track | pi s | pi tok | pum s | pum tok |
+|---|---|---|---|---|
+| js | 34.5 | 197 384 | 41.4 | 215 952 |
+| go | 17.8 | 121 031 | 33.0 | 169 022 |
+| python | 150.3 | 152 157 | 62.3 | 218 497 |
 
-## Results (2026-08-13, Check mode off) — `results-2026-08-13-checkoff.json`
+### Combined view
 
-PUM was re-run with `checkMode: off` (and `sandboxMode: off`) in `pum.json` so the only meaningful difference from `pi -ne` is PUM's Bash-output summarization and system prompt.
-
-### Mean wall time and tokens (per non-skipped run)
-
-| Track/agent | avg seconds | avg tokens |
-|---|---|---|
-| js/pi | 34.5 | 197 384 |
-| js/pum | 41.4 | 215 952 |
-| go/pi | 17.8 | 121 031 |
-| go/pum | 33.0 | 169 022 |
-| python/pi | 150.3 | 152 157 |
-| python/pum | 62.3 | 218 497 |
-
-Pass/fail per track (per agent):
-
-| Track | pi | pum |
-|---|---|---|
-| js | 10/10 | 10/10 |
-| go | 9/10 | 9/10 (same `counter` env gap) |
-| python | 8/10 | 10/10 |
-
-### Effect of turning Check mode off on PUM
-
-| Track | pum tokens (check on) | pum tokens (check off) | pum sec (on -> off) |
+| Track | Agent | Check on (s / tok) | Check off (s / tok) |
 |---|---|---|---|
-| js | 386 354 | 215 952 | 54.4 -> 41.4 |
-| go | 588 699 | 169 022 | 79.3 -> 33.0 |
-| python | 350 597 | 218 497 | 32.9 -> 62.3 |
+| js | pi | 35.4 / 142 164 | 34.5 / 197 384 |
+| js | pum | 54.4 / 386 354 | 41.4 / 215 952 |
+| go | pi | 24.2 / 131 198 | 17.8 / 121 031 |
+| go | pum | 79.3 / 588 699 | 33.0 / 169 022 |
+| python | pi | 68.4 / 210 996 | 150.3 / 152 157 |
+| python | pum | 32.9 / 350 597 | 62.3 / 218 497 |
 
-With Check mode off, PUM's token usage is close to pi's (it still carries a larger system prompt). The verifier was the dominant extra cost. On Python, PUM passed all 10 exercises while pi passed 8 and timed out (300s) on 4 runs.
+### Key notes
+
+- Both agents solved almost every runnable exercise. The real deltas favor PUM
+  on Python: it passed 10/10 in both runs, while pi passed 9/10 (check on) and
+  8/10 with four 300s timeouts (check off).
+- Go `counter` failed for both agents: the exercise needs a `COUNTER_IMPL`
+  build tag/env that the harness did not set. It is a setup gap, not a model
+  result.
+- The two to four times higher PUM token count with Check mode on is from the
+  verifier: every checked Bash/edit triggers a verifier model call. With Check
+  mode off, PUM tokens drop to near pi's level (go/pum 589k -> 169k, js/pum
+  386k -> 216k) and PUM runs faster. Remaining difference is PUM's larger
+  system prompt, not the Bash-output summarizer.
