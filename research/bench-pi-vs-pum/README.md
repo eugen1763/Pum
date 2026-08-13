@@ -125,3 +125,36 @@ Notes:
 Interpretation:
 - Both agents solved almost every runnable exercise. The two real deltas favor PUM on Python (`beer-song`, `dominoes`) and favor pi on speed in most tracks.
 - PUM reports 2-4x more tokens than pi. Do not read this as a Bash-summarization failure. The released `pum` runs its configured Check mode (on), which adds verifier model calls on every checked Bash/edit, plus a larger system prompt. To isolate the Bash-output feature, run PUM with Check mode off and compare only then.
+
+## Results (2026-08-13, Check mode off) — `results-2026-08-13-checkoff.json`
+
+PUM was re-run with `checkMode: off` (and `sandboxMode: off`) in `pum.json` so the only meaningful difference from `pi -ne` is PUM's Bash-output summarization and system prompt.
+
+### Mean wall time and tokens (per non-skipped run)
+
+| Track/agent | avg seconds | avg tokens |
+|---|---|---|
+| js/pi | 34.5 | 197 384 |
+| js/pum | 41.4 | 215 952 |
+| go/pi | 17.8 | 121 031 |
+| go/pum | 33.0 | 169 022 |
+| python/pi | 150.3 | 152 157 |
+| python/pum | 62.3 | 218 497 |
+
+Pass/fail per track (per agent):
+
+| Track | pi | pum |
+|---|---|---|
+| js | 10/10 | 10/10 |
+| go | 9/10 | 9/10 (same `counter` env gap) |
+| python | 8/10 | 10/10 |
+
+### Effect of turning Check mode off on PUM
+
+| Track | pum tokens (check on) | pum tokens (check off) | pum sec (on -> off) |
+|---|---|---|---|
+| js | 386 354 | 215 952 | 54.4 -> 41.4 |
+| go | 588 699 | 169 022 | 79.3 -> 33.0 |
+| python | 350 597 | 218 497 | 32.9 -> 62.3 |
+
+With Check mode off, PUM's token usage is close to pi's (it still carries a larger system prompt). The verifier was the dominant extra cost. On Python, PUM passed all 10 exercises while pi passed 8 and timed out (300s) on 4 runs.

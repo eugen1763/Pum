@@ -1,0 +1,966 @@
+[
+  {
+    "track": "js",
+    "exercise": "affine-cipher",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 16.21,
+    "tokens": 216983,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "affine-cipher",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 22.8,
+    "tokens": 164489,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "alphametics",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 43.34,
+    "tokens": 137039,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "alphametics",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 67.58,
+    "tokens": 399948,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "beer-song",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 24.49,
+    "tokens": 246450,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "beer-song",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 20.64,
+    "tokens": 233772,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "binary",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 22.94,
+    "tokens": 116128,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "binary",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 18.39,
+    "tokens": 112640,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "book-store",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 32.02,
+    "tokens": 128924,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "book-store",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 31.91,
+    "tokens": 126681,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "bottle-song",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 23.42,
+    "tokens": 182337,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "bottle-song",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 27.52,
+    "tokens": 139025,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "bowling",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 47.76,
+    "tokens": 189517,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "bowling",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 68.64,
+    "tokens": 227860,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "complex-numbers",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 35.23,
+    "tokens": 193152,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "complex-numbers",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 71.77,
+    "tokens": 359633,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "connect",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 58.14,
+    "tokens": 280450,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "connect",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 40.9,
+    "tokens": 130198,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "food-chain",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 41.75,
+    "tokens": 282858,
+    "exitCode": 0
+  },
+  {
+    "track": "js",
+    "exercise": "food-chain",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 43.62,
+    "tokens": 265271,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "alphametics",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 45.53,
+    "tokens": 104412,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "alphametics",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 39.68,
+    "tokens": 171820,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "beer-song",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 11.93,
+    "tokens": 168421,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "beer-song",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 9.9,
+    "tokens": 101221,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "book-store",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 11.56,
+    "tokens": 87603,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "book-store",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 32.2,
+    "tokens": 131636,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "bottle-song",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 14.84,
+    "tokens": 166542,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "bottle-song",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 23.93,
+    "tokens": 231935,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "bowling",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 10.39,
+    "tokens": 90253,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "bowling",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 38.12,
+    "tokens": 176618,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "connect",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 11.1,
+    "tokens": 107252,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "connect",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 99.01,
+    "tokens": 312185,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "counter",
+    "agent": "pi",
+    "pass": false,
+    "seconds": 41.61,
+    "tokens": 178210,
+    "exitCode": 0,
+    "reason": "tests failed (exit 1): 2026/08/13 15:42:47 Don't forget to set COUNTER_IMPL | FAIL\tcounter\t0.064s | FAIL"
+  },
+  {
+    "track": "go",
+    "exercise": "counter",
+    "agent": "pum",
+    "pass": false,
+    "seconds": 41.08,
+    "tokens": 213901,
+    "exitCode": 0,
+    "reason": "tests failed (exit 1): 2026/08/13 15:43:30 Don't forget to set COUNTER_IMPL | FAIL\tcounter\t0.067s | FAIL"
+  },
+  {
+    "track": "go",
+    "exercise": "crypto-square",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 9.86,
+    "tokens": 84043,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "crypto-square",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 14.79,
+    "tokens": 83947,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "dnd-character",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 11.7,
+    "tokens": 139753,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "dnd-character",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 13.73,
+    "tokens": 122127,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "dominoes",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 9.73,
+    "tokens": 83819,
+    "exitCode": 0
+  },
+  {
+    "track": "go",
+    "exercise": "dominoes",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 17.58,
+    "tokens": 144833,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "affine-cipher",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 300.02,
+    "tokens": null,
+    "exitCode": null
+  },
+  {
+    "track": "python",
+    "exercise": "affine-cipher",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 16.28,
+    "tokens": 154848,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "beer-song",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 64.43,
+    "tokens": 263626,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "beer-song",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 18.16,
+    "tokens": 392445,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "book-store",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 55.09,
+    "tokens": 328401,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "book-store",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 14.98,
+    "tokens": 204451,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "bottle-song",
+    "agent": "pi",
+    "pass": false,
+    "seconds": 300.02,
+    "tokens": null,
+    "exitCode": null,
+    "reason": "tests failed (exit 1): FAILED bottle_song_test.py::BottleSongTest::test_last_three_verses - Assertio...\r | FAILED bottle_song_test.py::BottleSongTest::test_verse_with_1_bottle - Assert...\r | 3 failed, 4 passed in 0.09s"
+  },
+  {
+    "track": "python",
+    "exercise": "bottle-song",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 37.96,
+    "tokens": 190750,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "bowling",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 38.1,
+    "tokens": 224408,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "bowling",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 39.82,
+    "tokens": 231807,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "connect",
+    "agent": "pi",
+    "pass": false,
+    "seconds": 300.01,
+    "tokens": null,
+    "exitCode": null,
+    "reason": "tests failed (exit 1): FAILED connect_test.py::ConnectTest::test_o_wins_crossing_from_top_to_bottom\r | FAILED connect_test.py::ConnectTest::test_x_wins_using_a_convoluted_path - As...\r | 4 failed, 6 passed in 0.08s"
+  },
+  {
+    "track": "python",
+    "exercise": "connect",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 29.87,
+    "tokens": 254830,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "dominoes",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 300.02,
+    "tokens": null,
+    "exitCode": null
+  },
+  {
+    "track": "python",
+    "exercise": "dominoes",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 46.15,
+    "tokens": 229868,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "dot-dsl",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 41.35,
+    "tokens": 193278,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "dot-dsl",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 300.03,
+    "tokens": null,
+    "exitCode": null
+  },
+  {
+    "track": "python",
+    "exercise": "food-chain",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 56.8,
+    "tokens": 186878,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "food-chain",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 32.73,
+    "tokens": 272830,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "forth",
+    "agent": "pi",
+    "pass": true,
+    "seconds": 46.68,
+    "tokens": 324980,
+    "exitCode": 0
+  },
+  {
+    "track": "python",
+    "exercise": "forth",
+    "agent": "pum",
+    "pass": true,
+    "seconds": 86.89,
+    "tokens": 253138,
+    "exitCode": 0
+  },
+  {
+    "track": "cpp",
+    "exercise": "all-your-base",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "all-your-base",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "allergies",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "allergies",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "bank-account",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "bank-account",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "binary-search-tree",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "binary-search-tree",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "circular-buffer",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "circular-buffer",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "clock",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "clock",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "complex-numbers",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "complex-numbers",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "crypto-square",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "crypto-square",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "diamond",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "diamond",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "dnd-character",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "cpp",
+    "exercise": "dnd-character",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: g++"
+  },
+  {
+    "track": "java",
+    "exercise": "affine-cipher",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "affine-cipher",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "all-your-base",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "all-your-base",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "alphametics",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "alphametics",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "bank-account",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "bank-account",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "book-store",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "book-store",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "bottle-song",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "bottle-song",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "bowling",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "bowling",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "change",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "change",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "circular-buffer",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "circular-buffer",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "connect",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "java",
+    "exercise": "connect",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: java, javac"
+  },
+  {
+    "track": "rust",
+    "exercise": "accumulate",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "accumulate",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "acronym",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "acronym",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "alphametics",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "alphametics",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "book-store",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "book-store",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "bowling",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "bowling",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "decimal",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "decimal",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "dot-dsl",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "dot-dsl",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "doubly-linked-list",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "doubly-linked-list",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "fizzy",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "fizzy",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "forth",
+    "agent": "pi",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  },
+  {
+    "track": "rust",
+    "exercise": "forth",
+    "agent": "pum",
+    "skipped": true,
+    "reason": "missing toolchain: cargo"
+  }
+]
