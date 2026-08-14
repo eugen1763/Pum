@@ -116,6 +116,7 @@ describe("managed shell model tools", () => {
       executable: "bun",
       args: ["run", "dev"],
       cwd: "/repo/child",
+      projectCwd: "/repo/child",
       env: { PORT: "3000" },
       owner: requesterOwner(childRequester),
     });
