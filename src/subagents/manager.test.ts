@@ -581,6 +581,62 @@ describe("SubagentManager extension", () => {
     expect(invalidated).toEqual([["stopping-session", "stopping"]]);
   });
 
+  test("invalidates exact child shells when a retained agent stops", async () => {
+    const invalidated: any[] = [];
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      managedShellLifecycle: {
+        async invalidateOwner(owner, reason) { invalidated.push({ owner, reason }); },
+        async invalidateSession() {},
+        async shutdown() {},
+      },
+    });
+    addTestAgent(manager, "shell-owner", "idle");
+    const record = (manager as any).records.get("shell-owner");
+    record.session = { sessionId: "child-session" };
+    record.dispose = async () => { record.session = undefined; };
+
+    await manager.stop("shell-owner");
+
+    expect(invalidated).toEqual([{
+      owner: { sessionId: "child-session", agentId: "shell-owner" },
+      reason: "the owning subagent became unavailable",
+    }]);
+  });
+
+  test("invalidates all session shells when the main session changes", async () => {
+    const invalidated: any[] = [];
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      managedShellLifecycle: {
+        async invalidateOwner() {},
+        async invalidateSession(sessionId, reason) { invalidated.push({ sessionId, reason }); },
+        async shutdown() {},
+      },
+    });
+    const first = {
+      getSessionId: () => "main-one",
+      getSessionFile: () => undefined,
+      getEntries: () => [],
+    };
+    const second = {
+      getSessionId: () => "main-two",
+      getSessionFile: () => undefined,
+      getEntries: () => [],
+    };
+    const api = { appendEntry() {}, sendMessage() {} } as any;
+
+    await manager.attachMain(api, first as any, "/repo");
+    await manager.attachMain(api, second as any, "/repo");
+
+    expect(invalidated).toEqual([{
+      sessionId: "main-one",
+      reason: "the owning session was replaced",
+    }]);
+  });
+
   test("recognizes completion-only messages without blocking actionable communication", () => {
     expect(isCompletionOnlyMessage("Completed and committed all requested work. Tests pass.")).toBe(true);
     expect(isCompletionOnlyMessage("Implemented the feature as abc123. Validation passed.")).toBe(true);

@@ -91,6 +91,7 @@ import {
 import type { SpawnPreviewManager, SpawnPreviewRequester } from "./spawn-preview";
 import { readonlySubagentExtension } from "./readonly";
 import type { SessionStatsManager } from "../session-stats";
+import type { ManagedShellOwnerLifecycle } from "../shells/types";
 import { captureForkSource, createForkedSession, entriesAfterForkCutoff } from "./fork-session";
 
 const MAX_RETAINED_AGENTS = 100;
@@ -225,6 +226,7 @@ type ManagerOptions = {
   triggerManager?: TriggerRuntimeManager;
   messageCacheController?: MessageCacheController;
   statsManager?: SessionStatsManager;
+  managedShellLifecycle?: ManagedShellOwnerLifecycle;
 };
 
 const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
@@ -302,6 +304,7 @@ export class SubagentManager {
   private readonly triggerManager?: TriggerRuntimeManager;
   private readonly messageCacheController?: MessageCacheController;
   private readonly statsManager?: SessionStatsManager;
+  private readonly managedShellLifecycle?: ManagedShellOwnerLifecycle;
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly listeners = new Set<(event: SubagentManagerEvent) => void>();
   private mainApi?: ExtensionAPI;
@@ -332,6 +335,7 @@ export class SubagentManager {
     this.triggerManager = options.triggerManager;
     this.messageCacheController = options.messageCacheController;
     this.statsManager = options.statsManager;
+    this.managedShellLifecycle = options.managedShellLifecycle;
   }
 
   subscribe(listener: (event: SubagentManagerEvent) => void): () => void {
@@ -375,7 +379,13 @@ export class SubagentManager {
   ): Promise<void> {
     const sessionId = sessionManager.getSessionId();
     if (this.mainApi === pi && this.parentSessionId === sessionId && this.mainSessionManager) return;
-    if (this.parentSessionId !== "detached") this.spawnPreviewManager?.cancelRequester(this.parentSessionId);
+    if (this.parentSessionId !== "detached") {
+      this.spawnPreviewManager?.cancelRequester(this.parentSessionId);
+      await this.managedShellLifecycle?.invalidateSession(
+        this.parentSessionId,
+        "the owning session was replaced",
+      );
+    }
     await this.stopAll("interrupted", false);
     this.records.clear();
     this.messageTimes.clear();
@@ -516,6 +526,7 @@ export class SubagentManager {
   async detachMain(): Promise<void> {
     const sessionId = this.parentSessionId;
     this.spawnPreviewManager?.cancelRequester(sessionId);
+    await this.managedShellLifecycle?.invalidateSession(sessionId, "the owning session closed");
     await this.stopAll("interrupted", true);
     this.emit({
       type: "trigger-target",
@@ -979,8 +990,13 @@ export class SubagentManager {
           if (record) record.api = pi;
           void ctx;
         });
-        pi.on("session_shutdown", (_event, ctx) => {
-          this.spawnPreviewManager?.cancelRequester(ctx.sessionManager.getSessionId(), agentId);
+        pi.on("session_shutdown", async (_event, ctx) => {
+          const sessionId = ctx.sessionManager.getSessionId();
+          this.spawnPreviewManager?.cancelRequester(sessionId, agentId);
+          await this.managedShellLifecycle?.invalidateOwner(
+            { sessionId, agentId },
+            "the owning subagent session closed",
+          );
         });
         pi.on("before_agent_start", (event) => {
           const record = this.records.get(agentId);
@@ -2325,6 +2341,12 @@ export class SubagentManager {
     const record = this.findRecord(id);
     if (!record) return;
     const sessionId = record.session?.sessionId;
+    if (sessionId) {
+      await this.managedShellLifecycle?.invalidateOwner(
+        { sessionId, agentId: record.snapshot.id },
+        "the owning subagent became unavailable",
+      );
+    }
     if (record.dispose) await record.dispose();
     this.clearSettlementDeliveriesForParent(record.snapshot.id);
     if (sessionId) {
@@ -2348,6 +2370,12 @@ export class SubagentManager {
   private async stopAll(status: SubagentStatus, persist: boolean): Promise<void> {
     for (const record of this.records.values()) {
       const sessionId = record.session?.sessionId;
+      if (sessionId) {
+        await this.managedShellLifecycle?.invalidateOwner(
+          { sessionId, agentId: record.snapshot.id },
+          "the owning subagent became unavailable",
+        );
+      }
       if (record.dispose) await record.dispose();
       if (sessionId) await this.triggerManager?.invalidateAgent(sessionId, record.snapshot.id);
       if (!["starting", "running"].includes(record.snapshot.status)) continue;
