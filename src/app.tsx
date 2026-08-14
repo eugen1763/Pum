@@ -144,6 +144,10 @@ import {
 } from "./news";
 import { statsFromEntries, type SessionStatsManager } from "./session-stats";
 import { maxStatsScrollOffset, StatsPopup } from "./stats-popup";
+import {
+  projectTranscriptLines,
+  transcriptOutputMode,
+} from "./transcript-output";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -566,6 +570,11 @@ export function App({
   const questionnaire = questionnaireManager?.current();
   const spawnPreview = spawnPreviewManager?.current();
   const visibleTx = activeAgent?.transcript ?? tx;
+  const outputMode = transcriptOutputMode(settings);
+  const visibleLines = useMemo(
+    () => projectTranscriptLines(visibleTx.lines, outputMode),
+    [visibleTx.lines, outputMode],
+  );
   const visibleBusy = activeAgent
     ? activeAgent.status === "starting" || activeAgent.status === "running"
     : busy;
@@ -1246,6 +1255,7 @@ export function App({
               arg: toolArg(event.toolName, event.args, cwd),
               state: "running",
               startedAt: Date.now(),
+              input: event.args,
             },
           });
           break;
@@ -1272,6 +1282,8 @@ export function App({
                     ? messageCacheDetail(event.result)
                     : undefined,
             exitCode: bashResult.exitCode,
+            result: event.result,
+            isError: event.isError,
           });
           break;
         }
@@ -2961,7 +2973,10 @@ export function App({
     }
   });
 
-  const lastLine = visibleTx.lines[visibleTx.lines.length - 1];
+  const lastProjectedLine = visibleLines[visibleLines.length - 1];
+  const lastLine: Line | undefined = lastProjectedLine?.kind === "tool-summary"
+    ? { kind: "text", role: "system", text: lastProjectedLine.text }
+    : lastProjectedLine;
   const streamGap = visibleTx.stream
     ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
     : false;
@@ -3015,11 +3030,24 @@ export function App({
           stickyStart="bottom"
           verticalScrollbarOptions={{ visible: true }}
         >
-          {visibleTx.lines.map((line, i) => {
-            const workingCaret = visibleBusy && !visibleTx.stream && i === visibleTx.lines.length - 1;
+          {visibleLines.map((line, i) => {
+            const workingCaret = visibleBusy && !visibleTx.stream && i === visibleLines.length - 1;
             const row =
-              line.kind === "tool" ? (
-                <ToolLine theme={theme} call={line.call} workingCaret={workingCaret} />
+              line.kind === "tool-summary" ? (
+                <TextLine
+                  theme={theme}
+                  syntaxStyle={syntaxStyle}
+                  role="system"
+                  text={line.text}
+                />
+              ) : line.kind === "tool" ? (
+                <ToolLine
+                  theme={theme}
+                  syntaxStyle={syntaxStyle}
+                  call={line.call}
+                  workingCaret={workingCaret}
+                  outputMode={outputMode}
+                />
               ) : line.kind === "agent-message" ? (
                 <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
               ) : (
@@ -3036,9 +3064,18 @@ export function App({
                   }
                 />
               );
-            const gapBefore = needsTranscriptGap(visibleTx.lines[i - 1], line);
+            const currentGapLine: Line = line.kind === "tool-summary"
+              ? { kind: "text", role: "system", text: line.text }
+              : line;
+            const previousProjected = visibleLines[i - 1];
+            const previousGapLine: Line | undefined = previousProjected?.kind === "tool-summary"
+              ? { kind: "text", role: "system", text: previousProjected.text }
+              : previousProjected;
+            const gapBefore = needsTranscriptGap(previousGapLine, currentGapLine);
             const lineKey =
-              line.kind === "tool"
+              line.kind === "tool-summary"
+                ? `tool-summary:${i}:${line.text}`
+                : line.kind === "tool"
                 ? `tool:${line.call.id}`
                 : line.kind === "agent-message"
                   ? `agent:${line.sender}:${line.recipient}:${i}:${line.text}`
@@ -3069,7 +3106,7 @@ export function App({
           ) : null}
           {visibleTx.pending.some((pending) => !pending.delivered) ? (
             <>
-              {(visibleTx.lines.length > 0 || visibleTx.stream) ? <Gap /> : null}
+              {(visibleLines.length > 0 || visibleTx.stream) ? <Gap /> : null}
               {visibleTx.pending.filter((pending) => !pending.delivered).map((pending) => (
                 <PendingMessageLine
                   key={pending.id}
