@@ -25,6 +25,7 @@ import {
 import {
   CHECK_MODE_PROFILES,
   checkPathsForProject,
+  cycleOutputMode,
   MAX_ACTIVE_SUBAGENTS,
   MIN_ACTIVE_SUBAGENTS,
   SANDBOX_MODES,
@@ -1509,6 +1510,10 @@ export function App({
     update({ workingRuleAnimation: next });
   };
 
+  const stepOutputMode = (step: number) => {
+    update({ outputMode: cycleOutputMode(settings.outputMode, step) });
+  };
+
   const openLogin = () => {
     settingsOpenRef.current = false;
     setSettingsOpen(false);
@@ -2214,6 +2219,7 @@ export function App({
     providers: { enter: openLogin },
     animations: { step: () => update({ animations: !settings.animations }) },
     workingRuleAnimation: { step: stepWorkingRuleAnimation },
+    outputMode: { step: stepOutputMode },
     webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
@@ -2256,6 +2262,7 @@ export function App({
     providers: "login and custom setup ›",
     animations: `‹ ${settings.animations ? "on" : "off"} ›`,
     workingRuleAnimation: `‹ ${settings.workingRuleAnimation} ›${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
+    outputMode: `‹ ${settings.outputMode ?? "default"} ›`,
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,

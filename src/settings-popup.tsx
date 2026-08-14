@@ -10,6 +10,7 @@ export type SettingRowId =
   | "theme"
   | "animations"
   | "workingRuleAnimation"
+  | "outputMode"
   | "webSearch"
   | "writingStyle"
   | "explanationStrength"
@@ -35,6 +36,7 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "theme", label: "Theme", category: "Appearance", keywords: "color palette semantic", description: "Change the semantic color preset. theme.json overrides remain active." },
   { id: "animations", label: "Animations", category: "Appearance", keywords: "motion global truecolor", description: "Enable interface motion. PUM disables motion when true color is unavailable." },
   { id: "workingRuleAnimation", label: "Working animation", category: "Appearance", keywords: "rules input header coordinated off motion", description: "Choose how the header and input rules animate while an agent works." },
+  { id: "outputMode", label: "Output", category: "Appearance", keywords: "transcript tools minimal default detailed preview summary", description: "Choose minimal summaries, standard tool rows, or detailed result previews in the transcript." },
   { id: "providers", label: "Providers", category: "Agent", keywords: "login oauth api key custom endpoint", description: "Open provider login or add an OpenAI-compatible custom endpoint." },
   { id: "model", label: "Model", category: "Agent", keywords: "provider llm active search", description: "Select the model used by the main agent. Search matches provider and model names." },
   { id: "thinkingLevel", label: "Thinking level", category: "Agent", keywords: "reasoning effort clamp capability", description: "Set reasoning effort. Pi clamps the level to the selected model capability." },
