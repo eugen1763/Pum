@@ -278,6 +278,8 @@ describe("SubagentManager extension", () => {
     expect(result.systemPrompt).toContain("call enable_tools with Subagents first");
     expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
     expect(definitions.get("spawn_subagent").parameters.properties.preview).toBeDefined();
+    expect(definitions.get("spawn_subagent").parameters.properties.context.anyOf.map((item: any) => item.const))
+      .toEqual(["fresh", "fork"]);
     expect(definitions.get("spawn_subagent").parameters.properties.readonly).toBeUndefined();
     expect(definitions.get("spawn_subagent").promptGuidelines).toContain(
       "For follow-up implementation work, prefer spawn_subagent while configured capacity is available.",
@@ -401,8 +403,14 @@ describe("SubagentManager extension", () => {
     const mainRun = mainTools.get("spawn_subagent").execute("tool", {
       task: "Main preview task",
       preview: true,
+      context: "fork",
     }, undefined, undefined, {
-      sessionManager: { getSessionId: () => "main-session" },
+      sessionManager: {
+        getSessionId: () => "main-session",
+        getSessionFile: () => "/sessions/main.jsonl",
+        getLeafId: () => "main-cutoff",
+        getBranch: () => [{ type: "message", id: "main-cutoff", parentId: null, timestamp: "now", message: { role: "user", content: "Main prompt" } }],
+      },
       cwd: "/repo",
       model: { provider: "mock", id: "model" },
       thinkingLevel: "off",
@@ -413,6 +421,12 @@ describe("SubagentManager extension", () => {
     previewManager.approve("Follow this note");
     await mainRun;
     expect(spawned[0].task).toBe("Main preview task");
+    expect(spawned[0].context).toBe("fork");
+    expect(spawned[0].forkSource.origin).toEqual({
+      sourceSessionId: "main-session",
+      cutoffEntryId: "main-cutoff",
+      sourceAgentId: null,
+    });
     expect(notes).toEqual([["spawned", "Follow this note"]]);
 
     const childTools = new Map<string, any>();
@@ -1629,7 +1643,16 @@ describe("SubagentManager extension", () => {
         data: {
           event: "spawned",
           id: "child",
-          snapshot: { ...base, id: "child", parentAgentId: "parent" },
+          snapshot: {
+            ...base,
+            id: "child",
+            parentAgentId: "parent",
+            forkOrigin: {
+              sourceSessionId: "parent-session",
+              cutoffEntryId: "cutoff-entry",
+              sourceAgentId: "parent",
+            },
+          },
         },
       },
       {
@@ -1658,6 +1681,11 @@ describe("SubagentManager extension", () => {
     } as any, "/repo");
 
     expect(manager.getAgent("child")?.parentAgentId).toBe("parent");
+    expect(manager.getAgent("child")?.forkOrigin).toEqual({
+      sourceSessionId: "parent-session",
+      cutoffEntryId: "cutoff-entry",
+      sourceAgentId: "parent",
+    });
     expect(manager.activeCount()).toBe(0);
     expect(manager.getMaxActiveSubagents()).toBe(1);
     expect(manager.getAgent("child")?.usage).toEqual({
@@ -1668,6 +1696,10 @@ describe("SubagentManager extension", () => {
       contextPct: 35,
     });
     expect(manager.getAgent("legacy")?.parentAgentId).toBeNull();
+    expect(manager.getAgent("legacy")?.forkOrigin).toBeUndefined();
+    expect((manager as any).formatAgentList()).toContain(
+      "fork source: worker · session parent-session · cutoff cutoff-entry",
+    );
     expect(manager.getAgent("legacy")?.usage).toEqual({
       outgoing: 0,
       incoming: 0,

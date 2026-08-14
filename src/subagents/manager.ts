@@ -9,7 +9,7 @@ import {
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -80,6 +80,7 @@ import {
   type AgentMessageData,
   type TriggerEventData,
   type AgentTranscript,
+  type ForkSource,
   type SpawnSubagentOptions,
   type SubagentManagerEvent,
   type SubagentRegistryEvent,
@@ -90,6 +91,7 @@ import {
 import type { SpawnPreviewManager, SpawnPreviewRequester } from "./spawn-preview";
 import { readonlySubagentExtension } from "./readonly";
 import type { SessionStatsManager } from "../session-stats";
+import { captureForkSource, createForkedSession, entriesAfterForkCutoff } from "./fork-session";
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
@@ -277,6 +279,12 @@ export function spawnSubagentParameters(readonlyAvailable: boolean) {
     task: Type.String({ description: "Complete task for the subagent" }),
     name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
     preview: Type.Optional(Type.Boolean({ description: "Ask the user to approve before spawning" })),
+    context: Type.Optional(Type.Union([
+      Type.Literal("fresh"),
+      Type.Literal("fork"),
+    ], {
+      description: 'Conversation context mode. Defaults to "fresh". Use "fork" to inherit the immediate requester conversation before this assistant turn.',
+    })),
     ...(readonlyAvailable ? { readonly: readonlySpawnParameter() } : {}),
   }, { additionalProperties: false });
 }
@@ -443,7 +451,11 @@ export class SubagentManager {
           );
           restoredEntries.set(snapshot.id, childManager.getEntries());
           transcript = {
-            lines: replayEntries(childManager.buildContextEntries(), snapshot.worktree.path, true),
+            lines: replayEntries(
+              entriesAfterForkCutoff(childManager, snapshot.forkOrigin),
+              snapshot.worktree.path,
+              true,
+            ),
             stream: null,
             pending: [],
           };
@@ -1049,7 +1061,14 @@ export class SubagentManager {
               thinkingLevel: parent.snapshot.thinkingLevel,
               readonly: readonlyRequested,
               parentAgentId: agentId,
+              context: params.context ?? "fresh",
             };
+            if (options.context === "fork") {
+              options.forkSource = captureForkSource(
+                ctx.sessionManager,
+                agentId,
+              );
+            }
             if (params.preview) {
               const preview = await this.requestSpawnPreview({
                 sessionId: ctx.sessionManager.getSessionId(),
@@ -1268,7 +1287,11 @@ export class SubagentManager {
               modelId: `${ctx.model.provider}/${ctx.model.id}`,
               thinkingLevel: ctx.thinkingLevel ?? "off",
               readonly: readonlyRequested,
+              context: params.context ?? "fresh",
             };
+            if (options.context === "fork") {
+              options.forkSource = captureForkSource(ctx.sessionManager, null);
+            }
             if (params.preview) {
               const preview = await this.requestSpawnPreview({
                 sessionId: ctx.sessionManager.getSessionId(),
@@ -1420,6 +1443,11 @@ export class SubagentManager {
     if (options.readonly === true && this.sandboxModeSource() === "off") {
       throw new Error("Readonly subagents require the PUM Sandbox setting to be Auto or Require");
     }
+    const context = options.context ?? "fresh";
+    const forkSource = context === "fork"
+      ? options.forkSource ?? this.captureSpawnerForkSource(options.parentAgentId ?? null)
+      : undefined;
+    let allocatedSessionFile: string | undefined;
     const record = await this.withWorktreeLock(async () => {
       if (this.activeCount() >= this.maxActiveSubagents) throw activeLimitError(this.maxActiveSubagents);
       if (this.records.size >= MAX_RETAINED_AGENTS) throw new Error(`At most ${MAX_RETAINED_AGENTS} subagents can be retained`);
@@ -1430,33 +1458,48 @@ export class SubagentManager {
       }
 
       const worktree = await createWorktree(this.mainCwd, options.name);
-      const id = randomUUID().slice(0, 8);
-      const now = Date.now();
-      const snapshot: SubagentSnapshot = {
-        id,
-        name: worktree.name,
-        task: options.task,
-        status: "starting",
-        worktree,
-        parentAgentId: options.parentAgentId ?? null,
-        modelId: options.modelId,
-        thinkingLevel: options.thinkingLevel,
-        readonly: options.readonly === true,
-        transcript: emptyTranscript(),
-        startedAt: now,
-        updatedAt: now,
-        usage: emptyAgentUsage(),
-      };
-      const created: RuntimeRecord = {
-        snapshot,
-        userInstructionNotices: new Map(),
-        activityGeneration: 0,
-        idleNotifiedGeneration: 0,
-      };
-      this.records.set(id, created);
-      this.persist({ event: "spawned", id, at: now, snapshot: snapshotMetadata(snapshot) });
-      this.emit();
-      return created;
+      try {
+        const id = randomUUID().slice(0, 8);
+        const now = Date.now();
+        const snapshot: SubagentSnapshot = {
+          id,
+          name: worktree.name,
+          task: options.task,
+          status: "starting",
+          worktree,
+          parentAgentId: options.parentAgentId ?? null,
+          modelId: options.modelId,
+          thinkingLevel: options.thinkingLevel,
+          readonly: options.readonly === true,
+          forkOrigin: forkSource?.origin,
+          transcript: emptyTranscript(),
+          startedAt: now,
+          updatedAt: now,
+          usage: emptyAgentUsage(),
+        };
+        if (forkSource) {
+          const sessionDir = join(this.agentDir, "subagents", this.parentSessionId);
+          allocatedSessionFile = createForkedSession(
+            forkSource,
+            worktree.path,
+            sessionDir,
+          ).getSessionFile();
+          snapshot.sessionFile = allocatedSessionFile;
+        }
+        const created: RuntimeRecord = {
+          snapshot,
+          userInstructionNotices: new Map(),
+          activityGeneration: 0,
+          idleNotifiedGeneration: 0,
+        };
+        this.records.set(id, created);
+        this.emit();
+        return created;
+      } catch (error) {
+        if (allocatedSessionFile) rmSync(allocatedSessionFile, { force: true });
+        await removeWorktree(this.mainCwd, worktree).catch(() => {});
+        throw error;
+      }
     });
 
     try {
@@ -1469,9 +1512,28 @@ export class SubagentManager {
       });
       return cloneSnapshot(record);
     } catch (error) {
-      this.updateStatus(record, "failed", String(error));
+      if (context === "fork") {
+        await record.dispose?.();
+        this.records.delete(record.snapshot.id);
+        if (record.snapshot.sessionFile) rmSync(record.snapshot.sessionFile, { force: true });
+        await this.withWorktreeLock(() => removeWorktree(this.mainCwd, record.snapshot.worktree)).catch(() => {});
+        this.persist({ event: "removed", id: record.snapshot.id, at: Date.now() });
+        this.emit();
+      } else {
+        this.updateStatus(record, "failed", String(error));
+      }
       throw error;
     }
+  }
+
+  private captureSpawnerForkSource(parentAgentId: string | null): ForkSource {
+    if (parentAgentId === null) {
+      if (!this.mainSessionManager) throw new Error("Cannot fork: the main source session is unavailable");
+      return captureForkSource(this.mainSessionManager, null);
+    }
+    const parent = this.records.get(parentAgentId);
+    if (!parent?.session) throw new Error("Cannot fork: the immediate parent session is unavailable");
+    return captureForkSource(parent.session.sessionManager, parentAgentId);
   }
 
   private async ensureRuntime(record: RuntimeRecord, retrySettlements = true): Promise<void> {
@@ -2246,9 +2308,17 @@ export class SubagentManager {
   private formatAgentList(): string {
     const agents = this.getAgents();
     if (!agents.length) return "No subagents.";
-    return agents.map((agent) =>
-      `${agent.id}  ${agent.name}  ${agent.status}${agent.readonly ? "  readonly" : ""}\n  ${agent.worktree.branch}\n  ${agent.worktree.path}`,
-    ).join("\n");
+    return agents.map((agent) => {
+      const origin = agent.forkOrigin;
+      const source = origin?.sourceAgentId
+        ? this.records.get(origin.sourceAgentId)?.snapshot.name ?? origin.sourceAgentId
+        : "main";
+      return `${agent.id}  ${agent.name}  ${agent.status}${agent.readonly ? "  readonly" : ""}`
+        + `\n  ${agent.worktree.branch}\n  ${agent.worktree.path}`
+        + (origin
+          ? `\n  fork source: ${source} · session ${origin.sourceSessionId} · cutoff ${origin.cutoffEntryId ?? "root"}`
+          : "");
+    }).join("\n");
   }
 
   async stop(id: string, status: SubagentStatus = "stopped", persist = true): Promise<void> {

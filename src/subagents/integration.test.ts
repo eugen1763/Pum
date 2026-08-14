@@ -12,7 +12,7 @@ import {
 import { applyPatchExtension } from "../apply-patch";
 import { QuestionnaireManager } from "../questionnaire";
 import { SubagentManager } from "./manager";
-import { createWorktree } from "../worktree";
+import { createWorktree, listWorktrees } from "../worktree";
 import type { SubagentStatus } from "./types";
 import { SandboxController } from "../sandbox";
 import { replayEntries } from "../replay";
@@ -454,6 +454,7 @@ describe("background subagents", () => {
     });
     expect(Date.now() - started).toBeLessThan(1_000);
     expect(["starting", "running", "idle"]).toContain(spawned.status);
+    expect(spawned.forkOrigin).toBeUndefined();
 
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline && mainBridge.deliveries.length === 0) {
@@ -751,6 +752,122 @@ describe("background subagents", () => {
       .rejects.toThrow("before its completion notice arrives");
     await mainBridge.insert(completion);
     await (manager as any).worktreeAction(repo, "merge", retained.id);
+    await manager.detachMain();
+  });
+
+  test("forks main and nested conversations while keeping child transcripts local", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const source = SessionManager.inMemory(repo);
+    source.appendMessage({ role: "user", content: "Earlier main request", timestamp: 1 } as any);
+    source.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "Earlier main response" }],
+      api: "mock",
+      provider: "mock",
+      model: "mock-model",
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: {} },
+      stopReason: "stop",
+      timestamp: 2,
+    } as any);
+    const cutoff = source.appendMessage({ role: "user", content: "Current main request", timestamp: 3 } as any);
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    const mainBridge = createMainBridge(manager, source);
+    await manager.attachMain(mainBridge.api as any, source, repo);
+
+    const parent = await manager.spawn({
+      task: "Parent fork task",
+      name: "fork-main-parent",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+      context: "fork",
+    });
+    await waitUntil(() => manager.getAgent(parent.id)?.status === "idle");
+    const parentRecord = (manager as any).records.get(parent.id);
+    const parentText = replayEntries(parentRecord.session.sessionManager.getBranch(), repo, true)
+      .filter((line) => line.kind === "text")
+      .map((line: any) => line.text);
+    expect(parentText).toEqual([
+      "Earlier main request",
+      "Earlier main response",
+      "Current main request",
+      "Parent fork task",
+      "Task complete.",
+    ]);
+    expect(manager.getAgent(parent.id)?.forkOrigin).toEqual({
+      sourceSessionId: source.getSessionId(),
+      cutoffEntryId: cutoff,
+      sourceAgentId: null,
+    });
+    expect(manager.getAgent(parent.id)?.transcript.lines.some(
+      (line) => line.kind === "text" && line.text === "Earlier main request",
+    )).toBe(false);
+
+    const child = await manager.spawn({
+      task: "Nested fork task",
+      name: "fork-nested-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+      parentAgentId: parent.id,
+      context: "fork",
+    });
+    await waitUntil(() => manager.getAgent(child.id)?.status === "idle");
+    const childRecord = (manager as any).records.get(child.id);
+    const childText = replayEntries(childRecord.session.sessionManager.getBranch(), repo, true)
+      .filter((line) => line.kind === "text")
+      .map((line: any) => line.text);
+    expect(childText).toEqual([...parentText, "Nested fork task", "Task complete."]);
+    expect(manager.getAgent(child.id)?.forkOrigin?.sourceSessionId).toBe(parentRecord.session.sessionId);
+    expect(manager.getAgent(child.id)?.forkOrigin?.sourceAgentId).toBe(parent.id);
+    expect(manager.getAgent(child.id)?.transcript.lines.some(
+      (line) => line.kind === "text" && line.text === "Parent fork task",
+    )).toBe(false);
+    await manager.detachMain();
+
+    const resumed = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await resumed.attachMain({
+      appendEntry(customType: string, data: unknown) {
+        source.appendCustomEntry(customType, data);
+      },
+      sendMessage() {},
+    } as any, source, repo);
+    expect(resumed.getAgent(parent.id)?.forkOrigin?.cutoffEntryId).toBe(cutoff);
+    expect(resumed.getAgent(parent.id)?.transcript.lines.some(
+      (line) => line.kind === "text" && line.text === "Earlier main request",
+    )).toBe(false);
+    expect(resumed.getAgent(parent.id)?.transcript.lines.some(
+      (line) => line.kind === "text" && line.text === "Parent fork task",
+    )).toBe(true);
+    expect(resumed.getAgent(child.id)?.transcript.lines.some(
+      (line) => line.kind === "text" && line.text === "Parent fork task",
+    )).toBe(false);
+    expect(resumed.getAgent(child.id)?.transcript.lines.some(
+      (line) => line.kind === "text" && line.text === "Nested fork task",
+    )).toBe(true);
+    await resumed.detachMain();
+  });
+
+  test("removes the new worktree and registry record when exact fork creation fails", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir });
+    const source = SessionManager.inMemory(repo);
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, source, repo);
+    const before = await listWorktrees(repo);
+    await expect(manager.spawn({
+      task: "This fork must fail",
+      name: "invalid-fork-cleanup",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+      context: "fork",
+      forkSource: {
+        origin: { sourceSessionId: "source", cutoffEntryId: "missing", sourceAgentId: null },
+        entries: [],
+      },
+    })).rejects.toThrow("captured active branch does not match");
+    expect(manager.getAgents()).toEqual([]);
+    expect((await listWorktrees(repo)).map((record) => record.name))
+      .toEqual(before.map((record) => record.name));
     await manager.detachMain();
   });
 
