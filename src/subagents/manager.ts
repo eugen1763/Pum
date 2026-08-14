@@ -33,6 +33,7 @@ import {
   withSearchRoute,
 } from "../web-search";
 import { bashOutput, bashResultDisplay, editCounts, toolArg, type ToolCall } from "../tool-line";
+import { toolPreviewFromResult, toolPreviewFromStart } from "../tool-preview";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
@@ -853,6 +854,7 @@ export class SubagentManager {
             arg: toolArg(event.toolName, event.args, record.snapshot.worktree.path),
             state: "running",
             startedAt: Date.now(),
+            preview: toolPreviewFromStart(event.toolName, event.args),
           },
         });
         break;
@@ -863,6 +865,7 @@ export class SubagentManager {
         break;
       case "tool_execution_end": {
         const bashResult = event.toolName === "bash" ? bashResultDisplay(event.result) : {};
+        const preview = toolPreviewFromResult(event.toolName, event.result);
         this.patchTool(record, event.toolCallId, {
           state: isRejectedToolResult(event.result, event.toolCallId)
             ? "rejected"
@@ -879,6 +882,7 @@ export class SubagentManager {
                   ? messageCacheDetail(event.result)
                   : undefined,
           exitCode: bashResult.exitCode,
+          ...(preview ? { preview } : {}),
         });
         break;
       }
