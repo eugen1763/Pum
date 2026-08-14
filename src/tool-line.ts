@@ -1,5 +1,6 @@
 import { posix, win32 } from "node:path";
 import { webSearchArgument } from "./web-search";
+import type { ToolResultPreview } from "./tool-preview";
 
 export type ToolCall = {
   id: string;
@@ -21,6 +22,8 @@ export type ToolCall = {
   result?: unknown;
   /** True when the retained result represents a failed tool execution. */
   isError?: boolean;
+  /** Display-only structured result data used by detailed transcript mode. */
+  preview?: ToolResultPreview;
 };
 
 /** Extract the cumulative text payload from a Bash progress result. */

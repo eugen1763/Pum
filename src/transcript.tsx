@@ -16,6 +16,7 @@ import {
 import type { Theme } from "./theme";
 import { bashOutputWindow, type ToolCall } from "./tool-line";
 import type { TranscriptOutputMode } from "./transcript-output";
+import type { DiffPreviewLine, PreviewLanguage, ToolResultPreview } from "./tool-preview";
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
@@ -448,12 +449,13 @@ function rejectedDetail(theme: Theme, detail: string): StyledText {
 
 export function ToolLine({
   theme,
+  syntaxStyle,
   call,
   workingCaret = false,
-  outputMode: _outputMode = "default",
-  syntaxStyle: _syntaxStyle,
+  outputMode = "default",
 }: {
   theme: Theme;
+  syntaxStyle?: SyntaxStyle;
   call: ToolCall;
   workingCaret?: boolean;
   /** Detailed-mode renderers use this without changing canonical call data. */
@@ -487,8 +489,16 @@ export function ToolLine({
     active: workingCaret,
   });
   const output = call.name === "bash" && call.output && bashOutputVisible
+    && (call.state === "running" || outputMode !== "detailed")
     ? bashOutputWindow(call.output)
     : null;
+  const detailedPreview = outputMode === "detailed"
+    && call.state !== "running"
+    && call.state !== "rejected"
+    && call.preview
+    && (call.state === "ok" || call.preview.kind === "bash")
+    ? call.preview
+    : undefined;
 
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
@@ -557,6 +567,141 @@ export function ToolLine({
           </box>
         </Row>
       ) : null}
+      {detailedPreview ? (
+        <DetailedToolPreview theme={theme} syntaxStyle={syntaxStyle} preview={detailedPreview} />
+      ) : null}
     </box>
+  );
+}
+
+function previewColor(theme: Theme, kind: DiffPreviewLine["kind"]): string {
+  if (kind === "add") return theme.success;
+  if (kind === "remove") return theme.error;
+  if (kind === "context") return theme.dim;
+  return theme.tool;
+}
+
+function PreviewSource({
+  content,
+  language,
+  syntaxStyle,
+  fallbackColor,
+}: {
+  content: string;
+  language?: PreviewLanguage;
+  syntaxStyle?: SyntaxStyle;
+  fallbackColor: string;
+}) {
+  if (!content) return <box style={{ height: 1, flexShrink: 0 }} />;
+  if (language && syntaxStyle) {
+    return (
+      <code
+        content={content}
+        filetype={language}
+        syntaxStyle={syntaxStyle}
+        selectable
+        style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+      />
+    );
+  }
+  return (
+    <text
+      content={content}
+      fg={fallbackColor}
+      selectable
+      wrapMode="word"
+      style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+    />
+  );
+}
+
+function OmittedLines({ theme, count }: { theme: Theme; count: number }) {
+  if (count <= 0) return null;
+  return (
+    <text
+      content={`... ${count} more line${count === 1 ? "" : "s"}`}
+      fg={theme.dim}
+      selectable
+      wrapMode="word"
+      style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+    />
+  );
+}
+
+/** Display-only detailed preview. The model-facing tool result stays unchanged. */
+export function DetailedToolPreview({
+  theme,
+  syntaxStyle,
+  preview,
+}: {
+  theme: Theme;
+  syntaxStyle?: SyntaxStyle;
+  preview: ToolResultPreview;
+}) {
+  if (preview.kind === "diff") {
+    return (
+      <Row glyph={GUTTER} glyphColor={theme.dim}>
+        <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+          {preview.lines.map((line, index) => {
+            const color = previewColor(theme, line.kind);
+            if (line.kind === "header") {
+              return line.text ? (
+                <text
+                  key={`${index}:${line.text}`}
+                  content={line.text}
+                  fg={color}
+                  selectable
+                  wrapMode="word"
+                  style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+                />
+              ) : <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />;
+            }
+            return (
+              <box key={`${index}:${line.text}`} style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}>
+                <box style={{ width: 1, flexShrink: 0 }}>
+                  <text content={line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "} fg={color} />
+                </box>
+                <PreviewSource
+                  content={line.source}
+                  language={line.language}
+                  syntaxStyle={syntaxStyle}
+                  fallbackColor={color}
+                />
+              </box>
+            );
+          })}
+        </box>
+      </Row>
+    );
+  }
+
+  return (
+    <Row glyph={GUTTER} glyphColor={theme.dim}>
+      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+        {preview.kind === "write" && preview.language && syntaxStyle ? (
+          preview.window.lines.length > 0 ? (
+            <code
+              content={preview.window.lines.join("\n")}
+              filetype={preview.language}
+              syntaxStyle={syntaxStyle}
+              selectable
+              style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+            />
+          ) : null
+        ) : preview.window.lines.map((line, index) => line ? (
+          <text
+            key={`${index}:${line}`}
+            content={line}
+            fg={preview.kind === "bash" ? theme.bashOutput : theme.dim}
+            selectable
+            wrapMode="word"
+            style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+          />
+        ) : (
+          <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
+        ))}
+        <OmittedLines theme={theme} count={preview.window.hidden} />
+      </box>
+    </Row>
   );
 }

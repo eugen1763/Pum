@@ -49,6 +49,7 @@ import {
   type Role,
 } from "./transcript";
 import { bashOutput, bashResultDisplay, editCounts, toolArg, type ToolCall } from "./tool-line";
+import { toolPreviewFromResult, toolPreviewFromStart } from "./tool-preview";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
 import { appendHistory, loadHistory, removeHistory } from "./history";
@@ -1257,6 +1258,7 @@ export function App({
               state: "running",
               startedAt: Date.now(),
               input: event.args,
+              preview: toolPreviewFromStart(event.toolName, event.args),
             },
           });
           break;
@@ -1267,6 +1269,7 @@ export function App({
           break;
         case "tool_execution_end": {
           const bashResult = event.toolName === "bash" ? bashResultDisplay(event.result) : {};
+          const preview = toolPreviewFromResult(event.toolName, event.result);
           patchTool(event.toolCallId, {
             state: isRejectedToolResult(event.result, event.toolCallId)
               ? "rejected"
@@ -1285,6 +1288,7 @@ export function App({
             exitCode: bashResult.exitCode,
             result: event.result,
             isError: event.isError,
+            ...(preview ? { preview } : {}),
           });
           break;
         }
