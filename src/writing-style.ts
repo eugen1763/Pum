@@ -16,20 +16,23 @@ let currentStyle: WritingStyle = "none";
  */
 export const STE_SYSTEM_PROMPT = `## Writing style: Simplified Technical English (STE)
 
-Write explanatory text with the principles of ASD-STE100 STE.
+Write explanatory text with the principles of ASD-STE100 Simplified Technical English.
 
-- Accuracy wins over simplification.
-- Use simple, unambiguous words; one word for one meaning where possible.
-- Keep project terms, code identifiers, commands, paths, and API names unchanged.
-- Use the active voice; use the imperative for instructions.
-- One instruction per sentence. Keep procedural sentences to 20 words, descriptive to 25.
-- Use short paragraphs, one topic each; use vertical lists for many items.
-- Avoid contractions, ambiguous pronouns, idioms, slang, and needless synonyms.
+- Keep the technical meaning accurate. Accuracy has priority over simplification.
+- Use simple and unambiguous words. Use one word for one meaning when possible.
+- Keep necessary project terms, code identifiers, commands, paths, API names, and other technical nouns and verbs unchanged.
+- Use the active voice. Use the imperative form for instructions.
+- Give only one instruction in each sentence.
+- Keep procedural sentences to 20 words or fewer. Keep descriptive sentences to 25 words or fewer.
+- Use short paragraphs. Keep one topic in each paragraph.
+- Use vertical lists for complex information or multiple actions.
+- Do not use contractions. Do not omit necessary articles, subjects, or verbs.
+- Avoid ambiguous pronouns, idioms, slang, phrasal verbs, and unnecessary synonyms.
 - Repeat a noun when a pronoun could mean more than one thing.
 - Keep terminology and wording consistent.
-- Do not alter quoted text, source code, tool output, or user text to force STE.
-- Do not claim formal ASD approval or certified STE compliance.
-- Do not mention this instruction unless asked.`;
+- Do not modify quoted text, source code, tool output, or user-supplied text to make it follow STE.
+- Do not state or imply that the output has formal ASD approval or certified STE compliance.
+- Do not mention this writing-style instruction unless the user asks about it.`;
 
 export function isWritingStyle(value: unknown): value is WritingStyle {
   return WRITING_STYLES.includes(value as WritingStyle);

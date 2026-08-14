@@ -187,9 +187,12 @@ function defaultPathKind(path: string): "file" | "directory" | undefined {
 function deniedPathArgs(
   paths: readonly string[],
   pathKind: (path: string) => "file" | "directory" | undefined,
+  writableRoots: readonly string[],
 ): string[] {
   const args: string[] = [];
   const seen = new Set<string>();
+  const remounted = new Set<string>();
+  const normalizedWritableRoots = writableRoots.map((path) => normalizeAbsolutePath("Writable root", path));
   for (const rawPath of paths) {
     const path = normalizeAbsolutePath("Denied path", rawPath);
     if (seen.has(path)) continue;
@@ -197,12 +200,30 @@ function deniedPathArgs(
     const kind = pathKind(path);
     if (kind === "directory") args.push("--tmpfs", path);
     else if (kind === "file") args.push("--ro-bind", "/dev/null", path);
-    // Bubblewrap creates a missing bind target in the underlying host mount.
-    // Besides leaking an empty placeholder into a writable project, creation
-    // fails outright below read-only system mounts (for example when a host
-    // has no /etc/sudoers). A path that does not exist contains no credential
-    // data to expose. The deterministic policy still rejects explicit access
-    // to credential-sensitive names before the sandbox starts.
+    else {
+      const writableRoot = normalizedWritableRoots
+        .filter((root) => isWithin(root, path))
+        .sort((left, right) => right.length - left.length)[0];
+      if (!writableRoot) continue;
+
+      // A bind mask needs a destination and can create that destination in the
+      // host-backed writable mount. Remount the nearest existing ancestor
+      // read-only instead. The missing denied path then stays absent and cannot
+      // be created, without adding a host placeholder.
+      let ancestor = posix.dirname(path);
+      while (ancestor !== writableRoot && pathKind(ancestor) !== "directory") {
+        const parent = posix.dirname(ancestor);
+        if (parent === ancestor || !isWithin(writableRoot, parent)) {
+          ancestor = writableRoot;
+          break;
+        }
+        ancestor = parent;
+      }
+      if (!remounted.has(ancestor)) {
+        remounted.add(ancestor);
+        args.push("--remount-ro", ancestor);
+      }
+    }
   }
   return args;
 }
@@ -240,7 +261,11 @@ export function buildBubblewrapArgv(
   }
   // Keep private and denied mounts last so earlier allow mounts cannot expose them.
   args.push("--tmpfs", privateTemp);
-  args.push(...deniedPathArgs(policy.deniedPaths, options.pathKind ?? defaultPathKind));
+  args.push(...deniedPathArgs(
+    policy.deniedPaths,
+    options.pathKind ?? defaultPathKind,
+    [...policy.readWritePaths, privateTemp],
+  ));
   args.push("--chdir", cwd, "--", executable, ...policy.args);
   return args;
 }
