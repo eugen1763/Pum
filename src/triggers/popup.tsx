@@ -63,7 +63,9 @@ function durationText(value?: number): string {
   return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}s`;
 }
 
-export function displayTriggerCommand(trigger: TriggerSnapshot): string {
+export function displayTriggerCommand(
+  trigger: Pick<TriggerSnapshot, "executable" | "args">,
+): string {
   let redactNext = false;
   const args = trigger.args.map((argument) => {
     if (redactNext) {

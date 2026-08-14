@@ -165,6 +165,16 @@ describe("StatusBar usage and subagent counts", () => {
     expectOneMeasuredLine(frame, 100);
   });
 
+  test("shows the global running-shell count and keeps one row", async () => {
+    const frame = await renderStatus(100, 0, 0, { runningShellCount: 3 });
+    expect(frame).toContain("▣ 3");
+    expectOneMeasuredLine(frame, 100);
+
+    const layout = statusBarLayout({ ...thresholdInput, width: 2, runningShellCount: 3 });
+    expect(layout.totalWidth).toBeLessThanOrEqual(2);
+    expect(layout.showRunningShells).toBe(false);
+  });
+
   test("keeps one line and removes usage fields before agent state", async () => {
     const frame = await renderStatus(48, 5, 2);
     expectAgentCounts(frame, 48, 5, 2, { idle: 3, active: 2 });

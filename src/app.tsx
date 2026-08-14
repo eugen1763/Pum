@@ -119,10 +119,17 @@ import {
   moveTriggerSelection,
   sortTriggers,
   triggerActionForKey,
-  TriggersPopup,
   type TriggerAction,
   type TriggerManagerLike,
 } from "./triggers/popup";
+import {
+  moveProcessSelection,
+  processTabForKey,
+  ProcessesPopup,
+  sortShells,
+  type ProcessTab,
+  type ShellManagerLike,
+} from "./processes-popup";
 import type { TerminalTitleController } from "./terminal-title";
 import { readClipboardText } from "./text-paste";
 import { copyTextToClipboard } from "./clipboard";
@@ -405,6 +412,7 @@ export function App({
   copyNewsAnswerText = copyTextToClipboard,
   onExit = () => process.exit(0),
   triggerManager,
+  shellManager,
   messageCacheController,
   terminalTitle,
   startupWarnings = [],
@@ -434,6 +442,7 @@ export function App({
   copyNewsAnswerText?: typeof copyTextToClipboard;
   onExit?: () => void | Promise<void>;
   triggerManager?: TriggerManagerLike;
+  shellManager?: ShellManagerLike;
   messageCacheController?: MessageCacheController;
   terminalTitle?: TerminalTitleController;
   /** Visible process-local warnings. These lines never enter pi session context. */
@@ -528,8 +537,12 @@ export function App({
   const [modelSearchFocused, setModelSearchFocused] = useState(false);
   const [, setAgentRevision] = useState(0);
   const [triggersOpen, setTriggersOpen] = useState(false);
+  const [processTab, setProcessTab] = useState<ProcessTab>("triggers");
   const [triggerCursor, setTriggerCursor] = useState(0);
+  const [shellCursor, setShellCursor] = useState(0);
   const [, setTriggerRevision] = useState(0);
+  const [shellRevision, setShellRevision] = useState(0);
+  const [shellTails, setShellTails] = useState<Record<string, string>>({});
 
   const [newsOpen, setNewsOpen] = useState(false);
   const newsOpenRef = useRef(false);
@@ -563,6 +576,10 @@ export function App({
   const visibleUsage = activeAgent?.usage ?? usage;
   const agentTreeRows = buildAgentTree(agents);
   const triggers = sortTriggers(triggerManager?.getTriggers() ?? []);
+  const shells = sortShells(shellManager?.list() ?? []);
+  const runningShellCount = shells.filter(
+    (shell) => shell.state === "starting" || shell.state === "running",
+  ).length;
   const statsSnapshot = useMemo(() => statsManager?.snapshot() ?? statsFromEntries(
     (session.sessionManager as any).getEntries?.() ?? session.sessionManager.buildContextEntries(),
     `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
@@ -591,12 +608,14 @@ export function App({
   const spawnPreviewInputRef = useRef<TextareaRenderable>(null);
   const settingsOpenRef = useRef(settingsOpen);
   const triggersOpenRef = useRef(false);
+  const processTabRef = useRef<ProcessTab>("triggers");
   const settingsPageRef = useRef(page);
   const settingsSearchFocusedRef = useRef(settingsSearchFocused);
   const focusInputAfterSwitch = useRef(false);
   const activeAgentIdRef = useRef<string | null>(null);
   const agentSelectorCursorRef = useRef(0);
   const triggerCursorRef = useRef(0);
+  const shellCursorRef = useRef(0);
   const commandCursorRef = useRef(0);
   const stashRef = useRef(stash);
   const stashOpenRef = useRef(false);
@@ -678,9 +697,30 @@ export function App({
     setStatsOpen(false);
     statsOpenRef.current = false;
     setStashMode(false);
+    processTabRef.current = "triggers";
+    setProcessTab("triggers");
     const nextCursor = Math.min(triggerCursorRef.current, Math.max(0, triggers.length - 1));
     triggerCursorRef.current = nextCursor;
     setTriggerCursor(nextCursor);
+    setTriggerPopup(true);
+  };
+  const openProcesses = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setNewsOpen(false);
+    newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
+    setStashMode(false);
+    const nextTriggerCursor = Math.min(triggerCursorRef.current, Math.max(0, triggers.length - 1));
+    const nextShellCursor = Math.min(shellCursorRef.current, Math.max(0, shells.length - 1));
+    triggerCursorRef.current = nextTriggerCursor;
+    shellCursorRef.current = nextShellCursor;
+    setTriggerCursor(nextTriggerCursor);
+    setShellCursor(nextShellCursor);
     setTriggerPopup(true);
   };
   // The event subscription is set up once, so it reads the toggle via a ref.
@@ -1050,6 +1090,28 @@ export function App({
     triggerCursorRef.current = next;
     setTriggerCursor(next);
   }), [triggerManager]);
+
+  useEffect(() => shellManager?.subscribe(() => {
+    setShellRevision((revision) => revision + 1);
+    const count = shellManager.list().length;
+    const next = Math.min(shellCursorRef.current, Math.max(0, count - 1));
+    shellCursorRef.current = next;
+    setShellCursor(next);
+  }), [shellManager]);
+
+  useEffect(() => {
+    if (!shellManager || !triggersOpen || processTab !== "shells") return;
+    const shell = shells[shellCursor];
+    if (!shell || !shell.output.exists) return;
+    let active = true;
+    void shellManager.getOutput(shell.id, { lineLimit: 20 }).then((result) => {
+      if (!active) return;
+      setShellTails((tails) => tails[shell.id] === result.tail
+        ? tails
+        : { ...tails, [shell.id]: result.tail });
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [shellManager, triggersOpen, processTab, shellCursor, shellRevision]);
 
   useEffect(
     () => subagentManager.subscribe((event) => {
@@ -1817,10 +1879,11 @@ export function App({
     const loginCommand = trimmed === "/login";
     const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
+    const processesCommand = trimmed === "/processes";
     const newsCommand = trimmed === "/news";
     const statsCommand = trimmed === "/stats";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !newsCommand && !statsCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !statsCommand && !worktreeCommand) return false;
     editingStashIndex.current = null;
 
     if (historyCommand) {
@@ -1836,6 +1899,11 @@ export function App({
     if (triggersCommand) {
       setEditorText("");
       openTriggers();
+      return true;
+    }
+    if (processesCommand) {
+      setEditorText("");
+      openProcesses();
       return true;
     }
     if (newsCommand) {
@@ -2105,6 +2173,16 @@ export function App({
       kind: "text",
       role: "error",
       text: `trigger ${action} failed: ${String(error)}`,
+    }));
+  };
+
+  const killSelectedShell = () => {
+    const shell = shells[shellCursorRef.current];
+    if (!shell || !shellManager || (shell.state !== "starting" && shell.state !== "running")) return;
+    Promise.resolve(shellManager.terminate(shell.id)).catch((error) => append({
+      kind: "text",
+      role: "error",
+      text: `shell kill failed: ${String(error)}`,
     }));
   };
 
@@ -2387,7 +2465,7 @@ export function App({
     if (key.ctrl && key.name === "t") {
       key.stopPropagation();
       if (triggersOpenRef.current) setTriggerPopup(false);
-      else openTriggers();
+      else openProcesses();
       return;
     }
 
@@ -2395,15 +2473,29 @@ export function App({
       key.stopPropagation();
       if (key.name === "escape") {
         setTriggerPopup(false);
+      } else if (processTabForKey(key, processTabRef.current)) {
+        const tab = processTabForKey(key, processTabRef.current)!;
+        processTabRef.current = tab;
+        setProcessTab(tab);
       } else if (key.name === "up" || key.name === "down" || key.name === "pageup" || key.name === "pagedown") {
         const direction = key.name === "up" || key.name === "pageup" ? -1 : 1;
         const steps = key.name === "pageup" || key.name === "pagedown" ? 5 : 1;
-        let next = triggerCursorRef.current;
+        const shellTab = processTabRef.current === "shells";
+        let next = shellTab ? shellCursorRef.current : triggerCursorRef.current;
         for (let index = 0; index < steps; index++) {
-          next = moveTriggerSelection(next, triggers.length, direction);
+          next = shellTab
+            ? moveProcessSelection(next, shells.length, direction)
+            : moveTriggerSelection(next, triggers.length, direction);
         }
-        triggerCursorRef.current = next;
-        setTriggerCursor(next);
+        if (shellTab) {
+          shellCursorRef.current = next;
+          setShellCursor(next);
+        } else {
+          triggerCursorRef.current = next;
+          setTriggerCursor(next);
+        }
+      } else if (processTabRef.current === "shells") {
+        if (key.name === "k" || key.sequence === "k") killSelectedShell();
       } else {
         const action = triggerActionForKey(key, triggers[triggerCursorRef.current]);
         if (action) performTriggerAction(action);
@@ -2904,6 +2996,7 @@ export function App({
           agentCount={agents.length}
           runningAgentCount={activeSubagentCount}
           maxActiveAgentCount={settings.maxActiveSubagents}
+          runningShellCount={runningShellCount}
           activeAgentName={activeAgent?.name}
         />
         <WorkingRule
@@ -3124,10 +3217,14 @@ export function App({
           />
         ) : null}
         {triggersOpen ? (
-          <TriggersPopup
+          <ProcessesPopup
             theme={theme}
+            tab={processTab}
             triggers={triggers}
-            cursor={triggerCursor}
+            shells={shells}
+            triggerCursor={triggerCursor}
+            shellCursor={shellCursor}
+            shellTail={shells[shellCursor] ? shellTails[shells[shellCursor]!.id] : undefined}
             terminalWidth={width}
             terminalHeight={height}
           />

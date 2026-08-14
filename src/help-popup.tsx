@@ -59,7 +59,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/news", "Open recent answers (News)"],
       ["/stats", "Show session statistics"],
       ["/check-path", "Manage extra Check mode paths"],
-      ["/triggers", "Manage external triggers"],
+      ["/processes", "Manage triggers and shells"],
       ["/worktree", "Create a managed worktree"],
       ["Tab", "Complete a command preview"],
     ],
@@ -69,7 +69,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     controls: [
       ["Ctrl+P", "Open Settings"],
       ["Ctrl+N", "Open News; n/p jump"],
-      ["Ctrl+T", "Open external triggers"],
+      ["Ctrl+T", "Open Processes"],
       ["Ctrl+End", "Scroll transcript to the end"],
       ["/ in Settings", "Focus settings search"],
       ["Esc", "Close; twice to cancel work"],
