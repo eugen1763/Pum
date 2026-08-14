@@ -111,30 +111,74 @@ describe("Linux Bubblewrap sandbox", () => {
     expect(args).toContain("--unshare-net");
   });
 
-  test("remounts the existing parent of a missing denied file without creating a host placeholder", () => {
+  test("shadows a missing denied path without remounting the host writable root", () => {
     const args = buildBubblewrapArgv(policy({ deniedPaths: ["/work/project/.env"] }), {
       systemMounts: ["/usr"],
       pathKind: (path) => path === "/work/project" ? "directory" : undefined,
+      pathEntries: () => ["notes.txt", "src"],
     });
     const writableIndex = args.indexOf("--bind");
+    const shadowIndex = args.findIndex((value, offset) => value === "--tmpfs"
+      && args[offset + 1] === "/work/project");
+    const siblingIndex = args.findIndex((value, offset) => value === "--bind"
+      && args[offset + 1] === "/work/project/notes.txt"
+      && args[offset + 2] === "/work/project/notes.txt");
+    const maskIndex = args.findIndex((value, offset) => value === "--perms"
+      && args[offset + 1] === "000"
+      && args[offset + 2] === "--tmpfs"
+      && args[offset + 3] === "/work/project/.env");
     const remountIndex = args.findIndex((value, offset) => value === "--remount-ro"
       && args[offset + 1] === "/work/project");
-    expect(remountIndex).toBeGreaterThan(writableIndex);
-    expect(args).not.toContain("/work/project/.env");
+    expect(shadowIndex).toBeGreaterThan(writableIndex);
+    expect(siblingIndex).toBeGreaterThan(shadowIndex);
+    expect(maskIndex).toBeGreaterThan(siblingIndex);
+    expect(remountIndex).toBeGreaterThan(maskIndex);
   });
 
-  test("remounts the nearest existing ancestor for a nested missing denied file", () => {
+  test("shadows only the nearest existing ancestor for a nested missing denied file", () => {
     const args = buildBubblewrapArgv(policy({ deniedPaths: ["/work/project/cache/private/key"] }), {
       systemMounts: ["/usr"],
       pathKind: (path) => path === "/work/project/cache" || path === "/work/project"
         ? "directory"
         : undefined,
+      pathEntries: () => ["public.txt"],
     });
     const writableIndex = args.indexOf("--bind");
+    const shadowIndex = args.findIndex((value, offset) => value === "--tmpfs"
+      && args[offset + 1] === "/work/project/cache");
+    const siblingIndex = args.findIndex((value, offset) => value === "--bind"
+      && args[offset + 1] === "/work/project/cache/public.txt");
+    const maskIndex = args.findIndex((value, offset) => value === "--tmpfs"
+      && args[offset + 1] === "/work/project/cache/private/key");
     const remountIndex = args.findIndex((value, offset) => value === "--remount-ro"
       && args[offset + 1] === "/work/project/cache");
-    expect(remountIndex).toBeGreaterThan(writableIndex);
-    expect(args).not.toContain("/work/project/cache/private/key");
+    expect(shadowIndex).toBeGreaterThan(writableIndex);
+    expect(siblingIndex).toBeGreaterThan(shadowIndex);
+    expect(maskIndex).toBeGreaterThan(siblingIndex);
+    expect(remountIndex).toBeGreaterThan(maskIndex);
+  });
+
+  test("keeps existing denied masks after missing-path shadows", () => {
+    const args = buildBubblewrapArgv(policy({
+      deniedPaths: ["/work/project/secret.txt", "/work/project/.env"],
+    }), {
+      systemMounts: ["/usr"],
+      pathKind: (path) => {
+        if (path === "/work/project/secret.txt") return "file";
+        if (path === "/work/project") return "directory";
+        return undefined;
+      },
+      pathEntries: () => ["secret.txt", "notes.txt"],
+    });
+    const shadowIndex = args.findIndex((value, offset) => value === "--tmpfs"
+      && args[offset + 1] === "/work/project");
+    const reboundSecretIndex = args.findIndex((value, offset) => value === "--bind"
+      && args[offset + 1] === "/work/project/secret.txt");
+    const secretMaskIndex = args.findIndex((value, offset) => value === "--ro-bind"
+      && args[offset + 1] === "/dev/null"
+      && args[offset + 2] === "/work/project/secret.txt");
+    expect(reboundSecretIndex).toBeGreaterThan(shadowIndex);
+    expect(secretMaskIndex).toBeGreaterThan(reboundSecretIndex);
   });
 
   test("uses the host network only when the policy permits it", () => {

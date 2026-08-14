@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { posix } from "node:path";
 import type {
   SandboxBackend,
@@ -60,6 +60,7 @@ export interface BubblewrapBackendOptions {
   probeTimeoutMs?: number;
   systemMounts?: readonly string[];
   pathKind?: (path: string) => "file" | "directory" | undefined;
+  pathEntries?: (path: string) => readonly string[];
 }
 
 export class NodeBubblewrapProcessAdapter implements BubblewrapProcessAdapter {
@@ -184,46 +185,100 @@ function defaultPathKind(path: string): "file" | "directory" | undefined {
   }
 }
 
+function defaultPathEntries(path: string): string[] {
+  return readdirSync(path);
+}
+
+type MissingDeniedShadow = {
+  ancestor: string;
+};
+
+type DeniedMask =
+  | { kind: "directory"; path: string }
+  | { kind: "file"; path: string }
+  | { kind: "missing"; path: string };
+
+function nearestExistingDirectory(
+  path: string,
+  writableRoot: string,
+  pathKind: (path: string) => "file" | "directory" | undefined,
+): string | undefined {
+  let ancestor = posix.dirname(path);
+  while (isWithin(writableRoot, ancestor)) {
+    const kind = pathKind(ancestor);
+    if (kind === "directory") return ancestor;
+    if (kind === "file") return undefined;
+    if (ancestor === writableRoot) break;
+    ancestor = posix.dirname(ancestor);
+  }
+  return undefined;
+}
+
+function assertEntryName(name: string, directory: string): void {
+  assertNoNul("Directory entry", name);
+  if (name === "" || name === "." || name === ".." || name.includes("/")) {
+    throw new Error(`Invalid directory entry in ${directory}: ${name}`);
+  }
+}
+
 function deniedPathArgs(
   paths: readonly string[],
   pathKind: (path: string) => "file" | "directory" | undefined,
+  pathEntries: (path: string) => readonly string[],
   writableRoots: readonly string[],
+  privateTemp: string,
 ): string[] {
   const args: string[] = [];
   const seen = new Set<string>();
-  const remounted = new Set<string>();
   const normalizedWritableRoots = writableRoots.map((path) => normalizeAbsolutePath("Writable root", path));
+  const shadows = new Map<string, MissingDeniedShadow>();
+  const masks: DeniedMask[] = [];
   for (const rawPath of paths) {
     const path = normalizeAbsolutePath("Denied path", rawPath);
     if (seen.has(path)) continue;
     seen.add(path);
     const kind = pathKind(path);
-    if (kind === "directory") args.push("--tmpfs", path);
-    else if (kind === "file") args.push("--ro-bind", "/dev/null", path);
+    if (kind === "directory") masks.push({ kind, path });
+    else if (kind === "file") masks.push({ kind, path });
     else {
+      if (isWithin(privateTemp, path)) {
+        throw new Error(`Cannot safely mask missing denied path inside private temp: ${path}`);
+      }
       const writableRoot = normalizedWritableRoots
         .filter((root) => isWithin(root, path))
         .sort((left, right) => right.length - left.length)[0];
       if (!writableRoot) continue;
-
-      // A bind mask needs a destination and can create that destination in the
-      // host-backed writable mount. Remount the nearest existing ancestor
-      // read-only instead. The missing denied path then stays absent and cannot
-      // be created, without adding a host placeholder.
-      let ancestor = posix.dirname(path);
-      while (ancestor !== writableRoot && pathKind(ancestor) !== "directory") {
-        const parent = posix.dirname(ancestor);
-        if (parent === ancestor || !isWithin(writableRoot, parent)) {
-          ancestor = writableRoot;
-          break;
-        }
-        ancestor = parent;
-      }
-      if (!remounted.has(ancestor)) {
-        remounted.add(ancestor);
-        args.push("--remount-ro", ancestor);
-      }
+      const ancestor = nearestExistingDirectory(path, writableRoot, pathKind);
+      if (!ancestor) continue;
+      shadows.set(ancestor, { ancestor });
+      masks.push({ kind: "missing", path });
     }
+  }
+
+  // Bubblewrap creates missing mount destinations. Creating one below a host
+  // writable bind can therefore modify the host. Put a tmpfs over the nearest
+  // existing ancestor first. Rebind existing children so normal sibling writes
+  // still reach the host, then create the deny mask only inside the tmpfs.
+  // New direct children of the shadow stay blocked by its read-only remount.
+  const orderedShadows = [...shadows.values()].sort(
+    (left, right) => left.ancestor.length - right.ancestor.length,
+  );
+  for (const shadow of orderedShadows) {
+    args.push("--tmpfs", shadow.ancestor);
+    const entries = [...pathEntries(shadow.ancestor)].sort();
+    for (const entry of entries) {
+      assertEntryName(entry, shadow.ancestor);
+      const child = posix.join(shadow.ancestor, entry);
+      args.push("--bind", child, child);
+    }
+  }
+  for (const mask of masks) {
+    if (mask.kind === "directory") args.push("--tmpfs", mask.path);
+    else if (mask.kind === "file") args.push("--ro-bind", "/dev/null", mask.path);
+    else args.push("--perms", "000", "--tmpfs", mask.path);
+  }
+  for (const shadow of [...orderedShadows].reverse()) {
+    args.push("--remount-ro", shadow.ancestor);
   }
   return args;
 }
@@ -231,7 +286,7 @@ function deniedPathArgs(
 /** Build the complete Bubblewrap argv from an authoritative sandbox policy. */
 export function buildBubblewrapArgv(
   policy: SandboxPolicy,
-  options: Pick<BubblewrapBackendOptions, "systemMounts" | "pathKind"> = {},
+  options: Pick<BubblewrapBackendOptions, "systemMounts" | "pathKind" | "pathEntries"> = {},
 ): string[] {
   if (policy.version !== 1) throw new Error(`Unsupported sandbox policy version: ${policy.version}`);
   assertNoNul("Exact command", policy.exactCommand);
@@ -264,7 +319,9 @@ export function buildBubblewrapArgv(
   args.push(...deniedPathArgs(
     policy.deniedPaths,
     options.pathKind ?? defaultPathKind,
-    [...policy.readWritePaths, privateTemp],
+    options.pathEntries ?? defaultPathEntries,
+    policy.readWritePaths,
+    privateTemp,
   ));
   args.push("--chdir", cwd, "--", executable, ...policy.args);
   return args;
@@ -390,6 +447,7 @@ export function createBubblewrapBackend(options: BubblewrapBackendOptions = {}):
       const args = buildBubblewrapArgv(policy, {
         systemMounts: options.systemMounts,
         pathKind: options.pathKind,
+        pathEntries: options.pathEntries,
       });
       const child = adapter.spawn({
         executable,
