@@ -20,7 +20,7 @@ function markdownContent(root: BaseRenderable): string[] {
   return content;
 }
 
-const request = {
+const request: any = {
   id: "spawn-preview-1",
   requester: { sessionId: "child-session", agentId: "child", name: "worker" },
   options: {
@@ -65,8 +65,19 @@ describe("spawn preview popup", () => {
     const frame = setup.captureCharFrame();
     expect(markdownContent(setup.renderer.root)).toContain(request.options.task);
     expect(frame).toContain("Optional note");
+    expect(frame).toContain("Context · fresh");
+    expect(frame).toContain("Source · none");
     expect(frame).toContain("Enter approve");
     expect(inputRef.current?.focused).toBe(true);
+  });
+
+  test("shows fork context and the immediate requester source", async () => {
+    request.options.context = "fork";
+    const { setup } = await render(72, 18);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("Context · fork");
+    expect(frame).toContain("Source · worker · session child-session");
+    delete request.options.context;
   });
 
   test("remains usable without a frame in a short terminal", async () => {

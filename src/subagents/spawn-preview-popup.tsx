@@ -38,7 +38,11 @@ export function SpawnPreviewPopup({
   const geometry = spawnPreviewPopupGeometry(terminalWidth, terminalHeight);
   const scrollRef = useRef<ScrollBoxRenderable>(null);
   const noteHeight = geometry.compact ? 1 : Math.min(4, Math.max(1, terminalHeight - 8));
-  const taskAreaHeight = Math.max(1, geometry.height - noteHeight - (geometry.compact ? 1 : 6));
+  const taskAreaHeight = Math.max(1, geometry.height - noteHeight - (geometry.compact ? 1 : 8));
+  const contextMode = request.options.context ?? "fresh";
+  const source = contextMode === "fork"
+    ? `${request.requester.name} · session ${request.requester.sessionId}`
+    : "none";
 
   useEffect(() => {
     inputRef.current?.setText("");
@@ -64,12 +68,15 @@ export function SpawnPreviewPopup({
       padding={geometry.compact ? 0 : 1}
     >
       {!geometry.compact ? (
-        <text
-          content={request.options.readonly ? "Child task · readonly" : "Child task"}
-          fg={theme.accent}
-          bg={theme.popupBg}
-          style={{ height: 1, flexShrink: 0 }}
-        />
+        <box style={{ flexDirection: "column", height: 3, flexShrink: 0 }}>
+          <text
+            content={request.options.readonly ? "Child task · readonly" : "Child task"}
+            fg={theme.accent}
+            bg={theme.popupBg}
+          />
+          <text content={`Context · ${contextMode}`} fg={theme.dim} bg={theme.popupBg} />
+          <text content={`Source · ${source}`} fg={theme.dim} bg={theme.popupBg} />
+        </box>
       ) : null}
       <scrollbox
         ref={scrollRef}

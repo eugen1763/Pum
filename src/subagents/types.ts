@@ -2,6 +2,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import type { Line, PendingLine } from "../transcript";
 import type { WorktreeRecord } from "../worktree";
 import type { AgentUsage } from "../agent-usage";
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import {
   EXTERNAL_TRIGGER_CUSTOM_TYPE,
   type ExternalTriggerEventData,
@@ -32,6 +33,21 @@ export type AgentTranscript = {
   pending: PendingLine[];
 };
 
+export type SpawnContextMode = "fresh" | "fork";
+
+export type ForkOrigin = {
+  sourceSessionId: string;
+  cutoffEntryId: string | null;
+  sourceAgentId: string | null;
+};
+
+/** Immutable runtime capture. Only origin is persisted in the subagent snapshot. */
+export type ForkSource = {
+  origin: ForkOrigin;
+  sourceSessionFile?: string;
+  entries: readonly SessionEntry[];
+};
+
 export type SubagentSnapshot = {
   id: string;
   name: string;
@@ -45,6 +61,8 @@ export type SubagentSnapshot = {
   thinkingLevel: string;
   /** True when the child must not mutate files or delegate filesystem mutation. Missing legacy values mean false. */
   readonly?: boolean;
+  /** Present only when this child inherited an exact requester conversation branch. */
+  forkOrigin?: ForkOrigin;
   transcript: AgentTranscript;
   summary?: string;
   startedAt: number;
@@ -121,6 +139,9 @@ export type SpawnSubagentOptions = {
   readonly?: boolean;
   createWorktree?: boolean;
   parentAgentId?: string | null;
+  context?: SpawnContextMode;
+  /** Runtime-only immutable branch capture. This value is not persisted. */
+  forkSource?: ForkSource;
 };
 
 export type RoutedPrompt = {
