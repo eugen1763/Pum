@@ -2,6 +2,7 @@ export type ShutdownActions = {
   unmount(): void | Promise<void>;
   cleanup(): void;
   shutdownTriggers?(): Promise<void>;
+  shutdownShells?(): Promise<void>;
   dispose(): Promise<void>;
   destroy(): void | Promise<void>;
   exit(code: number): void;
@@ -18,9 +19,13 @@ export function createShutdown(actions: ShutdownActions): (code: number) => Prom
       } finally {
         actions.cleanup();
         try {
-          await actions.shutdownTriggers?.();
+          await actions.shutdownShells?.();
         } finally {
-          await actions.dispose();
+          try {
+            await actions.shutdownTriggers?.();
+          } finally {
+            await actions.dispose();
+          }
         }
       }
     } finally {

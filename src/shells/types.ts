@@ -3,6 +3,9 @@ export const DEFAULT_SHELL_RETAINED_LIMIT = 20;
 export const DEFAULT_SHELL_OUTPUT_LIMIT_BYTES = 100 * 1024 * 1024;
 export const DEFAULT_SHELL_TERMINATION_GRACE_MS = 2_000;
 
+export const MANAGED_SHELL_CUSTOM_TYPE = "pum.managed_shell";
+export const MANAGED_SHELL_COMPLETION_TYPE = "pum.managed_shell_completion";
+
 export type ShellId = string;
 export type ShellState = "starting" | "running" | "exited" | "failed" | "terminated";
 
@@ -153,3 +156,40 @@ export interface PublicShellManager {
   invalidateAgent(sessionId: string, agentId: string): Promise<void>;
   shutdown(): Promise<void>;
 }
+
+export type ManagedShellLifecycleState = "started" | "exited" | "failed" | "terminated" | "unavailable";
+
+/** Durable session data for customType `pum.managed_shell`. */
+export type ManagedShellLifecycleEvent = {
+  version: 1;
+  shellId: ShellId;
+  name: string;
+  owner: ShellOwner;
+  state: ManagedShellLifecycleState;
+  executable: string;
+  args: string[];
+  cwd: string;
+  at: number;
+  startedAt: number;
+  finishedAt: number | null;
+  runtimeMs: number | null;
+  exitCode: number | null;
+  signal: string | null;
+  output?: ShellOutputMetadata & { tail?: string };
+  noticeId?: string;
+  reason?: string;
+};
+
+export type ManagedShellCompletionMessage = {
+  id: string;
+  shellId: ShellId;
+  name: string;
+  owner: ShellOwner;
+  text: string;
+  at: number;
+};
+
+export type ShellLifecycleManager = Pick<
+  PublicShellManager,
+  "invalidateSession" | "invalidateAgent" | "shutdown"
+>;

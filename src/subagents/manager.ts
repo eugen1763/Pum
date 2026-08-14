@@ -91,6 +91,15 @@ import {
 import type { SpawnPreviewManager, SpawnPreviewRequester } from "./spawn-preview";
 import { readonlySubagentExtension } from "./readonly";
 import type { SessionStatsManager } from "../session-stats";
+import {
+  MANAGED_SHELL_COMPLETION_TYPE,
+  MANAGED_SHELL_CUSTOM_TYPE,
+  type ManagedShellCompletionMessage,
+  type ManagedShellLifecycleEvent,
+  type PublicShellManager,
+  type ShellOwner,
+} from "../shells/types";
+import { registerShellTools, type ShellTargetSelector } from "../shells/tools";
 import { captureForkSource, createForkedSession, entriesAfterForkCutoff } from "./fork-session";
 
 const MAX_RETAINED_AGENTS = 100;
@@ -225,6 +234,7 @@ type ManagerOptions = {
   triggerManager?: TriggerRuntimeManager;
   messageCacheController?: MessageCacheController;
   statsManager?: SessionStatsManager;
+  shellManager?: PublicShellManager;
 };
 
 const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
@@ -302,6 +312,7 @@ export class SubagentManager {
   private readonly triggerManager?: TriggerRuntimeManager;
   private readonly messageCacheController?: MessageCacheController;
   private readonly statsManager?: SessionStatsManager;
+  private readonly shellManager?: PublicShellManager;
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly listeners = new Set<(event: SubagentManagerEvent) => void>();
   private mainApi?: ExtensionAPI;
@@ -332,6 +343,7 @@ export class SubagentManager {
     this.triggerManager = options.triggerManager;
     this.messageCacheController = options.messageCacheController;
     this.statsManager = options.statsManager;
+    this.shellManager = options.shellManager;
   }
 
   subscribe(listener: (event: SubagentManagerEvent) => void): () => void {
@@ -375,7 +387,10 @@ export class SubagentManager {
   ): Promise<void> {
     const sessionId = sessionManager.getSessionId();
     if (this.mainApi === pi && this.parentSessionId === sessionId && this.mainSessionManager) return;
-    if (this.parentSessionId !== "detached") this.spawnPreviewManager?.cancelRequester(this.parentSessionId);
+    if (this.parentSessionId !== "detached") {
+      this.spawnPreviewManager?.cancelRequester(this.parentSessionId);
+      await this.shellManager?.invalidateSession(this.parentSessionId);
+    }
     await this.stopAll("interrupted", false);
     this.records.clear();
     this.messageTimes.clear();
@@ -516,6 +531,7 @@ export class SubagentManager {
   async detachMain(): Promise<void> {
     const sessionId = this.parentSessionId;
     this.spawnPreviewManager?.cancelRequester(sessionId);
+    await this.shellManager?.invalidateSession(sessionId);
     await this.stopAll("interrupted", true);
     this.emit({
       type: "trigger-target",
@@ -597,7 +613,8 @@ export class SubagentManager {
   private countsAsActivity(message: any): boolean {
     if (message?.role === "user") return true;
     if (message?.role !== "custom") return false;
-    if (message.customType === TRIGGER_EVENT_CUSTOM_TYPE) return true;
+    if (message.customType === TRIGGER_EVENT_CUSTOM_TYPE
+      || message.customType === MANAGED_SHELL_COMPLETION_TYPE) return true;
     if (message.customType !== AGENT_MESSAGE_CUSTOM_TYPE) return false;
     const details = message.details as AgentMessageData | undefined;
     return !["acknowledgement", "idle", "completion", "status", "reminder"].includes(details?.kind ?? "message");
@@ -766,7 +783,11 @@ export class SubagentManager {
         this.acceptIdleOpenReminder(record.snapshot.id, message);
         if (this.countsAsActivity(message)) this.beginActivity(record);
         if (message?.role === "custom"
-          && [AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) {
+          && [
+            AGENT_MESSAGE_CUSTOM_TYPE,
+            TRIGGER_EVENT_CUSTOM_TYPE,
+            MANAGED_SHELL_COMPLETION_TYPE,
+          ].includes(message.customType)) {
           const id = message.details?.id;
           if (typeof id === "string") {
             this.resolvePending(record, id);
@@ -979,8 +1000,10 @@ export class SubagentManager {
           if (record) record.api = pi;
           void ctx;
         });
-        pi.on("session_shutdown", (_event, ctx) => {
-          this.spawnPreviewManager?.cancelRequester(ctx.sessionManager.getSessionId(), agentId);
+        pi.on("session_shutdown", async (_event, ctx) => {
+          const sessionId = ctx.sessionManager.getSessionId();
+          this.spawnPreviewManager?.cancelRequester(sessionId, agentId);
+          await this.shellManager?.invalidateAgent(sessionId, agentId);
         });
         pi.on("before_agent_start", (event) => {
           const record = this.records.get(agentId);
@@ -1028,6 +1051,19 @@ export class SubagentManager {
           registerTriggerTools(
             pi,
             this.triggerManager,
+            (ctx) => ({
+              kind: "subagent",
+              sessionId: ctx.sessionManager.getSessionId(),
+              agentId,
+              cwd: ctx.cwd,
+            }),
+            { audience: "subagent" },
+          );
+        }
+        if (this.shellManager && !toolGroupsRecord?.snapshot.readonly) {
+          registerShellTools(
+            pi,
+            this.shellManager,
             (ctx) => ({
               kind: "subagent",
               sessionId: ctx.sessionManager.getSessionId(),
@@ -1209,7 +1245,11 @@ export class SubagentManager {
             return;
           }
           if (message.role !== "custom"
-            || ![AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) return;
+            || ![
+              AGENT_MESSAGE_CUSTOM_TYPE,
+              TRIGGER_EVENT_CUSTOM_TYPE,
+              MANAGED_SHELL_COMPLETION_TYPE,
+            ].includes(message.customType)) return;
           const details = message.details as AgentMessageData | undefined;
           const id = details?.id;
           if (typeof id === "string") {
@@ -1254,6 +1294,22 @@ export class SubagentManager {
               audience: "main",
               resolveTarget: (requester, selector) => this.resolveTriggerSelector(requester.sessionId, selector),
               authorizeTarget: (requester, target) => this.authorizeTriggerTarget(requester.sessionId, target),
+            },
+          );
+        }
+        if (this.shellManager) {
+          registerShellTools(
+            pi,
+            this.shellManager,
+            (ctx) => ({
+              kind: "main",
+              sessionId: ctx.sessionManager.getSessionId(),
+              cwd: ctx.cwd,
+            }),
+            {
+              audience: "main",
+              resolveOwner: (requester, selector) => this.resolveShellOwner(requester.sessionId, selector),
+              authorizeOwner: (requester, owner) => this.authorizeShellOwner(requester.sessionId, owner),
             },
           );
         }
@@ -1634,6 +1690,18 @@ export class SubagentManager {
     return record.session?.sessionId === target.sessionId;
   }
 
+  private async authorizeShellOwner(requesterSessionId: string, owner: ShellOwner): Promise<boolean> {
+    return this.authorizeTriggerTarget(requesterSessionId, owner);
+  }
+
+  private async resolveShellOwner(
+    sessionId: string,
+    selector: ShellTargetSelector,
+  ): Promise<{ owner: ShellOwner; cwd: string }> {
+    const resolved = await this.resolveTriggerSelector(sessionId, selector);
+    return { owner: resolved.target, cwd: resolved.cwd };
+  }
+
   private async resolveTriggerSelector(
     sessionId: string,
     selector: TriggerTargetSelector,
@@ -1857,6 +1925,69 @@ export class SubagentManager {
       text: data.text,
       messageId: data.id,
     };
+  }
+
+  async persistManagedShellEvent(data: ManagedShellLifecycleEvent): Promise<void> {
+    const { sessionId, agentId } = data.owner;
+    if (agentId === null) {
+      if (sessionId !== this.parentSessionId || !this.mainApi) {
+        throw new Error("The main shell owner is unavailable");
+      }
+      this.mainApi.appendEntry(MANAGED_SHELL_CUSTOM_TYPE, data);
+      return;
+    }
+    const record = this.records.get(agentId);
+    if (!record) throw new Error(`Unknown shell owner agent: ${agentId}`);
+    await this.ensureRuntime(record);
+    if (!record.session || record.session.sessionId !== sessionId) {
+      throw new Error("The child shell owner is unavailable");
+    }
+    record.session.sessionManager.appendCustomEntry(MANAGED_SHELL_CUSTOM_TYPE, data);
+  }
+
+  async deliverManagedShellCompletion(data: ManagedShellCompletionMessage): Promise<void> {
+    const { sessionId, agentId } = data.owner;
+    const line: Extract<Line, { kind: "agent-message" }> = {
+      kind: "agent-message",
+      sender: `shell:${data.name}`,
+      recipient: agentId ?? "main",
+      text: data.text,
+      messageId: data.id,
+    };
+    const pending: PendingLine = { id: data.id, line };
+    const message = {
+      customType: MANAGED_SHELL_COMPLETION_TYPE,
+      content: data.text,
+      display: true,
+      details: data,
+    };
+    if (agentId === null) {
+      if (sessionId !== this.parentSessionId || !this.mainApi) {
+        throw new Error("The main shell owner is unavailable");
+      }
+      this.emit({ type: "main-pending-add", pending });
+      if (!this.wakeMain(message, data.text)) {
+        this.emit({ type: "main-pending-drop", id: data.id });
+        throw new Error("The main shell owner is unavailable");
+      }
+      return;
+    }
+    const record = this.records.get(agentId);
+    if (!record) throw new Error(`Unknown shell owner agent: ${agentId}`);
+    await this.ensureRuntime(record);
+    if (!record.session || !record.api || record.session.sessionId !== sessionId) {
+      throw new Error("The child shell owner is unavailable");
+    }
+    this.addPending(record, pending);
+    try {
+      withSearchRoute(record.session.sessionId, () => {
+        record.api!.sendMessage(message, { deliverAs: "followUp", triggerTurn: true });
+      });
+      this.updateStatus(record, "running");
+    } catch (error) {
+      this.dropPending(record, data.id);
+      throw error;
+    }
   }
 
   async deliverTriggerEvent(data: TriggerEventData): Promise<void> {
@@ -2325,6 +2456,9 @@ export class SubagentManager {
     const record = this.findRecord(id);
     if (!record) return;
     const sessionId = record.session?.sessionId;
+    if (sessionId) {
+      await this.shellManager?.invalidateAgent(sessionId, record.snapshot.id);
+    }
     if (record.dispose) await record.dispose();
     this.clearSettlementDeliveriesForParent(record.snapshot.id);
     if (sessionId) {
@@ -2348,6 +2482,9 @@ export class SubagentManager {
   private async stopAll(status: SubagentStatus, persist: boolean): Promise<void> {
     for (const record of this.records.values()) {
       const sessionId = record.session?.sessionId;
+      if (sessionId) {
+        await this.shellManager?.invalidateAgent(sessionId, record.snapshot.id);
+      }
       if (record.dispose) await record.dispose();
       if (sessionId) await this.triggerManager?.invalidateAgent(sessionId, record.snapshot.id);
       if (!["starting", "running"].includes(record.snapshot.status)) continue;
