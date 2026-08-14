@@ -25,6 +25,7 @@ const values = Object.fromEntries(
 describe("settings search and navigation", () => {
   test("filters labels, categories, and useful keywords", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
+    expect(filterSettingsRows("transcript detailed").map((row) => row.id)).toEqual(["outputMode"]);
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual([
       "checkMode", "sandboxMode", "checkModel", "checkPaths",
     ]);

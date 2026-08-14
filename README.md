@@ -325,7 +325,7 @@ Set `PUM_DIR` to override the complete PUM data directory.
 | `auth.json` | Provider credentials and custom-provider keys |
 | `models.json` | Custom endpoints and model metadata; submitted keys are not stored here |
 | `settings.json` | Model and thinking level managed by pi |
-| `pum.json` | Theme, animation, search, writing, explanation, Check mode, sandbox, and subagent settings |
+| `pum.json` | Theme, animation, transcript output, search, writing, explanation, Check mode, sandbox, and subagent settings |
 | `theme.json` | Optional semantic color overrides |
 | `history.json` | Prompt history by working directory |
 | `prompt-stash.json` | Stashed prompts by working directory |
