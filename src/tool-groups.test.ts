@@ -24,6 +24,7 @@ import {
   CHILD_EXTRA_TOOL_NAMES,
   CORE_TOOL_NAMES,
   ENABLE_TOOLS,
+  SHELLS_GROUP_TOOL_NAMES,
   ToolGroupsController,
   TOOL_GROUP_NAMES,
   activeToolNames,
@@ -117,11 +118,11 @@ describe("tool group membership", () => {
   });
 
   test("readonly children omit mutation tools from core, allowlist, and enabled groups", () => {
-    const active = activeToolNames(["Admin", "Subagents", "Worktree"], "subagent", true);
+    const active = activeToolNames(["Admin", "Subagents", "Worktree", "Shells"], "subagent", true);
     for (const tool of [
       "write", "edit", "apply_patch", "spawn_subagent", "message_agent", "create_trigger",
       "resume_trigger", "invoke_trigger", "message_cache_add", "message_cache_delete",
-      "message_cache_send",
+      "message_cache_send", ...SHELLS_GROUP_TOOL_NAMES,
     ]) {
       expect(active).not.toContain(tool);
       expect(childAllowedToolNames(true)).not.toContain(tool);
@@ -147,8 +148,21 @@ describe("tool group membership", () => {
     }
   });
 
+  test("Shells is hidden until enabled and readonly children never expose it", () => {
+    const hiddenMain = activeToolNames([], "main");
+    const mutableMain = activeToolNames(["Shells"], "main");
+    const mutableChild = activeToolNames(["Shells"], "subagent");
+    const readonlyChild = activeToolNames(["Shells"], "subagent", true);
+    for (const tool of SHELLS_GROUP_TOOL_NAMES) {
+      expect(hiddenMain).not.toContain(tool);
+      expect(mutableMain).toContain(tool);
+      expect(mutableChild).toContain(tool);
+      expect(readonlyChild).not.toContain(tool);
+    }
+  });
+
   test("core tools and enable_tools are present in every group combination", () => {
-    for (const enabled of [[], ["Admin"], ["Subagents", "Worktree"], ["Admin", "Subagents", "Worktree"]]) {
+    for (const enabled of [[], ["Admin"], ["Subagents", "Worktree"], ["Admin", "Subagents", "Worktree", "Shells"]]) {
       const active = activeToolNames(enabled, "main");
       for (const core of [...CORE_TOOL_NAMES, ENABLE_TOOLS]) {
         expect(active).toContain(core);
@@ -242,10 +256,10 @@ describe("tool group persistence", () => {
     const controller = new ToolGroupsController("main");
     controller.load(undefined);
     expect(controller.describe()).toContain("Enabled tool groups: (none)");
-    expect(controller.describe()).toContain("Hidden tool groups: Admin, Subagents, Worktree");
+    expect(controller.describe()).toContain("Hidden tool groups: Admin, Subagents, Worktree, Shells");
     controller.enableGroup("Admin");
     expect(controller.describe()).toContain("Enabled tool groups: Admin");
-    expect(controller.describe()).toContain("Hidden tool groups: Subagents, Worktree");
+    expect(controller.describe()).toContain("Hidden tool groups: Subagents, Worktree, Shells");
   });
 });
 
