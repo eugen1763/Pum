@@ -13,6 +13,8 @@ import { DEFAULT_BASH_OUTPUT, normalizeBashOutput, type BashOutputSettings } fro
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
+export const OUTPUT_MODES = ["minimal", "default", "detailed"] as const;
+export type OutputMode = (typeof OUTPUT_MODES)[number];
 export const CHECK_MODE_PROFILES = ["off", "on"] as const;
 export type CheckModeProfile = (typeof CHECK_MODE_PROFILES)[number];
 
@@ -88,6 +90,20 @@ export function isWorkingRuleAnimationMode(value: unknown): value is WorkingRule
   return WORKING_RULE_ANIMATION_MODES.includes(value as WorkingRuleAnimationMode);
 }
 
+export function isOutputMode(value: unknown): value is OutputMode {
+  return OUTPUT_MODES.includes(value as OutputMode);
+}
+
+export function normalizeOutputMode(value: unknown): OutputMode {
+  return isOutputMode(value) ? value : "default";
+}
+
+export function cycleOutputMode(value: unknown, step: number): OutputMode {
+  const current = normalizeOutputMode(value);
+  const index = OUTPUT_MODES.indexOf(current);
+  return OUTPUT_MODES[(index + step % OUTPUT_MODES.length + OUTPUT_MODES.length) % OUTPUT_MODES.length]!;
+}
+
 /**
  * PUM's own settings. Model and thinking level are deliberately not here — pi
  * already persists those to <AGENT_DIR>/settings.json via setModel() and
@@ -99,6 +115,8 @@ export type PumSettings = {
   animations: boolean;
   /** Animation used for the rules while an agent works. */
   workingRuleAnimation: WorkingRuleAnimationMode;
+  /** Transcript tool-output detail. Legacy settings omit this field and migrate to default. */
+  outputMode?: OutputMode;
   webSearch: boolean;
   writingStyle: WritingStyle;
   explanationStrength: ExplanationStrength;
@@ -120,6 +138,7 @@ const DEFAULTS: PumSettings = {
   animations: true,
   // Preserve the rule-only behavior used before this setting existed.
   workingRuleAnimation: "input-only",
+  outputMode: "default",
   webSearch: true,
   writingStyle: "none",
   explanationStrength: "simple",
@@ -140,6 +159,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     workingRuleAnimation: isWorkingRuleAnimationMode(merged.workingRuleAnimation)
       ? merged.workingRuleAnimation
       : DEFAULTS.workingRuleAnimation,
+    outputMode: normalizeOutputMode(merged.outputMode),
     writingStyle: isWritingStyle(merged.writingStyle) ? merged.writingStyle : DEFAULTS.writingStyle,
     explanationStrength: isExplanationStrength(merged.explanationStrength)
       ? merged.explanationStrength
