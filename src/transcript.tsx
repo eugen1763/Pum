@@ -460,8 +460,6 @@ export function ToolLine({
   workingCaret?: boolean;
   /** Detailed-mode renderers use this without changing canonical call data. */
   outputMode?: TranscriptOutputMode;
-  /** Detailed result previews use the current semantic syntax style. */
-  syntaxStyle?: SyntaxStyle;
 }) {
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
