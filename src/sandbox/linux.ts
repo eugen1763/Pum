@@ -196,7 +196,13 @@ function deniedPathArgs(
     seen.add(path);
     const kind = pathKind(path);
     if (kind === "directory") args.push("--tmpfs", path);
-    else args.push("--ro-bind", "/dev/null", path);
+    else if (kind === "file") args.push("--ro-bind", "/dev/null", path);
+    // Bubblewrap creates a missing bind target in the underlying host mount.
+    // Besides leaking an empty placeholder into a writable project, creation
+    // fails outright below read-only system mounts (for example when a host
+    // has no /etc/sudoers). A path that does not exist contains no credential
+    // data to expose. The deterministic policy still rejects explicit access
+    // to credential-sensitive names before the sandbox starts.
   }
   return args;
 }

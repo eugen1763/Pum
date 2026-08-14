@@ -1,9 +1,10 @@
 /**
- * PUM vs pi benchmark harness over Aider's polyglot exercise set.
+ * PUM vs pi vs OpenCode benchmark harness over Aider's polyglot exercise set.
  *
  * This is NOT Aider's own harness. Aider's benchmark.py drives Aider's loop.
- * We extract the Exercism exercises and drive `pi -ne` and `pum -p` directly
- * so we can compare the two agents on identical prompts.
+ * We extract the Exercism exercises and drive `pi -ne`, `pum -p`, and
+ * `opencode run` directly so we can compare the three agents on identical
+ * prompts.
  *
  * The user runs this from a terminal (not through a checked agent) because it
  * clones the exercise repo, installs per-exercise test dependencies, and runs
@@ -13,24 +14,25 @@
  *   bun run research/bench-pi-vs-pum/harness.ts --track all --limit 5
  *   bun run research/bench-pi-vs-pum/harness.ts --dry
  *   bun run research/bench-pi-vs-pum/harness.ts --track js --problem affine-cipher
+ *   bun run research/bench-pi-vs-pum/harness.ts --track js --agents pi,pum,opencode
  *
  * Metrics per run: pass/fail, wall-clock seconds, and best-effort token usage
- * read from each agent's session files.
+ * (pi/pum from session files, opencode from its SQLite session store).
  */
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { Database } from "bun:sqlite";
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve, win32 } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, posix, resolve, win32 } from "node:path";
 
 const ROOT = resolve(dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, "$1"), "../..");
 const PI_CLI = join(ROOT, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
@@ -179,6 +181,7 @@ function args(): {
   tokens: boolean;
   piCmd: string;
   pumCmd: string;
+  opencodeCmd: string;
 } {
   const a = process.argv.slice(2);
   const out = {
@@ -192,6 +195,7 @@ function args(): {
     tokens: true,
     piCmd: process.env.PI_CMD ?? `node ${PI_CLI}`,
     pumCmd: process.env.PUM_CMD ?? `bun run ${ROOT}/src/index.tsx`,
+    opencodeCmd: process.env.OPENCODE_CMD ?? "opencode run -m litellm/ds4-ops --auto",
   };
   const readVal = (i: number) => a[i + 1];
   for (let i = 0; i < a.length; i++) {
@@ -229,6 +233,10 @@ function args(): {
         out.pumCmd = readVal(i);
         i++;
         break;
+      case "--opencode-cmd":
+        out.opencodeCmd = readVal(i);
+        i++;
+        break;
       case "--dry":
         out.dry = true;
         break;
@@ -241,11 +249,12 @@ function args(): {
   --track <t1,t2|all>   tracks to run (js,go,python,cpp,java,rust,all)
   --limit <n>           max exercises per track (default 10)
   --problem <name>      run one exercise by name
-  --agents <pi,pum>     which agents to run (default both)
+  --agents <pi,pum,opencode> which agents to run (default both)
   --work <dir>          scratch dir for the cloned repo and runs
   --timeout <sec>       per-agent timeout (default 300)
   --pi-cmd <cmd>        override the pi command
   --pum-cmd <cmd>       override the pum command
+  --opencode-cmd <cmd>  override the opencode command
   --dry                 validate plumbing without invoking the model
   --no-tokens           disable token capture`);
         process.exit(0);
@@ -375,6 +384,21 @@ function copyDir(src: string, dst: string): void {
   }
 }
 
+/**
+ * OpenCode resolves its project directory to the enclosing git worktree root,
+ * not the process cwd. Initialize a fresh git repository in the run directory
+ * so OpenCode anchors there instead of the benchmark repo, keeping each run
+ * isolated.
+ */
+function initOpenCodeGit(runDir: string): void {
+  const r = spawnSync("git", ["init", "-q"], { cwd: runDir, stdio: "ignore", windowsHide: true });
+  if (r.error || r.status !== 0) return;
+  spawnSync("git", ["config", "user.email", "bench@example.com"], { cwd: runDir, stdio: "ignore" });
+  spawnSync("git", ["config", "user.name", "bench"], { cwd: runDir, stdio: "ignore" });
+  spawnSync("git", ["add", "-A"], { cwd: runDir, stdio: "ignore" });
+  spawnSync("git", ["commit", "-qm", "init"], { cwd: runDir, stdio: "ignore" });
+}
+
 function enableTestsInDir(track: Track, runDir: string): void {
   const all = walkFiles(runDir);
   for (const f of all) {
@@ -417,6 +441,9 @@ function globMatch(glob: string, name: string): boolean {
 
 /** PUM's Windows session subdirectory name (mirrors src/platform.ts). */
 function pumSessionDirName(cwd: string): string {
+  if (process.platform !== "win32") {
+    return `--${posix.resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+  }
   const canonical = win32.resolve(cwd).toLowerCase();
   const readable = canonical
     .replace(/^\\\\/, "unc-")
@@ -434,7 +461,11 @@ function agentSessionDir(agent: string, runDir: string): string | null {
   if (agent === "pum") {
     let agentDir: string;
     if (process.env.PUM_DIR) {
-      agentDir = win32.resolve(process.env.PUM_DIR);
+      agentDir = resolve(process.env.PUM_DIR);
+    } else if (process.platform === "darwin") {
+      agentDir = join(homedir(), "Library", "Application Support", "pum");
+    } else if (process.platform !== "win32") {
+      agentDir = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "pum");
     } else {
       const base = process.env.LOCALAPPDATA ?? process.env.APPDATA ?? join(homedir(), "AppData", "Local");
       agentDir = join(base, "pum");
@@ -443,31 +474,29 @@ function agentSessionDir(agent: string, runDir: string): string | null {
   }
   if (agent === "pi") {
     const agentDir = process.env.PI_CONFIG_DIR ?? join(homedir(), ".pi", "agent");
-    const sub = `--${runDir.replace(/[/\\:]/g, "-")}--`;
+    const sub = process.platform === "win32"
+      ? `--${runDir.replace(/[/\\:]/g, "-")}--`
+      : `--${posix.resolve(runDir).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
     return join(agentDir, "sessions", sub);
   }
   return null;
 }
 
-/**
- * Sum token usage from this run's session files modified within `withinMs`.
- * pi and PUM store each run in its own subdirectory under the agent's sessions
- * dir; we target that exact subdirectory and only recent .jsonl files within it.
- */
-function collectTokens(agent: string, runDir: string, withinMs: number): number | null {
+function sessionFiles(agent: string, runDir: string): Set<string> {
+  const dir = agentSessionDir(agent, runDir);
+  if (!dir || !existsSync(dir)) return new Set();
+  return new Set(readdirSync(dir).filter((file) => file.endsWith(".jsonl")));
+}
+
+/** Sum usage from only the session file(s) created by this invocation. */
+function collectTokens(agent: string, runDir: string, before: ReadonlySet<string>): number | null {
   const dir = agentSessionDir(agent, runDir);
   if (!dir || !existsSync(dir)) return null;
   let total = 0;
   let found = false;
-  const now = Date.now();
   for (const f of readdirSync(dir)) {
-    if (!f.endsWith(".jsonl")) continue;
+    if (!f.endsWith(".jsonl") || before.has(f)) continue;
     const p = join(dir, f);
-    try {
-      if (now - statSync(p).mtimeMs > withinMs) continue;
-    } catch {
-      continue;
-    }
     for (const line of readFileSync(p, "utf8").split("\n")) {
       if (!line.trim()) continue;
       try {
@@ -487,6 +516,46 @@ function collectTokens(agent: string, runDir: string, withinMs: number): number 
   return found ? total : null;
 }
 
+/** OpenCode's global SQLite session store. */
+function opencodeDbPath(): string {
+  const dataHome = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+  return join(dataHome, "opencode", "opencode.db");
+}
+
+/**
+ * Sum usage for the OpenCode session created by this invocation. OpenCode
+ * records per-session token counters in SQLite, but it resolves `directory` to
+ * the enclosing git worktree root (not the process cwd), so we match the newest
+ * session created inside the run window instead. Runs are sequential, so the
+ * latest session row in the window is the one we just executed.
+ */
+function opencodeTokens(startedMs: number): number | null {
+  const dbPath = opencodeDbPath();
+  if (!existsSync(dbPath)) return null;
+  let db: Database | undefined;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const row = db.query(
+      `SELECT tokens_input, tokens_output, tokens_reasoning,
+              tokens_cache_read, tokens_cache_write, time_created
+         FROM session WHERE time_created >= ? ORDER BY time_created DESC LIMIT 1`,
+    ).get(startedMs - 60_000) as
+      | { tokens_input: unknown; tokens_output: unknown; tokens_reasoning: unknown;
+          tokens_cache_read: unknown; tokens_cache_write: unknown; time_created: unknown }
+      | undefined;
+    if (!row) return null;
+    // The row must genuinely belong to this invocation, not an earlier run.
+    if (Number(row.time_created) < startedMs - 60_000) return null;
+    const num = (v: unknown) => Number(v ?? 0);
+    return num(row.tokens_input) + num(row.tokens_output) + num(row.tokens_reasoning)
+      + num(row.tokens_cache_read) + num(row.tokens_cache_write);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -498,6 +567,8 @@ type RunOutcome = {
   pass?: boolean;
   seconds?: number;
   tokens?: number | null;
+  checkAttempts?: number | null;
+  checkTokens?: number | null;
   exitCode?: number | null;
   skipped?: boolean;
   reason?: string;
@@ -528,9 +599,9 @@ async function main() {
   // 2. Verify agent commands + toolchains.
   const piSpawnable = o.agents.includes("pi");
   const pumSpawnable = o.agents.includes("pum");
-  const agentChecks: string[] = [];
-  if (!piSpawnable && !pumSpawnable) {
-    console.error("No agents selected. Use --agents pi,pum");
+  const opencodeSpawnable = o.agents.includes("opencode");
+  if (!piSpawnable && !pumSpawnable && !opencodeSpawnable) {
+    console.error("No agents selected. Use --agents pi,pum,opencode");
     process.exit(1);
   }
   if (o.dry) {
@@ -541,8 +612,9 @@ async function main() {
       console.log(`[${t.id}] ${t.label}: tools ${missing.length ? "MISSING " + missing.join(",") : "ok"} | exercises ${names.length}`);
     }
     console.log("\nAgent commands:");
-    if (piSpawnable) console.log(`  pi  : ${o.piCmd} -ne -p <prompt>`);
-    if (pumSpawnable) console.log(`  pum : ${o.pumCmd} -p <prompt>`);
+    if (piSpawnable) console.log(`  pi      : ${o.piCmd} -ne -p <prompt>`);
+    if (pumSpawnable) console.log(`  pum     : ${o.pumCmd} -p <prompt>`);
+    if (opencodeSpawnable) console.log(`  opencode: ${o.opencodeCmd} <prompt>`);
     console.log("\nDry mode completes without invoking the model. Exiting.");
     return;
   }
@@ -573,19 +645,24 @@ async function main() {
     }
     console.log(`\n[${track.id}] ${track.label}: running ${chosen.length} exercises`);
 
-    for (const name of chosen) {
+    for (let exerciseIndex = 0; exerciseIndex < chosen.length; exerciseIndex++) {
+      const name = chosen[exerciseIndex]!;
       const srcDir = join(dataDir, track.dir, "exercises", "practice", name);
       const prompt = promptFor(track, srcDir) || "(no instructions file)";
       const task = `${track.id}/${name}`;
       console.log(`\n--- ${task} ---`);
 
-      for (const agent of o.agents) {
+      // Alternate the first runner so provider load and time-of-run effects do
+      // not consistently favor either agent.
+      const orderedAgents = exerciseIndex % 2 === 0 ? o.agents : [...o.agents].reverse();
+      for (const agent of orderedAgents) {
         const runDir = join(work, "runs", track.id, name, agent);
         // Fresh copy per agent so edits never leak between agents.
         rmSync(runDir, { recursive: true, force: true });
         mkdirSync(runDir, { recursive: true });
         copyDir(srcDir, runDir);
         enableTestsInDir(track, runDir);
+        if (agent === "opencode") initOpenCodeGit(runDir);
 
         const header = `You are working in a coding exercise directory. Read the existing source
 file(s), implement the required function(s), and make ALL the tests pass.
@@ -595,17 +672,36 @@ before you finish. Respond concisely.
 Instructions:
 ${prompt}`;
 
-        const cmd = agent === "pi" ? o.piCmd : o.pumCmd;
+        const cmd = agent === "pi" ? o.piCmd : agent === "opencode" ? o.opencodeCmd : o.pumCmd;
         const argv = cmd.split(" ").map((x) => x.trim()).filter(Boolean);
-        const argsForPrompt = agent === "pi" ? [...argv, "-ne", "-p", header] : [...argv, "-p", header];
+        const statsPath = join(work, "stats", track.id, name, `${agent}.json`);
+        const argsForPrompt = agent === "pi"
+          ? [...argv, "-ne", "-p", header]
+          : agent === "opencode"
+            ? [...argv, "--dir", runDir, header]
+            : [...argv, "-p", header, "--statsFile", statsPath, "--override"];
 
+        const sessionsBefore = sessionFiles(agent, runDir);
         const started = Date.now();
         const res = await run(argsForPrompt, runDir, o.timeout);
         const seconds = (Date.now() - started) / 1000;
 
         let tokens: number | null = null;
         if (o.tokens && !res.timedOut) {
-          tokens = collectTokens(agent, runDir, Math.max(30_000, o.timeout * 1000 + 10_000));
+          if (agent === "opencode") tokens = opencodeTokens(started);
+          else tokens = collectTokens(agent, runDir, sessionsBefore);
+        }
+        let checkAttempts: number | null = null;
+        let checkTokens: number | null = null;
+        if (agent === "pum" && existsSync(statsPath)) {          try {
+            const stats = JSON.parse(readFileSync(statsPath, "utf8"))?.stats;
+            const rows = Array.isArray(stats?.models)
+              ? stats.models.filter((row: any) => row?.role === "Check")
+              : [];
+            checkAttempts = rows.reduce((sum: number, row: any) => sum + Number(row.attempts ?? 0), 0);
+            checkTokens = rows.reduce((sum: number, row: any) =>
+              sum + Number(row.outgoing ?? 0) + Number(row.incoming ?? 0) + Number(row.cacheRead ?? 0), 0);
+          } catch {}
         }
 
         // Score: run the exercise tests after the agent finishes.
@@ -626,10 +722,13 @@ ${prompt}`;
           pass,
           seconds: Math.round(seconds * 100) / 100,
           tokens,
+          checkAttempts,
+          checkTokens,
           exitCode: res.code,
           reason: reason || undefined,
         });
-        console.log(`  [${agent}] ${pass ? "PASS" : "FAIL"} in ${seconds.toFixed(1)}s tokens=${tokens ?? "n/a"} exit=${res.code}${reason ? " | " + reason : ""}`);
+        const check = checkAttempts ? ` check=${checkAttempts}/${checkTokens ?? "n/a"}tok` : "";
+        console.log(`  [${agent}] ${pass ? "PASS" : "FAIL"} in ${seconds.toFixed(1)}s tokens=${tokens ?? "n/a"}${check} exit=${res.code}${reason ? " | " + reason : ""}`);
       }
     }
   }

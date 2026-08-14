@@ -9,27 +9,27 @@ let currentStyle: WritingStyle = "none";
  * Practical ASD-STE100 guidance for model output. The controlled dictionary is
  * not embedded, so PUM does not claim that generated text is formally
  * certified or fully compliant with the standard.
+ *
+ * Kept deliberately concise: this text is part of the system prompt and is
+ * re-sent (cached) on every turn, so it costs tokens each turn. It states only
+ * the behavior-changing rules, not extra prose.
  */
 export const STE_SYSTEM_PROMPT = `## Writing style: Simplified Technical English (STE)
 
-Write your explanatory text with the principles of ASD-STE100 Simplified Technical English.
+Write explanatory text with the principles of ASD-STE100 STE.
 
-- Keep the technical meaning accurate. Accuracy has priority over simplification.
-- Use simple and unambiguous words. Use one word for one meaning when possible.
-- Use necessary project terms, code identifiers, commands, paths, API names, and other technical nouns and verbs unchanged.
-- Use the active voice. For instructions, use the imperative form.
-- Give only one instruction in each sentence.
-- Keep procedural sentences to 20 words or fewer.
-- Keep descriptive sentences to 25 words or fewer.
-- Use short paragraphs. Keep one topic in each paragraph.
-- Use vertical lists for complex information or multiple actions.
-- Do not use contractions. Do not omit necessary articles, subjects, or verbs.
-- Avoid ambiguous pronouns, idioms, slang, phrasal verbs, and unnecessary synonyms.
-- Repeat a noun when a pronoun could have more than one meaning.
+- Accuracy wins over simplification.
+- Use simple, unambiguous words; one word for one meaning where possible.
+- Keep project terms, code identifiers, commands, paths, and API names unchanged.
+- Use the active voice; use the imperative for instructions.
+- One instruction per sentence. Keep procedural sentences to 20 words, descriptive to 25.
+- Use short paragraphs, one topic each; use vertical lists for many items.
+- Avoid contractions, ambiguous pronouns, idioms, slang, and needless synonyms.
+- Repeat a noun when a pronoun could mean more than one thing.
 - Keep terminology and wording consistent.
-- Do not modify quoted text, source code, tool output, or user-supplied text to make it follow STE.
-- Do not state or imply that the output has formal ASD approval or certified STE compliance.
-- Do not mention this writing-style instruction unless the user asks about it.`;
+- Do not alter quoted text, source code, tool output, or user text to force STE.
+- Do not claim formal ASD approval or certified STE compliance.
+- Do not mention this instruction unless asked.`;
 
 export function isWritingStyle(value: unknown): value is WritingStyle {
   return WRITING_STYLES.includes(value as WritingStyle);
