@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { AGENT_DIR } from "../config";
-import { analyzeCheckPolicy } from "../check-policy";
+import { analyzeCheckPolicy, analyzeExecutablePolicy } from "../check-policy";
 import { getCheckModeConfig } from "../check-mode";
 import { buildSandboxPolicy, decideSandboxMode } from "../sandbox-policy";
 import {
@@ -19,6 +19,12 @@ import {
   executeBashWithOutput,
 } from "../bash-output";
 import type { CheckModeProfile } from "../settings";
+import { NodeShellProcessAdapter } from "../shells/process";
+import type {
+  ShellProcessAdapter,
+  ShellProcessHandle,
+  ShellProcessSpawnRequest,
+} from "../shells/types";
 import type { SandboxBackend, SandboxCapability, SandboxMode } from "./types";
 import { createBubblewrapBackend } from "./linux";
 import { createWindowsSandboxBackend } from "./windows";
@@ -124,6 +130,76 @@ export class SandboxController {
   probe(): Promise<SandboxCapability> {
     return this.#probe ??= this.#backend?.probe()
       ?? Promise.resolve(unsupportedCapability(this.#platform));
+  }
+
+  /** Create the mutable native sandbox execution path used by managed shells. */
+  shellProcessAdapter(direct: ShellProcessAdapter = new NodeShellProcessAdapter()): ShellProcessAdapter {
+    const controller = this;
+    return {
+      async spawn(request: ShellProcessSpawnRequest): Promise<ShellProcessHandle> {
+        const check = getCheckModeConfig();
+        if (check.profile === "off" || controller.#mode === "off") {
+          return direct.spawn(request);
+        }
+
+        const capability = await controller.probe();
+        const decision = decideSandboxMode(controller.#mode, capability);
+        if (decision.action === "block") throw new Error(decision.reason);
+        if (decision.action === "direct") {
+          if (decision.warning) controller.#emitWarning(decision.warning);
+          return direct.spawn(request);
+        }
+        if (!controller.#backend) throw new Error("Sandbox backend is unavailable");
+
+        const result = analyzeExecutablePolicy({
+          executable: request.executable,
+          args: request.args,
+          cwd: request.cwd,
+          projectCwd: request.projectCwd,
+          profile: "balanced",
+          allowedPaths: check.additionalPaths,
+          protectedPaths: [controller.#agentDir],
+        });
+        if (!result.analysis.complete || result.analysis.truncated || !result.analysis.syntaxBalanced) {
+          throw new Error(`Sandbox policy analysis is incomplete: ${result.analysis.errors.join("; ")}`);
+        }
+        if (result.decision === "block") {
+          throw new Error(`Sandbox policy hard block: ${result.reason}`);
+        }
+
+        const executable = findExecutable(request.executable, controller.#platform);
+        const privateTemp = await mkdtemp(join(tmpdir(), "pum-shell-sandbox-"));
+        try {
+          const policy = buildSandboxPolicy({
+            command: result.exactCommand,
+            cwd: request.cwd,
+            additionalRoots: check.additionalPaths,
+            result,
+            executable,
+            args: request.args,
+            directArgv: true,
+            privateTemp,
+            environment: request.env,
+            pumConfigRoot: controller.#agentDir,
+            platform: controller.#platform,
+          });
+          const handle = controller.#backend.spawn(policy, {
+            onStdout: request.onStdout,
+            onStderr: request.onStderr,
+          });
+          const completed = handle.completed.finally(() => (
+            rm(privateTemp, { recursive: true, force: true }).catch(() => {})
+          ));
+          return {
+            completed,
+            kill() { handle.kill(); },
+          };
+        } catch (error) {
+          await rm(privateTemp, { recursive: true, force: true }).catch(() => {});
+          throw error;
+        }
+      },
+    };
   }
 
   async startupWarning(checkMode: CheckModeProfile): Promise<string | undefined> {

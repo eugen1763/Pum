@@ -209,13 +209,14 @@ export function isProcessCheckProposal(value: unknown): value is ProcessCheckPro
   if (!value || typeof value !== "object") return false;
   const proposal = value as Partial<ProcessCheckProposal>;
   return proposal.kind === "process"
-    && proposal.source === "external-trigger"
+    && ["external-trigger", "managed-shell"].includes(proposal.source ?? "")
     && typeof proposal.executable === "string"
     && Array.isArray(proposal.args)
     && proposal.args.every((argument) => typeof argument === "string")
     && typeof proposal.cwd === "string"
     && ["create", "start", "resume", "repeat", "invoke-run"].includes(proposal.operation ?? "")
-    && (proposal.triggerName === undefined || typeof proposal.triggerName === "string");
+    && (proposal.triggerName === undefined || typeof proposal.triggerName === "string")
+    && (proposal.shellName === undefined || typeof proposal.shellName === "string");
 }
 
 /** Build the exact safety identity. Display-only triggerName is intentionally omitted. */
@@ -297,7 +298,7 @@ export async function prepareCheck(
   const paths = mutation?.changedPaths ?? [];
   const processProposal = isProcessCheckProposal(input) ? input : undefined;
   const summary = processProposal
-    ? `${processProposal.operation} external trigger process: ${processProposal.executable}`
+    ? `${processProposal.operation} ${processProposal.source === "managed-shell" ? "managed shell" : "external trigger"} process: ${processProposal.executable}`
     : toolName === "bash"
       ? `Run ${bash!.stages.length} shell stage${bash!.stages.length === 1 ? "" : "s"}`
       : `Change ${paths.length} project file${paths.length === 1 ? "" : "s"} (+${mutation!.additions} −${mutation!.removals})`;
@@ -325,6 +326,7 @@ export async function prepareCheck(
       args: processProposal.args,
       cwd: processProposal.cwd,
       triggerName: processProposal.triggerName,
+      shellName: processProposal.shellName,
       analysis: bash,
     } : undefined,
     proposedMutation: mutation ? {
@@ -710,6 +712,8 @@ export type ExternalTriggerSafetyChecker = (
   signal?: AbortSignal,
 ) => Promise<void>;
 
+export type ManagedShellSafetyChecker = ExternalTriggerSafetyChecker;
+
 /** Create the process safety callback used by TriggerManager. */
 export function createExternalTriggerSafetyChecker(
   runtime: CheckerRuntime,
@@ -732,6 +736,9 @@ export function createExternalTriggerSafetyChecker(
     throw new Error(redactApprovalPreview(evaluation.reason));
   };
 }
+
+/** Create the structured process safety callback used by ShellManager. */
+export const createManagedShellSafetyChecker = createExternalTriggerSafetyChecker;
 
 export async function verifyToolCall(runtime: CheckerRuntime, call: ToolCheck): Promise<ToolBlock | undefined> {
   const evaluation = await evaluateToolCall(runtime, call);
