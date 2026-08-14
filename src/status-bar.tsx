@@ -27,6 +27,7 @@ export type StatusProps = {
   agentCount: number;
   runningAgentCount: number;
   maxActiveAgentCount: number;
+  runningShellCount?: number;
   activeAgentName?: string;
 };
 
@@ -48,7 +49,7 @@ const REMOVAL_ORDER: readonly (StatusMetadataItem["key"] | "title")[] = [
 const PULSE_GLYPH_WIDTH = 1;
 
 type WorkingMode = "full" | "compact" | "pulse" | null;
-type LeftPart = "model" | "thinking" | "agents" | "activeAgent";
+type LeftPart = "model" | "thinking" | "agents" | "shells" | "activeAgent";
 
 export type StatusBarLayout = {
   showTitle: boolean;
@@ -56,6 +57,7 @@ export type StatusBarLayout = {
   thinkingText: string | null;
   showIdleAgents: boolean;
   showRunningAgents: boolean;
+  showRunningShells: boolean;
   activeAgentText: string | null;
   workingMode: WorkingMode;
   metadata: StatusMetadataItem[];
@@ -81,6 +83,7 @@ type StatusBarLayoutInput = Pick<
   | "agentCount"
   | "runningAgentCount"
   | "maxActiveAgentCount"
+  | "runningShellCount"
   | "activeAgentName"
 > & { width: number };
 
@@ -125,6 +128,7 @@ function leftParts(input: StatusBarLayoutInput, layout: StatusBarLayout): LeftPa
   if (layout.modelText) parts.push("model");
   if (layout.thinkingText) parts.push("thinking");
   if (agentTextWidth(input, layout) > 0) parts.push("agents");
+  if (layout.showRunningShells && (input.runningShellCount ?? 0) > 0) parts.push("shells");
   if (layout.activeAgentText) parts.push("activeAgent");
   return parts;
 }
@@ -141,6 +145,9 @@ function measureLayout(input: StatusBarLayoutInput, layout: StatusBarLayout): vo
   const contentWidth = (layout.modelText ? statusTextWidth(layout.modelText) : 0) +
     (layout.thinkingText ? statusTextWidth(layout.thinkingText) : 0) +
     agentTextWidth(input, layout) +
+    (layout.showRunningShells && (input.runningShellCount ?? 0) > 0
+      ? statusTextWidth(`▣ ${input.runningShellCount}`)
+      : 0) +
     (layout.activeAgentText ? statusTextWidth(layout.activeAgentText) : 0) +
     Math.max(0, parts.length - 1) * statusTextWidth(" · ");
   layout.leftWidth = (layout.showTitle ? statusTextWidth(" pum  ") : 0) + contentWidth;
@@ -171,6 +178,7 @@ export function statusBarLayout(input: StatusBarLayoutInput): StatusBarLayout {
     thinkingText: input.thinkingLevel || null,
     showIdleAgents: true,
     showRunningAgents: true,
+    showRunningShells: true,
     activeAgentText: input.activeAgentName || null,
     workingMode: input.busy ? "full" : null,
     metadata: statusMetadataItems(input),
@@ -226,6 +234,10 @@ export function statusBarLayout(input: StatusBarLayoutInput): StatusBarLayout {
     measureLayout(input, layout);
   }
   truncateLayoutField(input, layout, "activeAgentText");
+  if (layout.totalWidth > input.width) {
+    layout.showRunningShells = false;
+    measureLayout(input, layout);
+  }
   if (layout.totalWidth > input.width) {
     layout.showRunningAgents = false;
     measureLayout(input, layout);
@@ -293,6 +305,7 @@ export function StatusBar(props: StatusProps) {
               {part === "model" ? <text content={layout.modelText!} fg={theme.fg} wrapMode="none" /> : null}
               {part === "thinking" ? <text content={layout.thinkingText!} fg={theme.dim} wrapMode="none" /> : null}
               {part === "activeAgent" ? <text content={layout.activeAgentText!} fg={theme.dim} wrapMode="none" /> : null}
+              {part === "shells" ? <text content={`▣ ${props.runningShellCount ?? 0}`} fg={theme.warn} wrapMode="none" /> : null}
               {part === "agents" ? (
                 <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
                   {layout.showIdleAgents && idleAgentCount > 0

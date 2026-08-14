@@ -39,7 +39,11 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "/triggers",
-    description: "Manage external triggers",
+    description: "Open Processes on the Triggers tab",
+  },
+  {
+    name: "/processes",
+    description: "Manage external triggers and shells",
   },
   {
     name: "/worktree",

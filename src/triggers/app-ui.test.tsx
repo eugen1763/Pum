@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App } from "../app";
+import type { ManagedShellSnapshot, ShellManagerLike } from "../processes-popup";
 import type { TriggerManagerLike, TriggerSnapshot } from "./popup";
 
 let destroy: (() => void) | undefined;
@@ -110,6 +111,33 @@ async function renderApp(options: { loginRequired?: boolean } = {}) {
     invoke: (id) => { calls.push(`run:${id}`); },
     cancel: (id) => { calls.push(`cancel:${id}`); },
   };
+  const shells: ManagedShellSnapshot[] = [{
+    id: "shell-api",
+    name: "API server",
+    state: "running",
+    owner: { sessionId: "session-1", agentId: null, label: "main" },
+    executable: "server",
+    args: ["--port", "8080"],
+    cwd: "/tmp/project",
+    createdAt: 100,
+    startedAt: 110,
+    finishedAt: null,
+    exitCode: null,
+    signal: null,
+    ready: true,
+    readyAt: 120,
+    output: { path: "/tmp/shell-api", bytes: 6, truncated: false, exists: true },
+  }];
+  const shellManager: ShellManagerLike = {
+    subscribe: () => () => {},
+    list: () => shells,
+    inspect: (id) => shells.find((shell) => shell.id === id)!,
+    getOutput: async (id) => ({ shell: shells.find((shell) => shell.id === id)!, tail: "ready\n" }),
+    terminate: async (id) => {
+      calls.push(`kill:${id}`);
+      return shells.find((shell) => shell.id === id)!;
+    },
+  };
   const subagentManager = {
     getAgents: () => [],
     subscribe: () => () => {},
@@ -128,6 +156,7 @@ async function renderApp(options: { loginRequired?: boolean } = {}) {
       searchProviders={[]}
       subagentManager={subagentManager}
       triggerManager={triggerManager}
+      shellManager={shellManager}
       loginRequired={options.loginRequired}
       promptHistoryStore={{ load: () => [], append: () => [], remove: () => [] }}
       promptStashStore={{
@@ -151,7 +180,7 @@ describe("external trigger App controls", () => {
     setup.mockInput.pressKey("t", { ctrl: true });
     await settle(setup);
     let frame = setup.captureCharFrame();
-    expect(frame).toContain("External triggers");
+    expect(frame).toContain("Processes");
     expect(frame.indexOf("First trigger")).toBeLessThan(frame.indexOf("Later trigger"));
 
     setup.mockInput.pressKey("p");
@@ -173,12 +202,12 @@ describe("external trigger App controls", () => {
     await setup.mockInput.typeText("/triggers");
     setup.mockInput.pressEnter();
     await settle(setup);
-    expect(setup.captureCharFrame()).toContain("External triggers");
+    expect(setup.captureCharFrame()).toContain("Processes");
     expect(setup.captureCharFrame()).not.toContain("❯ /triggers");
 
     setup.mockInput.pressEscape();
     await settle(setup);
-    expect(setup.captureCharFrame()).not.toContain("External triggers");
+    expect(setup.captureCharFrame()).not.toContain("Processes");
 
     await setup.mockInput.typeText("focused again");
     await settle(setup);
@@ -195,7 +224,7 @@ describe("external trigger App controls", () => {
     setup.mockInput.pressEscape();
     await settle(setup);
 
-    expect(setup.captureCharFrame()).not.toContain("External triggers");
+    expect(setup.captureCharFrame()).not.toContain("Processes");
     expect(setup.captureCharFrame()).not.toContain("esc again to cancel");
     expect(aborts()).toBe(0);
   });
@@ -207,6 +236,21 @@ describe("external trigger App controls", () => {
     setup.mockInput.pressKey("t", { ctrl: true });
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("Login");
-    expect(setup.captureCharFrame()).not.toContain("External triggers");
+    expect(setup.captureCharFrame()).not.toContain("Processes");
+  });
+
+  test("switches to Shells and kills the selected running shell", async () => {
+    const { setup, calls } = await renderApp();
+
+    setup.mockInput.pressKey("t", { ctrl: true });
+    await settle(setup);
+    setup.mockInput.pressArrow("right");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("API server");
+    expect(setup.captureCharFrame()).toContain("ready");
+
+    setup.mockInput.pressKey("k");
+    await settle(setup);
+    expect(calls).toContain("kill:shell-api");
   });
 });
