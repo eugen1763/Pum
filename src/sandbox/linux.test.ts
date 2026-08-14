@@ -111,14 +111,30 @@ describe("Linux Bubblewrap sandbox", () => {
     expect(args).toContain("--unshare-net");
   });
 
-  test("masks missing denied paths as read-only files so they cannot be created", () => {
+  test("remounts the existing parent of a missing denied file without creating a host placeholder", () => {
     const args = buildBubblewrapArgv(policy({ deniedPaths: ["/work/project/.env"] }), {
       systemMounts: ["/usr"],
-      pathKind: () => undefined,
+      pathKind: (path) => path === "/work/project" ? "directory" : undefined,
     });
-    const index = args.findIndex((value, offset) => value === "--ro-bind"
-      && args[offset + 1] === "/dev/null" && args[offset + 2] === "/work/project/.env");
-    expect(index).toBeGreaterThan(-1);
+    const writableIndex = args.indexOf("--bind");
+    const remountIndex = args.findIndex((value, offset) => value === "--remount-ro"
+      && args[offset + 1] === "/work/project");
+    expect(remountIndex).toBeGreaterThan(writableIndex);
+    expect(args).not.toContain("/work/project/.env");
+  });
+
+  test("remounts the nearest existing ancestor for a nested missing denied file", () => {
+    const args = buildBubblewrapArgv(policy({ deniedPaths: ["/work/project/cache/private/key"] }), {
+      systemMounts: ["/usr"],
+      pathKind: (path) => path === "/work/project/cache" || path === "/work/project"
+        ? "directory"
+        : undefined,
+    });
+    const writableIndex = args.indexOf("--bind");
+    const remountIndex = args.findIndex((value, offset) => value === "--remount-ro"
+      && args[offset + 1] === "/work/project/cache");
+    expect(remountIndex).toBeGreaterThan(writableIndex);
+    expect(args).not.toContain("/work/project/cache/private/key");
   });
 
   test("uses the host network only when the policy permits it", () => {
