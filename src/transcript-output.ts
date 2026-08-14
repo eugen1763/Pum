@@ -3,18 +3,15 @@ import {
   minimalTranscriptLines,
   type MinimalTranscriptLine,
 } from "./output-minimal";
+import { normalizeOutputMode, type OutputMode } from "./settings";
 
-/** Transcript presentation modes persisted by PUM settings. */
-export type TranscriptOutputMode = "minimal" | "default" | "detailed";
-
-export const TRANSCRIPT_OUTPUT_MODES = ["minimal", "default", "detailed"] as const;
+/** Alias kept at the transcript boundary to avoid coupling renderers to settings storage. */
+export type TranscriptOutputMode = OutputMode;
 
 /** Read the mode defensively while older settings and test fixtures omit it. */
 export function transcriptOutputMode(settings: unknown): TranscriptOutputMode {
   const value = (settings as { outputMode?: unknown } | null)?.outputMode;
-  return TRANSCRIPT_OUTPUT_MODES.includes(value as TranscriptOutputMode)
-    ? value as TranscriptOutputMode
-    : "default";
+  return normalizeOutputMode(value);
 }
 
 /**

@@ -853,6 +853,7 @@ export class SubagentManager {
             arg: toolArg(event.toolName, event.args, record.snapshot.worktree.path),
             state: "running",
             startedAt: Date.now(),
+            input: event.args,
           },
         });
         break;
@@ -879,6 +880,8 @@ export class SubagentManager {
                   ? messageCacheDetail(event.result)
                   : undefined,
           exitCode: bashResult.exitCode,
+          result: event.result,
+          isError: event.isError,
         });
         break;
       }

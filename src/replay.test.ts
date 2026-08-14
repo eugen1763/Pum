@@ -170,7 +170,7 @@ describe("subagent transcript replay", () => {
       },
     ], process.cwd(), true);
 
-    expect(lines[0]).toEqual({
+    expect(lines[0]).toMatchObject({
       kind: "tool",
       call: {
         id: "patch-1",
@@ -212,7 +212,7 @@ describe("subagent transcript replay", () => {
       },
     ], "/repo", true);
 
-    expect(lines[0]).toEqual({
+    expect(lines[0]).toMatchObject({
       kind: "tool",
       call: {
         id: "read-1",
@@ -249,7 +249,7 @@ describe("subagent transcript replay", () => {
       },
     ], process.cwd(), true);
 
-    expect(lines[0]).toEqual({
+    expect(lines[0]).toMatchObject({
       kind: "tool",
       call: {
         id: "bash-1",
