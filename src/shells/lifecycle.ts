@@ -3,11 +3,12 @@ import {
   MANAGED_SHELL_CUSTOM_TYPE,
   type ManagedShellCompletionMessage,
   type ManagedShellLifecycleEvent,
-  type ManagedShellOwnerSelector,
+  type ShellOwner,
+  type ShellSnapshot,
 } from "./types";
 
 export type ManagedShellLifecyclePersistence = {
-  append(owner: ManagedShellOwnerSelector, customType: string, data: unknown): void;
+  append(owner: ShellOwner, customType: string, data: unknown): Promise<void> | void;
 };
 
 export type ManagedShellCompletionDelivery = {
@@ -33,23 +34,23 @@ export class ManagedShellLifecycleController {
     private readonly delivery: ManagedShellCompletionDelivery,
   ) {}
 
-  record(event: ManagedShellLifecycleEvent): void {
-    this.persistence.append(event.owner, MANAGED_SHELL_CUSTOM_TYPE, event);
+  async record(event: ManagedShellLifecycleEvent): Promise<void> {
+    await this.persistence.append(event.owner, MANAGED_SHELL_CUSTOM_TYPE, event);
   }
 
   async recordExit(event: ManagedShellLifecycleEvent, intentional: boolean): Promise<void> {
-    if (!intentional && event.state !== "exited") {
-      throw new Error("A natural managed-shell exit must use the exited state");
+    if (!intentional && !["exited", "failed"].includes(event.state)) {
+      throw new Error("A natural managed-shell exit must use the exited or failed state");
     }
-    if (intentional && event.state !== "killed") {
-      throw new Error("An intentional managed-shell exit must use the killed state");
+    if (intentional && event.state !== "terminated") {
+      throw new Error("An intentional managed-shell exit must use the terminated state");
     }
 
     const noticeId = event.noticeId ?? `managed-shell-exit:${event.shellId}`;
     const persisted = { ...event, noticeId };
     if (!this.terminalRecorded.has(noticeId)) {
       this.terminalRecorded.add(noticeId);
-      this.record(persisted);
+      await this.record(persisted);
     }
     if (intentional || this.delivered.has(noticeId)) return;
 
@@ -86,6 +87,32 @@ export class ManagedShellLifecycleController {
       if (typeof id === "string") this.delivered.add(id);
     }
   }
+}
+
+export function lifecycleEventFromSnapshot(
+  snapshot: ShellSnapshot,
+  tail?: string,
+): ManagedShellLifecycleEvent {
+  const finishedAt = snapshot.finishedAt;
+  return {
+    version: 1,
+    shellId: snapshot.id,
+    name: snapshot.name,
+    owner: { ...snapshot.owner },
+    state: snapshot.state === "running" || snapshot.state === "starting"
+      ? "started"
+      : snapshot.state,
+    executable: snapshot.executable,
+    args: [...snapshot.args],
+    cwd: snapshot.cwd,
+    at: finishedAt ?? snapshot.startedAt,
+    startedAt: snapshot.startedAt,
+    finishedAt,
+    runtimeMs: finishedAt === null ? null : Math.max(0, finishedAt - snapshot.startedAt),
+    exitCode: snapshot.exitCode,
+    signal: snapshot.signal,
+    output: { ...snapshot.output, ...(tail === undefined ? {} : { tail }) },
+  };
 }
 
 export function completionText(event: ManagedShellLifecycleEvent): string {

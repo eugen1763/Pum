@@ -45,6 +45,11 @@ export const READONLY_CHILD_OMITTED_TOOL_NAMES = [
   "message_cache_add",
   "message_cache_delete",
   "message_cache_send",
+  "start_shell",
+  "list_shells",
+  "inspect_shell",
+  "get_shell_output",
+  "kill_shell",
 ] as const;
 
 /**
@@ -79,11 +84,20 @@ export const SUBAGENTS_GROUP_TOOL_NAMES = [
 /** Worktree group. */
 export const WORKTREE_GROUP_TOOL_NAMES = ["worktree"] as const;
 
+/** Managed background shell group. Readonly children omit the complete group. */
+export const SHELLS_GROUP_TOOL_NAMES = [
+  "start_shell",
+  "list_shells",
+  "inspect_shell",
+  "get_shell_output",
+  "kill_shell",
+] as const;
+
 /**
  * The hidden groups. There is no News group because PUM has no news model
  * tool (news.ts is a UI-only feature), so that group would contain zero tools.
  */
-export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree"] as const;
+export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree", "Shells"] as const;
 
 export type ToolGroupName = (typeof TOOL_GROUP_NAMES)[number];
 
@@ -99,6 +113,7 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, ToolGroupDefinition>> =
   Admin: { label: "Admin", toolNames: ADMIN_GROUP_TOOL_NAMES },
   Subagents: { label: "Subagents", toolNames: SUBAGENTS_GROUP_TOOL_NAMES },
   Worktree: { label: "Worktree", toolNames: WORKTREE_GROUP_TOOL_NAMES },
+  Shells: { label: "Shells", toolNames: SHELLS_GROUP_TOOL_NAMES },
 };
 
 /** Union of every optional tool name across all hidden groups. */
@@ -106,6 +121,7 @@ export const ALL_GROUP_TOOL_NAMES: readonly string[] = [
   ...ADMIN_GROUP_TOOL_NAMES,
   ...SUBAGENTS_GROUP_TOOL_NAMES,
   ...WORKTREE_GROUP_TOOL_NAMES,
+  ...SHELLS_GROUP_TOOL_NAMES,
 ];
 
 /** The tool names a session of an audience may expose (the allowlist). */

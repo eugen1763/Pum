@@ -26,6 +26,7 @@ function exitEvent(overrides: Partial<ManagedShellLifecycleEvent> = {}): Managed
       path: "/tmp/pum-shells/shell-1/output.log",
       bytes: 42,
       truncated: false,
+      exists: true,
       tail: "server failed",
     },
     ...overrides,
@@ -95,7 +96,7 @@ describe("managed shell lifecycle", () => {
     );
 
     await lifecycle.recordExit(exitEvent({
-      state: "killed",
+      state: "terminated",
       exitCode: null,
       signal: "SIGTERM",
     }), true);

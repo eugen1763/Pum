@@ -21,7 +21,7 @@ function event(state: ManagedShellLifecycleEvent["state"]): ManagedShellLifecycl
     finishedAt: state === "started" ? null : 2,
     runtimeMs: state === "started" ? null : 1,
     exitCode: state === "exited" ? 0 : null,
-    signal: state === "killed" ? "SIGTERM" : null,
+    signal: state === "terminated" ? "SIGTERM" : null,
   };
 }
 
@@ -59,16 +59,16 @@ describe("managed shell replay", () => {
     ]);
   });
 
-  test("replays intentional kills without a synthetic unavailable row", () => {
+  test("replays intentional termination without a synthetic unavailable row", () => {
     const lines = replayEntries([
       { type: "custom", customType: MANAGED_SHELL_CUSTOM_TYPE, data: event("started") },
-      { type: "custom", customType: MANAGED_SHELL_CUSTOM_TYPE, data: event("killed") },
+      { type: "custom", customType: MANAGED_SHELL_CUSTOM_TYPE, data: event("terminated") },
     ], "/repo", true);
 
     expect(lines.at(-1)).toEqual({
       kind: "text",
       role: "system",
-      text: "Managed shell watch (shell-1) was killed intentionally.",
+      text: "Managed shell watch (shell-1) was terminated intentionally.",
     });
   });
 

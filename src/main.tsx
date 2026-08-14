@@ -52,6 +52,16 @@ import {
   filesystemSandboxExtension,
 } from "./filesystem-sandbox";
 import { SessionStatsManager } from "./session-stats";
+import { ShellManager } from "./shells/manager";
+import {
+  NodeShellFileOperations,
+  NodeShellProcessAdapter,
+  systemShellClock,
+} from "./shells/process";
+import {
+  ManagedShellLifecycleController,
+  lifecycleEventFromSnapshot,
+} from "./shells/lifecycle";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -100,6 +110,33 @@ export async function start(options: StartupOptions): Promise<void> {
     });
   });
   let subagentManager!: SubagentManager;
+  const shellLifecycle = new ManagedShellLifecycleController(
+    {
+      append: (_owner, _customType, data) =>
+        subagentManager.persistManagedShellEvent(data as any),
+    },
+    {
+      deliver: (message) => subagentManager.deliverManagedShellCompletion(message.details),
+    },
+  );
+  const startedShells = new Set<string>();
+  const shellManager = new ShellManager({
+    process: new NodeShellProcessAdapter(),
+    files: new NodeShellFileOperations(),
+    clock: systemShellClock,
+    async onCompleted(snapshot) {
+      const output = await shellManager.getOutput(snapshot.id, { lineLimit: 200 }).catch(() => undefined);
+      const event = lifecycleEventFromSnapshot(snapshot, output?.tail);
+      await shellLifecycle.recordExit(event, snapshot.state === "terminated");
+    },
+  });
+  shellManager.subscribe((event) => {
+    if (event.type !== "changed"
+      || !["starting", "running"].includes(event.snapshot.state)
+      || startedShells.has(event.snapshot.id)) return;
+    startedShells.add(event.snapshot.id);
+    void shellLifecycle.record(lifecycleEventFromSnapshot(event.snapshot));
+  });
   const triggerManager = new TriggerManager({
     process: new NodeTriggerProcessAdapter(),
     clock: systemTriggerClock,
@@ -151,6 +188,7 @@ export async function start(options: StartupOptions): Promise<void> {
     messageCacheController,
     statsManager,
     triggerManager,
+    shellManager,
     childExtensionFactories: [
       identityExtension,
       writingStyleExtension,
@@ -239,6 +277,7 @@ export async function start(options: StartupOptions): Promise<void> {
       selectionClipboard.dispose();
       cleanupPendingImages();
     },
+    shutdownShells: () => shellManager.shutdown(),
     shutdownTriggers: () => triggerManager.shutdown(),
     dispose: () => sessionRuntime.dispose(),
     destroy: async () => {

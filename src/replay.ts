@@ -80,7 +80,7 @@ function managedShellEventOf(entry: any): ManagedShellLifecycleEvent | undefined
     || typeof data.owner?.sessionId !== "string"
     || (data.owner.agentId !== null && typeof data.owner.agentId !== "string")
     || typeof data.owner.label !== "string"
-    || !["started", "exited", "killed", "unavailable"].includes(data.state)
+    || !["started", "exited", "failed", "terminated", "unavailable"].includes(data.state)
     || typeof data.executable !== "string"
     || !Array.isArray(data.args)
     || data.args.some((arg: unknown) => typeof arg !== "string")
@@ -110,12 +110,14 @@ function managedShellReplayText(event: ManagedShellLifecycleEvent): string {
   if (event.state === "started") {
     return `${label} started: ${[event.executable, ...event.args].join(" ")}`;
   }
-  if (event.state === "killed") return `${label} was killed intentionally.`;
+  if (event.state === "terminated") return `${label} was terminated intentionally.`;
   if (event.state === "unavailable") {
     return `${label} became unavailable${event.reason ? `: ${event.reason}` : "."}`;
   }
   const result = event.signal ? `signal ${event.signal}` : `exit code ${event.exitCode ?? "unknown"}`;
-  return `${label} exited with ${result}.`;
+  return event.state === "failed"
+    ? `${label} failed with ${result}.`
+    : `${label} exited with ${result}.`;
 }
 
 function toolEventOf(entry: any): ToolCall | undefined {

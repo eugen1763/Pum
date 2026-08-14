@@ -586,11 +586,10 @@ describe("SubagentManager extension", () => {
     const manager = new SubagentManager({
       modelRuntime: {} as any,
       agentDir: "/tmp/pum-test",
-      managedShellLifecycle: {
-        async invalidateOwner(owner, reason) { invalidated.push({ owner, reason }); },
+      shellManager: {
+        async invalidateAgent(sessionId: string, agentId: string) { invalidated.push({ sessionId, agentId }); },
         async invalidateSession() {},
-        async shutdown() {},
-      },
+      } as any,
     });
     addTestAgent(manager, "shell-owner", "idle");
     const record = (manager as any).records.get("shell-owner");
@@ -600,8 +599,8 @@ describe("SubagentManager extension", () => {
     await manager.stop("shell-owner");
 
     expect(invalidated).toEqual([{
-      owner: { sessionId: "child-session", agentId: "shell-owner" },
-      reason: "the owning subagent became unavailable",
+      sessionId: "child-session",
+      agentId: "shell-owner",
     }]);
   });
 
@@ -610,11 +609,10 @@ describe("SubagentManager extension", () => {
     const manager = new SubagentManager({
       modelRuntime: {} as any,
       agentDir: "/tmp/pum-test",
-      managedShellLifecycle: {
-        async invalidateOwner() {},
-        async invalidateSession(sessionId, reason) { invalidated.push({ sessionId, reason }); },
-        async shutdown() {},
-      },
+      shellManager: {
+        async invalidateAgent() {},
+        async invalidateSession(sessionId: string) { invalidated.push(sessionId); },
+      } as any,
     });
     const first = {
       getSessionId: () => "main-one",
@@ -631,10 +629,7 @@ describe("SubagentManager extension", () => {
     await manager.attachMain(api, first as any, "/repo");
     await manager.attachMain(api, second as any, "/repo");
 
-    expect(invalidated).toEqual([{
-      sessionId: "main-one",
-      reason: "the owning session was replaced",
-    }]);
+    expect(invalidated).toEqual(["main-one"]);
   });
 
   test("recognizes completion-only messages without blocking actionable communication", () => {
