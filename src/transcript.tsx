@@ -15,6 +15,7 @@ import {
 } from "./animation";
 import type { Theme } from "./theme";
 import { bashOutputWindow, type ToolCall } from "./tool-line";
+import type { TranscriptOutputMode } from "./transcript-output";
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
@@ -449,10 +450,16 @@ export function ToolLine({
   theme,
   call,
   workingCaret = false,
+  outputMode: _outputMode = "default",
+  syntaxStyle: _syntaxStyle,
 }: {
   theme: Theme;
   call: ToolCall;
   workingCaret?: boolean;
+  /** Detailed-mode renderers use this without changing canonical call data. */
+  outputMode?: TranscriptOutputMode;
+  /** Detailed result previews use the current semantic syntax style. */
+  syntaxStyle?: SyntaxStyle;
 }) {
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";

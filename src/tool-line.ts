@@ -15,6 +15,12 @@ export type ToolCall = {
   startedAt?: number;
   /** Nonzero Bash process exit code, when the result provides one. */
   exitCode?: number;
+  /** Canonical model-authored input retained for display-mode regeneration. */
+  input?: unknown;
+  /** Canonical tool result retained for display-mode regeneration. */
+  result?: unknown;
+  /** True when the retained result represents a failed tool execution. */
+  isError?: boolean;
 };
 
 /** Extract the cumulative text payload from a Bash progress result. */

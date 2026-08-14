@@ -262,6 +262,7 @@ export function replayEntries(
             name: block.name,
             arg: toolArg(block.name, block.arguments, cwd),
             state: "ok",
+            input: block.arguments,
           };
           calls.set(block.id, call);
           lines.push({ kind: "tool", call });
@@ -273,6 +274,8 @@ export function replayEntries(
     if (message?.role === "toolResult") {
       const call = calls.get(message.toolCallId);
       if (call) {
+        call.result = message;
+        call.isError = message.isError === true;
         call.state = isRejectedToolResult(message)
           ? "rejected"
           : message.isError
