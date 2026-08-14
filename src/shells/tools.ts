@@ -52,6 +52,7 @@ export type StartShellManagerInput = {
   executable: string;
   args: string[];
   cwd: string;
+  projectCwd: string;
   env?: Readonly<Record<string, string>>;
   owner: ShellOwner;
 };
@@ -265,6 +266,7 @@ export function registerShellTools(
         executable: input.executable,
         args: [...input.args],
         cwd: input.cwd ?? actor.cwd,
+        projectCwd: actor.cwd,
         env: input.env,
         owner,
       });

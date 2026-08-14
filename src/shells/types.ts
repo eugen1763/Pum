@@ -44,6 +44,8 @@ export type CreateShellInput = {
   executable: string;
   args?: readonly string[];
   cwd: string;
+  /** Authoritative owning project or worktree boundary. */
+  projectCwd?: string;
   env?: Readonly<Record<string, string>>;
   waitFor?: string;
   waitTimeoutMs?: number;
@@ -55,6 +57,7 @@ export type ShellProcessSpawnRequest = {
   executable: string;
   args: readonly string[];
   cwd: string;
+  projectCwd: string;
   env: Readonly<Record<string, string>>;
   onStdout(chunk: Uint8Array): void;
   onStderr(chunk: Uint8Array): void;
@@ -66,7 +69,26 @@ export interface ShellProcessHandle {
 }
 
 export interface ShellProcessAdapter {
-  spawn(request: ShellProcessSpawnRequest): ShellProcessHandle;
+  spawn(request: ShellProcessSpawnRequest): ShellProcessHandle | Promise<ShellProcessHandle>;
+}
+
+export type ShellSafetyRequest = {
+  proposal: {
+    kind: "process";
+    source: "managed-shell";
+    executable: string;
+    args: readonly string[];
+    cwd: string;
+    operation: "start";
+    shellName?: string;
+  };
+  requester:
+    | { kind: "main"; sessionId: string; cwd: string }
+    | { kind: "subagent"; sessionId: string; agentId: string; cwd: string };
+};
+
+export interface ShellSafetyChecker {
+  check(request: ShellSafetyRequest): Promise<void> | void;
 }
 
 export interface ShellOutputWriter {
@@ -109,6 +131,7 @@ export type ShellManagerOptions = {
   process: ShellProcessAdapter;
   files: ShellFileOperations;
   clock: ShellClock;
+  safety?: ShellSafetyChecker;
   environment?: Readonly<Record<string, string | undefined>>;
   runningLimit?: number;
   retainedLimit?: number;

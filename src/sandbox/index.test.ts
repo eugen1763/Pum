@@ -7,6 +7,7 @@ import { SandboxController } from "./index";
 import { setCheckModeConfig } from "../check-mode";
 import { DEFAULT_CHECK_MODEL } from "../check-mode";
 import { pathsHaveSameIdentity } from "../platform";
+import type { ShellProcessAdapter, ShellProcessSpawnRequest } from "../shells/types";
 
 function context(cwd: string) {
   return {
@@ -226,5 +227,100 @@ describe("sandbox Bash override", () => {
     const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: "linux" });
     expect(await controller.startupWarning("off")).toBeUndefined();
     expect(mock.probeCount()).toBe(0);
+  });
+});
+
+function shellRequest(overrides: Partial<ShellProcessSpawnRequest> = {}): ShellProcessSpawnRequest {
+  return {
+    executable: "git",
+    args: ["status", "--short"],
+    cwd: process.cwd(),
+    projectCwd: process.cwd(),
+    env: { PATH: process.env.PATH ?? "" },
+    onStdout() {},
+    onStderr() {},
+    ...overrides,
+  };
+}
+
+function directShellAdapter() {
+  const requests: ShellProcessSpawnRequest[] = [];
+  const value: ShellProcessAdapter = {
+    spawn(request) {
+      requests.push(request);
+      return {
+        completed: Promise.resolve({ exitCode: 0, signal: null }),
+        kill() {},
+      };
+    },
+  };
+  return { value, requests };
+}
+
+describe("managed shell sandbox adapter", () => {
+  test("uses direct argv without probing when Check mode is off", async () => {
+    setCheckModeConfig({ profile: "off", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    const mock = backend({ state: "enforced", backend: process.platform === "win32" ? "mxc" : "bubblewrap" });
+    const direct = directShellAdapter();
+    const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: process.platform });
+
+    const handle = await controller.shellProcessAdapter(direct.value).spawn(shellRequest());
+    await handle.completed;
+    expect(direct.requests).toHaveLength(1);
+    expect(mock.probeCount()).toBe(0);
+    expect(mock.policies).toEqual([]);
+  });
+
+  test("uses direct fallback and emits one warning in Auto mode", async () => {
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    const mock = backend({ state: "unavailable", backend: "bubblewrap", reason: "bwrap was not found" });
+    const direct = directShellAdapter();
+    const warnings: string[] = [];
+    const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: "linux" });
+    controller.subscribeWarnings((warning) => warnings.push(warning));
+
+    await (await controller.shellProcessAdapter(direct.value).spawn(shellRequest())).completed;
+    expect(direct.requests).toHaveLength(1);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("deterministic Check mode only");
+  });
+
+  test("blocks in Require mode when native enforcement is unavailable", async () => {
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    const mock = backend({ state: "unavailable", backend: "mxc", reason: "CreateProcessInSandbox unavailable" });
+    const direct = directShellAdapter();
+    const controller = new SandboxController({ backend: mock.value, mode: "require", platform: "win32" });
+
+    await expect(controller.shellProcessAdapter(direct.value).spawn(shellRequest()))
+      .rejects.toThrow("Sandbox enforcement is required");
+    expect(direct.requests).toEqual([]);
+    expect(mock.policies).toEqual([]);
+  });
+
+  test("builds a native direct-argv policy without shell transport", async () => {
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    const mock = backend({ state: "enforced", backend: process.platform === "win32" ? "mxc" : "bubblewrap" });
+    const direct = directShellAdapter();
+    const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: process.platform });
+
+    await (await controller.shellProcessAdapter(direct.value).spawn(shellRequest())).completed;
+    expect(direct.requests).toEqual([]);
+    expect(mock.policies).toHaveLength(1);
+    expect(mock.policies[0]!.exactCommand).toBe(JSON.stringify(["git", "status", "--short"]));
+    expect(mock.policies[0]!.args).toEqual(["status", "--short"]);
+    expect(mock.policies[0]!.readWritePaths.map((path) => path.toLowerCase()))
+      .toContain(process.cwd().toLowerCase());
+  });
+
+  test("blocks a deterministic project-boundary violation before spawning", async () => {
+    setCheckModeConfig({ profile: "on", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    const mock = backend({ state: "enforced", backend: process.platform === "win32" ? "mxc" : "bubblewrap" });
+    const direct = directShellAdapter();
+    const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: process.platform });
+
+    await expect(controller.shellProcessAdapter(direct.value).spawn(shellRequest({ cwd: tmpdir() })))
+      .rejects.toThrow("Sandbox policy hard block");
+    expect(direct.requests).toEqual([]);
+    expect(mock.policies).toEqual([]);
   });
 });

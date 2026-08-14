@@ -183,6 +183,21 @@ export class ShellManager implements PublicShellManager {
     const createdAt = this.clock.now();
     let writer: ShellOutputWriter | undefined;
     try {
+      const projectCwd = input.projectCwd ?? input.cwd;
+      await this.options.safety?.check({
+        proposal: {
+          kind: "process",
+          source: "managed-shell",
+          executable: input.executable,
+          args: input.args ?? [],
+          cwd: input.cwd,
+          operation: "start",
+          shellName: input.name,
+        },
+        requester: input.owner.agentId === null
+          ? { kind: "main", sessionId: input.owner.sessionId, cwd: projectCwd }
+          : { kind: "subagent", sessionId: input.owner.sessionId, agentId: input.owner.agentId, cwd: projectCwd },
+      });
       writer = await this.options.files.createPrivateOutput(id);
       this.assertOpen();
     } catch (error) {
@@ -240,10 +255,11 @@ export class ShellManager implements PublicShellManager {
 
     try {
       const environment = sanitizeShellEnvironment(this.options.environment ?? process.env, input.env);
-      record.handle = this.options.process.spawn({
+      record.handle = await this.options.process.spawn({
         executable: input.executable,
         args: input.args ?? [],
         cwd: input.cwd,
+        projectCwd: input.projectCwd ?? input.cwd,
         env: environment,
         onStdout: (chunk) => this.capture(record, "stdout", chunk),
         onStderr: (chunk) => this.capture(record, "stderr", chunk),

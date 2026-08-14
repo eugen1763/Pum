@@ -27,6 +27,8 @@ export type BuildSandboxPolicyOptions = {
   args: readonly string[];
   /** The resolved shell receives the exact command on stdin instead of argv. */
   stdin?: boolean;
+  /** Execute the resolved program with direct arguments instead of shell command transport. */
+  directArgv?: boolean;
   /** Private temporary directory prepared by the controller. */
   privateTemp: string;
   environment?: Readonly<Record<string, string | undefined>>;
@@ -151,7 +153,7 @@ export function buildSandboxPolicy(options: BuildSandboxPolicyOptions): SandboxP
   if (!options.executable || options.executable.includes("\0")) throw new Error("Sandbox executable is invalid");
   if (!pathApi(options.cwd, platform).isAbsolute(options.executable)) throw new Error("Sandbox executable must be resolved");
   if (options.args.some((argument) => argument.includes("\0"))) throw new Error("Sandbox arguments are invalid");
-  if (!options.stdin && !options.args.includes(executionCommand)) {
+  if (!options.stdin && !options.directArgv && !options.args.includes(executionCommand)) {
     throw new Error("Sandbox arguments must contain the exact command");
   }
   if (!options.result.analysis.complete || options.result.analysis.truncated || !options.result.analysis.syntaxBalanced) {

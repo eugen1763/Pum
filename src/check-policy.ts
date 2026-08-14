@@ -144,7 +144,7 @@ export type ProcessCheckOperation = "create" | "start" | "resume" | "repeat" | "
 
 export type ProcessCheckProposal = {
   kind: "process";
-  source: "external-trigger";
+  source: "external-trigger" | "managed-shell";
   executable: string;
   /** Process arguments. The executable is not included. */
   args: readonly string[];
@@ -152,6 +152,8 @@ export type ProcessCheckProposal = {
   operation: ProcessCheckOperation;
   /** Display context only. This field is not part of the safety identity. */
   triggerName?: string;
+  /** Display context only. This field is not part of the safety identity. */
+  shellName?: string;
 };
 
 export type AnalyzeExecutablePolicyOptions = Pick<ProcessCheckProposal, "executable" | "args" | "cwd"> & {

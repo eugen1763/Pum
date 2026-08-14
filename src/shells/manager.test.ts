@@ -96,6 +96,7 @@ function harness(overrides: Partial<ShellManagerOptions> & {
     },
     files,
     clock,
+    safety: overrides.safety,
     environment: overrides.environment ?? { PATH: "/bin", HOME: "/home/test", NODE_OPTIONS: "unsafe" },
     runningLimit: overrides.runningLimit,
     retainedLimit: overrides.retainedLimit,
@@ -112,6 +113,36 @@ async function flush(rounds = 12): Promise<void> {
 }
 
 describe("ShellManager", () => {
+  test("checks the complete structured process before creating output or spawning", async () => {
+    const checked: unknown[] = [];
+    const h = harness({
+      safety: {
+        check(request) {
+          checked.push(request);
+          throw new Error("blocked by Check mode");
+        },
+      },
+    });
+
+    await expect(h.manager.create(input({ projectCwd: "/project-root" })))
+      .rejects.toThrow("blocked by Check mode");
+    expect(checked).toEqual([{
+      proposal: {
+        kind: "process",
+        source: "managed-shell",
+        executable: "server",
+        args: ["--port", "3000"],
+        cwd: "/project",
+        operation: "start",
+        shellName: undefined,
+      },
+      requester: { kind: "main", sessionId: "session-1", cwd: "/project-root" },
+    }]);
+    expect(h.requests).toEqual([]);
+    expect(h.writers).toEqual([]);
+    expect(h.manager.list()).toEqual([]);
+  });
+
   test("starts direct argv, waits for readiness, and captures marked output", async () => {
     const exit = deferred<ShellProcessExit>();
     const completed: string[] = [];
