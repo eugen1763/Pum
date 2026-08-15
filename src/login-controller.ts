@@ -134,6 +134,11 @@ export class LoginController {
 
   close() {
     this.cancelOperation();
+    // cancelOperation scrubs the provider secret. The custom-provider key is
+    // kept across the error → retry path on purpose, but the closed popup is
+    // the end of that path, so it goes too.
+    this.customKey = "";
+    this.customKeyCursor = 0;
     this.closePopup();
   }
 
@@ -174,6 +179,10 @@ export class LoginController {
     void this.runtime.login(method.providerId, method.authType, {
       signal: controller.signal,
       notify: (event: AuthEvent) => {
+        // A provider flow keeps unwinding after Escape. A late event must not
+        // repaint the page the user left, and must never open a browser for a
+        // login that was already cancelled.
+        if (controller.signal.aborted) return;
         if (event.type === "auth_url" || event.type === "device_code") {
           this.latestBrowserAuthEvent = event;
         }
@@ -190,6 +199,10 @@ export class LoginController {
         if (!this.promptWaiter) this.setPage({ kind: "working", providerName: method.providerName, event });
       },
       prompt: (prompt: AuthPrompt) => new Promise<string>((resolve, reject) => {
+        if (controller.signal.aborted) {
+          reject(new Error("Login cancelled"));
+          return;
+        }
         this.secret = "";
         this.secretCursor = 0;
         const rejectPrompt = (error: Error) => {
@@ -233,6 +246,9 @@ export class LoginController {
     this.controller = controller;
     this.setPage({ kind: "custom-working", endpoint, message: "Discovering OpenAI-compatible models…" });
     void discoverOpenAIModels(endpoint, key, { signal: controller.signal }).then(async ({ baseUrl, models }) => {
+      // Discovery can resolve after Escape. Writing models.json here would
+      // leave behind a provider the user backed out of.
+      controller.signal.throwIfAborted();
       const providerId = customProviderId(baseUrl);
       this.setPage({ kind: "custom-working", endpoint, message: `Saving ${models.length} discovered models…` });
       await persistCustomProvider(providerId, baseUrl, models);

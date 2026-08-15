@@ -1,6 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { filterLoginMethods, LoginController } from "./login-controller";
 import type { LoginPage } from "./login-popup";
+
+const temporaryDirectories: string[] = [];
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 const model = {
   id: "model-a", name: "Model A", provider: "api", api: "openai-completions",
@@ -252,6 +262,138 @@ describe("login controller", () => {
     await settle();
     expect(aborted).toBe(true);
     expect(pages.at(-1)?.kind).toBe("providers");
+  });
+
+  test("ignores provider events that arrive after the login is cancelled", async () => {
+    const pages: LoginPage[] = [];
+    const launched: string[] = [];
+    let notify: ((event: any) => void) | undefined;
+    let prompt: ((prompt: any) => Promise<string>) | undefined;
+    const runtime = {
+      getProviders: () => [{ id: "oauth", name: "OAuth", auth: { oauth: {
+        name: "Account", login() {}, refresh() {}, toAuth() {},
+      } } }],
+      // A device flow only emits device_code after a network round trip, so
+      // Escape lands while the provider is still awaiting it.
+      login: async (_id: string, _type: string, interaction: any) => {
+        notify = interaction.notify;
+        prompt = interaction.prompt;
+        await new Promise((_resolve, reject) => interaction.signal.addEventListener("abort", () => {
+          reject(new Error("cancelled"));
+        }));
+      },
+    } as any;
+    const controller = new LoginController(
+      runtime,
+      () => ({}) as any,
+      (page) => pages.push(page),
+      () => {},
+      () => {},
+      async (url) => { launched.push(url); return true; },
+    );
+    controller.open();
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    await settle();
+    expect(pages.at(-1)?.kind).toBe("working");
+
+    controller.handleKey({ name: "escape" });
+    await settle();
+    expect(pages.at(-1)?.kind).toBe("providers");
+    const settledPages = pages.length;
+
+    notify!({ type: "device_code", userCode: "ABCD", verificationUri: "https://device.test" });
+    await expect(prompt!({ type: "secret", message: "Enter API key" }))
+      .rejects.toThrow("Login cancelled");
+    await settle();
+
+    expect(launched).toEqual([]);
+    expect(pages).toHaveLength(settledPages);
+    expect(pages.at(-1)?.kind).toBe("providers");
+  });
+
+  test("scrubs the custom API key when the popup closes", () => {
+    const pages: LoginPage[] = [];
+    let closed = false;
+    const runtime = { getProviders: () => [] } as any;
+    const controller = new LoginController(
+      runtime,
+      () => ({}) as any,
+      (page) => pages.push(page),
+      () => {},
+      () => { closed = true; },
+    );
+    controller.open();
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    controller.pasteText("https://local.example.test/v1");
+    controller.handleKey({ name: "enter" });
+    controller.pasteText("secret-custom-key");
+    expect(pages.at(-1)).toMatchObject({ kind: "custom-key", secretLength: 17 });
+
+    const internals = controller as unknown as { customKey: string; customKeyCursor: number };
+    expect(internals.customKey).toBe("secret-custom-key");
+    controller.close();
+    expect(closed).toBe(true);
+    expect(internals.customKey).toBe("");
+    expect(internals.customKeyCursor).toBe(0);
+  });
+
+  test("does not persist a custom provider after the setup is cancelled", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pum-login-test-"));
+    temporaryDirectories.push(directory);
+    const controllerModule = new URL("./login-controller.ts", import.meta.url).href;
+    const script = [
+      `import { existsSync } from "node:fs";`,
+      `import { join } from "node:path";`,
+      `import { LoginController } from ${JSON.stringify(controllerModule)};`,
+      `let controller;`,
+      // The endpoint answers, and Escape lands while discovery is still
+      // unwinding — after the models are in hand, before the persist step.
+      `globalThis.fetch = async () => ({`,
+      `  ok: true,`,
+      `  async json() {`,
+      `    controller.handleKey({ name: "escape" });`,
+      `    return { data: [{ id: "local-model" }] };`,
+      `  },`,
+      `});`,
+      `const runtime = {`,
+      `  getProviders: () => [],`,
+      `  refresh: async () => ({}),`,
+      `  login: async () => {},`,
+      `  getProvider: () => undefined,`,
+      `  getAvailableSnapshot: () => [],`,
+      `};`,
+      `const pages = [];`,
+      `controller = new LoginController(runtime, () => ({}), (page) => pages.push(page), () => {}, () => {});`,
+      `controller.open();`,
+      `controller.handleKey({ name: "down" });`,
+      `controller.handleKey({ name: "enter" });`,
+      `controller.pasteText("https://local.example.test/v1");`,
+      `controller.handleKey({ name: "enter" });`,
+      `controller.handleKey({ name: "enter" });`,
+      `await Bun.sleep(50);`,
+      `console.log(JSON.stringify({`,
+      `  models: existsSync(join(process.env.PUM_DIR, "models.json")),`,
+      `  page: pages.at(-1).kind,`,
+      `}));`,
+      `process.exit(0);`,
+    ].join("\n");
+
+    const processResult = Bun.spawn([process.execPath, "-e", script], {
+      env: { ...process.env, PUM_DIR: directory },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [exitCode, stdout, stderr] = await Promise.all([
+      processResult.exited,
+      new Response(processResult.stdout).text(),
+      new Response(processResult.stderr).text(),
+    ]);
+
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({ models: false, page: "providers" });
   });
 
   test("keeps a retry action after an error", async () => {

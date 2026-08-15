@@ -76,4 +76,39 @@ describe("rejection theme tokens", () => {
     expect(theme.popupShadow).toBe(PRESETS["github-light"]!.border);
     expect(theme.unknownRejectionToken).toBeUndefined();
   });
+
+  test("ignores a theme.json that is not a plain object", async () => {
+    const badShapes: Array<[string, string]> = [
+      ["null", "null"],
+      ["string", JSON.stringify("abc")],
+      ["array", JSON.stringify([1, 2])],
+      ["empty object", JSON.stringify({})],
+      ["malformed", "{not json"],
+    ];
+    for (const [label, contents] of badShapes) {
+      const directory = mkdtempSync(join(tmpdir(), "pum-theme-bad-"));
+      temporaryDirectories.push(directory);
+      writeFileSync(join(directory, "theme.json"), contents);
+
+      const themeModule = new URL("./theme.ts", import.meta.url).href;
+      const script = [
+        `import { loadTheme } from ${JSON.stringify(themeModule)};`,
+        `console.log(JSON.stringify(loadTheme("tokyonight")));`,
+      ].join("\n");
+      const processResult = Bun.spawn([process.execPath, "-e", script], {
+        env: { ...process.env, PUM_DIR: directory },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exitCode, stdout, stderr] = await Promise.all([
+        processResult.exited,
+        new Response(processResult.stdout).text(),
+        new Response(processResult.stderr).text(),
+      ]);
+
+      expect(`${label}: ${stderr}`).toBe(`${label}: `);
+      expect(`${label}: ${exitCode}`).toBe(`${label}: 0`);
+      expect(JSON.parse(stdout)).toEqual(PRESETS.tokyonight!);
+    }
+  });
 });

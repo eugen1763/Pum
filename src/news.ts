@@ -99,8 +99,14 @@ export function saveNewsItems(
   if (!sessionFile) return;
   try {
     const file = newsFileFor(sessionFile);
-    writeFileSync(`${file}.tmp`, JSON.stringify(items.slice(0, NEWS_CAPACITY), null, 2), "utf8");
-    renameSync(`${file}.tmp`, file);
+    // An empty list with no companion file is nothing to record. Writing it
+    // would leave a two-byte "[]" beside every session ever opened.
+    if (items.length === 0 && !existsSync(file)) return;
+    // The temp name carries pid and time so two PUM processes on one session
+    // cannot interleave write and rename and lose an update.
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(temporary, JSON.stringify(items.slice(0, NEWS_CAPACITY), null, 2), "utf8");
+    renameSync(temporary, file);
   } catch {
     // A failed news write never breaks the session.
   }

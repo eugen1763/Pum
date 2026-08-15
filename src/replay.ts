@@ -23,6 +23,9 @@ import {
   type ManagedShellLifecycleEvent,
 } from "./shells/types";
 
+/** Shown on a replayed tool call whose turn ended before a result was stored. */
+export const INTERRUPTED_TOOL_DETAIL = "interrupted";
+
 const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -261,7 +264,12 @@ export function replayEntries(
             id: block.id,
             name: block.name,
             arg: toolArg(block.name, block.arguments, cwd),
-            state: "ok",
+            // Nothing proves a replayed call succeeded until its persisted
+            // result says so. A call whose turn was cancelled or crashed never
+            // gets one, and statsFromEntries already counts that as
+            // interrupted, so replay must not show it as a green check.
+            state: "error",
+            detail: INTERRUPTED_TOOL_DETAIL,
             input: block.arguments,
           };
           calls.set(block.id, call);
@@ -285,6 +293,8 @@ export function replayEntries(
           const bashResult = bashResultDisplay(message);
           call.exitCode = bashResult.exitCode;
         }
+        // The result decides the note, so drop the interrupted placeholder.
+        call.detail = undefined;
         if (call.state === "rejected") call.detail = rejectedToolReason(message);
         else if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
         else if (call.name === "questionnaire") call.detail = questionnaireDetail(message);

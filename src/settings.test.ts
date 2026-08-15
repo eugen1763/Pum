@@ -17,6 +17,25 @@ import {
 import { DEFAULT_BASH_OUTPUT } from "./bash-output";
 
 describe("PUM settings migration", () => {
+  test("rejects non-boolean toggles and a non-string theme", () => {
+    const settings = normalizeSettings({
+      showThinking: "no",
+      webSearch: "yes",
+      theme: 42,
+      animations: "off",
+    } as any);
+    expect(settings.showThinking).toBe(false);
+    expect(settings.webSearch).toBe(true);
+    expect(settings.theme).toBe("tokyonight");
+    expect(settings.animations).toBe(true);
+    // Already-correct validation must not regress.
+    expect(normalizeSettings({ maxActiveSubagents: 25 } as any).maxActiveSubagents).toBe(25);
+    expect(normalizeSettings({ maxActiveSubagents: 26 } as any).maxActiveSubagents)
+      .toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
+    expect(normalizeSettings({ maxActiveSubagents: 0 } as any).maxActiveSubagents)
+      .toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
+  });
+
   test("preserves migration defaults for old files", () => {
     const settings = normalizeSettings({ animations: true, theme: "gruvbox" });
     expect(settings.workingRuleAnimation).toBe("input-only");
@@ -184,6 +203,32 @@ describe("PUM settings persistence", () => {
       maxActiveSubagents: 7,
       bashOutput: DEFAULT_BASH_OUTPUT,
     });
+  });
+
+  test("keeps a corrupt pum.json before defaults can overwrite it", async () => {
+    const directory = temporaryConfigDirectory();
+    const corrupt = '{"theme": "gruvbox", "maxActiveSubagents": 7,';
+    writeFileSync(join(directory, "pum.json"), corrupt, "utf8");
+    const settingsModule = new URL("./settings.ts", import.meta.url).href;
+    const script = [
+      `import { readFileSync } from "node:fs";`,
+      `import { join } from "node:path";`,
+      `import { loadSettings, saveSettings } from ${JSON.stringify(settingsModule)};`,
+      `const settings = loadSettings();`,
+      `saveSettings(settings);`,
+      `console.log(JSON.stringify({`,
+      `  theme: settings.theme,`,
+      `  backup: readFileSync(join(process.env.PUM_DIR, "pum.json.bad"), "utf8"),`,
+      `}));`,
+    ].join("\n");
+
+    const result = await runInConfigDirectory(directory, script);
+
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed.theme).toBe("tokyonight");
+    expect(parsed.backup).toBe(corrupt);
   });
 
   test("leftover temp files do not affect loading", async () => {

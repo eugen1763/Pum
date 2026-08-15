@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { rejectedToolDetails } from "./check-mode";
-import { replayEntries } from "./replay";
+import { INTERRUPTED_TOOL_DETAIL, replayEntries } from "./replay";
 import { WEB_SEARCH_CUSTOM_TYPE } from "./web-search";
 import {
   AGENT_MESSAGE_CUSTOM_TYPE,
@@ -307,6 +307,30 @@ describe("subagent transcript replay", () => {
     }]);
   });
 
+  test("replays a call with no persisted result as interrupted", () => {
+    const lines = replayEntries([
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "done", name: "bash", arguments: { command: "ls" } },
+            { type: "toolCall", id: "cut-short", name: "bash", arguments: { command: "sleep 30" } },
+          ],
+        },
+      },
+      {
+        type: "message",
+        message: { role: "toolResult", toolCallId: "done", isError: false, content: "ok" },
+      },
+    ], "/repo", true);
+
+    expect(lines).toMatchObject([
+      { kind: "tool", call: { id: "done", state: "ok", detail: undefined } },
+      { kind: "tool", call: { id: "cut-short", state: "error", detail: INTERRUPTED_TOOL_DETAIL } },
+    ]);
+  });
+
   test("restores Windows project paths with stable display separators", () => {
     const lines = replayEntries([{
       type: "message",
@@ -323,7 +347,8 @@ describe("subagent transcript replay", () => {
 
     expect(lines[0]).toMatchObject({
       kind: "tool",
-      call: { id: "read-windows", arg: "src/file name.ts · limit=8", state: "ok" },
+      // No persisted result: the call is interrupted, not successful.
+      call: { id: "read-windows", arg: "src/file name.ts · limit=8", state: "error" },
     });
   });
 

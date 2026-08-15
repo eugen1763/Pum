@@ -155,7 +155,10 @@ export function normalizeSettings(parsed: unknown): PumSettings {
   const merged = { ...DEFAULTS, ...source };
   return {
     ...merged,
+    showThinking: typeof merged.showThinking === "boolean" ? merged.showThinking : DEFAULTS.showThinking,
+    theme: typeof merged.theme === "string" && merged.theme.length > 0 ? merged.theme : DEFAULTS.theme,
     animations: typeof merged.animations === "boolean" ? merged.animations : DEFAULTS.animations,
+    webSearch: typeof merged.webSearch === "boolean" ? merged.webSearch : DEFAULTS.webSearch,
     workingRuleAnimation: isWorkingRuleAnimationMode(merged.workingRuleAnimation)
       ? merged.workingRuleAnimation
       : DEFAULTS.workingRuleAnimation,
@@ -176,10 +179,28 @@ export function normalizeSettings(parsed: unknown): PumSettings {
   };
 }
 
+/** Where a corrupt pum.json is kept so the next save cannot destroy it. */
+export const CORRUPT_SETTINGS_PATH = `${SETTINGS_PATH}.bad`;
+
 export function loadSettings(): PumSettings {
+  let raw: string;
   try {
-    return normalizeSettings(JSON.parse(readFileSync(SETTINGS_PATH, "utf8")));
+    raw = readFileSync(SETTINGS_PATH, "utf8");
   } catch {
+    // No settings file yet, or it is unreadable — the defaults stand.
+    return { ...DEFAULTS };
+  }
+  try {
+    return normalizeSettings(JSON.parse(raw));
+  } catch {
+    // The file exists but does not parse. Keep the bytes beside it, because the
+    // next saveSettings would otherwise replace the user's real settings with
+    // defaults and leave nothing to recover from. Recovery, never a crash.
+    try {
+      writeFileSync(CORRUPT_SETTINGS_PATH, raw);
+    } catch {
+      // A failed backup must not stop PUM from starting.
+    }
     return { ...DEFAULTS };
   }
 }

@@ -1,6 +1,6 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { basename, dirname, join } from "node:path";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { isRejectedToolResult } from "./check-mode";
 
 export type StatsRole = "Agent" | "Check";
@@ -447,12 +447,47 @@ export type CheckStatsObservation = {
   usage?: UsageLike;
 };
 
+/** Coalescing window for stats writes. Long enough to swallow a tool burst. */
+const PERSIST_DEBOUNCE_MS = 250;
+
+/** Managers holding a queued write, flushed together when the process exits. */
+const pendingManagers = new Set<SessionStatsManager>();
+let exitHookInstalled = false;
+
+function installExitHook(): void {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  process.on("exit", () => {
+    for (const manager of [...pendingManagers]) manager.flush();
+  });
+}
+
+/** Cheap identity for a session file, so an unchanged agent is not re-read. */
+function fileStamp(path: string | undefined): string {
+  if (!path) return "none";
+  try {
+    const stats = statSync(path);
+    return `${stats.mtimeMs}:${stats.size}`;
+  } catch {
+    return "missing";
+  }
+}
+
 export class SessionStatsManager {
   private mainSessionFile?: string;
   private data: PersistedStats = { version: 1, agents: [] };
   private sessions = new Map<string, AgentSession>();
   private unsubscribers = new Map<string, () => void>();
   private listeners = new Set<() => void>();
+  private snapshotCache = new Map<string, { key: string; snapshot: SessionStatsSnapshot }>();
+  private agentRevisions = new Map<string, number>();
+  private persistTimer?: ReturnType<typeof setTimeout>;
+  private persistPending = false;
+
+  /** Invalidate the cached snapshot of one agent after its data changed. */
+  private touch(agentId: string): void {
+    this.agentRevisions.set(agentId, (this.agentRevisions.get(agentId) ?? 0) + 1);
+  }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -465,9 +500,13 @@ export class SessionStatsManager {
 
   prepareMainSession(sessionFile: string | undefined): void {
     if (this.mainSessionFile === sessionFile) return;
+    // Anything queued belongs to the session being left behind.
+    this.flush();
     for (const unsubscribe of this.unsubscribers.values()) unsubscribe();
     this.unsubscribers.clear();
     this.sessions.clear();
+    this.snapshotCache.clear();
+    this.agentRevisions.clear();
     this.mainSessionFile = sessionFile;
     this.data = { version: 1, agents: [] };
     if (this.mainSessionFile) {
@@ -506,7 +545,8 @@ export class SessionStatsManager {
     }
     const unsubscribe = session.subscribe((event: any) => this.observeAgentEvent(agentId, session, event));
     this.unsubscribers.set(agentId, unsubscribe);
-    this.persist();
+    this.touch(agentId);
+    this.schedulePersist();
     this.emit();
   }
 
@@ -514,7 +554,8 @@ export class SessionStatsManager {
     const entries = readEntries(sessionFile) ?? [];
     const agent = this.ensureAgent(agentId, initialModel, !hasHistoricalRequests(entries));
     agent.sessionFile = sessionFile;
-    this.persist();
+    this.touch(agentId);
+    this.schedulePersist();
     this.emit();
   }
 
@@ -531,7 +572,8 @@ export class SessionStatsManager {
     if (entries) agent.fallback = boundedSnapshot(this.snapshotForAgent(agent, entries, false));
     agent.runningTools = [];
     this.detach(agentId);
-    this.persist();
+    this.touch(agentId);
+    this.schedulePersist();
     this.emit();
   }
 
@@ -545,7 +587,7 @@ export class SessionStatsManager {
       row.cacheRead += observation.usage.cacheRead ?? 0;
       row.cost += observation.usage.cost?.total ?? 0;
     }
-    this.persist();
+    this.schedulePersist();
     this.emit();
   }
 
@@ -575,21 +617,42 @@ export class SessionStatsManager {
       changed = false;
     }
     if (!changed) return;
-    this.persist();
+    this.touch(agentId);
+    this.schedulePersist();
     this.emit();
   }
 
   snapshot(): SessionStatsSnapshot {
     const parts: SessionStatsSnapshot[] = [];
-    for (const agent of this.data.agents) {
-      const session = this.sessions.get(agent.id);
-      const manager = session?.sessionManager as any;
-      const entries = manager?.getEntries?.() ?? readEntries(agent.sessionFile);
-      if (entries) parts.push(this.snapshotForAgent(agent, entries, true));
-      else if (agent.fallback) parts.push(agent.fallback);
-      else parts.push(observationSnapshot(agent));
-    }
+    for (const agent of this.data.agents) parts.push(this.agentSnapshot(agent));
     return mergeSessionStats(parts);
+  }
+
+  /**
+   * One agent's contribution, reused while nothing about it has changed. The
+   * key is cheap on purpose: a revision the mutating paths bump, plus the entry
+   * count of a live session or the size and mtime of a stored one. An
+   * unattached agent is not even read from disk until its file moves.
+   */
+  private agentSnapshot(agent: PersistedAgent): SessionStatsSnapshot {
+    const session = this.sessions.get(agent.id);
+    const manager = session?.sessionManager as any;
+    const live = manager?.getEntries?.() as any[] | undefined;
+    const source = live ? `live:${live.length}` : `file:${fileStamp(agent.sessionFile)}`;
+    const cached = this.snapshotCache.get(agent.id);
+    const key = `${this.agentRevisions.get(agent.id) ?? 0}:${source}`;
+    if (cached?.key === key) return cached.snapshot;
+    const entries = live ?? readEntries(agent.sessionFile);
+    const snapshot = entries
+      ? this.snapshotForAgent(agent, entries, true)
+      : agent.fallback ?? observationSnapshot(agent);
+    // snapshotForAgent can reconcile branch summaries and bump the revision,
+    // so key on what it left behind or the next read misses again.
+    this.snapshotCache.set(agent.id, {
+      key: `${this.agentRevisions.get(agent.id) ?? 0}:${source}`,
+      snapshot,
+    });
+    return snapshot;
   }
 
   private snapshotForAgent(
@@ -643,6 +706,7 @@ export class SessionStatsManager {
       };
       this.data.agents.push(agent);
       this.data.agents = this.data.agents.slice(-MAX_AGENTS);
+      this.touch(id);
     } else if (agent.attemptsExact !== true) {
       agent.attemptsExact = false;
     }
@@ -664,7 +728,8 @@ export class SessionStatsManager {
       if (this.countBranchSummaryAttempt(agent, entry, activeModel)) changed = true;
     }
     if (!changed) return;
-    this.persist();
+    // snapshot() runs inside a React render. Queue the write, never do it here.
+    this.schedulePersist();
   }
 
   private countBranchSummaryAttempt(agent: PersistedAgent, entry: any, activeModel: string): boolean {
@@ -672,6 +737,7 @@ export class SessionStatsManager {
       return false;
     }
     if (agent.countedBranchSummaryIds.includes(entry.id)) return false;
+    this.touch(agent.id);
     agent.countedBranchSummaryIds.push(entry.id);
     agent.countedBranchSummaryIds = agent.countedBranchSummaryIds.slice(-MAX_COUNTED_BRANCH_SUMMARIES);
     if (agent.attemptsExact) this.ensureObservation(agent, "Agent", activeModel).attempts += 1;
@@ -679,6 +745,9 @@ export class SessionStatsManager {
   }
 
   private ensureObservation(agent: PersistedAgent, role: StatsRole, model: string): PersistedModelObservation {
+    // Every caller mutates the row it gets back, so the cached snapshot of this
+    // agent is stale from here on.
+    this.touch(agent.id);
     let row = agent.observations.find((item) => item.role === role && item.model === model);
     if (!row) {
       row = { model, role, attempts: 0, outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, compressions: 0 };
@@ -688,11 +757,53 @@ export class SessionStatsManager {
     return row;
   }
 
+  /**
+   * Queue a stats write. Serializing and writing the whole file on every tool
+   * event costs more than the metrics are worth, so writes coalesce and land
+   * once the burst settles. flush() covers exit, and an exit hook covers a
+   * crash, so nothing queued is lost.
+   */
+  private schedulePersist(): void {
+    if (!this.mainSessionFile) return;
+    this.persistPending = true;
+    pendingManagers.add(this);
+    installExitHook();
+    if (this.persistTimer) return;
+    const timer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.flush();
+    }, PERSIST_DEBOUNCE_MS);
+    timer.unref?.();
+    this.persistTimer = timer;
+  }
+
+  /** Write a queued stats update now. Safe to call at any time. */
+  flush(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = undefined;
+    }
+    if (!this.persistPending) return;
+    this.persistPending = false;
+    pendingManagers.delete(this);
+    this.persist();
+  }
+
+  /** Stop observing sessions and write anything still queued. */
+  dispose(): void {
+    for (const unsubscribe of this.unsubscribers.values()) unsubscribe();
+    this.unsubscribers.clear();
+    this.sessions.clear();
+    this.flush();
+  }
+
   private persist(): void {
     if (!this.mainSessionFile) return;
     try {
       const file = sessionStatsFile(this.mainSessionFile);
-      const temp = `${file}.tmp`;
+      // pid and time keep two PUM processes on one session from interleaving
+      // write and rename and losing an update.
+      const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
       writeFileSync(temp, JSON.stringify(this.data), "utf8");
       renameSync(temp, file);
     } catch {

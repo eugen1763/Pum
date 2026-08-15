@@ -395,7 +395,13 @@ export function loadTheme(name: string): Theme {
   const base = PRESETS[name] ?? tokyonight;
   let override: Partial<Theme> = {};
   try {
-    override = JSON.parse(readFileSync(THEME_PATH, "utf8"));
+    const parsed: unknown = JSON.parse(readFileSync(THEME_PATH, "utf8"));
+    // JSON.parse also succeeds for null, arrays, strings and numbers. Only a
+    // plain object can carry tokens, so every other shape is a bad file and is
+    // ignored whole rather than crashing the merge below.
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      override = parsed as Partial<Theme>;
+    }
   } catch {
     // no file, or unreadable — the preset stands on its own
   }

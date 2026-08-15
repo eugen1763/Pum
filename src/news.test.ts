@@ -1,7 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   NEWS_CAPACITY,
   formatAge,
@@ -14,8 +14,15 @@ import {
   type NewsItem,
 } from "./news";
 
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
 function tempSessionFile(): string {
   const dir = mkdtempSync(join(tmpdir(), "pum-news-"));
+  temporaryDirectories.push(dir);
   return join(dir, "session-id.jsonl");
 }
 
@@ -30,6 +37,35 @@ function item(text: string, partial: Partial<NewsItem> = {}): NewsItem {
 }
 
 describe("news persistence", () => {
+  test("writes no companion file for an empty list", () => {
+    const sessionFile = tempSessionFile();
+    saveNewsItems(sessionFile, []);
+    expect(existsSync(newsFileFor(sessionFile))).toBe(false);
+    expect(readdirSync(dirname(sessionFile))).toEqual([]);
+    expect(loadNewsItems(sessionFile)).toEqual([]);
+  });
+
+  test("still clears an existing companion file", () => {
+    const sessionFile = tempSessionFile();
+    saveNewsItems(sessionFile, [item("first answer")]);
+    saveNewsItems(sessionFile, []);
+    expect(existsSync(newsFileFor(sessionFile))).toBe(true);
+    expect(loadNewsItems(sessionFile)).toEqual([]);
+  });
+
+  test("does not use a fixed temp name another process could be writing", () => {
+    const sessionFile = tempSessionFile();
+    const fixed = `${newsFileFor(sessionFile)}.tmp`;
+    // Stand in for a second PUM process mid-write. A shared temp name would
+    // clobber this file and rename a half-written list into place.
+    writeFileSync(fixed, "another process is writing here", "utf8");
+    saveNewsItems(sessionFile, [item("first answer")]);
+    expect(readFileSync(fixed, "utf8")).toBe("another process is writing here");
+    expect(loadNewsItems(sessionFile)).toEqual([item("first answer")]);
+    expect(readdirSync(dirname(sessionFile)).filter((name) => name.endsWith(".tmp")))
+      .toEqual([basename(fixed)]);
+  });
+
   test("round trips through the companion file", () => {
     const sessionFile = tempSessionFile();
     const items = [item("first answer"), item("second answer", { read: true })];

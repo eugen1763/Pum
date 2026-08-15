@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   chartBarWidths,
@@ -116,6 +116,89 @@ describe("session statistics aggregation", () => {
       .toEqual({ successful: 8, failed: 4, blocked: 2, running: 2, interrupted: 4 });
     expect(chartBarWidths({ successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 0 }, 20))
       .toEqual({ successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 0 });
+  });
+
+  test("coalesces stats writes off the per-event path", () => {
+    const root = join(process.cwd(), `.stats-coalesce-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    roots.push(root);
+    mkdirSync(root);
+    const path = join(root, "main.jsonl");
+    writeJsonl(path, []);
+    const main = fakeSession(path, [], "mock/alpha");
+    const manager = new SessionStatsManager();
+    const file = sessionStatsFile(path);
+
+    manager.bindMainSession(main.session);
+    rmSync(file, { force: true });
+
+    for (let index = 0; index < 50; index++) {
+      main.emit({ type: "turn_start" });
+      main.emit({ type: "tool_execution_start", toolCallId: `tool-${index}`, toolName: "bash" });
+      main.emit({ type: "tool_execution_end", toolCallId: `tool-${index}` });
+    }
+    // 150 events, no write on the hot path.
+    expect(existsSync(file)).toBe(false);
+
+    manager.flush();
+    expect(existsSync(file)).toBe(true);
+    const persisted = JSON.parse(readFileSync(file, "utf8"));
+    expect(persisted.agents).toHaveLength(1);
+    expect(persisted.agents[0].observations[0].attempts).toBe(50);
+
+    // A pure read writes nothing, and queues nothing to write later.
+    rmSync(file);
+    manager.snapshot();
+    expect(existsSync(file)).toBe(false);
+    manager.flush();
+    expect(existsSync(file)).toBe(false);
+
+    main.emit({ type: "turn_start" });
+    manager.dispose();
+    expect(JSON.parse(readFileSync(file, "utf8")).agents[0].observations[0].attempts).toBe(51);
+  });
+
+  test("reuses the snapshot of an agent whose session file has not moved", () => {
+    const root = join(process.cwd(), `.stats-cache-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    roots.push(root);
+    mkdirSync(root);
+    const mainPath = join(root, "main.jsonl");
+    const childPath = join(root, "child.jsonl");
+    writeJsonl(mainPath, []);
+    writeJsonl(childPath, [
+      assistant("a1", "beta", { input: 10, output: 5 }, [{ id: "c1", name: "bash" }]),
+      result("c1", "bash"),
+    ]);
+    const main = fakeSession(mainPath, [], "mock/alpha");
+    const manager = new SessionStatsManager();
+    manager.prepareMainSession(mainPath);
+    manager.registerAgentFile("restored-child", childPath, "mock/beta");
+    manager.bindMainSession(main.session);
+
+    const stamp = new Date(1_700_000_000_000);
+    utimesSync(childPath, stamp, stamp);
+    const first = manager.snapshot();
+    expect(first.outcomes.successful).toBe(1);
+
+    // Same size and timestamp, different content. A cached agent never reads it
+    // again, so the numbers must not move.
+    const replacement = readFileSync(childPath, "utf8").replace("bash", "grep");
+    expect(replacement).toHaveLength(readFileSync(childPath, "utf8").length);
+    writeFileSync(childPath, replacement);
+    utimesSync(childPath, stamp, stamp);
+    expect(statSync(childPath).mtimeMs).toBe(stamp.getTime());
+
+    expect(manager.snapshot().tools).toEqual(first.tools);
+
+    // A real change to the file is picked up.
+    writeJsonl(childPath, [
+      assistant("a1", "beta", { input: 10, output: 5 }, [
+        { id: "c1", name: "bash" },
+        { id: "c2", name: "read" },
+      ]),
+      result("c1", "bash"),
+      result("c2", "read"),
+    ]);
+    expect(manager.snapshot().outcomes.successful).toBe(2);
   });
 
   test("keeps live running tools separate from interrupted tools", () => {
