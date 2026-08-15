@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { App } from "./app";
+import { App, queuedUserSteersInOrder } from "./app";
 
 let destroy: (() => void) | undefined;
 afterEach(() => {
@@ -225,6 +225,28 @@ describe("prompt newline entry (Shift/Ctrl+Enter)", () => {
     expect(sent).toEqual({ kitty: ["kitty message"], raw: ["raw message"], other: ["other message"] });
     expect(rawSetup.captureCharFrame()).toContain("raw message");
     expect(otherSetup.captureCharFrame()).toContain("other message");
+  });
+
+  test("preserves internal spaces and tabs in displayed and delivered text", async () => {
+    const sent: string[] = [];
+    const setup = await renderApp({ onPrompt: (text) => sent.push(text) });
+    await setup.mockInput.typeText("  alpha  beta\tgamma  ");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(sent).toEqual(["alpha  beta\tgamma"]);
+    expect(setup.captureCharFrame()).toContain("alpha  beta");
+  });
+
+  test("matches recallable queued steers in original queue order", () => {
+    const pending = [
+      { id: "second", delivered: false, recallable: true, deliveryText: "wire-b", line: { kind: "text", role: "user", text: "display B" } },
+      { id: "first", delivered: false, recallable: true, deliveryText: "wire-a", line: { kind: "text", role: "user", text: "display A" } },
+      { id: "hidden", delivered: false, recallable: false, deliveryText: "wire-hidden", line: { kind: "text", role: "user", text: "hidden" } },
+    ] as any;
+
+    expect(queuedUserSteersInOrder(["wire-a", "wire-hidden", "wire-b"], pending))
+      .toEqual(["display A", "display B"]);
   });
 
   test("trailing backslash plus Enter remains the fallback newline", async () => {

@@ -33,7 +33,11 @@ function fakeSession() {
   } as any;
 }
 
-async function renderApp(width: number, height: number) {
+async function renderApp(
+  width: number,
+  height: number,
+  cachedPrompts: Array<{ text: string; executed: boolean }> = [],
+) {
   const setup = await createTestRenderer({ width, height, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const session = fakeSession();
@@ -65,6 +69,15 @@ async function renderApp(width: number, height: number) {
       }}
       searchProviders={[]}
       subagentManager={manager}
+      promptHistoryStore={{ load: () => [], append: () => [], remove: () => [] }}
+      promptStashStore={{
+        load: () => cachedPrompts,
+        append: () => cachedPrompts,
+        markExecuted: () => cachedPrompts,
+        markExecutedMany: () => cachedPrompts,
+        replace: () => cachedPrompts,
+        remove: () => cachedPrompts,
+      }}
     />,
   );
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -145,6 +158,38 @@ describe("prompt input layout", () => {
 
     expect(frame).toContain("❯ / ");
     expect(frame.match(/❯/gu)).toHaveLength(1);
+  });
+
+  test("Escape dismisses slash suggestions without deleting the draft", async () => {
+    const setup = await renderApp(70, 20);
+    await setup.mockInput.typeText("/c");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("/compress");
+
+    setup.mockInput.pressEscape();
+    await settle(setup);
+
+    expect(textarea(setup.renderer.root)?.plainText).toBe("/c");
+    expect(setup.captureCharFrame()).not.toContain("/compress");
+  });
+
+  test("shows when a cached prompt is checked out for editing", async () => {
+    const setup = await renderApp(70, 20, [{ text: "cached draft", executed: false }]);
+    setup.mockInput.pressTab();
+    setup.mockInput.pressArrow("up");
+    setup.mockInput.pressTab();
+    await settle(setup);
+
+    expect(textarea(setup.renderer.root)?.plainText).toBe("cached draft");
+    expect(setup.captureCharFrame()).toContain("editing cache #1");
+  });
+
+  test("does not overflow a narrow terminal with confirmation hints", async () => {
+    const setup = await renderApp(10, 16);
+    setup.mockInput.pressKey("c", { ctrl: true });
+    await settle(setup);
+
+    expect(setup.captureCharFrame().split("\n").every((line) => line.length <= 10)).toBe(true);
   });
 
   test("completes a project path with Tab", async () => {

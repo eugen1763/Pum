@@ -113,6 +113,7 @@ async function renderApp(options: {
     bindMainSession: async () => {},
     sendUserMessage: async (id: string, text: string) => { calls.childMessages.push({ id, text }); },
     abortAgent: async () => {},
+    resendUndeliveredMainSettlements: async () => {},
   } as any;
   root.render(
     <App
@@ -224,6 +225,22 @@ describe("Ctrl+C prompt clearing", () => {
     expect(promptLine(setup.captureCharFrame())).toContain("Message worker-one");
   });
 
+  test("inserts an image marker at the caret", async () => {
+    testDir = mkdtempSync(join(tmpdir(), "pum-image-caret-test-"));
+    const imagePath = join(testDir, "image.png");
+    writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const { setup } = await renderApp({
+      captureImage: async () => ({ path: imagePath, mimeType: "image/png" }),
+    });
+
+    await setup.mockInput.typeText("beforeafter");
+    for (let index = 0; index < 5; index++) setup.mockInput.pressArrow("left");
+    setup.mockInput.pressKey("v", { meta: true });
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("before[Image #1]after");
+  });
+
   test("removes an attached image file", async () => {
     testDir = mkdtempSync(join(tmpdir(), "pum-ctrl-c-test-"));
     const imagePath = join(testDir, "image.png");
@@ -268,6 +285,24 @@ describe("Ctrl+C prompt clearing", () => {
     expect(calls.exit).toBe(1);
   });
 
+  test("dismisses busy slash suggestions and still cancels on the second Escape", async () => {
+    const { setup, calls, emit } = await renderApp();
+    emit({ type: "agent_start" });
+    await setup.mockInput.typeText("/c");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("/compress");
+
+    setup.mockInput.pressEscape();
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("/compress");
+    expect(promptLine(setup.captureCharFrame())).toContain("/c");
+    expect(calls.abort).toBe(0);
+
+    setup.mockInput.pressEscape();
+    await settle(setup);
+    expect(calls.abort).toBe(1);
+  });
+
   test("clears a steering draft without cancelling busy work", async () => {
     const { setup, calls, emit } = await renderApp();
     emit({ type: "agent_start" });
@@ -284,6 +319,20 @@ describe("Ctrl+C prompt clearing", () => {
     setup.mockInput.pressEnter();
     await settle(setup);
     expect(calls.steers).toEqual(["replacement steer"]);
+  });
+
+  test("Ctrl+C closes Settings instead of arming application quit", async () => {
+    const { setup, calls } = await renderApp();
+    await setup.mockInput.typeText("preserved draft");
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await settle(setup);
+
+    pressCtrlC(setup);
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).not.toContain("Settings");
+    expect(setup.captureCharFrame()).not.toContain("again to quit");
+    expect(calls.exit).toBe(0);
   });
 
   test("does not clear the transcript draft while Settings owns focus", async () => {
