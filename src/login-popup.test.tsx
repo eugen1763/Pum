@@ -3,7 +3,7 @@ import { parseColor } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import type { LoginMethod } from "./login-flow";
-import { LoginPopup, type LoginPage } from "./login-popup";
+import { loginTextFooter, LoginPopup, type LoginPage } from "./login-popup";
 import { loadTheme } from "./theme";
 
 const theme = loadTheme("tokyonight");
@@ -74,6 +74,23 @@ async function providerHarness(width = 60, height = 12) {
 }
 
 describe("login popup", () => {
+  test("shows concise paste guidance for wide and narrow login fields", async () => {
+    expect(loginTextFooter(60, "continue", "back")).toBe(
+      "enter continue   paste / ctrl+v local   esc back",
+    );
+    expect(loginTextFooter(34, "discover", "back")).toBe(
+      "enter local ctrl+v/paste esc",
+    );
+
+    const frame = await frameFor({
+      kind: "custom-endpoint",
+      endpoint: "",
+      cursor: 0,
+    }, 34, 10);
+    expect(frame).toContain("local ctrl+v");
+    expect(frame.split("\n").every((line) => Array.from(line).length <= 34)).toBe(true);
+  });
+
   test("keeps provider setup usable in a narrow terminal", async () => {
     const frame = await frameFor({
       kind: "providers",
@@ -113,6 +130,24 @@ describe("login popup", () => {
     }, 60);
     expect(frame).toContain("••••••••••••");
     expect(frame).not.toContain("secret-value");
+  });
+
+  test("renders the caret at the actual public and secret cursor positions", async () => {
+    const endpoint = await frameFor({
+      kind: "custom-endpoint",
+      endpoint: "abcd",
+      cursor: 2,
+    }, 60);
+    expect(endpoint).toContain("ab▌cd");
+
+    const secret = await frameFor({
+      kind: "custom-key",
+      endpoint: "https://example.test/v1",
+      secretLength: 4,
+      cursor: 2,
+    }, 60);
+    expect(secret).toContain("••▌••");
+    expect(secret).not.toContain("secret-value");
   });
 
   test("keeps an auth URL visible on the immediate manual-code prompt", async () => {
@@ -172,7 +207,7 @@ describe("login popup", () => {
   test("restores the selected row after custom-provider and auth-flow pages", async () => {
     const harness = await providerHarness();
     await harness.render(harness.providerPage(9));
-    await harness.render({ kind: "custom-endpoint", endpoint: "" });
+    await harness.render({ kind: "custom-endpoint", endpoint: "", cursor: 0 });
     await harness.render(harness.providerPage(9));
     expect(harness.selectedText()).toContain("Provider 09");
 
