@@ -216,13 +216,35 @@ These were chosen deliberately. Change them only on purpose.
   commit. Credential-sensitive paths and symbolic-link or junction components
   are blocked. This is a process-local path guard, not operating-system
   isolation for bash, scripts, extensions, or trigger processes.
+- **The guard validates the path the tool will actually open.** pi's `read` tool
+  retries filename variants (NFD, curly apostrophe, narrow-space AM/PM), so
+  checking the literal string would approve one path while the tool opened
+  another. For a read, the sandbox resolves the same candidate in the same order
+  and runs every check on that candidate.
+- **PUM's own staged temp directories are readable, never writable.** Large
+  pasted text and captured bash output live in per-process directories that PUM
+  registers explicitly. Reads inside a registered root are allowed so the model
+  can retrieve what it was told to read; writes there are still refused, and the
+  credential rules still apply. A model-supplied temp path never matches.
+- **Mutating a multiply-linked file is refused.** A hard link is an ordinary file
+  to `lstat`, so containment alone cannot tell whether an in-project name aliases
+  content outside the project. Writes, edits, and patches to a file with a link
+  count above one are blocked; reads stay allowed, because hard links are common
+  in real trees. The check cannot say where the other links point, and it is a
+  check-time test rather than a guarantee against a link created afterwards.
+- **An insert-only patch hunk needs an anchor.** A hunk with no context lines, no
+  `@@` header, and no `*** End of File` marker is rejected when the patch is
+  parsed, so preview, validation, and apply all agree. Silent placement at end of
+  file is not a supported spelling.
 - **Bash output is summarized to a bounded head+tail view.** `src/bash-output.ts`
   wraps pi's bash tool in main and managed child sessions. The default keeps
   first 30 / last 40 lines within 3KB, strips ANSI, drops progress-only lines,
   compresses repeated and similar runs, and re-injects FAIL/error/warning lines
   from the elided middle. PUM tees the exact stream to its own trusted private
   temp file before execution; the marker points at it whenever output is changed
-  or elided. Never parse a file path from command output. The tool schema
+  or elided. Captures live in one per-process directory created on first use, so
+  the sandbox can allow reads there without opening the whole system temp
+  directory; shutdown removes it. Never parse a file path from command output. The tool schema
   gains `full_output` (return pi's native output), `strategy`, `max_bytes`, and
   `patterns` (regexes whose matching lines survive elision). The `bashOutput`
   setting in `pum.json` tunes or disables it. See `research/bash-output/`.

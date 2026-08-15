@@ -2,6 +2,48 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.16-beta.2] - 2026-08-15
+
+### Fixed
+- Stopped a crash while the prompt input is torn down. A queued frame or microtask that measured the editor after OpenTUI destroyed it threw `EditorView is destroyed`; the measurement now returns instead of throwing.
+- Shortened help rows that no longer fit the popup. `Ctrl+Backspace` and `Ctrl+W` share one row, `/processes` and `/triggers` share one row, and the `Ctrl+P` row carries the settings search key.
+
+## [0.2.16-beta.1] - 2026-08-15
+
+### Added
+- Added an outer sandbox around the whole agent. `pum s` starts PUM in a writable container, `pum sr` keeps the current directory read-only, and `pum ss` prepares or updates the runtime. Extra directories mount with a `:ro` or `:rw` suffix, the agent directory is mounted writable, and `pum sr` refuses to start when `PUM_DIR` sits inside the read-only project.
+- Added a prompt input mode. `Alt+I` toggles it; `Enter` then inserts a new line instead of sending, and the prompt caret shows `i`.
+- Added local path completion in the prompt. `Tab` completes a path, and the candidates stay inside the project and the approved roots.
+- Added cursor editing in the login fields. Arrow keys, `Home`, `End`, `Backspace`, and `Delete` now work at any position instead of only at the end of the text.
+
+### Changed
+- Applied the thinking-visibility setting to subagent transcripts, so hidden thinking stays hidden in a subagent view.
+- Reworded the help popup rows and the Check mode and Check model setting descriptions.
+
+### Fixed
+- Kept queued child messages after a cancel. Aborting the main turn no longer drops a queued steer, and the running prompt is restored only when no queued steer survives.
+- Recovered the prompt after a failed send. The draft and every still-valid attachment marker return instead of being lost with the editor.
+- Kept clipboard image markers atomic. A selection or a caret inside a marker now expands to cover it before the new marker is inserted.
+- Stopped a modal cancel key from typing its character into the prompt.
+- Used the saved Check mode when starting inside the outer sandbox instead of forcing the default.
+
+## [0.2.15-beta.1] - 2026-08-14
+
+### Added
+- Added the **Output** transcript setting with `minimal`, `default`, and `detailed`. Minimal aggregates tool rows into a short summary, and detailed adds a result preview under Bash, `write`, and `edit` rows. Switching the mode regenerates the transcript from the canonical replay, so earlier rows follow the new mode too.
+- Added managed background shells. `start_shell`, `list_shells`, `inspect_shell`, `get_shell_output`, and `kill_shell` run and supervise long-lived commands; the Processes popup gains a Shells tab and the status bar counts running shells. Shells go through the same sandbox as Bash, readonly subagents do not get the tool group, and shutdown stops every shell.
+
+## [0.2.14-beta.1] - 2026-08-14
+
+### Added
+- Added forked subagent conversations. A spawned subagent can start from a copy of the parent conversation up to the current entry instead of from an empty session, and the spawn preview shows the choice.
+
+### Changed
+- Condensed the Simplified Technical English writing-style prompt. Every rule stays; the per-turn context is smaller.
+
+### Fixed
+- Kept Bash output on screen after the command finishes. Live output now stays visible for at least two seconds instead of disappearing the moment the call completes.
+
 ## [0.2.13-beta.1] - 2026-08-13
 
 ### Added
