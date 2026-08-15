@@ -43,7 +43,12 @@ describe("Help popup layout", () => {
     expect(controls.some(([key]) => key === "Ctrl+Alt+Enter")).toBe(true);
     expect(controls.some(([key, text]) => key === "Main ↑ / ↓" && text.includes("Sent history"))).toBe(true);
     expect(controls.some(([key, text]) => key === "Ctrl+H" && text.includes("/history"))).toBe(true);
-    expect(controls.some(([key, text]) => key === "/processes" && text.includes("/triggers"))).toBe(true);
+    // /processes and /triggers are separate commands: /triggers forces the
+    // Triggers tab, /processes keeps the last one.
+    expect(controls).toContainEqual(["/processes", "Open Processes on last tab"]);
+    expect(controls).toContainEqual(["/triggers", "Open Processes on Triggers"]);
+    expect(controls.some(([key]) => key === "Ctrl+P")).toBe(true);
+    expect(controls.some(([key]) => key === "/ in Settings")).toBe(true);
   });
 
   test("summarizes the main workflow", async () => {
@@ -63,9 +68,9 @@ describe("Help popup layout", () => {
     expect(frame).toContain("Prompt");
     expect(frame).toContain("History and sessions");
     expect(frame).toContain("Commands");
-    expect(frame).toContain("Ctrl+P /");
+    expect(frame).toContain("Ctrl+P");
+    expect(frame).toContain("/ in Settings");
     expect(frame).toContain("Ctrl+End");
-    expect(frame).toContain("Close popup; clear; twice quits");
     expect(frame).toContain("esc or ? close");
 
     const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));
@@ -82,6 +87,24 @@ describe("Help popup layout", () => {
     }
     expect(footerIndex - lastContentIndex).toBe(2);
     expect(lines[footerIndex]).not.toContain("Send, or steer while working");
+  });
+
+  test("keeps every wide-layout row reachable", async () => {
+    // A constant popup height used to hide the last rows of the taller column
+    // at every terminal size, and the arrows did nothing in this layout.
+    const tall = await renderHelp(140, 40, 0);
+    expect(tall).toContain("Ctrl+H");
+    expect(tall).toContain("pum -r");
+    expect(tall).toContain("Close popup; clear; twice quits");
+    expect(tall).not.toContain("↑↓ scroll");
+
+    const short = await renderHelp(140, 28, 0);
+    expect(short).not.toContain("pum -r");
+    expect(short).toContain("↑↓ scroll");
+
+    const scrolled = await renderHelp(140, 28, maxHelpScrollOffset(28, 140));
+    expect(scrolled).toContain("Ctrl+H");
+    expect(scrolled).toContain("pum -r");
   });
 
   test("stacks category groups vertically when the full columns would clip", async () => {

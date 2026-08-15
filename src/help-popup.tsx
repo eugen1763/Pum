@@ -61,7 +61,8 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/news", "Open recent answers (News)"],
       ["/stats", "Show session statistics"],
       ["/check-path", "Manage extra Check mode paths"],
-      ["/processes", "Manage processes; /triggers alias"],
+      ["/processes", "Open Processes on last tab"],
+      ["/triggers", "Open Processes on Triggers"],
       ["/worktree", "Create a managed worktree"],
       ["Tab", "Complete a command or local path"],
     ],
@@ -69,10 +70,11 @@ export const HELP_GROUPS: HelpGroup[] = [
   {
     title: "Application",
     controls: [
-      ["Ctrl+P /", "Open Settings / focus search"],
+      ["Ctrl+P", "Open Settings"],
       ["Ctrl+N", "Open News; n answer / p source"],
       ["Ctrl+T", "Open Processes"],
       ["Ctrl+End", "Scroll transcript to the end"],
+      ["/ in Settings", "Focus the settings search"],
       ["Esc", "Close; twice to cancel work"],
       ["Ctrl+C", "Close popup; clear; twice quits"],
       ["?", "Open or close this help"],
@@ -83,13 +85,34 @@ export const HELP_GROUPS: HelpGroup[] = [
 const KEY_WIDTH = 17;
 type HelpLine = { kind: "heading"; text: string } | { kind: "control"; key: string; what: string } | { kind: "blank" };
 
-export function helpLines(terminalHeight: number): HelpLine[] {
-  const gaps = terminalHeight >= 32;
-  return HELP_GROUPS.flatMap((group, groupIndex) => [
+function groupLines(groups: HelpGroup[], gaps: boolean): HelpLine[] {
+  return groups.flatMap((group, groupIndex) => [
     { kind: "heading" as const, text: group.title },
     ...group.controls.map(([key, what]) => ({ kind: "control" as const, key, what })),
-    ...(gaps && groupIndex < HELP_GROUPS.length - 1 ? [{ kind: "blank" as const }] : []),
+    ...(gaps && groupIndex < groups.length - 1 ? [{ kind: "blank" as const }] : []),
   ]);
+}
+
+export function helpLines(terminalHeight: number): HelpLine[] {
+  return groupLines(HELP_GROUPS, terminalHeight >= 32);
+}
+
+/** Where the wide layout splits HELP_GROUPS between its two columns. */
+const COLUMN_SPLIT = 3;
+
+/** Rows each wide column renders, left first. */
+export function helpColumnLines(terminalHeight: number): [HelpLine[], HelpLine[]] {
+  const gaps = terminalHeight >= 32;
+  return [
+    groupLines(HELP_GROUPS.slice(0, COLUMN_SPLIT), gaps),
+    groupLines(HELP_GROUPS.slice(COLUMN_SPLIT), gaps),
+  ];
+}
+
+/** Rows the taller wide column needs. The popup grows to this where it can. */
+function wideContentRows(terminalHeight: number): number {
+  const [left, right] = helpColumnLines(terminalHeight);
+  return Math.max(left.length, right.length);
 }
 
 type HelpLayout = {
@@ -116,8 +139,13 @@ export function helpLayout(terminalWidth: number, terminalHeight: number): HelpL
   const margin = helpMargin(terminalWidth);
   const contentWidth = Math.max(0, terminalWidth - margin * 2 - 4);
   const twoColumns = contentWidth >= MIN_TWO_COLUMN_CONTENT_WIDTH;
-  const categorySpacing = terminalHeight >= 32;
-  const desiredHeight = twoColumns ? (categorySpacing ? 30 : 28) : 39;
+  // The wide layout asks for the rows its taller column needs, plus the
+  // summary, both gaps, the footer, and the frame. A constant here used to cap
+  // the popup below that, and the last rows of the left column were then
+  // unreachable at every terminal size.
+  const desiredHeight = twoColumns
+    ? wideContentRows(terminalHeight) + HELP_SUMMARY_WIDE.length + 2 + 1 + POPUP_FRAME_ROWS
+    : 39;
   const popupHeight = Math.max(1, Math.min(terminalHeight, desiredHeight));
   const innerHeight = Math.max(0, popupHeight - POPUP_FRAME_ROWS);
   const allSummaryLines = twoColumns
@@ -153,11 +181,19 @@ export function helpLayout(terminalWidth: number, terminalHeight: number): HelpL
   };
 }
 
-export function helpPageSize(terminalHeight: number): number {
-  return Math.max(1, helpLayout(0, terminalHeight).contentHeight);
+export function helpPageSize(terminalHeight: number, terminalWidth = 0): number {
+  return Math.max(1, helpLayout(terminalWidth, terminalHeight).contentHeight);
 }
 
-export function maxHelpScrollOffset(terminalHeight: number): number {
+/**
+ * Pass `terminalWidth` to clamp against the layout actually on screen. Without
+ * it the wide layout falls back to the taller stacked maximum, and the popup
+ * clamps the offset again when it renders.
+ */
+export function maxHelpScrollOffset(terminalHeight: number, terminalWidth = 0): number {
+  if (helpLayout(terminalWidth, terminalHeight).twoColumns) {
+    return Math.max(0, wideContentRows(terminalHeight) - helpPageSize(terminalHeight, terminalWidth));
+  }
   const lines = helpLines(terminalHeight);
   const raw = Math.max(0, lines.length - helpPageSize(terminalHeight));
   const headingBeforeFirstControl =
@@ -189,27 +225,16 @@ function HelpLineRow({ line, theme }: { line: HelpLine; theme: Theme }) {
   );
 }
 
-function HelpColumn({ groups, theme, spaced }: { groups: HelpGroup[]; theme: Theme; spaced: boolean }) {
+function HelpColumn({ lines, theme, scrollOffset, rows }: {
+  lines: HelpLine[];
+  theme: Theme;
+  scrollOffset: number;
+  rows: number;
+}) {
   return (
     <box style={{ flexDirection: "column", flexGrow: 1, minWidth: 0 }}>
-      {groups.map((group, groupIndex) => (
-        <box key={group.title} style={{ flexDirection: "column", flexShrink: 0, marginBottom: spaced && groupIndex < groups.length - 1 ? 1 : 0 }}>
-          <text content={group.title} fg={theme.dim} bg={theme.popupBg} />
-          {group.controls.map(([key, what], index) => (
-            <box key={`${key}:${index}`} style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
-              <box style={{ width: KEY_WIDTH, flexShrink: 0 }}>
-                <text content={key} fg={theme.accent} bg={theme.popupBg} wrapMode="none" />
-              </box>
-              <text
-                content={what}
-                fg={theme.fg}
-                bg={theme.popupBg}
-                wrapMode="none"
-                style={{ flexGrow: 1, minWidth: 0 }}
-              />
-            </box>
-          ))}
-        </box>
+      {lines.slice(scrollOffset, scrollOffset + rows).map((line, index) => (
+        <HelpLineRow key={`${scrollOffset + index}:${line.kind}`} line={line} theme={theme} />
       ))}
     </box>
   );
@@ -229,9 +254,12 @@ export function HelpPopup({
   const layout = helpLayout(terminalWidth, terminalHeight);
   const margin = helpMargin(terminalWidth);
   const popupWidth = Math.max(1, terminalWidth - margin * 2);
-  const split = 3;
   const lines = helpLines(terminalHeight);
-  const spaced = terminalHeight >= 32;
+  const [leftLines, rightLines] = helpColumnLines(terminalHeight);
+  const maxOffset = maxHelpScrollOffset(terminalHeight, terminalWidth);
+  // The caller tracks one offset for both layouts, so clamp it here.
+  const offset = Math.max(0, Math.min(scrollOffset, maxOffset));
+  const scrollable = maxOffset > 0;
 
   return (
     <PopupFrame
@@ -269,14 +297,14 @@ export function HelpPopup({
       >
         {layout.twoColumns ? (
           <>
-            <HelpColumn groups={HELP_GROUPS.slice(0, split)} theme={theme} spaced={spaced} />
+            <HelpColumn lines={leftLines} theme={theme} scrollOffset={offset} rows={layout.contentHeight} />
             <box style={{ width: 2, flexShrink: 0 }} />
-            <HelpColumn groups={HELP_GROUPS.slice(split)} theme={theme} spaced={spaced} />
+            <HelpColumn lines={rightLines} theme={theme} scrollOffset={offset} rows={layout.contentHeight} />
           </>
         ) : (
           <box style={{ flexDirection: "column", flexGrow: 1, minWidth: 0 }}>
-            {lines.slice(scrollOffset, scrollOffset + helpPageSize(terminalHeight)).map((line, index) => (
-              <HelpLineRow key={`${scrollOffset + index}:${line.kind}`} line={line} theme={theme} />
+            {lines.slice(offset, offset + helpPageSize(terminalHeight)).map((line, index) => (
+              <HelpLineRow key={`${offset + index}:${line.kind}`} line={line} theme={theme} />
             ))}
           </box>
         )}
@@ -285,7 +313,7 @@ export function HelpPopup({
       {layout.footerHeight ? (
         <box style={{ height: 1, flexShrink: 0 }}>
           <text
-            content={layout.twoColumns ? "esc or ? close" : "↑↓ scroll   esc or ? close"}
+            content={scrollable ? "↑↓ scroll   esc or ? close" : "esc or ? close"}
             fg={theme.dim}
             bg={theme.popupBg}
             wrapMode="none"

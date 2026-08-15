@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimationProvider, supportsTrueColor, useWorkingRule, type WorkingRuleRole } from "./animation";
 import {
   filterModels,
@@ -146,7 +146,18 @@ import {
   type NewsItem,
   type NewsPrompt,
 } from "./news";
-import { statsFromEntries, type SessionStatsManager } from "./session-stats";
+import {
+  statsFromEntries,
+  type SessionStatsManager,
+  type SessionStatsSnapshot,
+} from "./session-stats";
+
+/** Placeholder while the stats popup is closed, so no snapshot is built per event. */
+const EMPTY_STATS_SNAPSHOT: SessionStatsSnapshot = {
+  models: [],
+  tools: [],
+  outcomes: { successful: 0, failed: 0, blocked: 0, running: 0, interrupted: 0 },
+};
 import { maxStatsScrollOffset, StatsPopup } from "./stats-popup";
 import {
   projectTranscriptLines,
@@ -226,6 +237,44 @@ export function promptPlaceholder(options: {
 
 /** A blank row. An empty <text> measures to nothing, so this needs a height. */
 const Gap = () => <box style={{ height: 1, flexShrink: 0 }} />;
+
+type RenderErrorBoundaryProps = {
+  theme: Theme;
+  label: string;
+  /** A new value clears a shown error, so later state can render again. */
+  resetKey: string;
+  children: ReactNode;
+};
+
+/**
+ * A throw during a React commit escapes root.render, and nothing above it
+ * leaves the alternate screen or raw mode, so one bad transcript row or popup
+ * would wedge the terminal. This turns that into a single error row.
+ */
+export class RenderErrorBoundary extends Component<RenderErrorBoundaryProps, { message: string | null }> {
+  state: { message: string | null } = { message: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { message: error instanceof Error ? error.message : String(error) };
+  }
+
+  componentDidUpdate(previous: RenderErrorBoundaryProps) {
+    if (this.state.message !== null && previous.resetKey !== this.props.resetKey) {
+      this.setState({ message: null });
+    }
+  }
+
+  render() {
+    if (this.state.message === null) return this.props.children;
+    return (
+      <text
+        content={`${this.props.label} failed to render: ${this.state.message}`}
+        fg={this.props.theme.error}
+        style={{ flexShrink: 0 }}
+      />
+    );
+  }
+}
 
 function WorkingRule({
   theme,
@@ -625,10 +674,15 @@ export function App({
   const runningShellCount = shells.filter(
     (shell) => shell.state === "starting" || shell.state === "running",
   ).length;
-  const statsSnapshot = useMemo(() => statsManager?.snapshot() ?? statsFromEntries(
-    (session.sessionManager as any).getEntries?.() ?? session.sessionManager.buildContextEntries(),
-    `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
-  ), [statsManager, session, statsRevision]);
+  // Only the stats popup reads this, and building it walks every agent's entries.
+  // Computing it on each tool event put that work on the render thread, so it is
+  // built only while the popup is open.
+  const statsSnapshot = useMemo(() => (statsOpen
+    ? statsManager?.snapshot() ?? statsFromEntries(
+      (session.sessionManager as any).getEntries?.() ?? session.sessionManager.buildContextEntries(),
+      `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
+    )
+    : EMPTY_STATS_SNAPSHOT), [statsOpen, statsManager, session, statsRevision]);
   const inputHint = cancelArmed
     ? " esc again to cancel "
     : quitArmed
@@ -643,7 +697,9 @@ export function App({
     1,
     width - 2 - promptRightColumns - visibleInputHint.length,
   );
-  const commandSuggestions = stashOpen || commandSuggestionsDismissed
+  // Slash commands only exist for the main agent, so a subagent view neither
+  // shows them nor completes them into a message to the child.
+  const commandSuggestions = activeAgentId || stashOpen || commandSuggestionsDismissed
     ? []
     : matchingCommands(commandInput).slice(0, 5);
   const visibleSettingRows = filterSettingsRows(settingsQuery);
@@ -715,6 +771,13 @@ export function App({
   // Mirrors `busy` for the keyboard handler: a keypress can land before React
   // has re-rendered, and the handler's closure would still read the old value.
   const busyRef = useRef(false);
+  // True only while the main agent really runs a turn. `busy` also covers UI
+  // work such as /compress, /clear, /worktree, /check-path and a session
+  // switch, and steering into an idle session only queues text that no turn
+  // picks up, so steer-versus-prompt must read this instead.
+  const streamingRef = useRef(false);
+  /** True while a session switch or /clear is replacing the session object. */
+  const sessionSwitchRef = useRef(false);
   /** True while the running main-agent turn started from a direct user prompt. */
   const userTurnActiveRef = useRef(false);
   /** Text of the final assistant message; reset at each assistant message start. */
@@ -898,16 +961,11 @@ export function App({
 
   const syncInputMetrics = () => {
     const input = inputRef.current;
-    if (!input) return;
-    let totalRows: number;
-    try {
-      totalRows = input.editorView.getTotalVirtualLineCount();
-    } catch (error) {
-      // A queued frame or microtask can run after OpenTUI destroys the editor
-      // during a narrow-layout reconciliation or test teardown.
-      if (error instanceof Error && error.message === "EditorView is destroyed") return;
-      throw error;
-    }
+    // A queued frame or microtask can still run after the renderer destroys the
+    // textarea on shutdown or test teardown, and the editor view, the plain
+    // text, and the visual cursor all throw once that has happened.
+    if (!input || input.isDestroyed) return;
+    const totalRows = input.editorView.getTotalVirtualLineCount();
     const rows = Math.min(MAX_INPUT_ROWS, Math.max(1, totalRows));
     const cursorRow = input.cursorOffset >= input.plainText.length
       ? rows - 1
@@ -1312,6 +1370,8 @@ export function App({
     }));
 
   useEffect(() => {
+    // A replaced session cannot still be running the previous session's turn.
+    streamingRef.current = false;
     void subagentManager
       .bindMainSession(session.sessionManager, cwd)
       .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
@@ -1411,6 +1471,7 @@ export function App({
           break;
         }
         case "agent_start":
+          streamingRef.current = true;
           setWorking(true);
           break;
         case "turn_end": {
@@ -1460,6 +1521,7 @@ export function App({
           userTurnActiveRef.current = false;
           turnPromptsRef.current = [];
           releasePostTurnPastedTexts("main");
+          streamingRef.current = false;
           setWorking(false);
           break;
         }
@@ -1602,7 +1664,9 @@ export function App({
 
   const stepThinking = (step: number) => {
     const levels = getSupportedThinkingLevels(session.agent.state.model);
-    const i = levels.indexOf(thinkingLevel);
+    // pi holds the authoritative level, so two presses in one React batch both
+    // step from the committed value instead of from a stale render closure.
+    const i = levels.indexOf(session.agent.state.thinkingLevel as ThinkingLevel);
     const target = levels[Math.max(0, Math.min(levels.length - 1, i + step))]!;
     session.setThinkingLevel(target);
     // setThinkingLevel clamps to what the model supports — show the real value.
@@ -1610,19 +1674,19 @@ export function App({
   };
 
   const stepTheme = (step: number) => {
-    const i = PRESET_NAMES.indexOf(settings.theme);
+    const i = PRESET_NAMES.indexOf(settingsRef.current.theme);
     const next = PRESET_NAMES[(i + step + PRESET_NAMES.length) % PRESET_NAMES.length]!;
     update({ theme: next });
   };
 
   const stepWritingStyle = (step: number) => {
-    const i = WRITING_STYLES.indexOf(settings.writingStyle);
+    const i = WRITING_STYLES.indexOf(settingsRef.current.writingStyle);
     const next = WRITING_STYLES[(i + step + WRITING_STYLES.length) % WRITING_STYLES.length]!;
     update({ writingStyle: next });
   };
 
   const stepExplanationStrength = (step: number) => {
-    const i = EXPLANATION_STRENGTHS.indexOf(settings.explanationStrength);
+    const i = EXPLANATION_STRENGTHS.indexOf(settingsRef.current.explanationStrength);
     const next = EXPLANATION_STRENGTHS[
       (i + step + EXPLANATION_STRENGTHS.length) % EXPLANATION_STRENGTHS.length
     ]!;
@@ -1630,7 +1694,7 @@ export function App({
   };
 
   const stepWorkingRuleAnimation = (step: number) => {
-    const i = WORKING_RULE_ANIMATION_MODES.indexOf(settings.workingRuleAnimation);
+    const i = WORKING_RULE_ANIMATION_MODES.indexOf(settingsRef.current.workingRuleAnimation);
     const next = WORKING_RULE_ANIMATION_MODES[
       (i + step + WORKING_RULE_ANIMATION_MODES.length) % WORKING_RULE_ANIMATION_MODES.length
     ]!;
@@ -1638,7 +1702,7 @@ export function App({
   };
 
   const stepOutputMode = (step: number) => {
-    update({ outputMode: cycleOutputMode(settings.outputMode, step) });
+    update({ outputMode: cycleOutputMode(settingsRef.current.outputMode, step) });
   };
 
   const openLogin = () => {
@@ -1909,6 +1973,7 @@ export function App({
       return;
     }
     setWorking(true);
+    sessionSwitchRef.current = true;
     onSwitchSession(path)
       .then((next) => {
         if (!next) {
@@ -1925,7 +1990,10 @@ export function App({
         append({ kind: "text", role: "error", text: String(err) });
         queueMicrotask(() => inputRef.current?.focus());
       })
-      .finally(() => setWorking(false));
+      .finally(() => {
+        sessionSwitchRef.current = false;
+        setWorking(false);
+      });
   };
 
   const cancel = () => {
@@ -2120,22 +2188,26 @@ export function App({
           append({ kind: "text", role: "system", text: result.message });
         })
         .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
-        .finally(() => setWorking(false));
+        .finally(() => setWorking(streamingRef.current));
     } else if (worktreeCommand) {
       runWorktreeCommand({
         name: worktreeCommand[1],
         manager: subagentManager,
         append: (call) => append({ kind: "tool", call }),
         patch: patchTool,
-        settled: () => setWorking(false),
+        settled: () => setWorking(streamingRef.current),
       });
     } else if (clear) {
+      sessionSwitchRef.current = true;
       onNewSession()
         .then((next) => {
           if (next) setSession(next);
         })
         .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
-        .finally(() => setWorking(false));
+        .finally(() => {
+          sessionSwitchRef.current = false;
+          setWorking(false);
+        });
     } else {
       session
         .compact(compress![1]?.trim() || undefined)
@@ -2145,7 +2217,7 @@ export function App({
           text: `compressed context (${result.tokensBefore.toLocaleString()} tokens before)`,
         }))
         .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
-        .finally(() => setWorking(false));
+        .finally(() => setWorking(streamingRef.current));
     }
     return true;
   };
@@ -2156,6 +2228,12 @@ export function App({
     images: ReturnType<typeof imageContent>[] = [],
     recallable = images.length === 0,
   ): Promise<void> => {
+    // A pending session switch aborts and disposes this session, so anything
+    // delivered into it now is lost. Refuse instead, and let the caller keep
+    // the text.
+    if (sessionSwitchRef.current) {
+      throw new Error("session change in progress; send this again when it finishes");
+    }
     // A direct user prompt starts a user-initiated main turn, so its settled
     // answer becomes a news item. A reply also marks the newest answer seen.
     userTurnActiveRef.current = true;
@@ -2166,10 +2244,10 @@ export function App({
       text: displayText,
     };
 
-    turnPromptsRef.current.push({ text: displayText, steer: busyRef.current });
-    // Working already: keep the steering message pending at the transcript
+    turnPromptsRef.current.push({ text: displayText, steer: streamingRef.current });
+    // Streaming already: keep the steering message pending at the transcript
     // bottom until pi emits message_start for its actual insertion.
-    if (busyRef.current) {
+    if (streamingRef.current) {
       const pending: PendingLine = {
         id: randomUUID().slice(0, 12),
         line: userLine,
@@ -2188,11 +2266,16 @@ export function App({
     }
 
     append(userLine);
-    inFlight.current = promptText;
+    // Esc hands the running prompt back for editing, so only text the user
+    // actually typed belongs there. A generated coordination prompt would
+    // arrive in the draft as if they had written it.
+    inFlight.current = (recallable || displayText === promptText) ? promptText : "";
+    streamingRef.current = true;
     setWorking(true);
     try {
       await withSearchRoute(session.sessionId, () => session.prompt(promptText, { images }));
     } catch (error) {
+      streamingRef.current = false;
       append({ kind: "text", role: "error", text: String(error) });
       setWorking(false);
       throw error;
@@ -2224,6 +2307,17 @@ export function App({
     persistedPrompt = persistedPrompt.trim();
 
     if (!promptText && attachments.length === 0 && pastedTexts.length === 0) return;
+
+    // The main session is being replaced, so keep the draft rather than deliver
+    // into a session that is about to be aborted and disposed.
+    if (!selectedAgentId && sessionSwitchRef.current) {
+      append({
+        kind: "text",
+        role: "error",
+        text: "wait for the session change to finish before sending",
+      });
+      return;
+    }
 
     let images;
     try {
@@ -2311,7 +2405,14 @@ export function App({
     draft.current = "";
     setSelectedStash(-1);
     void deliverMainPrompt(promptText, displayText, images)
-      .then(finishAttachments)
+      .then(() => {
+        finishAttachments();
+        // The row is executed only once delivery succeeded, and only while it
+        // still holds the text that was sent.
+        if (stashIndex !== undefined && stashRef.current[stashIndex]?.text === value) {
+          executeStashedPrompt(stashIndex);
+        }
+      })
       .catch(restoreFailedDraft);
   };
 
@@ -2332,21 +2433,35 @@ export function App({
     setEditorText("");
   };
 
-  const runSelectedStashBatch = () => {
-    const indices = [...stashSelectionRef.current].sort((a, b) => a - b);
-    const prompts = indices.flatMap((index) => {
-      const prompt = stashRef.current[index];
-      return prompt ? [prompt.text] : [];
-    });
-    if (prompts.length === 0) return;
-
-    for (const prompt of prompts) history.current = promptHistoryStore.append(cwd, prompt);
+  const markStashBatchExecuted = (selected: ReadonlyArray<{ index: number; text: string }>) => {
+    // A row can have moved or changed during the turn, so only tick the ones
+    // that still hold the text that was sent.
+    const indices = selected
+      .filter((entry) => stashRef.current[entry.index]?.text === entry.text)
+      .map((entry) => entry.index);
+    if (indices.length === 0) return;
     const next = promptStashStore.markExecutedMany(cwd, indices);
     stashRef.current = next;
     setStash(next);
     refreshHistoryAfterStashMutation();
+  };
+
+  const runSelectedStashBatch = () => {
+    const indices = [...stashSelectionRef.current].sort((a, b) => a - b);
+    const selected = indices.flatMap((index) => {
+      const prompt = stashRef.current[index];
+      return prompt ? [{ index, text: prompt.text }] : [];
+    });
+    const prompts = selected.map((entry) => entry.text);
+    if (prompts.length === 0) return;
+
+    for (const prompt of prompts) history.current = promptHistoryStore.append(cwd, prompt);
     resetAfterCacheExecution();
-    void deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts), [], false).catch(() => {});
+    void deliverMainPrompt(buildStashBatchPrompt(prompts), cachedBatchDisplay(prompts), [], false)
+      // Rows are executed only after delivery succeeded. Marking them first
+      // left them ticked for work that never ran.
+      .then(() => markStashBatchExecuted(selected))
+      .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
   };
 
   useEffect(() => {
@@ -2413,12 +2528,12 @@ export function App({
   };
 
   const stepCheckMode = (step: number) => {
-    const index = CHECK_MODE_PROFILES.indexOf(settings.checkMode);
+    const index = CHECK_MODE_PROFILES.indexOf(settingsRef.current.checkMode);
     update({ checkMode: CHECK_MODE_PROFILES[(index + step + CHECK_MODE_PROFILES.length) % CHECK_MODE_PROFILES.length]! });
   };
 
   const stepSandboxMode = (step: number) => {
-    const current = settings.sandboxMode ?? "auto";
+    const current = settingsRef.current.sandboxMode ?? "auto";
     const index = SANDBOX_MODES.indexOf(current);
     update({ sandboxMode: SANDBOX_MODES[(index + step + SANDBOX_MODES.length) % SANDBOX_MODES.length]! });
   };
@@ -2426,10 +2541,10 @@ export function App({
   const rowActions: Record<SettingRowId, { step?: (n: number) => void; enter?: () => void }> = {
     theme: { step: stepTheme },
     providers: { enter: openLogin },
-    animations: { step: () => update({ animations: !settings.animations }) },
+    animations: { step: () => update({ animations: !settingsRef.current.animations }) },
     workingRuleAnimation: { step: stepWorkingRuleAnimation },
     outputMode: { step: stepOutputMode },
-    webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
+    webSearch: { step: () => update({ webSearch: !settingsRef.current.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
     checkMode: { step: stepCheckMode },
@@ -2446,11 +2561,11 @@ export function App({
       text: "use /check-path [list|add <directory>|remove <directory>|clear]",
     }) },
     thinkingLevel: { step: stepThinking },
-    showThinking: { step: () => update({ showThinking: !settings.showThinking }) },
+    showThinking: { step: () => update({ showThinking: !settingsRef.current.showThinking }) },
     maxActiveSubagents: { step: (step) => update({
       maxActiveSubagents: Math.max(
         MIN_ACTIVE_SUBAGENTS,
-        Math.min(MAX_ACTIVE_SUBAGENTS, settings.maxActiveSubagents + step),
+        Math.min(MAX_ACTIVE_SUBAGENTS, settingsRef.current.maxActiveSubagents + step),
       ),
     }) },
     model: { enter: () => {
@@ -2494,6 +2609,9 @@ export function App({
   };
 
   const selectAgentView = (target: string | null): boolean => {
+    const current = activeAgentIdRef.current;
+    // Nothing moves between views, so a pending attachment cannot be stranded.
+    if (target === current) return true;
     if (pendingImages.current.length > 0) {
       append({ kind: "text", role: "error", text: "send or remove attached images before switching agents" });
       return false;
@@ -2502,8 +2620,6 @@ export function App({
       append({ kind: "text", role: "error", text: "send or remove attached pasted text before switching agents" });
       return false;
     }
-    const current = activeAgentIdRef.current;
-    if (target === current) return true;
     const currentKey = current ?? "main";
     const targetKey = target ?? "main";
     viewDrafts.current.set(currentKey, inputRef.current?.plainText ?? "");
@@ -2537,9 +2653,11 @@ export function App({
       setNewsOpen(false);
       newsOpenRef.current = false;
       const target = spawnPreview.requester.agentId;
+      // Cancellation is for a missing recipient only. The requester's view is
+      // often already selected, and that never needs a switch.
       if (target && !agents.some((agent) => agent.id === target)) {
         spawnPreviewManager?.cancel("unavailable");
-      } else if (!selectAgentView(target)) {
+      } else if (target !== activeAgentIdRef.current && !selectAgentView(target)) {
         spawnPreviewManager?.cancel("unavailable");
       }
       return;
@@ -2845,7 +2963,7 @@ export function App({
         setHelpScrollOffset((offset) => Math.max(0, offset - (key.name === "pageup" ? 5 : 1)));
       } else if (key.name === "down" || key.name === "pagedown") {
         setHelpScrollOffset((offset) =>
-          Math.min(maxHelpScrollOffset(height), offset + (key.name === "pagedown" ? 5 : 1)),
+          Math.min(maxHelpScrollOffset(height, width), offset + (key.name === "pagedown" ? 5 : 1)),
         );
       }
       return;
@@ -3008,9 +3126,10 @@ export function App({
     const isPlainReturn =
       isReturnKey && !hasCtrlForReturn && !hasShiftForReturn && !hasAltForReturn;
     const inputValue = inputRef.current?.plainText ?? "";
-    const commandMatches = stashOpenRef.current || commandSuggestionsDismissedRef.current
-      ? []
-      : matchingCommands(inputValue).slice(0, 5);
+    const commandMatches =
+      activeAgentIdRef.current || stashOpenRef.current || commandSuggestionsDismissedRef.current
+        ? []
+        : matchingCommands(inputValue).slice(0, 5);
     const isContinuationReturn =
       isPlainReturn &&
       inputValue.endsWith("\\") &&
@@ -3167,10 +3286,8 @@ export function App({
       const index = stashCursorRef.current;
       if (index >= 0) {
         const prompt = stashRef.current[index];
-        if (prompt) {
-          submitPrompt(prompt.text, index);
-          executeStashedPrompt(index);
-        }
+        // submitPrompt ticks the row after delivery succeeds.
+        if (prompt) submitPrompt(prompt.text, index);
       } else if (inputValue.trim()) {
         addToStash(inputValue);
         setEditorText("");
@@ -3300,6 +3417,13 @@ export function App({
   const lastLine: Line | undefined = lastProjectedLine?.kind === "tool-summary"
     ? { kind: "text", role: "system", text: lastProjectedLine.text }
     : lastProjectedLine;
+  // Reset keys for the render boundaries: a shown error clears as soon as the
+  // transcript or the open popup changes, so the next state gets a fresh try.
+  const transcriptResetKey = `${activeAgentId ?? "main"}:${visibleLines.length}`;
+  const popupResetKey = [
+    loginOpen, spawnPreview?.id ?? "", Boolean(questionnaire), helpOpen, triggersOpen,
+    agentSelectorOpen, historyOpen, newsOpen, statsOpen, settingsOpen, page,
+  ].join(":");
   const streamGap = visibleTx.stream
     ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
     : false;
@@ -3353,93 +3477,95 @@ export function App({
           stickyStart="bottom"
           verticalScrollbarOptions={{ visible: true }}
         >
-          {visibleLines.map((line, i) => {
-            const workingCaret = visibleBusy && !visibleTx.stream && i === visibleLines.length - 1;
-            const row =
-              line.kind === "tool-summary" ? (
-                <TextLine
-                  theme={theme}
-                  syntaxStyle={syntaxStyle}
-                  role="system"
-                  text={line.text}
-                />
-              ) : line.kind === "tool" ? (
-                <ToolLine
-                  theme={theme}
-                  syntaxStyle={syntaxStyle}
-                  call={line.call}
-                  workingCaret={workingCaret}
-                  outputMode={outputMode}
-                />
-              ) : line.kind === "agent-message" ? (
-                <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
-              ) : (
-                <TextLine
-                  theme={theme}
-                  syntaxStyle={syntaxStyle}
-                  role={line.role as Role}
-                  text={line.text}
-                  workingCaret={workingCaret}
-                  news={
-                    line.kind === "text" && line.role === "assistant" && line.newsId
-                      ? (newsReadById.get(line.newsId) ? "seen" : "unseen")
-                      : undefined
-                  }
-                />
+          <RenderErrorBoundary theme={theme} label="transcript" resetKey={transcriptResetKey}>
+            {visibleLines.map((line, i) => {
+              const workingCaret = visibleBusy && !visibleTx.stream && i === visibleLines.length - 1;
+              const row =
+                line.kind === "tool-summary" ? (
+                  <TextLine
+                    theme={theme}
+                    syntaxStyle={syntaxStyle}
+                    role="system"
+                    text={line.text}
+                  />
+                ) : line.kind === "tool" ? (
+                  <ToolLine
+                    theme={theme}
+                    syntaxStyle={syntaxStyle}
+                    call={line.call}
+                    workingCaret={workingCaret}
+                    outputMode={outputMode}
+                  />
+                ) : line.kind === "agent-message" ? (
+                  <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
+                ) : (
+                  <TextLine
+                    theme={theme}
+                    syntaxStyle={syntaxStyle}
+                    role={line.role as Role}
+                    text={line.text}
+                    workingCaret={workingCaret}
+                    news={
+                      line.kind === "text" && line.role === "assistant" && line.newsId
+                        ? (newsReadById.get(line.newsId) ? "seen" : "unseen")
+                        : undefined
+                    }
+                  />
+                );
+              const currentGapLine: Line = line.kind === "tool-summary"
+                ? { kind: "text", role: "system", text: line.text }
+                : line;
+              const previousProjected = visibleLines[i - 1];
+              const previousGapLine: Line | undefined = previousProjected?.kind === "tool-summary"
+                ? { kind: "text", role: "system", text: previousProjected.text }
+                : previousProjected;
+              const gapBefore = needsTranscriptGap(previousGapLine, currentGapLine);
+              const lineKey =
+                line.kind === "tool-summary"
+                  ? `tool-summary:${i}:${line.text}`
+                  : line.kind === "tool"
+                  ? `tool:${line.call.id}`
+                  : line.kind === "agent-message"
+                    ? `agent:${line.sender}:${line.recipient}:${i}:${line.text}`
+                    : `text:${line.role}:${i}:${line.text}`;
+              return (
+                <box
+                  id={`transcript-line-${i}`}
+                  key={lineKey}
+                  style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}
+                >
+                  {gapBefore ? <Gap /> : null}
+                  {row}
+                </box>
               );
-            const currentGapLine: Line = line.kind === "tool-summary"
-              ? { kind: "text", role: "system", text: line.text }
-              : line;
-            const previousProjected = visibleLines[i - 1];
-            const previousGapLine: Line | undefined = previousProjected?.kind === "tool-summary"
-              ? { kind: "text", role: "system", text: previousProjected.text }
-              : previousProjected;
-            const gapBefore = needsTranscriptGap(previousGapLine, currentGapLine);
-            const lineKey =
-              line.kind === "tool-summary"
-                ? `tool-summary:${i}:${line.text}`
-                : line.kind === "tool"
-                ? `tool:${line.call.id}`
-                : line.kind === "agent-message"
-                  ? `agent:${line.sender}:${line.recipient}:${i}:${line.text}`
-                  : `text:${line.role}:${i}:${line.text}`;
-            return (
-              <box
-                id={`transcript-line-${i}`}
-                key={lineKey}
-                style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}
-              >
-                {gapBefore ? <Gap /> : null}
-                {row}
-              </box>
-            );
-          })}
-          {visibleTx.stream ? (
-            <>
-              {/* Same gap while the answer is still arriving, so it does not
-                  jump down a row when the message settles. */}
-              {streamGap ? <Gap /> : null}
-              <StreamLine
-                theme={theme}
-                syntaxStyle={syntaxStyle}
-                role={visibleTx.stream.kind}
-                text={visibleTx.stream.text}
-              />
-            </>
-          ) : null}
-          {visibleTx.pending.some((pending) => !pending.delivered) ? (
-            <>
-              {(visibleLines.length > 0 || visibleTx.stream) ? <Gap /> : null}
-              {visibleTx.pending.filter((pending) => !pending.delivered).map((pending) => (
-                <PendingMessageLine
-                  key={pending.id}
+            })}
+            {visibleTx.stream ? (
+              <>
+                {/* Same gap while the answer is still arriving, so it does not
+                    jump down a row when the message settles. */}
+                {streamGap ? <Gap /> : null}
+                <StreamLine
                   theme={theme}
                   syntaxStyle={syntaxStyle}
-                  pending={pending}
+                  role={visibleTx.stream.kind}
+                  text={visibleTx.stream.text}
                 />
-              ))}
-            </>
-          ) : null}
+              </>
+            ) : null}
+            {visibleTx.pending.some((pending) => !pending.delivered) ? (
+              <>
+                {(visibleLines.length > 0 || visibleTx.stream) ? <Gap /> : null}
+                {visibleTx.pending.filter((pending) => !pending.delivered).map((pending) => (
+                  <PendingMessageLine
+                    key={pending.id}
+                    theme={theme}
+                    syntaxStyle={syntaxStyle}
+                    pending={pending}
+                  />
+                ))}
+              </>
+            ) : null}
+          </RenderErrorBoundary>
         </scrollbox>
         <WorkingRule
           theme={theme}
@@ -3540,110 +3666,112 @@ export function App({
           mode={settings.workingRuleAnimation}
           role="inputBottom"
         />
-        {loginOpen ? (
-          <LoginPopup
-            theme={theme}
-            page={loginPage}
-            terminalWidth={width}
-            terminalHeight={height}
-            onProviderSearchChange={(value) => loginControllerRef.current?.setProviderQuery(value)}
-          />
-        ) : null}
-        {spawnPreview ? (
-          <SpawnPreviewPopup
-            theme={theme}
-            syntaxStyle={syntaxStyle}
-            request={spawnPreview}
-            terminalWidth={width}
-            terminalHeight={height}
-            inputRef={spawnPreviewInputRef}
-          />
-        ) : null}
-        {questionnaire ? (
-          <QuestionnairePopup
-            theme={theme}
-            request={questionnaire}
-            terminalWidth={width}
-            terminalHeight={height}
-            inputRef={questionnaireInputRef}
-          />
-        ) : null}
-        {helpOpen ? (
-          <HelpPopup
-            theme={theme}
-            terminalWidth={width}
-            terminalHeight={height}
-            scrollOffset={helpScrollOffset}
-          />
-        ) : null}
-        {triggersOpen ? (
-          <ProcessesPopup
-            theme={theme}
-            tab={processTab}
-            triggers={triggers}
-            shells={shells}
-            triggerCursor={triggerCursor}
-            shellCursor={shellCursor}
-            shellTail={shells[shellCursor] ? shellTails[shells[shellCursor]!.id] : undefined}
-            terminalWidth={width}
-            terminalHeight={height}
-          />
-        ) : null}
-        {agentSelectorOpen ? (
-          <AgentSelectorPopup
-            theme={theme}
-            rows={agentTreeRows}
-            cursor={agentSelectorCursor}
-          />
-        ) : null}
-        {historyOpen ? (
-          <SessionHistoryPopup
-            theme={theme}
-            sessions={historySessions}
-            currentPath={session.sessionFile}
-            terminalWidth={width}
-            terminalHeight={height}
-            onSelect={selectHistorySession}
-          />
-        ) : null}
-        {newsOpen ? (
-          <NewsPopup
-            theme={theme}
-            items={news}
-            cursor={newsCursor}
-            terminalWidth={width}
-            terminalHeight={height}
-          />
-        ) : null}
-        {statsOpen ? (
-          <StatsPopup
-            theme={theme}
-            snapshot={statsSnapshot}
-            terminalWidth={width}
-            terminalHeight={height}
-            scrollOffset={statsScrollOffset}
-          />
-        ) : null}
-        {settingsOpen ? (
-          <SettingsPopup
-            theme={theme}
-            page={page}
-            rows={visibleSettingRows}
-            selectedId={selectedSettingId}
-            values={rowValues}
-            query={settingsQuery}
-            searchFocused={settingsSearchFocused}
-            terminalWidth={width}
-            terminalHeight={height}
-            models={visibleModels}
-            modelQuery={modelQuery}
-            modelSearchFocused={modelSearchFocused}
-            onSearchChange={updateSettingsQuery}
-            onModelSearchChange={setModelQuery}
-            onSelectModel={selectModel}
-            onSelectCheckModel={selectCheckModel}
-          />
-        ) : null}
+        <RenderErrorBoundary theme={theme} label="popup" resetKey={popupResetKey}>
+          {loginOpen ? (
+            <LoginPopup
+              theme={theme}
+              page={loginPage}
+              terminalWidth={width}
+              terminalHeight={height}
+              onProviderSearchChange={(value) => loginControllerRef.current?.setProviderQuery(value)}
+            />
+          ) : null}
+          {spawnPreview ? (
+            <SpawnPreviewPopup
+              theme={theme}
+              syntaxStyle={syntaxStyle}
+              request={spawnPreview}
+              terminalWidth={width}
+              terminalHeight={height}
+              inputRef={spawnPreviewInputRef}
+            />
+          ) : null}
+          {questionnaire ? (
+            <QuestionnairePopup
+              theme={theme}
+              request={questionnaire}
+              terminalWidth={width}
+              terminalHeight={height}
+              inputRef={questionnaireInputRef}
+            />
+          ) : null}
+          {helpOpen ? (
+            <HelpPopup
+              theme={theme}
+              terminalWidth={width}
+              terminalHeight={height}
+              scrollOffset={helpScrollOffset}
+            />
+          ) : null}
+          {triggersOpen ? (
+            <ProcessesPopup
+              theme={theme}
+              tab={processTab}
+              triggers={triggers}
+              shells={shells}
+              triggerCursor={triggerCursor}
+              shellCursor={shellCursor}
+              shellTail={shells[shellCursor] ? shellTails[shells[shellCursor]!.id] : undefined}
+              terminalWidth={width}
+              terminalHeight={height}
+            />
+          ) : null}
+          {agentSelectorOpen ? (
+            <AgentSelectorPopup
+              theme={theme}
+              rows={agentTreeRows}
+              cursor={agentSelectorCursor}
+            />
+          ) : null}
+          {historyOpen ? (
+            <SessionHistoryPopup
+              theme={theme}
+              sessions={historySessions}
+              currentPath={session.sessionFile}
+              terminalWidth={width}
+              terminalHeight={height}
+              onSelect={selectHistorySession}
+            />
+          ) : null}
+          {newsOpen ? (
+            <NewsPopup
+              theme={theme}
+              items={news}
+              cursor={newsCursor}
+              terminalWidth={width}
+              terminalHeight={height}
+            />
+          ) : null}
+          {statsOpen ? (
+            <StatsPopup
+              theme={theme}
+              snapshot={statsSnapshot}
+              terminalWidth={width}
+              terminalHeight={height}
+              scrollOffset={statsScrollOffset}
+            />
+          ) : null}
+          {settingsOpen ? (
+            <SettingsPopup
+              theme={theme}
+              page={page}
+              rows={visibleSettingRows}
+              selectedId={selectedSettingId}
+              values={rowValues}
+              query={settingsQuery}
+              searchFocused={settingsSearchFocused}
+              terminalWidth={width}
+              terminalHeight={height}
+              models={visibleModels}
+              modelQuery={modelQuery}
+              modelSearchFocused={modelSearchFocused}
+              onSearchChange={updateSettingsQuery}
+              onModelSearchChange={setModelQuery}
+              onSelectModel={selectModel}
+              onSelectCheckModel={selectCheckModel}
+            />
+          ) : null}
+        </RenderErrorBoundary>
       </box>
     </AnimationProvider>
   );
