@@ -112,7 +112,8 @@ const EnvironmentSchema = Type.Record(
   Type.String({ minLength: 1, maxLength: 512 }),
   Type.String({ maxLength: 32_768 }),
   {
-    description: "Explicit environment overrides. PUM sanitizes inherited and supplied values.",
+    description: "Explicit environment additions. PUM refuses PATH and any variable that can inject"
+      + " runtime behavior, such as LD_PRELOAD, GIT_SSH_COMMAND, GIT_CONFIG_*, BASH_ENV, or PAGER.",
   },
 );
 

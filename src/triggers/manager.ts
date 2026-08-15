@@ -5,7 +5,7 @@ import {
   triggerTemplateValues,
   validateTriggerTemplate,
 } from "./template";
-import { sanitizeTriggerEnvironment } from "./process";
+import { sanitizeTriggerEnvironment, sanitizeTriggerEnvironmentAdditions } from "./process";
 import {
   DEFAULT_DELIVERED_LIMIT,
   DEFAULT_OUTPUT_LIMIT_BYTES,
@@ -48,6 +48,8 @@ type DeliveryRecord = {
 type TriggerRecord = {
   snapshot: TriggerSnapshot;
   env: Readonly<Record<string, string>>;
+  /** Model-supplied additions alone. The safety identity binds these values. */
+  envAdditions: Readonly<Record<string, string>>;
   requester: TriggerRequester;
   messageTemplate: string;
   timer?: unknown;
@@ -64,6 +66,12 @@ const STDERR_MARKER = encoder.encode("\n--- stderr ---\n");
 
 /** Grace period between the SIGTERM and the SIGKILL escalation for a supervised process. */
 const TERMINATION_GRACE_MS = 2_000;
+/** Extra wait after the SIGKILL escalation before shutdown gives up on a child. */
+const TERMINATION_KILL_WAIT_MS = 500;
+/** Total bound on the shutdown wait, so one wedged child cannot hang the exit. */
+const SHUTDOWN_TERMINATION_MS = 5_000;
+/** Node clamps a longer setTimeout delay to 1ms, so long waits re-arm in chunks. */
+const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
 
 function exactTarget(a: TriggerTarget, b: TriggerTarget): boolean {
   return a.sessionId === b.sessionId && a.agentId === b.agentId;
@@ -104,6 +112,8 @@ export class TriggerManager implements PublicTriggerManager {
   private readonly pending = new Map<string, DeliveryRecord>();
   private readonly delivered: DeliveryRecord[] = [];
   private readonly creatingIds = new Set<string>();
+  /** Pending child terminations. Shutdown waits for these under a bounded deadline. */
+  private readonly terminations = new Set<Promise<void>>();
   private readonly options: TriggerManagerOptions;
   private readonly triggerLimit: number;
   private readonly runningLimit: number;
@@ -166,10 +176,11 @@ export class TriggerManager implements PublicTriggerManager {
     if (expiresAt - createdAt > MAX_TRIGGER_LIFETIME_MS) {
       throw new Error(`Trigger lifetime cannot exceed ${MAX_TRIGGER_LIFETIME_MS}ms`);
     }
-    const env = sanitizeTriggerEnvironment(this.options.environment ?? process.env, input.env);
+    const envAdditions = sanitizeTriggerEnvironmentAdditions(input.env);
+    const env = sanitizeTriggerEnvironment(this.options.environment ?? process.env, envAdditions);
     this.creatingIds.add(id);
     try {
-      await this.checkSafety(id, input, requester, env, "create");
+      await this.checkSafety(id, input, requester, env, envAdditions, "create");
       this.assertOpen();
     } catch (error) {
       this.creatingIds.delete(id);
@@ -199,6 +210,7 @@ export class TriggerManager implements PublicTriggerManager {
     const record: TriggerRecord = {
       snapshot,
       env,
+      envAdditions,
       requester: { ...requester },
       messageTemplate,
       generation: 0,
@@ -341,6 +353,7 @@ export class TriggerManager implements PublicTriggerManager {
     if (this.shutdownRequested) return;
     this.shutdownRequested = true;
     await Promise.all([...this.records.values()].map((record) => this.cancelRecord(record, "cancelled", "Shutdown")));
+    await this.awaitTerminations();
     for (const delivery of [...this.delivered]) await this.cleanupDelivery(delivery);
     for (const delivery of [...this.pending.values()]) await this.cleanupDelivery(delivery);
     this.pending.clear();
@@ -378,6 +391,7 @@ export class TriggerManager implements PublicTriggerManager {
     input: Pick<CreateTriggerInput, "name" | "target" | "executable" | "args" | "cwd">,
     requester: TriggerRequester,
     env: Readonly<Record<string, string>>,
+    envAdditions: Readonly<Record<string, string>>,
     operation: TriggerSafetyOperation,
   ): Promise<void> {
     const result = await this.options.safety.check({
@@ -388,6 +402,7 @@ export class TriggerManager implements PublicTriggerManager {
         args: [...(input.args ?? [])],
         cwd: input.cwd,
         operation,
+        env: { ...envAdditions },
         triggerName: input.name,
       },
       triggerId: id,
@@ -403,20 +418,18 @@ export class TriggerManager implements PublicTriggerManager {
     if (record.timer !== undefined) this.options.clock.clearTimeout(record.timer);
     record.snapshot.nextRestartAt = at;
     const delay = Math.max(0, at - this.options.clock.now());
-    record.timer = this.options.clock.setTimeout(() => {
-      record.timer = undefined;
+    this.armLongTimeout(delay, (handle) => { record.timer = handle; }, () => {
       void this.start(record, false, false, operation).catch((error) => this.fail(record, error));
-    }, delay);
+    });
     this.emitChanged(record);
   }
 
   private armExpiry(record: TriggerRecord): void {
     if (record.snapshot.expiresAt === undefined) return;
     const delay = Math.max(0, record.snapshot.expiresAt - this.options.clock.now());
-    record.expiryTimer = this.options.clock.setTimeout(() => {
-      record.expiryTimer = undefined;
+    this.armLongTimeout(delay, (handle) => { record.expiryTimer = handle; }, () => {
       this.refreshExpiry(record);
-    }, delay);
+    });
   }
 
   private refreshExpiries(): void {
@@ -484,7 +497,7 @@ export class TriggerManager implements PublicTriggerManager {
         executable: record.snapshot.executable,
         args: record.snapshot.args,
         cwd: record.snapshot.cwd,
-      }, record.requester, record.env, operation);
+      }, record.requester, record.env, record.envAdditions, operation);
     } catch (error) {
       if (record.generation === generation) record.snapshot.state = record.snapshot.paused ? "paused" : "idle";
       this.runningCount = Math.max(0, this.runningCount - 1);
@@ -764,23 +777,72 @@ export class TriggerManager implements PublicTriggerManager {
   }
 
   /**
-   * Terminate a supervised process without blocking the caller. A single
-   * SIGTERM to the direct child is not enough: a grandchild or a signal that
-   * the child ignores would let the process outlive a "cancelled" report. So
-   * this sends SIGTERM, then escalates to SIGKILL after a bounded grace period
-   * if the child has not exited. The process adapter widens each signal to the
-   * process group or tree where the platform allows. The escalation is
-   * detached from the caller because cancel and shutdown must not hang on a
-   * child that never exits.
+   * Terminate a supervised process. A single SIGTERM to the direct child is not
+   * enough: a grandchild or a signal that the child ignores would let the
+   * process outlive a "cancelled" report. So this sends SIGTERM, then escalates
+   * to SIGKILL after a bounded grace period if the child has not exited. The
+   * process adapter widens each signal to the process group or tree where the
+   * platform allows.
+   */
+  private async terminateHandle(handle: TriggerProcessHandle): Promise<void> {
+    let exited = false;
+    const completed = handle.completed.then(() => { exited = true; }, () => { exited = true; });
+    try { handle.kill("SIGTERM"); } catch { /* the child may already be gone */ }
+    await this.race(completed, TERMINATION_GRACE_MS);
+    if (exited) return;
+    try { handle.kill("SIGKILL"); } catch { /* best effort */ }
+    await this.race(completed, TERMINATION_KILL_WAIT_MS);
+  }
+
+  /**
+   * Start a termination without blocking the caller, and keep the promise so
+   * shutdown can wait for the child. Cancel must not hang on a child that never
+   * exits, but shutdown must not orphan one either: the parent exits within
+   * milliseconds, and a detached escalation timer dies with it.
    */
   private beginTermination(handle: TriggerProcessHandle): void {
-    let exited = false;
-    void handle.completed.then(() => { exited = true; }, () => { exited = true; });
-    try { handle.kill("SIGTERM"); } catch { /* the child may already be gone */ }
-    this.options.clock.setTimeout(() => {
-      if (exited) return;
-      try { handle.kill("SIGKILL"); } catch { /* best effort */ }
-    }, TERMINATION_GRACE_MS);
+    const termination = this.terminateHandle(handle)
+      .catch(() => {})
+      .finally(() => { this.terminations.delete(termination); });
+    this.terminations.add(termination);
+  }
+
+  /** Wait for the supervised children, bounded so one wedged child cannot hang the exit. */
+  private async awaitTerminations(): Promise<void> {
+    if (this.terminations.size === 0) return;
+    await this.race(Promise.all([...this.terminations]).then(() => {}), SHUTDOWN_TERMINATION_MS);
+  }
+
+  /** Settle when `operation` settles or when the deadline passes, leaving no live timer. */
+  private async race(operation: Promise<unknown>, delayMs: number): Promise<void> {
+    let timer: unknown;
+    const deadline = new Promise<void>((resolve) => { timer = this.options.clock.setTimeout(resolve, delayMs); });
+    try {
+      await Promise.race([operation, deadline]);
+    } finally {
+      this.options.clock.clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Arm a timer for an arbitrary delay. Node clamps a single delay above the
+   * 32-bit bound to 1ms, so a long wait re-arms in chunks until the real
+   * deadline arrives.
+   */
+  private armLongTimeout(delayMs: number, store: (handle: unknown) => void, callback: () => void): void {
+    const deadline = this.options.clock.now() + Math.max(0, delayMs);
+    const arm = (): void => {
+      const remaining = Math.max(0, deadline - this.options.clock.now());
+      store(this.options.clock.setTimeout(() => {
+        if (this.options.clock.now() < deadline) {
+          arm();
+          return;
+        }
+        store(undefined);
+        callback();
+      }, Math.min(remaining, MAX_TIMEOUT_DELAY_MS)));
+    };
+    arm();
   }
 
   private async cancelRuntime(record: TriggerRecord): Promise<void> {

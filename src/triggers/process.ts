@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isExecutionHijackEnvironmentVariable } from "../credential-path";
 import type {
   ProcessSpawnRequest,
   TriggerClock,
@@ -19,13 +20,51 @@ const SAFE_ENVIRONMENT_KEYS = new Map(
   SAFE_ENVIRONMENT_KEY_NAMES.map((key) => [key.toUpperCase(), key]),
 );
 
+// A model may add environment variables, so the additions need their own
+// denylist: an allowlist covers only what PUM inherits. Check mode, the native
+// sandbox, and this launcher share `isExecutionHijackEnvironmentVariable`.
+// These names extend that shared list for a spawned process: interpreter
+// search paths, shell option and function injection, and Git helper programs.
 const UNSAFE_ENVIRONMENT_KEYS = new Set([
-  "NODE_OPTIONS", "BUN_OPTIONS", "DENO_FLAGS", "LD_PRELOAD", "LD_LIBRARY_PATH",
-  "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "PYTHONPATH", "RUBYOPT", "PERL5OPT",
-  "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "SSH_ASKPASS", "GIT_ASKPASS",
+  "BASHOPTS", "CDPATH", "GIT_DIFF_OPTS", "GIT_EXEC_PATH", "GIT_SEQUENCE_EDITOR",
+  "GIT_TEMPLATE_DIR", "IFS", "PERL5LIB", "PERLLIB", "RUBYLIB", "SUDO_ASKPASS",
 ].map((key) => key.toUpperCase()));
 
+/** Exported shell functions run at startup, so the whole family is denied. */
+const UNSAFE_ENVIRONMENT_PREFIXES = ["BASH_FUNC_"];
+
+// PATH and PATHEXT decide which binary an executable name resolves to, so PUM
+// inherits them but never lets a model supply them.
+const PROTECTED_INHERITED_KEYS = new Set(["PATH", "PATHEXT"]);
+
 const VALID_ENVIRONMENT_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Report whether a supplied environment name can inject runtime behavior. */
+export function isUnsafeProcessEnvironmentKey(name: string): boolean {
+  const upperKey = name.toUpperCase();
+  return isExecutionHijackEnvironmentVariable(upperKey)
+    || UNSAFE_ENVIRONMENT_KEYS.has(upperKey)
+    || UNSAFE_ENVIRONMENT_PREFIXES.some((prefix) => upperKey.startsWith(prefix));
+}
+
+/** Validate model-supplied additions and canonicalize the names PUM also inherits. */
+export function sanitizeTriggerEnvironmentAdditions(
+  additions: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(additions)) {
+    const upperKey = key.toUpperCase();
+    if (!VALID_ENVIRONMENT_KEY.test(key) || isUnsafeProcessEnvironmentKey(key)) {
+      throw new Error(`Unsafe trigger environment variable: ${key}`);
+    }
+    if (PROTECTED_INHERITED_KEYS.has(upperKey)) {
+      throw new Error(`Trigger environment variable cannot be supplied: ${key}`);
+    }
+    if (value.includes("\0")) throw new Error(`Trigger environment variable contains NUL: ${key}`);
+    result[SAFE_ENVIRONMENT_KEYS.get(upperKey) ?? key] = value;
+  }
+  return result;
+}
 
 /** Build a small environment and reject variables that can inject runtime behavior. */
 export function sanitizeTriggerEnvironment(
@@ -37,15 +76,7 @@ export function sanitizeTriggerEnvironment(
     const canonicalKey = SAFE_ENVIRONMENT_KEYS.get(sourceKey.toUpperCase());
     if (canonicalKey && typeof value === "string" && !value.includes("\0")) result[canonicalKey] = value;
   }
-  for (const [key, value] of Object.entries(additions)) {
-    const upperKey = key.toUpperCase();
-    if (!VALID_ENVIRONMENT_KEY.test(key) || UNSAFE_ENVIRONMENT_KEYS.has(upperKey)) {
-      throw new Error(`Unsafe trigger environment variable: ${key}`);
-    }
-    if (value.includes("\0")) throw new Error(`Trigger environment variable contains NUL: ${key}`);
-    result[SAFE_ENVIRONMENT_KEYS.get(upperKey) ?? key] = value;
-  }
-  return result;
+  return { ...result, ...sanitizeTriggerEnvironmentAdditions(additions) };
 }
 
 export class NodeTriggerProcessAdapter implements TriggerProcessAdapter {

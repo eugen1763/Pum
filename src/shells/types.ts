@@ -83,6 +83,11 @@ export type ShellSafetyRequest = {
     args: readonly string[];
     cwd: string;
     operation: "start";
+    /**
+     * Sanitized environment additions. They are part of the approval identity,
+     * so approving one command cannot be replayed with a different environment.
+     */
+    env?: Readonly<Record<string, string>>;
     shellName?: string;
   };
   requester:
@@ -134,7 +139,12 @@ export type ShellManagerOptions = {
   process: ShellProcessAdapter;
   files: ShellFileOperations;
   clock: ShellClock;
-  safety?: ShellSafetyChecker;
+  /**
+   * Required: a managed shell starts a real process from model input. Making
+   * this optional once let production wire a ShellManager with no Check mode
+   * at all, because the call site optional-chains the check away.
+   */
+  safety: ShellSafetyChecker;
   environment?: Readonly<Record<string, string | undefined>>;
   runningLimit?: number;
   retainedLimit?: number;

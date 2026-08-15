@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { TriggerManager } from "./manager";
 import { sanitizeTriggerEnvironment } from "./process";
+import { MAX_TRIGGER_LIFETIME_MS } from "./types";
 import type {
   CreateTriggerInput,
   ProcessExit,
@@ -17,11 +18,13 @@ import type {
 
 class FakeClock implements TriggerClock {
   time = 1_000;
+  readonly delays: number[] = [];
   private nextId = 1;
   private timers = new Map<number, { at: number; callback: () => void }>();
   now(): number { return this.time }
   setTimeout(callback: () => void, delayMs: number): unknown {
     const id = this.nextId++;
+    this.delays.push(delayMs);
     this.timers.set(id, { at: this.time + delayMs, callback });
     return id;
   }
@@ -305,6 +308,30 @@ describe("TriggerManager security and exact targeting", () => {
     expect(h.safetyCalls[1]?.proposal).toMatchObject({ kind: "process", source: "external-trigger" });
   });
 
+  test("rejects every behavior-altering addition and refuses a supplied PATH", () => {
+    const unsafe = [
+      "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_SSH_COMMAND", "GIT_SSH",
+      "GIT_EXTERNAL_DIFF", "GIT_EDITOR", "GIT_PAGER", "PAGER", "BROWSER", "EDITOR", "VISUAL",
+      "BASH_ENV", "ENV", "PROMPT_COMMAND", "SHELLOPTS", "BASHOPTS", "ZDOTDIR", "IFS", "CDPATH",
+      "BASH_FUNC_x%%", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
+      "DYLD_LIBRARY_PATH", "NODE_OPTIONS", "BUN_OPTIONS", "GIT_CONFIG", "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_SYSTEM", "PYTHONPATH", "PYTHONSTARTUP", "RUBYOPT", "PERL5OPT", "GIT_ASKPASS",
+      "SSH_ASKPASS", "git_ssh_command", "ld_preload",
+    ];
+    for (const key of unsafe) {
+      expect(() => sanitizeTriggerEnvironment({ PATH: "/usr/bin" }, { [key]: "planted" }))
+        .toThrow("Unsafe trigger environment variable");
+    }
+    // PATH is inherited but never supplied: an override would repoint every
+    // executable name at a planted binary.
+    expect(() => sanitizeTriggerEnvironment({ PATH: "/usr/bin" }, { PATH: "/attacker/bin" }))
+      .toThrow("Trigger environment variable cannot be supplied");
+    expect(() => sanitizeTriggerEnvironment({ PATH: "/usr/bin" }, { pathext: ".EXE" }))
+      .toThrow("Trigger environment variable cannot be supplied");
+    expect(sanitizeTriggerEnvironment({ PATH: "/usr/bin" }, { CUSTOM_OK: "yes" }))
+      .toEqual({ PATH: "/usr/bin", CUSTOM_OK: "yes" });
+  });
+
   test("rejects dangerous environment injection and handles Windows environment names", () => {
     expect(() => sanitizeTriggerEnvironment(
       { PATH: "C:\\Windows", SystemRoot: "C:\\Windows", COMSPEC: "cmd.exe", NODE_OPTIONS: "bad" },
@@ -313,6 +340,17 @@ describe("TriggerManager security and exact targeting", () => {
     expect(sanitizeTriggerEnvironment(
       { Path: "C:\\Windows", SYSTEMROOT: "C:\\Windows", ComSpec: "cmd.exe", pathext: ".EXE", LD_PRELOAD: "bad" },
     )).toEqual({ PATH: "C:\\Windows", SystemRoot: "C:\\Windows", COMSPEC: "cmd.exe", PATHEXT: ".EXE" });
+  });
+
+  test("binds the sanitized environment additions to every safety proposal", async () => {
+    const h = harness();
+    await h.manager.create(input({ id: "bound", env: { CUSTOM_OK: "yes" } }), requester);
+    h.clock.runDue();
+    await flushAsync();
+    expect(h.safetyCalls.map((call) => call.proposal.env))
+      .toEqual([{ CUSTOM_OK: "yes" }, { CUSTOM_OK: "yes" }]);
+    expect(h.safetyCalls[0]?.env).toEqual({ PATH: "/bin", HOME: "/home/test", CUSTOM_OK: "yes" });
+    expect(h.spawnCalls[0]?.env).toEqual({ PATH: "/bin", HOME: "/home/test", CUSTOM_OK: "yes" });
   });
 
   test("invalidates only the exact session or agent target", async () => {
@@ -568,6 +606,74 @@ describe("TriggerManager settlement robustness and termination", () => {
     h.clock.advance(2_000);
     await flushAsync();
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  test("shutdown waits for the supervised child and forces a bounded kill", async () => {
+    const exit = deferred<ProcessExit>();
+    const signals: string[] = [];
+    const h = harness({
+      spawn: () => ({ completed: exit.promise, kill(signal = "SIGTERM") { signals.push(signal); } }),
+    });
+    await h.manager.create(input({ id: "orphan" }), requester);
+    h.clock.runDue();
+    await flushAsync(4);
+    expect(h.manager.inspect("orphan").state).toBe("running");
+
+    // The parent exits within milliseconds of shutdown, so a detached
+    // escalation timer would die with it and leave the child reparented.
+    let settled = false;
+    const shutdown = h.manager.shutdown().then(() => { settled = true; });
+    await flushAsync();
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(settled).toBe(false);
+
+    h.clock.advance(2_000);
+    await flushAsync();
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(settled).toBe(false);
+
+    // A wedged child must not hang the exit either.
+    h.clock.advance(500);
+    await shutdown;
+    expect(settled).toBe(true);
+  });
+
+  test("shutdown resolves as soon as the supervised child exits", async () => {
+    const exit = deferred<ProcessExit>();
+    const signals: string[] = [];
+    const h = harness({
+      spawn: () => ({ completed: exit.promise, kill(signal = "SIGTERM") { signals.push(signal); } }),
+    });
+    await h.manager.create(input({ id: "obedient" }), requester);
+    h.clock.runDue();
+    await flushAsync(4);
+
+    let settled = false;
+    const shutdown = h.manager.shutdown().then(() => { settled = true; });
+    await flushAsync();
+    expect(settled).toBe(false);
+    exit.resolve({ exitCode: 0, signal: "SIGTERM" });
+    await shutdown;
+    expect(settled).toBe(true);
+    expect(signals).toEqual(["SIGTERM"]);
+  });
+
+  test("arms a 30-day lifetime in 32-bit chunks and still expires", async () => {
+    const clock = new FakeClock();
+    const h = harness({ clock });
+    await h.manager.create(
+      input({ id: "long", lifetimeMs: MAX_TRIGGER_LIFETIME_MS, startBehavior: "paused" }),
+      requester,
+    );
+    // A single delay above 2^31-1 is clamped to 1ms by Node, so the timer must
+    // be armed in chunks instead.
+    expect(MAX_TRIGGER_LIFETIME_MS).toBeGreaterThan(2_147_483_647);
+    expect(Math.max(...clock.delays)).toBeLessThanOrEqual(2_147_483_647);
+    expect(h.manager.inspect("long").state).toBe("paused");
+
+    clock.advance(MAX_TRIGGER_LIFETIME_MS);
+    await flushAsync();
+    expect(h.manager.inspect("long").state).toBe("expired");
   });
 
   test("does not escalate when the process exits within the grace period", async () => {

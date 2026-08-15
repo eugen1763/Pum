@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
-import { sanitizeShellEnvironment } from "./process";
+import { sanitizeShellEnvironment, sanitizeShellEnvironmentAdditions } from "./process";
 import {
   DEFAULT_SHELL_OUTPUT_LIMIT_BYTES,
   DEFAULT_SHELL_RETAINED_LIMIT,
@@ -182,9 +182,14 @@ export class ShellManager implements PublicShellManager {
     this.creatingIds.add(id);
     const createdAt = this.clock.now();
     let writer: ShellOutputWriter | undefined;
+    // Sanitize before the check, not at spawn time, so the approval binds the
+    // exact environment the process will get. A rejected variable fails here,
+    // before any output file or process exists.
+    let envAdditions: Record<string, string>;
     try {
       const projectCwd = input.projectCwd ?? input.cwd;
-      await this.options.safety?.check({
+      envAdditions = sanitizeShellEnvironmentAdditions(input.env);
+      await this.options.safety.check({
         proposal: {
           kind: "process",
           source: "managed-shell",
@@ -192,6 +197,7 @@ export class ShellManager implements PublicShellManager {
           args: input.args ?? [],
           cwd: input.cwd,
           operation: "start",
+          env: { ...envAdditions },
           shellName: input.name,
         },
         requester: input.owner.agentId === null
@@ -254,7 +260,7 @@ export class ShellManager implements PublicShellManager {
     }
 
     try {
-      const environment = sanitizeShellEnvironment(this.options.environment ?? process.env, input.env);
+      const environment = sanitizeShellEnvironment(this.options.environment ?? process.env, envAdditions);
       record.handle = await this.options.process.spawn({
         executable: input.executable,
         args: input.args ?? [],

@@ -161,6 +161,15 @@ const CHECK_TIMEOUT_MS = 15_000;
 
 export type { ProcessCheckOperation, ProcessCheckProposal } from "./check-policy";
 
+/**
+ * A structured process proposal plus the exact sanitized environment additions.
+ * An approval binds the environment, so a hostile `GIT_SSH_COMMAND` or `PATH`
+ * cannot ride on an approval granted for a plain command.
+ */
+export type CheckedProcessProposal = ProcessCheckProposal & {
+  env?: Readonly<Record<string, string>>;
+};
+
 export type PreparedCheck = {
   prompt: string;
   canonicalInput: string;
@@ -205,9 +214,9 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function isProcessCheckProposal(value: unknown): value is ProcessCheckProposal {
+export function isProcessCheckProposal(value: unknown): value is CheckedProcessProposal {
   if (!value || typeof value !== "object") return false;
-  const proposal = value as Partial<ProcessCheckProposal>;
+  const proposal = value as Partial<CheckedProcessProposal>;
   return proposal.kind === "process"
     && ["external-trigger", "managed-shell"].includes(proposal.source ?? "")
     && typeof proposal.executable === "string"
@@ -216,11 +225,27 @@ export function isProcessCheckProposal(value: unknown): value is ProcessCheckPro
     && typeof proposal.cwd === "string"
     && ["create", "start", "resume", "repeat", "invoke-run"].includes(proposal.operation ?? "")
     && (proposal.triggerName === undefined || typeof proposal.triggerName === "string")
-    && (proposal.shellName === undefined || typeof proposal.shellName === "string");
+    && (proposal.shellName === undefined || typeof proposal.shellName === "string")
+    && isEnvironmentRecord(proposal.env);
+}
+
+function isEnvironmentRecord(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>).every((item) => typeof item === "string");
+}
+
+/** Redact credential-shaped environment values before any prompt or message shows them. */
+function redactedEnvironment(env: Readonly<Record<string, string>>): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    result[key] = redactApprovalPreview(`${key}=${value}`).slice(key.length + 1);
+  }
+  return result;
 }
 
 /** Build the exact safety identity. Display-only triggerName is intentionally omitted. */
-export function canonicalProcessCheckInput(proposal: ProcessCheckProposal): string {
+export function canonicalProcessCheckInput(proposal: CheckedProcessProposal): string {
   return canonicalJson({
     kind: proposal.kind,
     source: proposal.source,
@@ -228,6 +253,7 @@ export function canonicalProcessCheckInput(proposal: ProcessCheckProposal): stri
     cwd: projectStorageKey(proposal.cwd),
     executable: proposal.executable,
     args: [...proposal.args],
+    env: { ...proposal.env },
   });
 }
 
@@ -297,13 +323,23 @@ export async function prepareCheck(
 
   const paths = mutation?.changedPaths ?? [];
   const processProposal = isProcessCheckProposal(input) ? input : undefined;
+  // The identity above binds the exact values. Everything a prompt, a preview,
+  // or a message can show goes through redaction first.
+  const processEnv = processProposal?.env && Object.keys(processProposal.env).length > 0
+    ? redactedEnvironment(processProposal.env)
+    : undefined;
   const summary = processProposal
     ? `${processProposal.operation} ${processProposal.source === "managed-shell" ? "managed shell" : "external trigger"} process: ${processProposal.executable}`
     : toolName === "bash"
       ? `Run ${bash!.stages.length} shell stage${bash!.stages.length === 1 ? "" : "s"}`
       : `Change ${paths.length} project file${paths.length === 1 ? "" : "s"} (+${mutation!.additions} −${mutation!.removals})`;
   const preview = processProposal
-    ? JSON.stringify({ executable: processProposal.executable, args: processProposal.args, cwd: processProposal.cwd }, null, 2)
+    ? JSON.stringify({
+      executable: processProposal.executable,
+      args: processProposal.args,
+      cwd: processProposal.cwd,
+      ...(processEnv ? { env: processEnv } : {}),
+    }, null, 2)
     : toolName === "bash" ? (input as { command: string }).command : mutation!.unifiedDiff;
   const request = {
     version: 2,
@@ -311,7 +347,7 @@ export async function prepareCheck(
     cwd,
     allowedDirectoryRoots: [cwd, ...additionalPaths],
     tool: toolName,
-    input,
+    input: processProposal ? { ...processProposal, ...(processEnv ? { env: processEnv } : {}) } : input,
     deterministicPolicy: policy ? {
       decision: policy.decision,
       reason: policy.reason,
@@ -325,6 +361,7 @@ export async function prepareCheck(
       executable: processProposal.executable,
       args: processProposal.args,
       cwd: processProposal.cwd,
+      env: processEnv,
       triggerName: processProposal.triggerName,
       shellName: processProposal.shellName,
       analysis: bash,
@@ -386,6 +423,7 @@ export async function prepareCheck(
         executable: processProposal.executable,
         argumentCount: processProposal.args.length,
         cwd: processProposal.cwd,
+        env: processEnv,
       } : undefined,
       proposedMutation: mutation ? {
         changedPaths: mutation.changedPaths,
@@ -446,7 +484,7 @@ export type ToolCheck = {
   observeRequest?: CheckRequestObserver;
 };
 export type ProcessCheckCall = Omit<ToolCheck, "toolName" | "input" | "cwd"> & {
-  proposal: ProcessCheckProposal;
+  proposal: CheckedProcessProposal;
   /** Project boundary. This value comes from the owning session, not the proposal. */
   projectCwd: string;
 };
@@ -707,7 +745,7 @@ export type ExternalTriggerSafetyRequester =
   | { kind: "subagent"; sessionId: string; agentId: string; cwd: string };
 
 export type ExternalTriggerSafetyChecker = (
-  proposal: ProcessCheckProposal,
+  proposal: CheckedProcessProposal,
   requester: ExternalTriggerSafetyRequester,
   signal?: AbortSignal,
 ) => Promise<void>;

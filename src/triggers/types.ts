@@ -143,6 +143,8 @@ export type TriggerProcessProposal = {
   args: readonly string[];
   cwd: string;
   operation: TriggerSafetyOperation;
+  /** Exact sanitized environment additions. This field is part of the safety identity. */
+  env?: Readonly<Record<string, string>>;
   triggerName?: string;
 };
 export type TriggerSafetyRequest = {

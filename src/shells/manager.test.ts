@@ -96,7 +96,7 @@ function harness(overrides: Partial<ShellManagerOptions> & {
     },
     files,
     clock,
-    safety: overrides.safety,
+    safety: overrides.safety ?? { check() {} },
     environment: overrides.environment ?? { PATH: "/bin", HOME: "/home/test", NODE_OPTIONS: "unsafe" },
     runningLimit: overrides.runningLimit,
     retainedLimit: overrides.retainedLimit,
@@ -134,6 +134,7 @@ describe("ShellManager", () => {
         args: ["--port", "3000"],
         cwd: "/project",
         operation: "start",
+        env: {},
         shellName: undefined,
       },
       requester: { kind: "main", sessionId: "session-1", cwd: "/project-root" },
@@ -141,6 +142,27 @@ describe("ShellManager", () => {
     expect(h.requests).toEqual([]);
     expect(h.writers).toEqual([]);
     expect(h.manager.list()).toEqual([]);
+  });
+
+  test("binds sanitized environment additions into the checked proposal", async () => {
+    const checked: any[] = [];
+    const h = harness({ safety: { check(request) { checked.push(request); } } });
+
+    await h.manager.create(input({ env: { API_BASE: "https://example.test" } }));
+
+    expect(checked[0].proposal.env).toEqual({ API_BASE: "https://example.test" });
+    expect(h.requests[0]?.env.API_BASE).toBe("https://example.test");
+  });
+
+  test("refuses an execution-hijacking variable before any process or output exists", async () => {
+    const checked: unknown[] = [];
+    const h = harness({ safety: { check(request) { checked.push(request); } } });
+
+    await expect(h.manager.create(input({ env: { GIT_SSH_COMMAND: "./evil.sh" } })))
+      .rejects.toThrow();
+    expect(checked).toEqual([]);
+    expect(h.requests).toEqual([]);
+    expect(h.writers).toEqual([]);
   });
 
   test("starts direct argv, waits for readiness, and captures marked output", async () => {

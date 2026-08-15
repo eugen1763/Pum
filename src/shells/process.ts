@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sanitizeTriggerEnvironment } from "../triggers/process";
+import { sanitizeTriggerEnvironment, sanitizeTriggerEnvironmentAdditions } from "../triggers/process";
 import type {
   ShellClock,
   ShellFileOperations,
@@ -18,6 +18,13 @@ export function sanitizeShellEnvironment(
   additions: Readonly<Record<string, string>> = {},
 ): Record<string, string> {
   return sanitizeTriggerEnvironment(source, additions);
+}
+
+/** Validate the model-supplied additions alone, so a check can bind them. */
+export function sanitizeShellEnvironmentAdditions(
+  additions: Readonly<Record<string, string>> = {},
+): Record<string, string> {
+  return sanitizeTriggerEnvironmentAdditions(additions);
 }
 
 export class NodeShellProcessAdapter implements ShellProcessAdapter {

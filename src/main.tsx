@@ -24,10 +24,13 @@ import {
 import {
   createCheckModeExtension,
   createExternalTriggerSafetyChecker,
+  createManagedShellSafetyChecker,
   setCheckModeConfig,
 } from "./check-mode";
 import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
+import { cleanupPendingPastedTexts } from "./pasted-text";
+import { cleanupBashOutputCaptures } from "./bash-output";
 import { shutdownSignals } from "./platform";
 import { createShutdown } from "./shutdown";
 import { settleSyntaxHighlighting } from "./syntax";
@@ -120,6 +123,13 @@ export async function start(options: StartupOptions): Promise<void> {
       usage: observation.usage,
     });
   });
+  const managedShellSafety = createManagedShellSafetyChecker(modelRuntime, (observation) => {
+    statsManager.observeCheck({
+      agentId: observation.requester?.kind === "subagent" ? observation.requester.agentId : null,
+      model: observation.model,
+      usage: observation.usage,
+    });
+  });
   let subagentManager!: SubagentManager;
   const shellLifecycle = new ManagedShellLifecycleController(
     {
@@ -135,6 +145,11 @@ export async function start(options: StartupOptions): Promise<void> {
     process: new NodeShellProcessAdapter(),
     files: new NodeShellFileOperations(),
     clock: systemShellClock,
+    // A managed shell starts a real process from model input, so it carries the
+    // same deterministic policy and verifier as an external trigger. The checker
+    // rejects when either blocks, and ShellManager.create propagates that
+    // rejection instead of starting the process.
+    safety: { check: (request) => managedShellSafety(request.proposal, request.requester) },
     async onCompleted(snapshot) {
       const output = await shellManager.getOutput(snapshot.id, { lineLimit: 200 }).catch(() => undefined);
       const event = lifecycleEventFromSnapshot(snapshot, output?.tail);
@@ -278,6 +293,10 @@ export async function start(options: StartupOptions): Promise<void> {
   const terminalTitle = new TerminalTitleController((title) => renderer.setTerminalTitle(title));
   const selectionClipboard = installSelectionClipboard(renderer);
   const root = createRoot(renderer);
+  // Reported on the restored terminal by the exit action below, so the message
+  // is not swallowed by the alternate screen.
+  let fatalError: unknown;
+  let shuttingDown = false;
   const shutdown = createShutdown({
     unmount: async () => {
       await settleSyntaxHighlighting(renderer.root);
@@ -287,19 +306,52 @@ export async function start(options: StartupOptions): Promise<void> {
       terminalTitle.clear();
       selectionClipboard.dispose();
       cleanupPendingImages();
+      cleanupPendingPastedTexts();
+      cleanupBashOutputCaptures();
     },
     shutdownShells: () => shellManager.shutdown(),
     shutdownTriggers: () => triggerManager.shutdown(),
-    dispose: () => sessionRuntime.dispose(),
+    dispose: async () => {
+      statsManager.dispose();
+      await sessionRuntime.dispose();
+    },
     destroy: async () => {
       renderer.destroy();
       await destroyTreeSitterClient();
     },
-    exit: (code) => process.exit(code),
+    exit: (code) => {
+      if (fatalError !== undefined) {
+        const detail = fatalError instanceof Error
+          ? fatalError.stack ?? fatalError.message
+          : String(fatalError);
+        console.error(`pum: fatal error\n${detail}`);
+      }
+      process.exit(code);
+    },
   });
   for (const signal of shutdownSignals()) {
-    process.on(signal, () => void shutdown(1));
+    process.on(signal, () => {
+      shuttingDown = true;
+      void shutdown(1);
+    });
   }
+  // OpenTUI installs its own uncaughtException and unhandledRejection handlers,
+  // but they only log to its internal console: they never exit and never restore
+  // the terminal. Without this, an escaped error leaves the alternate screen and
+  // raw mode engaged while shells, triggers and subagents keep running.
+  const failFast = (error: unknown): void => {
+    if (shuttingDown) {
+      // The shutdown chain itself failed. Its guard makes a second call a no-op,
+      // so exit directly instead of hanging with a wedged terminal.
+      console.error(`pum: shutdown failed\n${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+      process.exit(1);
+    }
+    shuttingDown = true;
+    fatalError = error;
+    void shutdown(1);
+  };
+  process.on("uncaughtException", failFast);
+  process.on("unhandledRejection", failFast);
 
   root.render(
     <App
@@ -341,6 +393,7 @@ export async function start(options: StartupOptions): Promise<void> {
       sandboxWarningSource={sandboxController}
       loginRequired={loginRequired}
       triggerManager={triggerManager}
+      shellManager={shellManager}
       onExit={() => shutdown(0)}
     />,
   );

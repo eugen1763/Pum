@@ -9,11 +9,13 @@ import {
   evaluateProcessCheck,
   evaluateToolCall,
   isRejectedToolResult,
+  prepareCheck,
   rejectedToolReason,
   redactApprovalPreview,
   safetyDecision,
   setCheckModeConfig,
   verifyToolCall,
+  type CheckedProcessProposal,
   type CheckModeConfig,
   type ProcessCheckProposal,
 } from "./check-mode";
@@ -462,7 +464,7 @@ describe("PUM settings-file scope and identity gating", () => {
 });
 
 describe("external-trigger process checks", () => {
-  const proposal = (overrides: Partial<ProcessCheckProposal> = {}): ProcessCheckProposal => ({
+  const proposal = (overrides: Partial<CheckedProcessProposal> = {}): CheckedProcessProposal => ({
     kind: "process",
     source: "external-trigger",
     operation: "start",
@@ -480,6 +482,30 @@ describe("external-trigger process checks", () => {
     expect(canonicalProcessCheckInput(proposal({ triggerName: "renamed" }))).toBe(first);
     expect(canonicalProcessCheckInput(proposal({ operation: "resume" }))).not.toBe(first);
     expect(canonicalProcessCheckInput(proposal({ args: ["test value", "&&"] }))).not.toBe(first);
+  });
+
+  test("binds the sanitized environment to the identity", () => {
+    const plain = canonicalProcessCheckInput(proposal());
+    const withEnv = canonicalProcessCheckInput(proposal({ env: { GIT_TERMINAL_PROMPT: "0" } }));
+    expect(plain).toContain('"env":{}');
+    expect(withEnv).not.toBe(plain);
+    // An approval for one environment must never be replayed with another.
+    expect(canonicalProcessCheckInput(proposal({ env: { GIT_TERMINAL_PROMPT: "1" } }))).not.toBe(withEnv);
+    expect(canonicalProcessCheckInput(proposal({ env: {} }))).toBe(plain);
+  });
+
+  test("shows the environment redacted while the identity keeps the exact values", async () => {
+    const cwd = tempProject("pum-process-env-");
+    const env = { DEPLOY_TOKEN: "hunter2", SAFE_FLAG: "1" };
+    const { prepared } = await prepareCheck("bash", proposal({ cwd, env }), cwd);
+    expect(prepared?.prompt).toContain("DEPLOY_TOKEN");
+    expect(prepared?.prompt).toContain("[REDACTED]");
+    expect(prepared?.prompt).not.toContain("hunter2");
+    expect(prepared?.preview).toContain("SAFE_FLAG");
+    expect(prepared?.preview).not.toContain("hunter2");
+    // The approval identity still binds the exact value, so a different
+    // environment is a different approval.
+    expect(prepared?.canonicalInput).toContain("hunter2");
   });
 
   test("hard-blocks a process cwd outside the owning project", async () => {
