@@ -201,6 +201,7 @@ describe("PUM settings persistence", () => {
       sandboxMode: "off",
       checkPaths: {},
       maxActiveSubagents: 7,
+      goalRetryLimit: 10,
       bashOutput: DEFAULT_BASH_OUTPUT,
     });
   });

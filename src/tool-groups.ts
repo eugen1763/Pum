@@ -2,6 +2,7 @@ import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-ag
 import { basename, dirname, join } from "node:path";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { Type } from "typebox";
+import { GOAL_VERDICT_TOOL_NAME } from "./goal-judge";
 
 /**
  * Always-present tool that reveals hidden tool groups in this thread.
@@ -31,6 +32,12 @@ export const CORE_TOOL_NAMES = [
 
 /** Extra always-sent tools that exist only in child (subagent) sessions. */
 export const CHILD_EXTRA_TOOL_NAMES = ["finish_subagent"] as const;
+
+/**
+ * A goal judge reads the repository and reports one verdict. It gets no
+ * mutation tool, no delegation tool, and no way to message another agent.
+ */
+export const JUDGE_TOOL_NAMES = ["read", "bash", GOAL_VERDICT_TOOL_NAME] as const;
 
 /** Tools omitted from readonly child schemas because they can mutate files or start mutating work. */
 export const READONLY_CHILD_OMITTED_TOOL_NAMES = [
@@ -127,6 +134,11 @@ export const ALL_GROUP_TOOL_NAMES: readonly string[] = [
 /** The tool names a session of an audience may expose (the allowlist). */
 export function mainAllowedToolNames(): string[] {
   return [...CORE_TOOL_NAMES, ENABLE_TOOLS, ...ALL_GROUP_TOOL_NAMES];
+}
+
+/** The complete tool list of a goal judge session. */
+export function judgeAllowedToolNames(): string[] {
+  return [...JUDGE_TOOL_NAMES];
 }
 
 /** The child session allowlist adds the child-only core tool. */

@@ -69,8 +69,6 @@ describe("Help popup layout", () => {
     expect(frame).toContain("History and sessions");
     expect(frame).toContain("Commands");
     expect(frame).toContain("Ctrl+P");
-    expect(frame).toContain("/ in Settings");
-    expect(frame).toContain("Ctrl+End");
     expect(frame).toContain("esc or ? close");
 
     const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));
@@ -95,6 +93,8 @@ describe("Help popup layout", () => {
     const tall = await renderHelp(140, 40, 0);
     expect(tall).toContain("Ctrl+H");
     expect(tall).toContain("pum -r");
+    expect(tall).toContain("/ in Settings");
+    expect(tall).toContain("Ctrl+End");
     expect(tall).toContain("Close popup; clear; twice quits");
     expect(tall).not.toContain("↑↓ scroll");
 
@@ -111,7 +111,14 @@ describe("Help popup layout", () => {
     expect(helpLayout(100, 28).twoColumns).toBe(false);
     const firstPage = await renderHelp(100, 28, 0);
     const lastPage = await renderHelp(100, 28, maxHelpScrollOffset(28));
-    const commandsPage = await renderHelp(100, 28, Math.max(0, maxHelpScrollOffset(28) - 5));
+    // Scroll to the Commands heading itself rather than a fixed distance from
+    // the end, so adding a command does not move this assertion off the page.
+    const commandsOffset = helpLines(28)
+      .findIndex((line) => line.kind === "heading" && line.text === "Commands");
+    const commandsPage = await renderHelp(100, 28, Math.min(
+      Math.max(0, commandsOffset),
+      maxHelpScrollOffset(28),
+    ));
 
     expect(firstPage).toContain("Prompt");
     expect(firstPage).toContain("Cache and agents");

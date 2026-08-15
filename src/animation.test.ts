@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   coordinatedRuleState,
   markdownCaretContent,
+  ruleText,
   workingRuleFrameState,
 } from "./animation";
+import { rgba } from "./theme";
+import { goalLabel } from "./goal-line";
+import { createGoal } from "./goal";
 
 describe("coordinated working rules", () => {
   test("keeps both rules in the active pair synchronized", () => {
@@ -92,5 +96,56 @@ describe("Markdown streaming caret", () => {
 
     expect(content).toBe("#▊");
     expect(/\s/u.test(content.at(-1)!)).toBe(false);
+  });
+});
+
+describe("goal label on the working rule", () => {
+  const base = rgba("#292e42");
+  const highlight = rgba("#ffffff");
+  const label = { text: "GOAL · active · ship it  ", width: 25, color: "#7aa2f7" };
+  const plainWidth = (text: import("@opentui/core").StyledText) =>
+    text.chunks.reduce((width, chunk) => width + Bun.stringWidth(chunk.text ?? ""), 0);
+
+  test("the row is exactly the rule width, label included", () => {
+    for (const width of [30, 80, 120]) {
+      const painted = ruleText(width, base, highlight, () => 0, label);
+      expect(plainWidth(painted)).toBe(width);
+    }
+  });
+
+  test("the label sits at the right end, after the rule glyphs", () => {
+    const painted = ruleText(80, base, highlight, () => 0, label);
+    const text = painted.chunks.map((chunk) => chunk.text ?? "").join("");
+    expect(text.startsWith("─")).toBe(true);
+    expect(text.endsWith("ship it  ")).toBe(true);
+    expect(text).toBe(`${"─".repeat(80 - label.width)}${label.text}`);
+  });
+
+  test("the label carries the rule colour as its background", () => {
+    const painted = ruleText(40, base, highlight, () => 0, label);
+    const labelChunks = painted.chunks.filter((chunk) => (chunk.text ?? "") !== "─");
+    expect(labelChunks.length).toBeGreaterThan(0);
+    for (const chunk of labelChunks) expect(chunk.bg).toEqual(base);
+  });
+
+  test("the sweep reaches the label, so the whole row animates as one", () => {
+    const width = 80;
+    const overLabel = width - 1;
+    const swept = ruleText(width, base, highlight, (column) => (column === overLabel ? 1 : 0), label);
+    const last = swept.chunks.at(-1)!;
+    expect(last.bg).not.toEqual(base);
+    const still = ruleText(width, base, highlight, () => 0, label);
+    expect(still.chunks.at(-1)!.bg).toEqual(base);
+  });
+
+  test("a static rule with no label is unchanged plain rule", () => {
+    const painted = ruleText(12, base, highlight, () => 0, null);
+    expect(painted.chunks.map((chunk) => chunk.text ?? "").join("")).toBe("─".repeat(12));
+  });
+
+  test("a wide-character label still fills exactly the rule width", () => {
+    const wide = goalLabel(createGoal("模型模型模型模型", 10, 1, "g"), 60)!;
+    const painted = ruleText(60, base, highlight, () => 0, { ...wide, color: "#7aa2f7" });
+    expect(plainWidth(painted)).toBe(60);
   });
 });

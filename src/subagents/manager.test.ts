@@ -1319,6 +1319,24 @@ describe("SubagentManager extension", () => {
     expect(countActiveSubagents(statuses.map((status) => ({ status })))).toBe(2);
   });
 
+  test("a running goal judge is never counted as a worker", () => {
+    const agents = [
+      { status: "running" as SubagentStatus, role: "worker" as const },
+      { status: "running" as SubagentStatus, role: "judge" as const },
+      { status: "starting" as SubagentStatus, role: "judge" as const },
+      // Legacy snapshots carry no role and are workers.
+      { status: "running" as SubagentStatus },
+    ];
+    expect(countActiveSubagents(agents)).toBe(2);
+    expect(countActiveSubagents(agents.filter((agent) => agent.role === "judge"))).toBe(0);
+  });
+
+  test("the capacity prompt reports spare slots while only a judge runs", () => {
+    const judgeOnly = [{ status: "running" as SubagentStatus, role: "judge" as const }];
+    expect(buildSubagentCapacityPrompt(countActiveSubagents(judgeOnly), 1))
+      .toContain("slots are available");
+  });
+
   test("uses default, lower, higher, and validated active limits", () => {
     const defaultManager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
     const lowerManager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 2 });

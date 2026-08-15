@@ -18,6 +18,14 @@ export const COMMANDS: Command[] = [
     description: "Alias for /clear",
   },
   {
+    name: "/goal",
+    description: "Set or control an autonomous goal (stop, continue, status, clear)",
+  },
+  {
+    name: "/goalf",
+    description: "Work a draft into one goal, then start it",
+  },
+  {
     name: "/history",
     description: "Browse saved sessions for this directory",
   },

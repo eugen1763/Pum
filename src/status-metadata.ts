@@ -29,6 +29,25 @@ export const formatCost = (value: number): string =>
 
 export const statusTextWidth = (text: string): number => Bun.stringWidth(text);
 
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Truncate by rendered terminal columns without splitting a Unicode grapheme. */
+export function truncateStatusText(text: string, maxWidth: number): string | null {
+  if (maxWidth <= 0) return null;
+  if (statusTextWidth(text) <= maxWidth) return text;
+  if (maxWidth === 1) {
+    const first = graphemeSegmenter.segment(text)[Symbol.iterator]().next().value?.segment ?? "";
+    return statusTextWidth(first) <= 1 ? first : "…";
+  }
+
+  let result = "";
+  for (const { segment } of graphemeSegmenter.segment(text)) {
+    if (statusTextWidth(result + segment) > maxWidth - 1) break;
+    result += segment;
+  }
+  return `${result}…`;
+}
+
 /** Show the launch directory without the long parent path. */
 export function formatWorkingDirectory(cwd: string): string {
   const withoutTrailingSeparators = cwd.replace(/[\\/]+$/, "");

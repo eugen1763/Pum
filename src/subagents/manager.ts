@@ -47,6 +47,7 @@ import {
 import {
   ToolGroupsController,
   childAllowedToolNames,
+  judgeAllowedToolNames,
 } from "../tool-groups";
 import {
   registerTriggerTools,
@@ -58,6 +59,8 @@ import {
   normalizeMaxActiveSubagents,
 } from "../settings";
 import type { SandboxMode } from "../sandbox/types";
+import { readBranch } from "../git-branch";
+import { GOAL_VERDICT_TOOL_NAME, goalVerdictParameters } from "../goal-judge";
 import {
   resolvePendingDelivery,
   settleTranscriptMessage,
@@ -86,6 +89,7 @@ import {
   type SubagentManagerEvent,
   type SubagentRegistryEvent,
   type SubagentSettlement,
+  type SubagentRole,
   type SubagentSnapshot,
   type SubagentStatus,
 } from "./types";
@@ -157,9 +161,16 @@ export function buildSubagentCapacityPrompt(activeCount: number, maxActive = DEF
   return `Subagent capacity: all ${maxActive} slots are active; no slots available. Queue follow-up work with message_agent only when an appropriate related running subagent is clear. Otherwise, state the capacity issue and keep the work pending for deliberate routing.`;
 }
 
-export function countActiveSubagents(agents: Iterable<Pick<SubagentSnapshot, "status">>): number {
+/**
+ * Workers only. A goal judge reviews the work, so counting it would let one
+ * review block the next one and would misreport spare parallel capacity.
+ */
+export function countActiveSubagents(
+  agents: Iterable<Pick<SubagentSnapshot, "status"> & { role?: SubagentRole }>,
+): number {
   let count = 0;
   for (const agent of agents) {
+    if (agent.role === "judge") continue;
     if (ACTIVE_SUBAGENT_STATUSES.has(agent.status)) count += 1;
   }
   return count;
@@ -218,6 +229,8 @@ type RuntimeRecord = {
   runtimeReady?: Promise<void>;
   /** Spawn tool schema registered for this child, refreshed with the Sandbox setting. */
   spawnParameters?: ReturnType<typeof spawnSubagentParameters>;
+  /** Set only for a goal judge: where its single structured verdict is delivered. */
+  goalVerdict?: (raw: unknown) => void;
 };
 
 type IdleOpenReminderState = {
@@ -465,6 +478,12 @@ export class SubagentManager {
     }
 
     for (const restoredSnapshot of restored.values()) {
+      // A judge belongs to one review of one live session. Resuming one would
+      // retain a record that no verdict can ever close, so drop it here.
+      if (restoredSnapshot.role === "judge") {
+        this.persist({ event: "removed", id: restoredSnapshot.id, at: Date.now() });
+        continue;
+      }
       const snapshot = {
         ...restoredSnapshot,
         parentAgentId: restoredSnapshot.parentAgentId ?? null,
@@ -659,9 +678,10 @@ export class SubagentManager {
   }
 
   private openReminderResources(agentId: string | null): OpenReminderResources {
-    const subagents = agentId === null
+    const subagents = (agentId === null
       ? [...this.records.values()]
-      : this.retainedDescendants(agentId).map(({ record }) => record);
+      : this.retainedDescendants(agentId).map(({ record }) => record)
+    ).filter((record) => record.snapshot.role !== "judge");
     const targetSessionId = agentId === null ? undefined : this.records.get(agentId)?.session?.sessionId;
     const triggers = (this.triggerManager?.getTriggers?.() ?? []).filter((trigger) =>
       !CLOSED_TRIGGER_STATES.has(trigger.state)
@@ -1039,6 +1059,14 @@ export class SubagentManager {
         pi.on("before_agent_start", (event) => {
           const record = this.records.get(agentId);
           if (!record) return;
+          if (record.snapshot.role === "judge") {
+            return {
+              systemPrompt: `${event.systemPrompt}\n\nYou are the PUM goal judge (${agentId}). `
+                + `You review the work in ${record.snapshot.worktree.path}. `
+                + "You do not do the work, delegate it, or talk to any other agent. "
+                + `Report once with ${GOAL_VERDICT_TOOL_NAME} and stop.`,
+            };
+          }
           const identity = `${event.systemPrompt}\n\nYou are subagent ${record.snapshot.name} (${agentId}). `
             + `Work only in ${record.snapshot.worktree.path} on branch ${record.snapshot.worktree.branch}. `;
           if (record.snapshot.readonly) {
@@ -1058,6 +1086,28 @@ export class SubagentManager {
               + buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
           };
         });
+
+        // A judge owns one tool. Registering nothing else keeps delegation,
+        // inter-agent messaging, and every mutation path out of its session.
+        if (this.records.get(agentId)?.snapshot.role === "judge") {
+          pi.registerTool({
+            name: GOAL_VERDICT_TOOL_NAME,
+            label: "Goal Verdict",
+            description: "Report the single structured review verdict for the current goal, then stop.",
+            promptSnippet: "Report one goal review verdict",
+            parameters: goalVerdictParameters,
+            execute: async (_id, params) => {
+              const record = this.records.get(agentId);
+              if (!record?.goalVerdict) throw new Error("This goal review is no longer live.");
+              // One verdict per judge. A second call must not start another turn.
+              const deliver = record.goalVerdict;
+              record.goalVerdict = undefined;
+              deliver(params);
+              return { ...textResult("Verdict recorded."), terminate: true };
+            },
+          });
+          return;
+        }
 
         const questionnaireRecord = this.records.get(agentId);
         if (questionnaireRecord) {
@@ -1540,6 +1590,58 @@ export class SubagentManager {
     return this.spawnPreviewManager.request(requester, options, signal);
   }
 
+  /** A descriptive record for an agent that runs in the launch project itself. */
+  private projectWorktreeRecord(name: string): WorktreeRecord {
+    const branch = readBranch(this.mainCwd) ?? "HEAD";
+    return {
+      name,
+      path: this.mainCwd,
+      branch,
+      baseBranch: branch,
+      baseCommit: "",
+    };
+  }
+
+  /**
+   * Start one fresh goal judge in the launch project.
+   *
+   * The judge holds no worktree, counts as no worker, cannot delegate, and
+   * reports exactly once through `goal_verdict`. The caller removes it with
+   * `removeGoalJudge` after the verdict is durably processed.
+   */
+  async spawnGoalJudge(options: {
+    task: string;
+    modelId: string;
+    thinkingLevel: string;
+    onVerdict: (raw: unknown) => void;
+  }): Promise<SubagentSnapshot> {
+    // Readonly needs an enforced OS sandbox. Without one the judge is mutable
+    // and is told, in its own instructions, to change nothing.
+    const readonly = this.sandboxModeSource() !== "off";
+    return this.spawn({
+      task: options.task,
+      modelId: options.modelId,
+      thinkingLevel: options.thinkingLevel,
+      readonly,
+      createWorktree: false,
+      role: "judge",
+      parentAgentId: null,
+      onGoalVerdict: options.onVerdict,
+    });
+  }
+
+  /** Stop and forget a judge. It owns no worktree, so nothing is merged or removed. */
+  async removeGoalJudge(id: string): Promise<void> {
+    const record = this.records.get(id);
+    if (!record || record.snapshot.role !== "judge") return;
+    record.goalVerdict = undefined;
+    await this.stop(id, "stopped", false);
+    this.statsManager?.closeAgent(id);
+    this.records.delete(id);
+    this.persist({ event: "removed", id, at: Date.now() });
+    this.emit();
+  }
+
   async spawn(options: SpawnSubagentOptions): Promise<SubagentSnapshot> {
     if (options.readonly === true && this.sandboxModeSource() === "off") {
       throw new Error("Readonly subagents require the PUM Sandbox setting to be Auto or Require");
@@ -1550,7 +1652,10 @@ export class SubagentManager {
       : undefined;
     let allocatedSessionFile: string | undefined;
     const record = await this.withWorktreeLock(async () => {
-      if (this.activeCount() >= this.maxActiveSubagents) throw activeLimitError(this.maxActiveSubagents);
+      // The judge is not a worker, so the parallel-work limit does not apply.
+      if (options.role !== "judge" && this.activeCount() >= this.maxActiveSubagents) {
+        throw activeLimitError(this.maxActiveSubagents);
+      }
       if (this.records.size >= MAX_RETAINED_AGENTS) throw new Error(`At most ${MAX_RETAINED_AGENTS} subagents can be retained`);
       if (options.parentAgentId !== undefined && options.parentAgentId !== null) {
         const parent = this.records.get(options.parentAgentId);
@@ -1558,9 +1663,14 @@ export class SubagentManager {
         if (parent.finishRequested !== undefined) throw new Error("Spawner subagent is finishing");
       }
 
-      const worktree = await createWorktree(this.mainCwd, options.name);
+      const id = randomUUID().slice(0, 8);
+      // A judge inspects the launch project itself, so it gets no worktree and
+      // no branch. Nothing has to be merged or removed when it is cleaned up.
+      const managed = options.createWorktree !== false;
+      const worktree = managed
+        ? await createWorktree(this.mainCwd, options.name)
+        : this.projectWorktreeRecord(options.name ?? `judge-${id}`);
       try {
-        const id = randomUUID().slice(0, 8);
         const now = Date.now();
         const snapshot: SubagentSnapshot = {
           id,
@@ -1572,6 +1682,7 @@ export class SubagentManager {
           modelId: options.modelId,
           thinkingLevel: options.thinkingLevel,
           readonly: options.readonly === true,
+          role: options.role ?? "worker",
           forkOrigin: forkSource?.origin,
           transcript: emptyTranscript(),
           startedAt: now,
@@ -1592,6 +1703,7 @@ export class SubagentManager {
           userInstructionNotices: new Map(),
           activityGeneration: 0,
           idleNotifiedGeneration: 0,
+          goalVerdict: options.onGoalVerdict,
         };
         this.records.set(id, created);
         // Register the agent before runtime setup can fail. A fresh spawn that
@@ -1607,7 +1719,7 @@ export class SubagentManager {
         return created;
       } catch (error) {
         if (allocatedSessionFile) rmSync(allocatedSessionFile, { force: true });
-        await removeWorktree(this.mainCwd, worktree).catch(() => {});
+        if (managed) await removeWorktree(this.mainCwd, worktree).catch(() => {});
         throw error;
       }
     });
@@ -1673,8 +1785,11 @@ export class SubagentManager {
       : SessionManagerClass.create(record.snapshot.worktree.path, sessionDir);
     // Each child tracks its own enabled tool groups, persisted next to its
     // session file. Restore before the child's enable_tools tool registers.
-    record.toolGroups = new ToolGroupsController("subagent", undefined, record.snapshot.readonly);
-    record.toolGroups.load(sessionManager.getSessionFile());
+    const judge = record.snapshot.role === "judge";
+    if (!judge) {
+      record.toolGroups = new ToolGroupsController("subagent", undefined, record.snapshot.readonly);
+      record.toolGroups.load(sessionManager.getSessionFile());
+    }
     const services = await createAgentSessionServices({
       cwd: record.snapshot.worktree.path,
       agentDir: this.agentDir,
@@ -1696,13 +1811,13 @@ export class SubagentManager {
       sessionManager,
       model,
       thinkingLevel: record.snapshot.thinkingLevel as any,
-      tools: childAllowedToolNames(record.snapshot.readonly),
+      tools: judge ? judgeAllowedToolNames() : childAllowedToolNames(record.snapshot.readonly),
     });
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
     this.statsManager?.attach(record.snapshot.id, result.session, record.snapshot.modelId);
     // Narrow the outgoing tool list to core plus enabled groups for this child.
-    result.session.setActiveToolsByName(record.toolGroups.activeTools());
+    if (record.toolGroups) result.session.setActiveToolsByName(record.toolGroups.activeTools());
     record.unsubscribe = result.session.subscribe((event) => this.processSessionEvent(record, event));
     record.unsubscribeSearch = observeSearchCalls(result.session.sessionId, (call) => {
       if (call.phase === "start") {
@@ -2379,6 +2494,9 @@ export class SubagentManager {
     status: "idle" | "completed" | "failed",
     summary?: string,
   ): Promise<void> {
+    // A judge reports through goal_verdict only. It never sends a lifecycle
+    // notice, so it can neither create a News item nor start an ack loop.
+    if (record.snapshot.role === "judge") return;
     const id = this.settlementId(record, status);
     let settlement = this.settlements.get(id);
     if (!settlement) {
@@ -2670,6 +2788,9 @@ export class SubagentManager {
     if (action === "merge") {
       return this.withWorktreeLock(async () => {
         const managedAgent = this.findRecord(target);
+        if (managedAgent?.snapshot.role === "judge") {
+          throw new Error("A goal judge holds no worktree and nothing to merge.");
+        }
         if (managedAgent) {
           this.assertNoRetainedDescendants(managedAgent, "merge");
           this.assertManagedMergeReady(managedAgent);
@@ -2701,6 +2822,9 @@ export class SubagentManager {
     if (action === "remove") {
       return this.withWorktreeLock(async () => {
         const managedAgent = this.findRecord(target);
+        if (managedAgent?.snapshot.role === "judge") {
+          throw new Error("A goal judge holds no worktree and is closed by the goal lifecycle.");
+        }
         if (managedAgent && ["starting", "running"].includes(managedAgent.snapshot.status)) {
           throw new Error(`Stop ${managedAgent.snapshot.name} before ${action}`);
         }

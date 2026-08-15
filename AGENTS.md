@@ -54,6 +54,10 @@ bun run start    # open the TUI in the current directory
 | `src/login-controller.ts` | Provider auth state machine and popup keyboard actions |
 | `src/login-flow.ts` | Provider registry, custom discovery, redaction, and atomic config writes |
 | `src/browser-launch.ts` | Validated direct-argv OAuth browser launch with visible fallback |
+| `src/goal.ts` | Goal state, transitions, verdict validation, and atomic persistence |
+| `src/goal-command.ts` | `/goal` and `/goalf` parsing |
+| `src/goal-judge.ts` | Judge task, verdict schema, and bounded repository context |
+| `src/goal-line.ts` | The goal label on the input-top rule |
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/check-mode.ts` | On/off Check mode for commands, mutations, and trigger processes |
 | `src/check-paths.ts` | Project-scoped additional Check mode root validation and commands |
@@ -255,6 +259,50 @@ These were chosen deliberately. Change them only on purpose.
   ambiguous context. It acquires pi mutation queues for every touched path,
   stages outputs, backs up existing files, and restores all files after a
   commit failure.
+- **A goal is one session's durable instruction.** `/goal <text>` stores it in a
+  companion file beside the session JSONL and starts a turn at once. `/goalf
+  <draft>` runs one interview turn that questions the user through the ordinary
+  questionnaire, ends with a `GOAL:` line, and stores nothing until the user
+  confirms it. Replacing, clearing, and confirming a proposal all ask first, and
+  cancelling changes nothing. States are `active`, `stopped`, `blocked`,
+  `completed`, and `failed`; the last two are terminal and must be replaced or
+  cleared. `/goal stop` ends automation without touching running work, `/goal
+  continue` resumes only a stopped goal, and `/goal status` prints the complete
+  state with untruncated text. A normal message steers the goal and answers a
+  blocked question. `/clear` and `/new` open a session with no companion file,
+  so no goal follows the user into it.
+- **The goal judge reviews; it never works.** After a settled main turn PUM
+  starts one fresh judge, but only when the goal is active, no managed worker is
+  starting or running, no judge is already in flight, no queued message is still
+  waiting for insertion, and this settled work generation is unjudged. Every one
+  of those is an event, never a poll or a timer. The judge runs in the launch
+  project with no worktree and no branch, holds only `read`, `bash`, and
+  `goal_verdict`, is readonly whenever Sandbox is not Off, and is told in plain
+  words not to mutate anything when it is not. It is excluded from the worker
+  count, sends no completion notice, creates no News item, and is removed once
+  its verdict is processed. A judge that settles without a verdict is dropped and
+  reported. Restored judge records are discarded on resume.
+- **Goal verdicts fail closed.** One structured verdict decides everything.
+  `completed` ends the goal with evidence. `blocked` asks the user one question
+  and waits. `incomplete` queues exactly one generated continuation, which is
+  delivered as a non-recallable main-agent turn. Invalid, missing, duplicated,
+  and stale results start no turn at all: a stop, a replacement, a clear, a
+  session switch, or a newer work generation makes an in-flight verdict stale,
+  and `/goal stop` wins those races because it bumps the goal generation and
+  removes the judge before it can report. The goal record is persisted before the
+  action runs, and the continuation stays owed until its turn actually starts, so
+  resume neither repeats a review nor delivers a continuation twice.
+- **`goalRetryLimit` bounds the loop.** The `pum.json` setting counts consecutive
+  `incomplete` verdicts, defaults to 10, accepts 0 through 100, and 0 means no
+  limit. Reaching a nonzero limit fails the goal and shows the latest judge
+  reason. A failed goal cannot continue.
+- **The goal rides the input-top rule, not the status bar.** The label sits at
+  the right end of the full-width rule above the prompt, takes the rule colour as
+  its background and a semantic foreground per state, keeps two columns of right
+  padding, and never exceeds half the rule. It truncates by terminal columns on
+  grapheme boundaries and disappears rather than overflow a narrow terminal. The
+  working-rule animation sweeps the whole row, label included, and the static
+  behavior is unchanged when animation is off.
 - **Sessions persist** to `<config dir>/sessions`.
 - **Prompt cleanup preserves every stash occurrence.** For each normalized
   working-directory identity, history also retains the 100 most recent sent

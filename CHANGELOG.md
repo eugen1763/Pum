@@ -2,6 +2,14 @@
 
 All notable changes to PUM are documented in this file.
 
+## [Unreleased]
+
+### Added
+- Added an autonomous goal mode. `/goal <text>` stores a goal with the session and starts work at once; `/goalf <draft>` interviews you first and stores nothing until you confirm the one goal it proposes. `/goal stop`, `/goal continue`, `/goal status`, and `/goal clear` control it, and replacing or clearing a goal asks first.
+- Added judge-driven continuation. After a settled main turn, once no managed worker is running and no queued message is waiting, a fresh readonly judge reviews the repository and returns one verdict: complete the goal, ask you a single question, or write the next instruction and start another turn. It holds no worktree, counts as no worker, and is removed after each review.
+- Added a `goalRetryLimit` setting, on the Ctrl+P panel and in `pum.json`. It bounds consecutive incomplete reviews, defaults to 10, accepts 0 through 100, and 0 means no limit.
+- Added a goal label to the full-width rule above the prompt. It shows the state and the goal, keeps the rule one row, truncates on grapheme boundaries, and animates with the rule.
+
 ## [0.2.16-beta.2] - 2026-08-15
 
 ### Fixed

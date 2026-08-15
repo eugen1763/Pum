@@ -16,6 +16,7 @@ const SAFE_TOOLS = new Set([
   "pause_trigger",
   "cancel_trigger",
   "web_search",
+  "goal_verdict",
 ]);
 
 export function readonlyToolBlockReason(

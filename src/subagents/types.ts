@@ -16,6 +16,9 @@ export const TRIGGER_EVENT_CUSTOM_TYPE = EXTERNAL_TRIGGER_CUSTOM_TYPE;
 /** Hidden user-message prefix used only to guarantee that the main loop wakes. */
 export const SUBAGENT_WAKE_PREFIX = "[PUM internal subagent wake]";
 
+/** A plain worker, or the goal judge that reviews after a settled turn. */
+export type SubagentRole = "worker" | "judge";
+
 export type SubagentStatus =
   | "starting"
   | "running"
@@ -61,6 +64,8 @@ export type SubagentSnapshot = {
   thinkingLevel: string;
   /** True when the child must not mutate files or delegate filesystem mutation. Missing legacy values mean false. */
   readonly?: boolean;
+  /** Set for a goal judge. Judges review; they never count as workers and never delegate. */
+  role?: SubagentRole;
   /** Present only when this child inherited an exact requester conversation branch. */
   forkOrigin?: ForkOrigin;
   transcript: AgentTranscript;
@@ -137,11 +142,15 @@ export type SpawnSubagentOptions = {
   modelId: string;
   thinkingLevel: string;
   readonly?: boolean;
+  /** False runs the agent in the launch project instead of a managed worktree. */
   createWorktree?: boolean;
+  role?: SubagentRole;
   parentAgentId?: string | null;
   context?: SpawnContextMode;
   /** Runtime-only immutable branch capture. This value is not persisted. */
   forkSource?: ForkSource;
+  /** Runtime-only judge sink. Set before the first turn so no verdict can race it. */
+  onGoalVerdict?: (raw: unknown) => void;
 };
 
 export type RoutedPrompt = {

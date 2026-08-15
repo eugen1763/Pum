@@ -10,6 +10,7 @@ import {
 } from "./explanation-strength";
 import type { SandboxMode } from "./sandbox/types";
 import { DEFAULT_BASH_OUTPUT, normalizeBashOutput, type BashOutputSettings } from "./bash-output";
+import { DEFAULT_GOAL_RETRY_LIMIT, normalizeGoalRetryLimit } from "./goal";
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
@@ -127,6 +128,8 @@ export type PumSettings = {
   /** Additional canonical directory roots allowed by the filesystem sandbox and Check mode, keyed by launch project. */
   checkPaths?: CheckPathsByProject;
   maxActiveSubagents: number;
+  /** Consecutive `incomplete` goal judgments allowed before the goal fails. 0 means no limit. Legacy settings omit this field. */
+  goalRetryLimit?: number;
   /** Bash output summarization policy (context-length control). */
   bashOutput?: BashOutputSettings;
 };
@@ -147,6 +150,7 @@ const DEFAULTS: PumSettings = {
   sandboxMode: "auto",
   checkPaths: {},
   maxActiveSubagents: DEFAULT_MAX_ACTIVE_SUBAGENTS,
+  goalRetryLimit: DEFAULT_GOAL_RETRY_LIMIT,
   bashOutput: { ...DEFAULT_BASH_OUTPUT },
 };
 
@@ -175,6 +179,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     sandboxMode: isSandboxMode(merged.sandboxMode) ? merged.sandboxMode : DEFAULTS.sandboxMode,
     checkPaths: normalizeCheckPathsByProject(merged.checkPaths),
     maxActiveSubagents: normalizeMaxActiveSubagents(merged.maxActiveSubagents),
+    goalRetryLimit: normalizeGoalRetryLimit(merged.goalRetryLimit),
     bashOutput: normalizeBashOutput(merged.bashOutput),
   };
 }

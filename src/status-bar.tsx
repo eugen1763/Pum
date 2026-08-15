@@ -7,9 +7,12 @@ import {
   statusMetadataItems,
   statusMetadataWidth,
   statusTextWidth,
+  truncateStatusText,
   type StatusMetadataItem,
 } from "./status-metadata";
 import type { Theme } from "./theme";
+
+export { truncateStatusText } from "./status-metadata";
 
 export type StatusProps = {
   theme: Theme;
@@ -86,25 +89,6 @@ type StatusBarLayoutInput = Pick<
   | "runningShellCount"
   | "activeAgentName"
 > & { width: number };
-
-const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-/** Truncate by rendered terminal columns without splitting a Unicode grapheme. */
-export function truncateStatusText(text: string, maxWidth: number): string | null {
-  if (maxWidth <= 0) return null;
-  if (statusTextWidth(text) <= maxWidth) return text;
-  if (maxWidth === 1) {
-    const first = graphemeSegmenter.segment(text)[Symbol.iterator]().next().value?.segment ?? "";
-    return statusTextWidth(first) <= 1 ? first : "…";
-  }
-
-  let result = "";
-  for (const { segment } of graphemeSegmenter.segment(text)) {
-    if (statusTextWidth(result + segment) > maxWidth - 1) break;
-    result += segment;
-  }
-  return `${result}…`;
-}
 
 function agentTextWidth(input: StatusBarLayoutInput, layout: StatusBarLayout): number {
   const idle = Math.max(0, input.agentCount - input.runningAgentCount);

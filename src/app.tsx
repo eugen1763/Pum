@@ -10,7 +10,13 @@ import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@open
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AnimationProvider, supportsTrueColor, useWorkingRule, type WorkingRuleRole } from "./animation";
+import {
+  AnimationProvider,
+  supportsTrueColor,
+  useWorkingRule,
+  type WorkingRuleLabel,
+  type WorkingRuleRole,
+} from "./animation";
 import {
   filterModels,
   filterSettingsRows,
@@ -151,6 +157,40 @@ import {
   type SessionStatsManager,
   type SessionStatsSnapshot,
 } from "./session-stats";
+import {
+  applyJudgeResult,
+  continuationDelivered,
+  continueGoal,
+  createGoal,
+  formatGoalStatus,
+  goalContinuePrompt,
+  goalFormulationPrompt,
+  goalStartPrompt,
+  isTerminalGoalState,
+  judgeTicketFor,
+  loadGoal,
+  noteSettledWork,
+  MAX_GOAL_RETRY_LIMIT,
+  MIN_GOAL_RETRY_LIMIT,
+  normalizeGoalRetryLimit,
+  parseGoalVerdict,
+  parseProposedGoal,
+  saveGoal,
+  shouldScheduleGoalJudge,
+  steerGoal,
+  stopGoal,
+  type GoalContinuation,
+  type GoalJudgeTicket,
+  type GoalRecord,
+} from "./goal";
+import { parseGoalCommand, type GoalControl } from "./goal-command";
+import { goalLabel, goalLabelColor } from "./goal-line";
+import {
+  buildJudgeTask,
+  collectRepositoryState,
+  goalOutcomeMessage,
+  judgeTranscript,
+} from "./goal-judge";
 
 /** Placeholder while the stats popup is closed, so no snapshot is built per event. */
 const EMPTY_STATS_SNAPSHOT: SessionStatsSnapshot = {
@@ -283,6 +323,7 @@ function WorkingRule({
   dimmed = false,
   mode,
   role,
+  label = null,
 }: {
   theme: Theme;
   width: number;
@@ -290,6 +331,7 @@ function WorkingRule({
   dimmed?: boolean;
   mode: WorkingRuleAnimationMode;
   role: WorkingRuleRole;
+  label?: WorkingRuleLabel | null;
 }) {
   const ref = useWorkingRule({
     width,
@@ -298,6 +340,7 @@ function WorkingRule({
     active: busy,
     mode,
     role,
+    label,
   });
   return <text ref={ref} style={{ flexShrink: 0 }} />;
 }
@@ -565,6 +608,27 @@ export function App({
   useLayoutEffect(() => {
     txRef.current = tx;
   }, [tx]);
+  // Autonomous goal mode. The ref is authoritative: keyboard handlers, session
+  // events, and the judge callback all read it before React has re-rendered.
+  const goalRef = useRef<GoalRecord | null>(null);
+  const [goal, setGoalState] = useState<GoalRecord | null>(() => {
+    const loaded = loadGoal(initialSession.sessionFile);
+    goalRef.current = loaded;
+    return loaded;
+  });
+  /** The live review, held as a promise so a fast verdict cannot outrun the spawn. */
+  const judgeRef = useRef<{
+    ticket: GoalJudgeTicket;
+    agent: Promise<{ id: string }>;
+    /** Set the moment the verdict tool runs, so a settle cannot report it missing. */
+    verdictSeen: boolean;
+  } | null>(null);
+  const judgeAgentIdRef = useRef<string | null>(null);
+  const judgeStartingRef = useRef(false);
+  /** Set while a `/goalf` interview turn is running, so no judge reviews it. */
+  const goalFormulationRef = useRef<{ draft: string } | null>(null);
+  /** Managed workers in flight, judges excluded. Mirrored for event handlers. */
+  const activeWorkersRef = useRef(0);
   const [busy, setBusy] = useState(false);
   const [quitArmed, setQuitArmed] = useState(false);
   const [cancelArmed, setCancelArmed] = useState(false);
@@ -644,8 +708,21 @@ export function App({
     [news],
   );
   const animations = settings.animations && supportsTrueColor();
+  // The goal rides the input-top rule, not the status bar. It is rebuilt only
+  // when the goal, the terminal width, or the theme changes.
+  const goalRuleLabel = useMemo<WorkingRuleLabel | null>(() => {
+    const label = goalLabel(goal, Math.max(0, width));
+    return label
+      ? { text: label.text, width: label.width, color: goalLabelColor(theme, label.state) }
+      : null;
+  }, [goal?.text, goal?.state, width, theme]);
   const agents = subagentManager.getAgents();
   const activeSubagentCount = countActiveSubagents(agents);
+  // Layout effect, like the transcript mirror: an event handler can read this
+  // before React has painted the render that produced the new count.
+  useLayoutEffect(() => {
+    activeWorkersRef.current = activeSubagentCount;
+  }, [activeSubagentCount]);
   const activeAgent = activeAgentId
     ? agents.find((agent) => agent.id === activeAgentId)
     : undefined;
@@ -1427,6 +1504,30 @@ export function App({
       stream: null,
       pending: [],
     });
+    // A goal belongs to one session. /clear and /new open a session with no
+    // companion file, so the old goal cannot follow the user into it.
+    clearGoalJudge();
+    goalFormulationRef.current = null;
+    const loadedGoal = loadGoal(session.sessionFile);
+    goalRef.current = loadedGoal;
+    setGoalState(loadedGoal);
+    const owed = loadedGoal?.state === "active" ? loadedGoal.pendingContinuation : undefined;
+    if (owed) {
+      // The continuation is durable until its turn actually starts. A crash in
+      // that window leaves it owed; a crash after delivery leaves it in the
+      // replayed transcript, and then it is already paid.
+      const alreadyDelivered = replayedLines.some(
+        (line) => line.kind === "text" && line.role === "user" && line.text === owed.text,
+      );
+      if (alreadyDelivered) {
+        const settled = continuationDelivered(loadedGoal!, owed.id);
+        goalRef.current = settled;
+        setGoalState(settled);
+        saveGoal(session.sessionFile, settled);
+      } else {
+        void deliverGoalContinuation(owed);
+      }
+    }
     setUsage(sessionUsage(session));
     if (focusInputAfterSwitch.current) {
       focusInputAfterSwitch.current = false;
@@ -1556,6 +1657,18 @@ export function App({
           releasePostTurnPastedTexts("main");
           streamingRef.current = false;
           setWorking(false);
+          // A `/goalf` interview settles into a proposal, never into goal work.
+          if (goalFormulationRef.current) {
+            goalFormulationRef.current = null;
+            void finishGoalFormulation(answer).catch((error) =>
+              append({ kind: "text", role: "error", text: String(error) }));
+            break;
+          }
+          {
+            const current = goalRef.current;
+            if (current?.state === "active") persistGoal(noteSettledWork(current));
+          }
+          maybeScheduleGoalJudge();
           break;
         }
       }
@@ -1596,7 +1709,36 @@ export function App({
         releasePostTurnPastedTexts(agent.id);
       }
     }
+    // A judge that settles without calling goal_verdict has said nothing. Drop
+    // it, or `judgeInFlight` would stay true and stall the goal for good.
+    const judge = judgeRef.current;
+    const judgeId = judgeAgentIdRef.current;
+    if (judge && judgeId && !judge.verdictSeen) {
+      const record = agents.find((agent) => agent.id === judgeId);
+      if (record && record.status !== "starting" && record.status !== "running") {
+        clearGoalJudge();
+        append({
+          kind: "text",
+          role: "error",
+          text: "the goal review ended without a verdict; no turn was started",
+        });
+      }
+    }
   }, [agents.map((agent) => `${agent.id}:${agent.status}`).join("|")]);
+
+  // The review trigger reacts to lifecycle changes only: the main agent
+  // settling, the last worker settling, and queued messages being inserted.
+  // There is no timer and no status poll anywhere in this path.
+  useEffect(() => {
+    maybeScheduleGoalJudge();
+  }, [
+    busy,
+    activeSubagentCount,
+    tx.pending.filter((pending) => !pending.delivered).length,
+    goal?.id,
+    goal?.state,
+    goal?.workGeneration,
+  ]);
 
   // Recalculate visual rows after wrapping, terminal resizes, or editor height changes.
   useEffect(() => {
@@ -2140,6 +2282,7 @@ export function App({
 
   const runCommand = (text: string): boolean => {
     const trimmed = text.trim();
+    if (runGoalCommand(trimmed)) return true;
     const compress = /^\/compress(?:\s+(.*))?$/s.exec(trimmed);
     const clear = /^\/(?:clear|new)$/.test(trimmed);
     const historyCommand = trimmed === "/history";
@@ -2301,6 +2444,338 @@ export function App({
     }
   };
 
+  // ── Autonomous goal mode ────────────────────────────────────────────────
+  // The pure decisions live in goal.ts. Everything here only wires session and
+  // subagent lifecycle events to them; nothing polls and nothing runs on a timer.
+
+  const persistGoal = (next: GoalRecord | null) => {
+    goalRef.current = next;
+    setGoalState(next);
+    saveGoal(session.sessionFile, next);
+  };
+
+  /** Drop the live review. A judge holds no worktree, so nothing is merged. */
+  const clearGoalJudge = () => {
+    const judge = judgeRef.current;
+    judgeRef.current = null;
+    judgeAgentIdRef.current = null;
+    judgeStartingRef.current = false;
+    if (!judge) return;
+    void judge.agent
+      .then((agent) => subagentManager.removeGoalJudge(agent.id))
+      .catch(() => {});
+  };
+
+  /** PUM's own git, with fixed arguments and no shell. No model input reaches it. */
+  const runGoalGit = async (args: string[]): Promise<string> => {
+    const child = Bun.spawn(["git", "--no-pager", ...args], {
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    const code = await child.exited;
+    if (code !== 0) throw new Error(err.trim() || `exited ${code}`);
+    return out;
+  };
+
+  const startGoalJudge = async (target: GoalRecord) => {
+    judgeStartingRef.current = true;
+    const ticket = judgeTicketFor(target, randomUUID().slice(0, 12));
+    try {
+      const repository = await collectRepositoryState(runGoalGit);
+      const task = buildJudgeTask({
+        goal: target,
+        transcript: judgeTranscript(txRef.current.lines),
+        repository,
+        mutable: (forcedSandboxMode ?? settingsRef.current.sandboxMode ?? "auto") === "off",
+      });
+      const agent = subagentManager.spawnGoalJudge({
+        task,
+        modelId: session.agent.state.model.id,
+        thinkingLevel: String(session.agent.state.thinkingLevel),
+        onVerdict: (raw) => {
+          // Mark it here, synchronously inside the tool call, so the judge's
+          // own settle cannot race the asynchronous processing below.
+          if (judgeRef.current?.ticket === ticket) judgeRef.current.verdictSeen = true;
+          void processGoalVerdict(ticket, raw);
+        },
+      });
+      judgeRef.current = { ticket, agent, verdictSeen: false };
+      judgeAgentIdRef.current = (await agent).id;
+    } catch (error) {
+      judgeRef.current = null;
+      append({ kind: "text", role: "error", text: `goal review could not start: ${String(error)}` });
+    } finally {
+      judgeStartingRef.current = false;
+    }
+  };
+
+  const maybeScheduleGoalJudge = () => {
+    // A `/goalf` interview turn is not goal work, so it is never reviewed.
+    if (goalFormulationRef.current || sessionSwitchRef.current) return;
+    const current = goalRef.current;
+    const schedule = shouldScheduleGoalJudge({
+      goal: current,
+      mainSettled: !streamingRef.current,
+      activeWorkerCount: activeWorkersRef.current,
+      judgeInFlight: judgeStartingRef.current || judgeRef.current !== null,
+      pendingInsertions: txRef.current.pending.filter((pending) => !pending.delivered).length,
+    });
+    if (schedule && current) void startGoalJudge(current);
+  };
+
+  const deliverGoalContinuation = async (continuation: GoalContinuation) => {
+    try {
+      await deliverMainPrompt(continuation.text, continuation.text, [], false);
+      const live = goalRef.current;
+      if (live) persistGoal(continuationDelivered(live, continuation.id));
+    } catch (error) {
+      // The turn never started, so the queued continuation is not owed to
+      // anyone. Release it, or it would block every later review.
+      const live = goalRef.current;
+      if (live) persistGoal(continuationDelivered(live, continuation.id));
+      append({
+        kind: "text",
+        role: "error",
+        text: `goal continuation was not delivered: ${String(error)}`,
+      });
+    }
+  };
+
+  const processGoalVerdict = async (ticket: GoalJudgeTicket, raw: unknown) => {
+    const result = parseGoalVerdict(raw);
+    if (!result) {
+      clearGoalJudge();
+      append({
+        kind: "text",
+        role: "error",
+        text: "the goal judge returned an invalid verdict; no turn was started",
+      });
+      return;
+    }
+    const outcome = applyJudgeResult(goalRef.current, ticket, result);
+    clearGoalJudge();
+    if (outcome.action.kind === "ignored") return;
+    // Durable before the action, so a crash between the two cannot repeat it.
+    persistGoal(outcome.goal);
+    const action = outcome.action;
+    if (action.kind === "completed") {
+      append({
+        kind: "text",
+        role: "system",
+        text: goalOutcomeMessage("completed", outcome.goal, action.summary),
+      });
+      return;
+    }
+    if (action.kind === "failed") {
+      append({
+        kind: "text",
+        role: "error",
+        text: goalOutcomeMessage("failed", outcome.goal, action.summary),
+      });
+      return;
+    }
+    if (action.kind === "blocked") {
+      append({
+        kind: "text",
+        role: "system",
+        text: `goal blocked: ${action.summary}\n\n${action.question}`,
+      });
+      return;
+    }
+    await deliverGoalContinuation(action.continuation);
+  };
+
+  const askGoalQuestion = async (
+    id: string,
+    prompt: string,
+    confirmValue: string,
+    confirmLabel: string,
+    cancelLabel: string,
+  ): Promise<boolean> => {
+    if (!questionnaireManager) return false;
+    const result = await questionnaireManager.request({ id: "main", name: "main" }, [{
+      id,
+      label: "Goal",
+      prompt,
+      // The safe answer is first, so the default selection changes nothing.
+      options: [
+        { value: "cancel", label: cancelLabel },
+        { value: confirmValue, label: confirmLabel },
+      ],
+    }]);
+    return !result.cancelled && result.answers[0]?.value === confirmValue;
+  };
+
+  const confirmGoalReplacement = (existing: GoalRecord) => askGoalQuestion(
+    "goal-replace",
+    `A ${existing.state} goal already exists:\n\n${existing.text}\n\nReplace it?`,
+    "replace",
+    "Replace it",
+    "Keep the current goal",
+  );
+
+  const applyNewGoal = async (text: string) => {
+    clearGoalJudge();
+    const created = createGoal(text, normalizeGoalRetryLimit(settingsRef.current.goalRetryLimit));
+    persistGoal(created);
+    await deliverMainPrompt(goalStartPrompt(created), `Goal: ${created.text}`, [], false);
+  };
+
+  const finishGoalFormulation = async (answer: string) => {
+    const proposed = parseProposedGoal(answer);
+    if (!proposed) {
+      append({
+        kind: "text",
+        role: "error",
+        text: "no goal was proposed, so nothing was stored. Use /goal <text> to set one directly.",
+      });
+      return;
+    }
+    const confirmed = await askGoalQuestion(
+      "goal-confirm",
+      `Proposed goal:\n\n${proposed}\n\nStart it?`,
+      "start",
+      "Start this goal",
+      "Cancel",
+    );
+    if (!confirmed) {
+      append({ kind: "text", role: "system", text: "goal unchanged" });
+      return;
+    }
+    await applyNewGoal(proposed);
+  };
+
+  const startGoalFormulation = async (draft: string) => {
+    const existing = goalRef.current;
+    if (existing && !(await confirmGoalReplacement(existing))) {
+      append({ kind: "text", role: "system", text: "goal unchanged" });
+      return;
+    }
+    goalFormulationRef.current = { draft };
+    try {
+      await deliverMainPrompt(
+        goalFormulationPrompt(draft),
+        `Work out a goal from: ${draft}`,
+        [],
+        false,
+      );
+    } catch (error) {
+      goalFormulationRef.current = null;
+      throw error;
+    }
+  };
+
+  const runGoalControl = (control: GoalControl) => {
+    const existing = goalRef.current;
+    if (control === "status") {
+      append({ kind: "text", role: "system", text: formatGoalStatus(existing) });
+      return;
+    }
+    if (!existing) {
+      append({ kind: "text", role: "error", text: "no goal is set. Use /goal <text> or /goalf <draft>." });
+      return;
+    }
+    if (control === "clear") {
+      void askGoalQuestion(
+        "goal-clear",
+        `Remove all stored state for this ${existing.state} goal?\n\n${existing.text}`,
+        "clear",
+        "Clear it",
+        "Keep the current goal",
+      ).then((confirmed) => {
+        if (!confirmed) {
+          append({ kind: "text", role: "system", text: "goal unchanged" });
+          return;
+        }
+        // Clearing bumps nothing, so the judge is dropped explicitly. A stale
+        // verdict then finds no goal at all and can change nothing.
+        clearGoalJudge();
+        goalFormulationRef.current = null;
+        persistGoal(null);
+        append({ kind: "text", role: "system", text: "goal cleared" });
+      }).catch((error) => append({ kind: "text", role: "error", text: String(error) }));
+      return;
+    }
+    try {
+      if (control === "stop") {
+        // Stop wins every race: the new generation makes an in-flight verdict
+        // stale, and the judge itself is removed before it can report.
+        const stopped = stopGoal(existing);
+        clearGoalJudge();
+        persistGoal(stopped);
+        append({
+          kind: "text",
+          role: "system",
+          text: "goal stopped. Automatic reviews and continuations are off; running work is untouched.",
+        });
+        return;
+      }
+      const resumed = continueGoal(existing);
+      if (busyRef.current) throw new Error("wait for the current turn to finish before continuing the goal");
+      persistGoal(resumed);
+      void deliverMainPrompt(
+        goalContinuePrompt(resumed),
+        `Continue goal: ${resumed.text}`,
+        [],
+        false,
+      ).catch((error) => append({ kind: "text", role: "error", text: String(error) }));
+    } catch (error) {
+      append({ kind: "text", role: "error", text: String(error) });
+    }
+  };
+
+  /** Handle `/goal` and `/goalf`. Returns false for anything else. */
+  const runGoalCommand = (text: string): boolean => {
+    const command = parseGoalCommand(text);
+    if (!command) return false;
+    const restoreCommandDraft = () => setEditorText(text, text.length, true);
+    setEditingStash(null);
+
+    if (command.kind === "error") {
+      append({ kind: "text", role: "error", text: command.message });
+      restoreCommandDraft();
+      return true;
+    }
+    if (command.kind === "control") {
+      histCursor.current = null;
+      draft.current = "";
+      runGoalControl(command.control);
+      return true;
+    }
+    if (busyRef.current) {
+      append({
+        kind: "text",
+        role: "error",
+        text: "wait for the current turn to finish before setting a goal",
+      });
+      restoreCommandDraft();
+      return true;
+    }
+    histCursor.current = null;
+    draft.current = "";
+    const report = (error: unknown) =>
+      append({ kind: "text", role: "error", text: String(error) });
+    if (command.kind === "formulate") {
+      void startGoalFormulation(command.draft).catch(report);
+      return true;
+    }
+    void (async () => {
+      const existing = goalRef.current;
+      if (existing && !(await confirmGoalReplacement(existing))) {
+        append({ kind: "text", role: "system", text: "goal unchanged" });
+        return;
+      }
+      await applyNewGoal(command.text);
+    })().catch(report);
+    return true;
+  };
+
   const submitPrompt = (value?: string, stashIndex?: number) => {
     // Read the selected agent from the ref, not the state. A view switch updates
     // the ref synchronously, but a switch-then-send in one input chunk runs
@@ -2423,6 +2898,13 @@ export function App({
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
+    // A normal message steers the live goal. Answering a blocked question
+    // resumes the lifecycle; automation stays on either way.
+    const steerable = goalRef.current;
+    if (steerable) {
+      const steered = steerGoal(steerable);
+      if (steered !== steerable) persistGoal(steered);
+    }
     void deliverMainPrompt(promptText, displayText, images)
       .then(() => {
         finishAttachments();
@@ -2587,6 +3069,15 @@ export function App({
         Math.min(MAX_ACTIVE_SUBAGENTS, settingsRef.current.maxActiveSubagents + step),
       ),
     }) },
+    goalRetryLimit: { step: (step) => update({
+      goalRetryLimit: Math.max(
+        MIN_GOAL_RETRY_LIMIT,
+        Math.min(
+          MAX_GOAL_RETRY_LIMIT,
+          normalizeGoalRetryLimit(settingsRef.current.goalRetryLimit) + step,
+        ),
+      ),
+    }) },
     model: { enter: () => {
       setModelQuery("");
       setModelSearchFocused(false);
@@ -2616,6 +3107,7 @@ export function App({
     thinkingLevel: `‹ ${thinkingLevel} ›`,
     showThinking: `‹ ${settings.showThinking ? "on" : "off"} ›`,
     maxActiveSubagents: `‹ ${settings.maxActiveSubagents} ›`,
+    goalRetryLimit: `‹ ${normalizeGoalRetryLimit(settings.goalRetryLimit) || "unlimited"} ›`,
     model: `${modelId} ›`,
   };
 
@@ -3596,6 +4088,7 @@ export function App({
           dimmed={stashOpen}
           mode={settings.workingRuleAnimation}
           role="inputTop"
+          label={goalRuleLabel}
         />
         {stashOpen ? (
           <PromptStash

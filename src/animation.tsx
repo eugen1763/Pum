@@ -1,5 +1,6 @@
 import {
   StyledText,
+  bg,
   fg,
   type MarkdownRenderable,
   type RGBA,
@@ -339,30 +340,64 @@ export function useMarkdownCaret(
   };
 }
 
-function ruleText(width: number, base: RGBA, hi: RGBA, head: number): StyledText {
-  const chunks = [];
-  for (let i = 0; i < width; i++) {
-    const distance = Math.abs(i - head);
-    const strength = distance < RULE_HIGHLIGHT_WIDTH
-      ? 1 - distance / RULE_HIGHLIGHT_WIDTH
-      : 0;
-    chunks.push(fg(strength > 0 ? mix(base, hi, strength * 0.8) : base)("─"));
-  }
-  return new StyledText(chunks);
-}
+/** A right-aligned label painted on the rule, with the rule colour behind it. */
+export type WorkingRuleLabel = {
+  text: string;
+  width: number;
+  color: string;
+};
 
-/** Preserve the original input-rule sweep, including its wrapped highlight tail. */
-function inputRuleText(width: number, base: RGBA, hi: RGBA, head: number): StyledText {
-  const chunks = [];
-  for (let i = 0; i < width; i++) {
-    const clockwise = (head - i + width) % width;
-    const counterclockwise = (i - head + width) % width;
-    const distance = Math.min(clockwise, counterclockwise);
-    const strength = distance < RULE_HIGHLIGHT_WIDTH
-      ? 1 - distance / RULE_HIGHLIGHT_WIDTH
-      : 0;
-    chunks.push(fg(strength > 0 ? mix(base, hi, strength * 0.8) : base)("─"));
+const labelSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Highlight strength at one column, 0 when the sweep head is far away. */
+type RuleStrength = (column: number) => number;
+
+const STATIC_STRENGTH: RuleStrength = () => 0;
+
+const linearStrength = (head: number): RuleStrength => (column) => {
+  const distance = Math.abs(column - head);
+  return distance < RULE_HIGHLIGHT_WIDTH ? 1 - distance / RULE_HIGHLIGHT_WIDTH : 0;
+};
+
+/** The original input-rule sweep, including its wrapped highlight tail. */
+const wrappedStrength = (head: number, width: number): RuleStrength => (column) => {
+  const clockwise = (head - column + width) % width;
+  const counterclockwise = (column - head + width) % width;
+  const distance = Math.min(clockwise, counterclockwise);
+  return distance < RULE_HIGHLIGHT_WIDTH ? 1 - distance / RULE_HIGHLIGHT_WIDTH : 0;
+};
+
+/**
+ * One rule row. The label sits at the right end and takes the swept rule colour
+ * as its background, so the whole row animates as a single wave.
+ */
+export function ruleText(
+  width: number,
+  base: RGBA,
+  hi: RGBA,
+  strength: RuleStrength,
+  label: WorkingRuleLabel | null = null,
+): StyledText {
+  const swept = (column: number) => {
+    const value = strength(column);
+    return value > 0 ? mix(base, hi, value * 0.8) : base;
+  };
+  const labelWidth = label ? Math.min(label.width, width) : 0;
+  const ruleColumns = Math.max(0, width - labelWidth);
+  const chunks: TextChunk[] = [];
+  for (let column = 0; column < ruleColumns; column++) chunks.push(fg(swept(column))("─"));
+
+  let column = ruleColumns;
+  if (label) {
+    for (const { segment } of labelSegmenter.segment(label.text)) {
+      const segmentWidth = Bun.stringWidth(segment);
+      if (column + segmentWidth > width) break;
+      chunks.push(bg(swept(column))(fg(label.color)(segment)));
+      column += segmentWidth;
+    }
   }
+  // A clipped grapheme can leave the row short. Finish it with plain rule.
+  for (; column < width; column++) chunks.push(fg(swept(column))("─"));
   return new StyledText(chunks);
 }
 
@@ -374,14 +409,18 @@ export function useWorkingRule(opts: {
   active: boolean;
   mode: WorkingRuleAnimationMode;
   role: WorkingRuleRole;
+  /** Optional right-aligned label painted on the rule colour. */
+  label?: WorkingRuleLabel | null;
 }): RefObject<TextRenderable | null> {
-  const { width, color, highlight, active, mode, role } = opts;
+  const { width, color, highlight, active, mode, role, label = null } = opts;
   const ref = useRef<TextRenderable>(null);
   const { subscribe, workingElapsed, workingRuleCycleWidth, enabled } = useClock();
+  const labelKey = label ? `${label.text}|${label.width}|${label.color}` : "";
 
   const plain = useCallback(() => {
-    if (ref.current) ref.current.content = new StyledText([fg(color)("─".repeat(width))]);
-  }, [color, width]);
+    if (ref.current) ref.current.content = ruleText(width, rgba(color), rgba(color), STATIC_STRENGTH, label);
+    // The base and highlight are the same colour here, so nothing is swept.
+  }, [color, width, labelKey]);
 
   useEffect(() => {
     const canAnimate = mode === "coordinated" || (mode === "input-only" && isInputRule(role));
@@ -402,12 +441,16 @@ export function useWorkingRule(opts: {
         workingRuleCycleWidth(),
       );
       if (!state) {
-        ref.current.content = new StyledText([fg(color)("─".repeat(width))]);
+        ref.current.content = ruleText(width, base, base, STATIC_STRENGTH, label);
         return;
       }
-      ref.current.content = mode === "input-only"
-        ? inputRuleText(width, base, hi, state.head)
-        : ruleText(width, base, hi, state.head);
+      ref.current.content = ruleText(
+        width,
+        base,
+        hi,
+        mode === "input-only" ? wrappedStrength(state.head, width) : linearStrength(state.head),
+        label,
+      );
     });
   }, [
     active,
@@ -417,6 +460,7 @@ export function useWorkingRule(opts: {
     width,
     color,
     highlight,
+    labelKey,
     plain,
     subscribe,
     workingElapsed,

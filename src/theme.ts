@@ -11,6 +11,8 @@ export type Theme = {
   accent: string;
   /** Foreground for the current working directory in the status bar. */
   statusCwd: string;
+  /** Foreground of the goal label painted on the input-top rule. */
+  goalLabel: string;
   border: string;
   /** Foreground and background of a user turn's full-width bar. */
   user: string;
@@ -55,6 +57,7 @@ const tokyonight: Theme = {
   dim: "#565f89",
   accent: "#7aa2f7",
   statusCwd: "#2ac3de",
+  goalLabel: "#c0caf5",
   border: "#292e42",
   user: "#c0caf5",
   userBg: "#283457",
@@ -91,6 +94,7 @@ const gruvbox: Theme = {
   dim: "#928374",
   accent: "#83a598",
   statusCwd: "#8ec07c",
+  goalLabel: "#ebdbb2",
   border: "#3c3836",
   user: "#ebdbb2",
   userBg: "#3c3836",
@@ -127,6 +131,7 @@ const catppuccin: Theme = {
   dim: "#6c7086",
   accent: "#89b4fa",
   statusCwd: "#94e2d5",
+  goalLabel: "#cdd6f4",
   border: "#313244",
   user: "#cdd6f4",
   userBg: "#313244",
@@ -163,6 +168,7 @@ const nord: Theme = {
   dim: "#7b88a1",
   accent: "#88c0d0",
   statusCwd: "#8fbcbb",
+  goalLabel: "#eceff4",
   border: "#3b4252",
   user: "#eceff4",
   userBg: "#434c5e",
@@ -199,6 +205,7 @@ const dracula: Theme = {
   dim: "#6272a4",
   accent: "#bd93f9",
   statusCwd: "#8be9fd",
+  goalLabel: "#f8f8f2",
   border: "#44475a",
   user: "#f8f8f2",
   userBg: "#44475a",
@@ -235,6 +242,7 @@ const rosepine: Theme = {
   dim: "#6e6a86",
   accent: "#c4a7e7",
   statusCwd: "#9ccfd8",
+  goalLabel: "#e0def4",
   border: "#26233a",
   user: "#e0def4",
   userBg: "#26233a",
@@ -271,6 +279,7 @@ const solarized: Theme = {
   dim: "#586e75",
   accent: "#268bd2",
   statusCwd: "#2aa198",
+  goalLabel: "#93a1a1",
   border: "#073642",
   user: "#93a1a1",
   userBg: "#073642",
@@ -307,6 +316,7 @@ const kanagawa: Theme = {
   dim: "#727169",
   accent: "#7e9cd8",
   statusCwd: "#7fb4ca",
+  goalLabel: "#dcd7ba",
   border: "#2a2a37",
   user: "#dcd7ba",
   userBg: "#2d4f67",
@@ -343,6 +353,7 @@ const githubLight: Theme = {
   dim: "#6e7781",
   accent: "#0969da",
   statusCwd: "#0a3069",
+  goalLabel: "#24292f",
   border: "#d0d7de",
   user: "#24292f",
   userBg: "#ddf4ff",
