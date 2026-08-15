@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathsHaveSameIdentity } from "./platform";
@@ -243,4 +243,24 @@ describe("random worktree names", () => {
     expect([...adjectiveDigits.values()].some((digits) => digits.size > 1)).toBe(true);
     expect([...nounDigits.values()].some((digits) => digits.size > 1)).toBe(true);
   });
+});
+
+describe("a repository whose name ends in a space", () => {
+  test("resolves rather than being trimmed into a path that does not exist", async () => {
+    // git prints the toplevel followed by a newline. Trimming that output also
+    // ate a trailing space in the directory name, and every later call landed
+    // on a path that was never there.
+    const spaced = join(root, "repo dir ");
+    mkdirSync(spaced);
+    git(spaced, "init", "-q", ".");
+    git(spaced, "config", "user.email", "t@t");
+    git(spaced, "config", "user.name", "t");
+    writeFileSync(join(spaced, "a.txt"), "hi\n");
+    git(spaced, "add", "-A");
+    git(spaced, "commit", "-qm", "init");
+
+    const record = await createWorktree(spaced);
+    expect(record.path).toContain("repo dir ");
+    expect(existsSync(record.path)).toBe(true);
+  }, 30_000);
 });
