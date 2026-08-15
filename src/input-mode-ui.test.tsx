@@ -68,21 +68,29 @@ async function renderApp() {
 }
 
 describe("prompt input mode", () => {
-  test("Ctrl+I toggles the visible input indicator", async () => {
+  test("Alt+I toggles the visible input indicator", async () => {
     const { setup } = await renderApp();
     expect(setup.captureCharFrame()).toContain("❯ Ask something…");
-    setup.mockInput.pressKey("i", { ctrl: true });
+    setup.mockInput.pressKey("i", { meta: true });
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("i Ask something…");
     expect(setup.captureCharFrame()).not.toContain("❯ Ask something…");
-    setup.mockInput.pressKey("i", { ctrl: true });
+    setup.mockInput.pressKey("i", { meta: true });
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("❯ Ask something…");
   });
 
+  test("Ctrl+I does not toggle the visible input indicator", async () => {
+    const { setup } = await renderApp();
+    setup.mockInput.pressKey("i", { ctrl: true });
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("❯ Ask something…");
+    expect(setup.captureCharFrame()).not.toContain("i Ask something…");
+  });
+
   test("plain Enter inserts a newline while input mode is on", async () => {
     const { setup, sent } = await renderApp();
-    setup.mockInput.pressKey("i", { ctrl: true });
+    setup.mockInput.pressKey("i", { meta: true });
     await setup.mockInput.typeText("first");
     setup.mockInput.pressEnter();
     await setup.mockInput.typeText("second");
@@ -98,11 +106,11 @@ describe("prompt input mode", () => {
 
   test("toggling input mode off restores plain Enter sending", async () => {
     const { setup, sent } = await renderApp();
-    setup.mockInput.pressKey("i", { ctrl: true });
+    setup.mockInput.pressKey("i", { meta: true });
     await setup.mockInput.typeText("first");
     setup.mockInput.pressEnter();
     await setup.mockInput.typeText("second");
-    setup.mockInput.pressKey("i", { ctrl: true });
+    setup.mockInput.pressKey("i", { meta: true });
     setup.mockInput.pressEnter();
     await settle(setup);
     expect(sent).toEqual(["first\nsecond"]);

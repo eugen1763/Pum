@@ -150,7 +150,7 @@ This MVP mounts the PUM configuration directory, including provider credentials,
 | Key | Action |
 |---|---|
 | `Enter` | Send or steer; while input mode is on, insert a new line |
-| `Ctrl+I` | Toggle multiline input mode; the prompt gutter changes to `i` while active |
+| `Alt+I` | Toggle multiline input mode; the prompt gutter changes to `i` while active |
 | `↑` on an empty prompt | Recall the newest queued user message for the selected agent |
 | `Ctrl+Enter` / `Shift+Enter` | Insert a new line |
 | `Alt+Enter` / `Ctrl+Alt+Enter` | Cache without sending; the Ctrl alias works around terminals that reserve Alt+Enter |

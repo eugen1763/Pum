@@ -2955,7 +2955,7 @@ export function App({
       return;
     }
 
-    if (key.ctrl && printableKey === "i") {
+    if ((key.meta || key.option) && !key.ctrl && printableKey === "i") {
       key.stopPropagation();
       const next = !inputModeRef.current;
       inputModeRef.current = next;
