@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 
@@ -64,6 +65,44 @@ export function isPathInside(
   return relative !== "" && relative !== ".." && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative);
 }
 
+/**
+ * Resolve a path to the spelling the OS considers real.
+ *
+ * Node's `realpathSync` keeps an 8.3 short name as it found it, while the
+ * async `realpath` expands it. Windows accounts like `runneradmin` genuinely
+ * have one, so the two disagree and a root registered through one never
+ * matches a path resolved through the other. `.native` asks the OS, which
+ * settles it in one spelling.
+ */
+/** Async twin of `canonicalRealpathSync`, and the default resolver below. */
+export async function canonicalRealpath(
+  path: string,
+  platform: RuntimePlatform = process.platform,
+): Promise<string> {
+  if (platform !== "win32") return realpath(path);
+  // Not in the fs/promises types, and not guaranteed present on every runtime,
+  // so reach for it defensively rather than assume it.
+  const native = (realpath as unknown as { native?: (path: string) => Promise<string> }).native;
+  try {
+    if (native) return await native(path);
+  } catch {
+    // Fall through to the portable resolver below.
+  }
+  return realpath(path);
+}
+
+export function canonicalRealpathSync(
+  path: string,
+  platform: RuntimePlatform = process.platform,
+): string {
+  if (platform !== "win32") return realpathSync(path);
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return realpathSync(path);
+  }
+}
+
 export function pathIdentity(
   path: string,
   platform: RuntimePlatform = process.platform,
@@ -84,7 +123,7 @@ export function isPathInsideOrSame(
 export async function canonicalPathIdentity(
   path: string,
   platform: RuntimePlatform = process.platform,
-  resolvePath: (path: string) => Promise<string> = realpath,
+  resolvePath: (path: string) => Promise<string> = canonicalRealpath,
 ): Promise<string> {
   const paths = pathApi(platform);
   const canonical = paths.resolve(await resolvePath(path));
@@ -94,7 +133,7 @@ export async function canonicalPathIdentity(
 export async function canonicalPathIdentityAllowMissing(
   path: string,
   platform: RuntimePlatform = process.platform,
-  resolvePath: (path: string) => Promise<string> = realpath,
+  resolvePath: (path: string) => Promise<string> = canonicalRealpath,
 ): Promise<string> {
   const paths = pathApi(platform);
   const absolute = paths.resolve(path);
@@ -117,7 +156,7 @@ export async function pathsHaveSameIdentity(
   first: string,
   second: string,
   platform: RuntimePlatform = process.platform,
-  resolvePath: (path: string) => Promise<string> = realpath,
+  resolvePath: (path: string) => Promise<string> = canonicalRealpath,
 ): Promise<boolean> {
   const [firstIdentity, secondIdentity] = await Promise.all([
     canonicalPathIdentity(first, platform, resolvePath),

@@ -38,6 +38,22 @@ async function git(
   return result.stdout.trim();
 }
 
+/**
+ * Run git where the output is a path.
+ *
+ * `git()` trims, which most callers want - the porcelain and status readers
+ * test the result for emptiness. A path is different: a directory name may end
+ * in a space, and trimming it produces a path that does not exist.
+ */
+async function gitPath(cwd: string, args: string[]): Promise<string> {
+  const result = await execFileAsync("git", args, {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 4 * 1024 * 1024,
+  });
+  return result.stdout.replace(/\r?\n$/, "");
+}
+
 function safeName(value: string): string {
   const normalized = value
     .trim()
@@ -59,7 +75,7 @@ export function randomWorktreeName(): string {
 }
 
 async function repositoryRoot(cwd: string): Promise<string> {
-  return realpath(await git(cwd, ["rev-parse", "--show-toplevel"]));
+  return realpath(await gitPath(cwd, ["rev-parse", "--show-toplevel"]));
 }
 
 async function managedRoot(root: string): Promise<string> {
@@ -81,7 +97,7 @@ async function managedWorktreePath(cwd: string, path: string): Promise<string> {
 }
 
 async function excludeManagedDirectory(root: string): Promise<void> {
-  const rawExcludePath = await git(root, ["rev-parse", "--git-path", "info/exclude"]);
+  const rawExcludePath = await gitPath(root, ["rev-parse", "--git-path", "info/exclude"]);
   const excludePath = isAbsolute(rawExcludePath) ? rawExcludePath : resolve(root, rawExcludePath);
   let current = "";
   try {

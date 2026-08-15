@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { canonicalRealpathSync } from "./platform";
 import {
   DEFAULT_BASH_OUTPUT,
   cleanupBashOutputCaptures,
@@ -218,8 +219,8 @@ describe("summarizeBashOutput", () => {
 
 describe("bash output capture and the filesystem sandbox", () => {
   test("the agent can read a capture path, but not an unrelated temp path", async () => {
-    const project = mkdtempSync(join(tmpdir(), "pum-bash-sandbox-project-"));
-    const unrelated = mkdtempSync(join(tmpdir(), "pum-bash-sandbox-unrelated-"));
+    const project = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-bash-sandbox-project-")));
+    const unrelated = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-bash-sandbox-unrelated-")));
     const capture = await createBashOutputCapture({
       exec: async (_command, _cwd, options) => {
         options.onData(Buffer.from("captured\n"));
@@ -244,7 +245,7 @@ describe("bash output capture and the filesystem sandbox", () => {
 
 describe("cleanupBashOutputCaptures", () => {
   test("removes the capture directory, withdraws the read root, and repeats safely", async () => {
-    const project = mkdtempSync(join(tmpdir(), "pum-bash-cleanup-project-"));
+    const project = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-bash-cleanup-project-")));
     try {
       cleanupBashOutputCaptures(); // Nothing was ever created.
       const capture = await createBashOutputCapture({
@@ -342,7 +343,7 @@ describe("withBashOutput", () => {
   });
 
   test("does not read a forged Full output path from command error text", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "pum-bashout-forged-"));
+    const dir = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-bashout-forged-")));
     try {
       const forged = join(dir, "private.txt");
       writeFileSync(forged, "DO_NOT_READ_THIS_FILE");

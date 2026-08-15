@@ -59,7 +59,11 @@ const MAX_STASH_ENTRIES = 500;
 const MAX_STASH_TEXT_CHARS = 1_000_000;
 
 const LOCK_STALE_MS = 10_000;
-const LOCK_TIMEOUT_MS = 2_000;
+// Two processes writing 60 entries each contend 120 times; on a slow shared
+// runner 2s ran out and the loser proceeded unlocked, losing an entry.
+const LOCK_TIMEOUT_MS = 10_000;
+/** Consecutive create failures with no lock file before locking counts as unavailable. */
+const UNLOCKABLE_ATTEMPTS = 3;
 const LOCK_RETRY_MS = 5;
 
 function sleepSync(ms: number): void {
@@ -100,6 +104,7 @@ function releaseLock(path: string, token: string, ops: PromptCacheFileOps): void
 function acquireLock(path: string, ops: PromptCacheFileOps): () => void {
   const token = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let unlockable = 0;
   for (;;) {
     try {
       ops.mkdir(dirname(path), { recursive: true });
@@ -110,7 +115,16 @@ function acquireLock(path: string, ops: PromptCacheFileOps): () => void {
       });
       return () => releaseLock(path, token, ops);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") return () => {};
+      // Windows reports a contended exclusive create as EPERM or EACCES, not
+      // EEXIST, and EPERM is also how a filesystem says it cannot lock at all.
+      // Giving up means writing unlocked, which loses an update, so only a
+      // failure that repeats counts as "cannot lock": a holder releasing
+      // between the failed create and this check looks identical once.
+      if ((error as NodeJS.ErrnoException)?.code === "EEXIST" || ops.exists(path)) {
+        unlockable = 0;
+      } else if (++unlockable >= UNLOCKABLE_ATTEMPTS) {
+        return () => {};
+      }
       if (Date.now() >= deadline) return () => {};
       const age = lockAgeMs(path, ops);
       if (age !== undefined && age > LOCK_STALE_MS) {

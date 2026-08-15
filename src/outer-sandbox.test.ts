@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { canonicalRealpathSync } from "./platform";
 import { tmpdir } from "node:os";
 import {
   buildOuterSandboxLaunchPlan,
@@ -19,7 +20,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 function directory(prefix: string): string {
-  const path = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  const path = canonicalRealpathSync(mkdtempSync(join(tmpdir(), prefix)));
   temporaryDirectories.push(path);
   return path;
 }

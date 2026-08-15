@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { canonicalRealpathSync, pathIdentity } from "./platform";
 import { OUTER_SANDBOX_ENV, OUTER_SANDBOX_MARKER } from "./outer-sandbox";
 import {
   buildPumOuterSandboxPlan,
@@ -14,7 +15,7 @@ import {
 const temporaryDirectories: string[] = [];
 
 function directory(prefix: string): string {
-  const path = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  const path = canonicalRealpathSync(mkdtempSync(join(tmpdir(), prefix)));
   temporaryDirectories.push(path);
   return path;
 }
@@ -111,7 +112,10 @@ describe("PUM outer sandbox launch", () => {
         { path: "/work/shared", mode: "rw" },
       ],
     });
-    expect(outerSandboxAdditionalRoots(context!, project)).toEqual(["/work/shared"]);
+    // The roots come back as canonical identities, and a rooted POSIX path
+    // resolves against the current drive on Windows, so compare the same way
+    // the code does rather than against the literal spelling.
+    expect(outerSandboxAdditionalRoots(context!, project)).toEqual([pathIdentity("/work/shared")]);
   });
 
   test("rejects invalid and nested child context", async () => {

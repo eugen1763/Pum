@@ -16,6 +16,9 @@ All notable changes to PUM are documented in this file.
 - An absolute path no longer matches a slash command, so Tab on `/u` completes `/usr/lib` instead of turning it into `/new`.
 
 ### Fixed
+- Staged pasted text and captured bash output are reachable on Windows accounts with an 8.3 short name. PUM stored the path `mkdtemp` returned rather than the canonical one the sandbox registered, so it handed the agent a path its own sandbox then refused.
+- The prompt cache no longer loses an entry when two PUM processes write at once. The cross-process lock gave up after two seconds of contention and carried on unlocked, and read a contended exclusive create on Windows as "this filesystem cannot lock".
+- A repository whose directory name ends in a space resolves. The trailing space was trimmed off the path git reported, leaving a path that does not exist.
 - Orphaned `.goal.json` files are swept when a session is deleted. The sweep never knew about them, so one was left behind for every session removed since goals shipped.
 
 - Added an autonomous goal mode. `/goal <text>` stores a goal with the session and starts work at once; `/goalf <draft>` interviews you first and stores nothing until you confirm the one goal it proposes. `/goal stop`, `/goal continue`, `/goal status`, and `/goal clear` control it, and replacing or clearing a goal asks first.

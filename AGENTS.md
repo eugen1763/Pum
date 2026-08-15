@@ -702,6 +702,20 @@ Each of these cost real debugging. They are not obvious from the docs.
   roots and mutation targets must use the shared canonical identity and
   containment helpers in `platform.ts`; raw string or `realpath()` spelling
   comparisons can reject valid roots or authorize the wrong boundary.
+- **`realpathSync` and `realpath` disagree about 8.3 names.** The sync one
+  leaves a short name as it found it; the async one expands it. A root
+  registered through one then never matches a path resolved through the other,
+  and only Windows sees it, because only Windows has short names. Go through
+  `canonicalRealpathSync` / `canonicalRealpath` in `platform.ts`, which ask the
+  OS. This hid two real bugs: staged pasted text and captured bash output were
+  handed to the agent under a spelling PUM's own sandbox refused.
+- **Windows strips a trailing space from a path component.** `repo dir ` is
+  created as `repo dir`, so a case built on one cannot be reproduced there.
+- **A contended exclusive create is `EPERM` on Windows, not `EEXIST`** - the
+  same code a filesystem uses to say it cannot lock at all. Telling the two
+  apart by whether the lock file exists is not enough on its own: a holder
+  releasing between the failed create and the check looks identical. Only a
+  failure that repeats means locking is unavailable.
 - **Bubblewrap mount order is part of the security policy.** Add system and
   read-only mounts first, writable project roots next, and private temporary and
   denied-path masks last. Reordering these arguments can expose credentials

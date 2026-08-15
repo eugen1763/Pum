@@ -26,8 +26,10 @@ function ensurePastedTextDir(): string {
     // The agent is told to read these files, and the filesystem sandbox allows
     // only the project and configured roots. Register this exact directory,
     // which PUM just created, as a read-only sandbox root.
-    registerSandboxTempReadRoot(created);
-    pastedTextDir = created;
+    // Keep the canonical spelling the sandbox registered, not the one mkdtemp
+    // returned. On a Windows account with an 8.3 alias those differ, and the
+    // agent would be handed a path its own sandbox then refuses.
+    pastedTextDir = registerSandboxTempReadRoot(created);
   }
   return pastedTextDir;
 }
