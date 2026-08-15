@@ -39,6 +39,20 @@ export type PendingTranscriptState = {
   pending: PendingLine[];
 };
 
+/** Hide retained reasoning without changing the authoritative transcript state. */
+export function transcriptForThinkingVisibility<T extends PendingTranscriptState>(
+  value: T,
+  showThinking: boolean,
+): T {
+  if (showThinking) return value;
+  const lines = value.lines.filter(
+    (line) => line.kind !== "text" || line.role !== "thinking",
+  );
+  const stream = value.stream?.kind === "thinking" ? null : value.stream;
+  if (lines.length === value.lines.length && stream === value.stream) return value;
+  return { ...value, lines, stream };
+}
+
 /** OpenTUI 0.5.1 supports Markdown selection at runtime but omits the React prop. */
 function SelectableMarkdown({ ref, ...props }: MarkdownProps) {
   const setRef = (renderable: MarkdownRenderable | null) => {
