@@ -1635,8 +1635,18 @@ describe("SubagentManager extension", () => {
     expect(record.userInstructionNotices.has("newer")).toBe(false);
   });
 
-  test("does not notify main when queued subagent delivery is cancelled", async () => {
-    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+  test("preserves cancelled queued child messages in the cache without notifying main", async () => {
+    const cached: Array<{ requester: any; text: string }> = [];
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      messageCacheController: {
+        add(requester: any, text: string) {
+          cached.push({ requester, text });
+          return { id: `cached-${cached.length}` };
+        },
+      } as any,
+    });
     addTestAgent(manager, "worker", "running");
     const record = (manager as any).records.get("worker");
     const deliveries: any[] = [];
@@ -1649,16 +1659,99 @@ describe("SubagentManager extension", () => {
       sessionId: "child-session",
       sessionManager: { appendCustomEntry() {} },
       steer: async () => {},
-      clearQueue: () => ({ steering: ["Cancel this instruction."], followUp: [] }),
+      clearQueue: () => ({
+        steering: ["First instruction.", "Attachment instruction."],
+        followUp: ["Second instruction."],
+      }),
       abort: async () => {},
     };
+    record.snapshot.transcript.pending = [
+      {
+        id: "first",
+        line: { kind: "text", role: "user", text: "First instruction." },
+        deliveryText: "First instruction.",
+      },
+      {
+        id: "agent",
+        line: { kind: "agent-message", sender: "main", recipient: "worker", text: "Keep this notice." },
+        deliveryText: "First instruction.",
+      },
+      {
+        id: "attachment",
+        line: { kind: "text", role: "user", text: "Attachment instruction." },
+        deliveryText: "Attachment instruction.",
+        recallable: false,
+      },
+      {
+        id: "second",
+        line: { kind: "text", role: "user", text: "Second instruction." },
+        deliveryText: "Second instruction.",
+      },
+      {
+        id: "delivered",
+        line: { kind: "text", role: "user", text: "Already delivered." },
+        deliveryText: "Second instruction.",
+        delivered: true,
+      },
+    ];
+    record.userInstructionNotices = new Map([
+      ["first", "First instruction."],
+      ["attachment", "Attachment instruction."],
+      ["second", "Second instruction."],
+    ]);
 
-    await manager.sendUserMessage("worker", "Cancel this instruction.");
+    await manager.abortAgent("worker");
+
+    expect(cached).toEqual([
+      {
+        requester: { kind: "subagent", id: "worker", name: "worker" },
+        text: "First instruction.",
+      },
+      {
+        requester: { kind: "subagent", id: "worker", name: "worker" },
+        text: "Second instruction.",
+      },
+    ]);
+    expect(record.snapshot.transcript.pending.map((item: any) => item.id)).toEqual([
+      "agent",
+      "delivered",
+    ]);
+    expect(record.userInstructionNotices.size).toBe(0);
+    expect(record.snapshot.transcript.lines).toContainEqual({
+      kind: "text",
+      role: "system",
+      text: "cancelled; preserved 2 queued user messages in the cache",
+    });
+    expect(record.snapshot.transcript.lines).toContainEqual({
+      kind: "text",
+      role: "error",
+      text: "cancelled 1 queued attachment message; attachments could not be preserved",
+    });
+    expect(deliveries).toEqual([]);
+  });
+
+  test("keeps cancelled user text visible when the message cache is unavailable", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const record = (manager as any).records.get("worker");
+    record.session = {
+      clearQueue: () => ({ steering: ["Recover me."], followUp: [] }),
+      abort: async () => {},
+    };
+    record.snapshot.transcript.pending = [{
+      id: "recover",
+      line: { kind: "text", role: "user", text: "Recover me." },
+      deliveryText: "Recover me.",
+    }];
+
     await manager.abortAgent("worker");
 
     expect(record.snapshot.transcript.pending).toEqual([]);
-    expect(record.userInstructionNotices.size).toBe(0);
-    expect(deliveries).toEqual([]);
+    expect(record.snapshot.transcript.lines).toContainEqual({
+      kind: "text",
+      role: "error",
+      text: "cancelled queued message could not be cached; copy it to retry:\nRecover me.",
+    });
   });
 
   test("restores parent metadata and migrates legacy records to main", async () => {
