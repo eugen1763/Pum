@@ -331,7 +331,7 @@ export function SettingsPopup({
             />
           </box> : null}
           {layout.footerHeight ? <text
-            content={layout.narrow ? "/ search  ↑↓ move  ←→ change  esc back" : "/ search   ↑↓ move   ←→ change   ⏎ open   esc back"}
+            content={layout.narrow ? "/ search  ↑↓ move  ←→ s save  esc back" : "/ search   ↑↓ move   ←→ change   s save global   esc back"}
             fg={theme.dim}
             bg={theme.popupBg}
             wrapMode="none"

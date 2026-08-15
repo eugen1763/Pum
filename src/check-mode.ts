@@ -3,7 +3,7 @@ import type { InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-ag
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { AGENT_DIR, settingsFilePaths } from "./config";
+import { AGENT_DIR } from "./config";
 import { projectStorageKey } from "./platform";
 import {
   canonicalJson,
@@ -622,9 +622,11 @@ export async function evaluateToolCall(runtime: CheckerRuntime, call: ToolCheck)
   const config = normalizeConfig(call.config);
   if (config.profile === "off") return { decision: "allow", reason: "Check mode is off", category: "off" };
   if (call.signal?.aborted) return { decision: "block", reason: "Safety check aborted", category: "abort" };
-  const settingsFiles = call.requester?.kind === "main"
-    ? call.settingsFiles ?? settingsFilePaths()
-    : [];
+  // No agent writes the config directory any more. Settings changes belong to
+  // the session, and `s` in the Settings popup is the one deliberate promotion
+  // to global - done by PUM itself, not through a tool. The mechanism stays so
+  // an exact-file allowance can be granted deliberately, but nothing grants one.
+  const settingsFiles = call.requester?.kind === "main" ? call.settingsFiles ?? [] : [];
   const preparedResult = await prepareCheck(
     call.toolName,
     call.input,

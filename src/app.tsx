@@ -35,6 +35,7 @@ import {
   MAX_ACTIVE_SUBAGENTS,
   MIN_ACTIVE_SUBAGENTS,
   SANDBOX_MODES,
+  normalizeSettings,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
   type PumSettings,
@@ -81,6 +82,13 @@ import {
 import { matchingCommands, moveCommandSelection } from "./commands";
 import { truncateStatusText } from "./status-metadata";
 import { modeLineLabels } from "./mode-line";
+import {
+  loadSessionSettings,
+  mergeSessionSettings,
+  saveSessionSettings,
+  sessionSettingsDiff,
+  type SessionSettings,
+} from "./session-settings";
 import { AfkController, type AfkStatus } from "./afk";
 import { parseAfkCommand } from "./afk-command";
 import {
@@ -666,7 +674,18 @@ export function App({
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsSearchFocused, setSettingsSearchFocused] = useState(true);
   const [selectedSettingId, setSelectedSettingId] = useState<SettingRowId | null>(SETTINGS_ROWS[0]!.id);
-  const [settings, setSettings] = useState(initial);
+  // `initial` is the global config. A session lays its own overrides over it,
+  // so both have to be tracked: one to write back on `s`, one to persist here.
+  // Normalize the baseline: comparing raw props against normalized state would
+  // report every default the normalizer filled in as a session override.
+  const globalSettingsRef = useRef(normalizeSettings(initial));
+  const [sessionOverrides, setSessionOverrides] = useState<SessionSettings>(
+    () => loadSessionSettings(initialSession.sessionFile),
+  );
+  const sessionOverridesRef = useRef(sessionOverrides);
+  const [settings, setSettings] = useState(
+    () => mergeSessionSettings(globalSettingsRef.current, sessionOverridesRef.current),
+  );
   // Mirrors settings for update(): a keypress or an async .then can fire a
   // second update before React commits the first, so update() must build the
   // next value from the latest pending settings, not the render closure.
@@ -1562,6 +1581,14 @@ export function App({
     // companion file, so the old goal cannot follow the user into it.
     clearGoalJudge();
     goalFormulationRef.current = null;
+    // Settings belong to one session too, so /clear and /new fall back to the
+    // global defaults rather than carrying the old session's overrides in.
+    const loadedOverrides = loadSessionSettings(session.sessionFile);
+    sessionOverridesRef.current = loadedOverrides;
+    setSessionOverrides(loadedOverrides);
+    const mergedSettings = mergeSessionSettings(globalSettingsRef.current, loadedOverrides);
+    settingsRef.current = mergedSettings;
+    setSettings(mergedSettings);
     const loadedGoal = loadGoal(session.sessionFile);
     goalRef.current = loadedGoal;
     setGoalState(loadedGoal);
@@ -1888,7 +1915,24 @@ export function App({
     if (patch.maxActiveSubagents !== undefined) {
       subagentManager.setMaxActiveSubagents(patch.maxActiveSubagents);
     }
+    // Session-scoped: the popup never writes the global config, which the
+    // sandboxes keep read-only. `s` in the popup is the one way to promote.
+    const overrides = sessionSettingsDiff(globalSettingsRef.current, next);
+    sessionOverridesRef.current = overrides;
+    setSessionOverrides(overrides);
+    saveSessionSettings(session.sessionFile, overrides);
+  };
+
+  /** Promote this session's settings to the global defaults, on `s` in the popup. */
+  const promoteSessionSettings = () => {
+    const next = settingsRef.current;
+    globalSettingsRef.current = next;
     saveSettings(next);
+    // Nothing differs from global any more, so the session owns no overrides.
+    sessionOverridesRef.current = {};
+    setSessionOverrides({});
+    saveSessionSettings(session.sessionFile, {});
+    appendMainLine({ kind: "text", role: "system", text: "Saved these settings as the global defaults." });
   };
 
   const stepThinking = (step: number) => {
@@ -3870,6 +3914,12 @@ export function App({
       }
 
       key.stopPropagation();
+      // Reachable only with the search unfocused, so `s` never eats a keystroke
+      // meant for the filter.
+      if (printableKeyCharacter(key.name, key.sequence, key.raw) === "s") {
+        promoteSessionSettings();
+        return;
+      }
       const action = selectedSettingId ? rowActions[selectedSettingId] : undefined;
       const confirming = key.name === "space" || key.sequence === " " || isSettingsReturn;
       if (key.name === "up" || key.name === "down") {

@@ -5,6 +5,19 @@ All notable changes to PUM are documented in this file.
 ## [Unreleased]
 
 ### Added
+- Added per-agent todo lists. A hidden `Todo` tool group gives the main agent and each managed child `todo_list`, `todo_add`, `todo_update`, `todo_complete` and `todo_delete`, each bound to its own session so no agent can read or change another's plan. Readonly children keep the tools. `Ctrl+O` and `/todo` open a view-only popup for the selected transcript, with `f` to filter.
+- Added `/afk`, which answers model questionnaires while you are away. Each questionnaire goes to one fresh delegate holding a single tool - no files, no shell, no network, no delegation. `/afk` alone toggles it, `/afk <instructions>` starts or re-steers it, and any failure hands the questionnaire straight back to you. AFK is process-local: it is never written to disk and never survives a restart.
+- Added `pum worktree [directory]` and `pum w [directory]`, which create an auto-named worktree under `<repo>/.pum/worktrees` and start a fresh session in it. The source repository stays writable for that process only, without touching your saved `/check-path` settings. Uncommitted source changes are not copied, because creation uses the current commit.
+- Added session-scoped settings. Changes in the Ctrl+P panel now apply to the current session and persist beside it, leaving the global `pum.json` alone; `s` in the panel saves them as the global defaults.
+- Added absolute and home path completion. `/` and `~/` now complete, alongside project-relative paths, with credential paths and symbolic links still excluded.
+
+### Changed
+- No agent can write the PUM config directory any more. The main agent's exact-file allowance for `settings.json`, `pum.json` and `theme.json` is revoked, since settings are session-scoped and only the Settings panel promotes them.
+- An absolute path no longer matches a slash command, so Tab on `/u` completes `/usr/lib` instead of turning it into `/new`.
+
+### Fixed
+- Orphaned `.goal.json` files are swept when a session is deleted. The sweep never knew about them, so one was left behind for every session removed since goals shipped.
+
 - Added an autonomous goal mode. `/goal <text>` stores a goal with the session and starts work at once; `/goalf <draft>` interviews you first and stores nothing until you confirm the one goal it proposes. `/goal stop`, `/goal continue`, `/goal status`, and `/goal clear` control it, and replacing or clearing a goal asks first.
 - Added judge-driven continuation. After a settled main turn, once no managed worker is running and no queued message is waiting, a fresh readonly judge reviews the repository and returns one verdict: complete the goal, ask you a single question, or write the next instruction and start another turn. It holds no worktree, counts as no worker, and is removed after each review.
 - Added a `goalRetryLimit` setting, on the Ctrl+P panel and in `pum.json`. It bounds consecutive incomplete reviews, defaults to 10, accepts 0 through 100, and 0 means no limit.

@@ -41,6 +41,7 @@ export const COMPANION_SUFFIXES = [
   ".tool-groups.json",
   ".goal.json",
   ".todo.json",
+  ".settings.json",
 ] as const;
 
 const DEFAULT_MAX_CACHE_ENTRIES = 256;

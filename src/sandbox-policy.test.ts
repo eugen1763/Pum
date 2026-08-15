@@ -313,3 +313,31 @@ describe("expanded credential and injection denials", () => {
     })).toEqual({ HOME: "/home/user", PATH: "/bin" });
   });
 });
+
+describe("the PUM config directory", () => {
+  test("is denied outright, so no backend can grant it a write", () => {
+    // Settings are session-scoped and PUM promotes them itself. No agent, in
+    // either sandbox, has a reason to write here - and the deterministic layer
+    // no longer grants an exact-file allowance either.
+    const command = "echo hi";
+    const policy = buildSandboxPolicy({
+      command,
+      cwd: "/work/repo",
+      executable: "/bin/bash",
+      args: ["-c", command],
+      privateTemp: "/tmp/private",
+      pumConfigRoot: "/pum",
+      home: "/home/user",
+      platform: "linux",
+      result: analyzeCheckPolicy({
+        command,
+        cwd: "/work/repo",
+        profile: "balanced",
+        fileSystem: inertFileSystem,
+      }),
+    });
+    expect(policy.deniedPaths).toContain("/pum");
+    expect(policy.readWritePaths).not.toContain("/pum");
+    expect(policy.readOnlyPaths).not.toContain("/pum");
+  });
+});
