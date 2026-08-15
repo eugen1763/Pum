@@ -15,7 +15,11 @@ afterEach(() => {
   destroy?.();
   destroy = undefined;
   for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true, maxRetries: process.platform === "win32" ? 10 : 0 });
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      // A leftover temp directory is harmless; failing teardown is not.
+    }
   }
 });
 
@@ -134,11 +138,33 @@ async function renderApp(options: {
   return { setup, session, relocated, relocationHandler };
 }
 
+async function settleUntil(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  done: () => boolean,
+  timeoutMs = 20_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await settle(setup);
+    if (done()) return;
+  }
+  throw new Error(`relocation did not settle: ${setup.captureCharFrame()}`);
+}
+
 async function type(setup: Awaited<ReturnType<typeof createTestRenderer>>, text: string) {
   await setup.mockInput.typeText(text);
   setup.mockInput.pressEnter();
   await settle(setup);
-  await settle(setup);
+}
+
+/** Send a command and wait for the move it starts to actually land. */
+async function typeAndSettleMove(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  text: string,
+  done: () => boolean,
+) {
+  await type(setup, text);
+  await settleUntil(setup, done);
 }
 
 describe("/worktree start and return", () => {
@@ -146,7 +172,7 @@ describe("/worktree start and return", () => {
     const repo = repository();
     const { setup, session, relocated } = await renderApp({ cwd: repo });
 
-    await type(setup, "/worktree start");
+    await typeAndSettleMove(setup, "/worktree start", () => loadRelocation(session.sessionFile) !== null);
     const record = loadRelocation(session.sessionFile);
     expect(record?.location).toBe("worktree");
     expect(record?.branch).toMatch(/^pum\//);
@@ -157,7 +183,7 @@ describe("/worktree start and return", () => {
     // that a worktree was created somewhere.
     expect(setup.captureCharFrame()).toContain(`${record!.name} · ${record!.branch}`);
 
-    await type(setup, "/worktree return");
+    await typeAndSettleMove(setup, "/worktree return", () => relocated.length > 1);
     expect(relocated[1]).toBe(repo);
     // Returning preserves the worktree; only the session moved.
     expect(existsSync(record!.worktreePath)).toBe(true);
@@ -167,9 +193,10 @@ describe("/worktree start and return", () => {
 
   test("refuses a second layer", async () => {
     const repo = repository();
-    const { setup } = await renderApp({ cwd: repo });
-    await type(setup, "/worktree start");
-    await type(setup, "/worktree start");
+    const { setup, session } = await renderApp({ cwd: repo });
+    await typeAndSettleMove(setup, "/worktree start", () => loadRelocation(session.sessionFile) !== null);
+    await typeAndSettleMove(setup, "/worktree start",
+      () => setup.captureCharFrame().includes("return first"));
     expect(setup.captureCharFrame()).toContain("return first");
   }, 30_000);
 
@@ -204,7 +231,8 @@ describe("/worktree start and return", () => {
   test("keeps the worktree when the move itself fails", async () => {
     const repo = repository();
     const { setup, session } = await renderApp({ cwd: repo, onRelocate: async () => null });
-    await type(setup, "/worktree start");
+    await typeAndSettleMove(setup, "/worktree start",
+      () => setup.captureCharFrame().includes("did not move"));
 
     const frame = setup.captureCharFrame();
     expect(frame).toContain("did not move");
@@ -263,8 +291,7 @@ describe("the worktree tool actions", () => {
     expect(loadRelocation(session.sessionFile)).toBeNull();
 
     session.emit({ type: "agent_settled" });
-    await settle(setup);
-    await settle(setup);
+    await settleUntil(setup, () => loadRelocation(session.sessionFile) !== null);
 
     const record = loadRelocation(session.sessionFile);
     expect(record?.location).toBe("worktree");
