@@ -82,6 +82,7 @@ import {
 import { matchingCommands, moveCommandSelection } from "./commands";
 import { truncateStatusText } from "./status-metadata";
 import { modeLineLabels } from "./mode-line";
+import { AGENT_NOTICE_CUSTOM_TYPE } from "./subagents/types";
 import {
   loadSessionSettings,
   mergeSessionSettings,
@@ -1501,11 +1502,13 @@ export function App({
   );
 
   useEffect(() => {
+    // A delegate answering counts as work even though it is not a managed
+    // agent, or the terminal reads as idle while AFK decides something.
     terminalTitle?.update({
-      working: busy || activeSubagentCount > 0,
+      working: busy || activeSubagentCount > 0 || afkAnswering,
       activeSubagentCount,
     });
-  }, [terminalTitle, busy, activeSubagentCount]);
+  }, [terminalTitle, busy, activeSubagentCount, afkAnswering]);
 
   useEffect(() => spawnPreviewManager?.subscribe(() => {
     setSpawnPreviewRevision((revision) => revision + 1);
@@ -2132,8 +2135,18 @@ export function App({
       role: "system" as const,
       text: [`AFK answered for ${request.requester.name}`, ...lines].join("\n"),
     };
-    if (request.requester.id === "main") appendMainLine(row);
-    else subagentManager.appendAgentLine(request.requester.id, row);
+    if (request.requester.id === "main") {
+      appendMainLine(row);
+      // appendMainLine only draws. Persist it too, or the row is gone on resume.
+      try {
+        session.sessionManager.appendCustomEntry?.(AGENT_NOTICE_CUSTOM_TYPE, {
+          agentId: "main",
+          line: row,
+        });
+      } catch {
+        // The row is already on screen; failing to persist must not throw here.
+      }
+    } else subagentManager.appendAgentLine(request.requester.id, row);
   };
 
   const afkDelegateRef = useRef<{
