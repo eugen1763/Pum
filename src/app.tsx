@@ -936,6 +936,8 @@ export function App({
     const previous = lastInputValue.current;
     let value = nextValue;
     let cleanupCursor: number | null = null;
+    let removedImages = 0;
+    let removedPastedTexts = 0;
     const kept: PendingImage[] = [];
 
     for (const image of pendingImages.current) {
@@ -959,6 +961,7 @@ export function App({
       value = value.slice(0, start) + value.slice(end);
       cleanupCursor = cleanupCursor === null ? start : Math.min(cleanupCursor, start);
       removePendingImage(image);
+      removedImages++;
     }
 
     // Recalculate marker positions after any atomic marker removal.
@@ -966,6 +969,7 @@ export function App({
       const start = value.indexOf(image.marker);
       if (start < 0) {
         removePendingImage(image);
+        removedImages++;
         return [];
       }
       return [{ ...image, start, end: start + image.marker.length }];
@@ -992,11 +996,13 @@ export function App({
       value = value.slice(0, start) + value.slice(fragmentEnd);
       cleanupCursor = cleanupCursor === null ? start : Math.min(cleanupCursor, start);
       removePendingPastedText(pasted);
+      removedPastedTexts++;
     }
     pendingPastedTexts.current = keptPasted.flatMap((pasted) => {
       const start = value.indexOf(pasted.marker);
       if (start < 0) {
         removePendingPastedText(pasted);
+        removedPastedTexts++;
         return [];
       }
       return [{ ...pasted, start, end: start + pasted.marker.length }];
@@ -1012,6 +1018,21 @@ export function App({
     setCommandCursor(0);
     setCommandInput(value);
     scheduleInputMetrics();
+    if (removedImages > 0 || removedPastedTexts > 0) {
+      const removed = [
+        removedImages > 0
+          ? `${removedImages} image attachment${removedImages === 1 ? "" : "s"}`
+          : "",
+        removedPastedTexts > 0
+          ? `${removedPastedTexts} pasted-text attachment${removedPastedTexts === 1 ? "" : "s"}`
+          : "",
+      ].filter(Boolean).join(" and ");
+      append({
+        kind: "text",
+        role: "system",
+        text: `removed ${removed} after its marker was edited`,
+      });
+    }
   };
 
   const handleTextareaChange = () => handleInput(inputRef.current?.plainText ?? "");

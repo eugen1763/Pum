@@ -208,6 +208,7 @@ describe("large text paste placeholder", () => {
     const frame = setup.captureCharFrame();
     expect(frame).not.toContain("[Pasted text");
     expect(frame).not.toContain("yyy");
+    expect(frame).toContain("removed 1 pasted-text attachment after its marker was edited");
     expect(pastedTextFiles().length).toBe(0);
   });
 

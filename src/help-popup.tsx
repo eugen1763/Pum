@@ -77,7 +77,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["Ctrl+End", "Scroll transcript to the end"],
       ["/ in Settings", "Focus settings search"],
       ["Esc", "Close; twice to cancel work"],
-      ["Ctrl+C", "Clear; twice quits"],
+      ["Ctrl+C", "Close popup; clear; twice quits"],
       ["?", "Open or close this help"],
     ],
   },

@@ -166,7 +166,7 @@ This MVP mounts the PUM configuration directory, including provider credentials,
 | `Ctrl+P` | Open settings |
 | `Ctrl+T` | Open Processes for supervised triggers and shells |
 | `Esc` twice | Cancel the selected working agent |
-| `Ctrl+C` | Clear the selected non-empty draft; on an empty draft, press twice to quit |
+| `Ctrl+C` | Close the active popup, or clear a non-empty draft; on an empty prompt, press twice to quit |
 | `?` | Show all controls when the prompt is empty |
 
 Sent-prompt history with `↑` / `↓` is available in the main transcript. Wrapped or multiline drafts keep those keys for cursor movement. Subagent views still support empty-prompt queued-message recall.

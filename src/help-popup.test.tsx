@@ -64,7 +64,7 @@ describe("Help popup layout", () => {
     expect(frame).toContain("Commands");
     expect(frame).toContain("/ in Settings");
     expect(frame).toContain("Ctrl+End");
-    expect(frame).toContain("Clear; twice quits");
+    expect(frame).toContain("Close popup; clear; twice quits");
     expect(frame).toContain("esc or ? close");
 
     const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));

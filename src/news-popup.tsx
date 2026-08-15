@@ -48,10 +48,10 @@ export function NewsPopup({
   const footer = count === 0
     ? "esc close"
     : terminalWidth >= 90
-      ? "← → navigate · n answer · p prompt · space read/unread · c copy · enter reply · esc close"
+      ? "← → navigate · n answer · p source · space read/unread · c copy · enter reply · esc close"
       : terminalWidth >= 64
-        ? "←→ navigate · n answer · p prompt · space read · c copy · enter reply · esc"
-        : "←→ nav · n answer · p prompt · space read · c copy · enter · esc";
+        ? "←→ navigate · n answer · p source · space read · c copy · enter reply · esc"
+        : "←→ nav · n answer · p source · space read · c copy · enter · esc";
 
   return (
     <PopupFrame
