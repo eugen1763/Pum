@@ -187,16 +187,29 @@ function defaultPathKind(path: string): "file" | "directory" | undefined {
 function deniedPathArgs(
   paths: readonly string[],
   pathKind: (path: string) => "file" | "directory" | undefined,
+  mounts: readonly BubblewrapMount[] = [],
 ): string[] {
   const args: string[] = [];
   const seen = new Set<string>();
+  const readOnlyTargets = mounts
+    .filter((mount) => mount.mode === "read-only")
+    .map((mount) => mount.target);
   for (const rawPath of paths) {
     const path = normalizeAbsolutePath("Denied path", rawPath);
     if (seen.has(path)) continue;
     seen.add(path);
     const kind = pathKind(path);
-    if (kind === "directory") args.push("--tmpfs", path);
-    else args.push("--ro-bind", "/dev/null", path);
+    if (kind === "directory") {
+      args.push("--tmpfs", path);
+      continue;
+    }
+    // A path that is missing on the host is still masked, so the command cannot
+    // create it inside the sandbox. That only works where the mount point can be
+    // made: under a read-only mount Bubblewrap cannot create the target and
+    // aborts the whole launch. Nothing is disclosed by skipping, because the
+    // file does not exist and a read-only mount cannot be written either.
+    if (kind === undefined && readOnlyTargets.some((target) => isWithin(target, path))) continue;
+    args.push("--ro-bind", "/dev/null", path);
   }
   return args;
 }
@@ -234,7 +247,7 @@ export function buildBubblewrapArgv(
   }
   // Keep private and denied mounts last so earlier allow mounts cannot expose them.
   args.push("--tmpfs", privateTemp);
-  args.push(...deniedPathArgs(policy.deniedPaths, options.pathKind ?? defaultPathKind));
+  args.push(...deniedPathArgs(policy.deniedPaths, options.pathKind ?? defaultPathKind, mounts));
   args.push("--chdir", cwd, "--", executable, ...policy.args);
   return args;
 }

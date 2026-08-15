@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { AGENT_DIR } from "./config";
-import type { CheckPolicyResult } from "./check-policy";
+import { isExecutionHijackEnvironmentVariable, type CheckPolicyResult } from "./check-policy";
 import { isPathInsideOrSame, pathIdentity, type RuntimePlatform } from "./platform";
 import type {
   SandboxCapability,
@@ -44,15 +44,12 @@ export type BuildSandboxPolicyOptions = {
 const SENSITIVE_ENVIRONMENT = /(?:^|_)(?:API_?KEY|AUTH|BEARER|COOKIE|CREDENTIALS?|PASS(?:WORD)?|PRIVATE_?KEY|SECRET|SESSION|TOKEN)(?:_|$)/i;
 /** A valid POSIX environment variable name. */
 const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const INJECTION_ENVIRONMENT = new Set([
-  "BASH_ENV", "BUN_OPTIONS", "ENV", "GIT_CONFIG_COUNT", "NODE_OPTIONS", "PERL5OPT",
-  "PROMPT_COMMAND", "PYTHONINSPECT", "PYTHONPATH", "RUBYOPT", "SHELLOPTS", "ZDOTDIR",
-]);
 
+/** Report a variable the sandbox never forwards: credential material or an execution hijack. */
 export function isSandboxEnvironmentVariableDenied(name: string): boolean {
   const upper = name.toUpperCase();
   return SENSITIVE_ENVIRONMENT.test(upper)
-    || INJECTION_ENVIRONMENT.has(upper)
+    || isExecutionHijackEnvironmentVariable(upper)
     || upper.startsWith("AWS_")
     || upper.startsWith("AZURE_")
     || upper.startsWith("GOOGLE_")
@@ -105,7 +102,10 @@ function collapseSamePermissionRoots(paths: readonly string[], platform: Runtime
 }
 
 function deniedCredentialPaths(roots: readonly string[], home: string, platform: RuntimePlatform): string[] {
-  const directoryNames = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker"];
+  const directoryNames = [
+    ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".terraform.d",
+    ".config/gh", ".config/glab", ".config/gcloud", ".config/rclone", ".config/doctl",
+  ];
   // The deterministic layer's isCredentialSensitivePath matches /^\.env(?:\..+)?$/
   // at any path segment. A backend denied path is one concrete path, not a
   // recursive glob, so PUM masks every known .env variant at each writable
@@ -116,7 +116,9 @@ function deniedCredentialPaths(roots: readonly string[], home: string, platform:
     ".env", ".env.local", ".env.development", ".env.development.local",
     ".env.production", ".env.production.local", ".env.test", ".env.test.local",
     ".env.staging", ".env.staging.local",
-    ".git-credentials", ".npmrc", ".pypirc", ".netrc", "auth.json", "credentials.json",
+    ".git-credentials", ".npmrc", ".pypirc", ".netrc", ".pgpass", ".terraformrc", ".boto",
+    ".s3cfg", ".htpasswd", "auth.json", "credentials.json", ".credentials.json",
+    "credentials.toml", "token.json", "secrets.json", "secrets.yaml", "secrets.yml",
   ];
   const denied: string[] = [];
   for (const root of [...roots, home]) {

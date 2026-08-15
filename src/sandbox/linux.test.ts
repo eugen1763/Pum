@@ -251,4 +251,16 @@ describe("Linux Bubblewrap sandbox", () => {
     });
     expect(await exitHandle.completed).toEqual({ exitCode: 7, signal: null });
   });
+
+  test("skips a missing denied path under a read-only mount so Bubblewrap can still start", () => {
+    // bwrap aborts with "Can't create file ...: Read-only file system" when it
+    // has to make a mount point inside a read-only mount.
+    const args = buildBubblewrapArgv(
+      policy({ deniedPaths: ["/usr/share/absent-secret", "/work/project/.env"] }),
+      { systemMounts: ["/usr"], pathKind: () => undefined },
+    );
+    expect(args.join(" ")).not.toContain("/usr/share/absent-secret");
+    // A writable root can still host the mask, so that protection is unchanged.
+    expect(args.join(" ")).toContain("--ro-bind /dev/null /work/project/.env");
+  });
 });

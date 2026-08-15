@@ -1,8 +1,8 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { posix, win32 } from "node:path";
-import { isCredentialSensitivePath } from "./credential-path";
+import { isCredentialSensitivePath, isExecutionHijackEnvironmentVariable } from "./credential-path";
 
-export { isCredentialSensitivePath } from "./credential-path";
+export { isCredentialSensitivePath, isExecutionHijackEnvironmentVariable } from "./credential-path";
 
 export type CheckPolicyProfile = "strict" | "balanced" | "ask";
 export type CheckPolicyDecision = "allow" | "ask" | "block";
@@ -14,6 +14,7 @@ export type CheckPolicyFindingCode =
   | "outside-project"
   | "escaping-symlink"
   | "credential-access"
+  | "environment-injection"
   | "privilege-escalation"
   | "persistence"
   | "remote-script-execution"
@@ -382,6 +383,89 @@ function npmSubcommand(argv: string[]): string | undefined {
   return undefined;
 }
 
+/** Wrappers that run another complete command vector taken from their own argv. */
+const WRAPPER_COMMANDS = new Set(["xargs", "timeout", "stdbuf"]);
+const XARGS_VALUE_OPTIONS = new Set([
+  "-I", "-i", "-L", "-n", "-P", "-s", "-d", "-E", "-e", "-a",
+  "--replace", "--max-lines", "--max-args", "--max-procs", "--max-chars",
+  "--delimiter", "--eof", "--arg-file", "--process-slot-var",
+]);
+const XARGS_FLAGS = new Set([
+  "--null", "--no-run-if-empty", "--verbose", "--interactive", "--exit", "--open-tty",
+]);
+
+/**
+ * Index where a wrapper's own options end and the wrapped command begins.
+ * `undefined` marks an option form the deterministic parser cannot resolve, so
+ * every caller keeps the wrapper argv and Check mode fails closed on it.
+ */
+function wrappedCommandStart(argv: string[]): number | undefined {
+  const name = commandName(argv[0]);
+  let index = 1;
+  if (name === "xargs") {
+    while (index < argv.length) {
+      const value = argv[index]!;
+      if (value === "--") return index + 1;
+      if (!value.startsWith("-") || value === "-") return index;
+      if (XARGS_VALUE_OPTIONS.has(value)) { index += 2; continue; }
+      if (XARGS_FLAGS.has(value) || (value.startsWith("--") && value.includes("="))) { index++; continue; }
+      if (/^-[IiLnPsdEea].+$/.test(value) || /^-[0rtpx]+$/.test(value)) { index++; continue; }
+      return undefined;
+    }
+    return index;
+  }
+  if (name === "timeout") {
+    const valueOptions = new Set(["-s", "--signal", "-k", "--kill-after"]);
+    while (index < argv.length && argv[index]!.startsWith("-")) {
+      const value = argv[index]!;
+      if (value === "--") { index++; break; }
+      if (valueOptions.has(value)) { index += 2; continue; }
+      if (value.startsWith("--") || /^-[a-z]+$/i.test(value)) { index++; continue; }
+      return undefined;
+    }
+    if (!/^\d+(?:\.\d+)?[smhd]?$/.test(argv[index] ?? "")) return undefined;
+    return index + 1;
+  }
+  if (name === "stdbuf") {
+    const valueOptions = new Set(["-i", "-o", "-e", "--input", "--output", "--error"]);
+    while (index < argv.length && argv[index]!.startsWith("-")) {
+      const value = argv[index]!;
+      if (value === "--") { index++; break; }
+      if (valueOptions.has(value)) { index += 2; continue; }
+      if (value.startsWith("--") || /^-[ioe].+$/.test(value)) { index++; continue; }
+      return undefined;
+    }
+    return index;
+  }
+  return undefined;
+}
+
+/** Command vectors that `find` runs for every match through -exec, -execdir, -ok, or -okdir. */
+function findExecArgvs(argv: string[]): string[][] {
+  if (commandName(argv[0]) !== "find") return [];
+  const vectors: string[][] = [];
+  for (let index = 1; index < argv.length; index++) {
+    if (!["-exec", "-execdir", "-ok", "-okdir"].includes(argv[index]!)) continue;
+    const inner: string[] = [];
+    while (++index < argv.length && argv[index] !== ";" && argv[index] !== "+") inner.push(argv[index]!);
+    if (inner.length > 0) vectors.push(inner);
+  }
+  return vectors;
+}
+
+/** Every environment assignment a stage applies, including an `env` command prefix. */
+function stageEnvAssignments(stage: BashStage): Record<string, string> {
+  const assignments: Record<string, string> = { ...stage.envAssignments };
+  if (commandName(stage.argv[0]) === "env") {
+    for (const value of stage.argv.slice(1)) {
+      const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/s.exec(value);
+      if (assignment) assignments[assignment[1]!] = assignment[2]!;
+      else if (!value.startsWith("-")) break;
+    }
+  }
+  return assignments;
+}
+
 function effectiveArgv(argv: string[]): string[] {
   let current = argv;
   for (let depth = 0; depth < 4; depth++) {
@@ -403,6 +487,12 @@ function effectiveArgv(argv: string[]): string[] {
       if (current[index] === "-n" || current[index] === "--adjustment") index += 2;
       else while (index < current.length && /^-\d+$/.test(current[index]!)) index++;
       current = current.slice(index);
+      continue;
+    }
+    if (WRAPPER_COMMANDS.has(name)) {
+      const start = wrappedCommandStart(current);
+      if (start === undefined) break;
+      current = current.slice(start);
       continue;
     }
     break;
@@ -857,6 +947,20 @@ function isAllowedRoot(value: string, cwd: string, projectCwd: string, allowedPa
     .some((root) => flavor.relative(flavor.resolve(root), absolute) === "");
 }
 
+/** Report a PATH assignment that adds a directory outside the approved roots. */
+function pathAssignmentEscapes(
+  value: string,
+  cwd: string,
+  projectCwd: string,
+  allowedPaths: readonly string[],
+): boolean {
+  return value.split(/[:;]/).some((entry) => {
+    if (entry === "" || entry === "$PATH" || entry === "${PATH}" || entry === "%PATH%") return false;
+    if (/(?:\$\(|`|\$\{|\$[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%)/.test(entry)) return true;
+    return !normalizedAbsolute(entry, cwd, projectCwd, allowedPaths).inside;
+  });
+}
+
 function isNullDevice(value: string): boolean {
   return value === "/dev/null";
 }
@@ -1029,8 +1133,10 @@ function classifyStageAccesses(stage: BashStage): ClassifiedAccess[] {
       const value = argv[index]!;
       if (uploadOptions.has(value) && argv[index + 1]) {
         const operand = argv[++index]!;
+        // curl reads a file for both -F name=@file and -F name=<file.
+        const formPath = value === "-F" || value === "--form" ? operand.match(/<(.+)$/)?.[1] : undefined;
         const atPath = operand.match(/@(.+)$/)?.[1];
-        const path = atPath ?? (value === "-T" || value === "--upload-file" || value === "--post-file" ? operand : undefined);
+        const path = formPath ?? atPath ?? (value === "-T" || value === "--upload-file" || value === "--post-file" ? operand : undefined);
         if (path && path !== "-") accesses.push({ path, mode: "read", source: "operand" });
         continue;
       }
@@ -1042,13 +1148,14 @@ function classifyStageAccesses(stage: BashStage): ClassifiedAccess[] {
       }
       const attached = value.match(/^(?:--data|--data-binary|--data-raw|--data-urlencode|--form|--upload-file|--post-file)=(.+)$/)?.[1];
       if (attached) {
+        const formPath = /^--form=/.test(value) ? attached.match(/<(.+)$/)?.[1] : undefined;
         const atPath = attached.match(/@(.+)$/)?.[1];
-        const path = atPath ?? (/^--(?:upload-file|post-file)=/.test(value) ? attached : undefined);
+        const path = formPath ?? atPath ?? (/^--(?:upload-file|post-file)=/.test(value) ? attached : undefined);
         if (path && path !== "-") accesses.push({ path, mode: "read", source: "operand" });
       }
-      const configPath = value.match(/^--config=(.+)$/)?.[1];
+      const configPath = value.match(/^(?:--config|-K)=(.+)$/)?.[1] ?? value.match(/^-K(.+)$/)?.[1];
       if (configPath) accesses.push({ path: configPath, mode: "execute", source: "operand" });
-      else if (value === "--config" && argv[index + 1]) accesses.push({ path: argv[++index]!, mode: "execute", source: "operand" });
+      else if ((value === "--config" || value === "-K") && argv[index + 1]) accesses.push({ path: argv[++index]!, mode: "execute", source: "operand" });
     }
     return accesses;
   }
@@ -1267,6 +1374,33 @@ function inspectHardBlocks(
         stage: stage.index,
       });
     }
+    for (const [variable, value] of Object.entries(stageEnvAssignments(stage))) {
+      if (isExecutionHijackEnvironmentVariable(variable)) {
+        addFinding(findings, {
+          code: "environment-injection",
+          severity: "hard-block",
+          message: `${variable} assignment can hijack command execution`,
+          stage: stage.index,
+          path: variable,
+        });
+      } else if (variable.toUpperCase() === "PATH" && pathAssignmentEscapes(value, activeCwd, projectCwd, allowedPaths)) {
+        addFinding(findings, {
+          code: "environment-injection",
+          severity: "hard-block",
+          message: "PATH assignment resolves outside the project and approved roots",
+          stage: stage.index,
+          path: variable,
+        });
+      }
+    }
+    if (WRAPPER_COMMANDS.has(name)) {
+      addFinding(findings, {
+        code: "unknown-path-access",
+        severity: "hard-block",
+        message: `${name} options cannot be resolved to an exact wrapped command`,
+        stage: stage.index,
+      });
+    }
     if (PRIVILEGE_COMMANDS.has(name)
       || ((name === "powershell" || name === "start-process") && lowerArgs.includes("runas"))) {
       addFinding(findings, { code: "privilege-escalation", severity: "hard-block", message: `${name} can escalate privileges`, stage: stage.index });
@@ -1375,14 +1509,13 @@ function inspectHardBlocks(
     }
 
     if (depth < 2) {
-      const nestedCommands = stage.substitutions.map((item) => item.text);
-      const lowerName = name.toLowerCase();
-      const commandFlag = lowerName === "cmd" ? argv.findIndex((arg) => arg.toLowerCase() === "/c")
-        : lowerName === "powershell" || lowerName === "pwsh" ? argv.findIndex((arg) => ["-c", "-command"].includes(arg.toLowerCase()))
-        : SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
-      if (commandFlag >= 0 && argv[commandFlag + 1]) nestedCommands.push(argv[commandFlag + 1]!);
-      for (const nestedCommand of nestedCommands) {
-        const nested = inspectHardBlocks(analyzeBashCommand(nestedCommand), activeCwd, fs, profile, depth + 1, projectCwd, allowedPaths, protectedPaths, allowedProtectedFiles);
+      const nestedAnalyses = [
+        ...stage.substitutions.map((item) => analyzeBashCommand(item.text)),
+        ...embeddedShellCommands(argv).map((text) => analyzeBashCommand(text)),
+        ...findExecArgvs(argv).map((vector) => argvAnalysis(vector)),
+      ];
+      for (const nestedAnalysis of nestedAnalyses) {
+        const nested = inspectHardBlocks(nestedAnalysis, activeCwd, fs, profile, depth + 1, projectCwd, allowedPaths, protectedPaths, allowedProtectedFiles);
         for (const access of nested.accesses) accesses.push({ ...access, stage: stage.index });
         for (const finding of nested.findings) {
           addFinding(findings, { ...finding, stage: stage.index, message: `nested command: ${finding.message}` });
@@ -1411,7 +1544,12 @@ function inspectHardBlocks(
     const argv = effectiveArgv(stage.argv);
     const name = commandName(argv[0]);
     if (!REMOTE_COMMANDS.has(name) && !STDIN_NETWORK_COMMANDS.has(name)) continue;
+    // `xargs` turns whatever it reads on stdin into the wrapped command's
+    // arguments, so piping an external read into an xargs-wrapped network
+    // command sends that data just as surely as `curl -d @-` does.
+    const stdinBecomesArguments = commandName(stage.argv[0]) === "xargs";
     const hasUpload = STDIN_NETWORK_COMMANDS.has(name)
+      || stdinBecomesArguments
       || argv.slice(1).some((arg) => /^(?:-d|-F|-T|--data(?:-binary|-raw|-urlencode)?|--form|--upload-file|--post-file|-InFile|-Body)(?:=|$)/i.test(arg));
     const directlyReadsExternal = accesses.some((access) => access.stage === stage.index && access.external && access.mode === "read");
     const pipedExternalRead = hasUpload && index > 0
@@ -1424,12 +1562,100 @@ function inspectHardBlocks(
   return { findings, accesses };
 }
 
-function shellCommandFlag(name: string, argv: string[]): number {
-  if (name === "cmd") return argv.findIndex((arg) => arg.toLowerCase() === "/c");
-  if (name === "powershell" || name === "pwsh") {
-    return argv.findIndex((arg) => ["-c", "-command"].includes(arg.toLowerCase()));
+type PackageRunnerCommand = {
+  /** Canonical runner label reported as deterministic network intent. */
+  label: string;
+  /** Shell text the runner executes through -c or --call. */
+  call?: string;
+  /** Package operand the runner downloads before it executes the package. */
+  remotePackage?: string;
+};
+
+const RUNNER_VALUE_OPTIONS = new Set([
+  "-c", "--call", "-p", "--package", "--cache", "--prefix", "--registry",
+  "--userconfig", "--shell", "--node-options", "--workspace", "-w",
+]);
+
+/** Recognize a package runner that executes inline shell text or a downloaded package. */
+function packageRunnerCommand(argv: string[]): PackageRunnerCommand | undefined {
+  const name = commandName(argv[0]);
+  let index = 1;
+  let label: string;
+  if (name === "npx" || name === "pnpx" || name === "bunx") label = name;
+  else {
+    while (index < argv.length && argv[index]!.startsWith("-")) {
+      if (RUNNER_VALUE_OPTIONS.has(argv[index]!)) index++;
+      index++;
+    }
+    const subcommand = (argv[index] ?? "").toLowerCase();
+    if (name === "npm" && (subcommand === "exec" || subcommand === "x")) label = `npm ${subcommand}`;
+    else if ((name === "pnpm" || name === "yarn") && subcommand === "dlx") label = `${name} dlx`;
+    else if (name === "bun" && subcommand === "x") label = "bun x";
+    else return undefined;
+    index++;
   }
-  return SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
+
+  let call: string | undefined;
+  let packageSpec: string | undefined;
+  let operand: string | undefined;
+  let endOfOptions = false;
+  for (; index < argv.length; index++) {
+    const value = argv[index]!;
+    if (!endOfOptions && value === "--") { endOfOptions = true; continue; }
+    if (!endOfOptions && value.startsWith("-") && value !== "-") {
+      const attached = /^(--[a-z-]+)=(.*)$/s.exec(value);
+      const option = attached?.[1] ?? value;
+      const optionValue = attached?.[2] ?? (RUNNER_VALUE_OPTIONS.has(option) ? argv[++index] : undefined);
+      if (option === "-c" || option === "--call") call = optionValue ?? "";
+      if (option === "-p" || option === "--package") packageSpec = optionValue;
+      continue;
+    }
+    operand ??= value;
+  }
+  const candidate = packageSpec ?? operand;
+  return { label, call, remotePackage: candidate !== undefined && !looksLikePath(candidate) ? candidate : undefined };
+}
+
+/** Shell text a command interpreter or package runner executes from its own argv. */
+function embeddedShellCommands(argv: string[]): string[] {
+  const name = commandName(argv[0]);
+  const flag = name === "cmd"
+    ? argv.findIndex((arg) => arg.toLowerCase() === "/c")
+    : name === "powershell" || name === "pwsh"
+      ? argv.findIndex((arg) => ["-c", "-command"].includes(arg.toLowerCase()))
+      : SHELL_INTERPRETERS.has(name) ? argv.findIndex((arg) => arg === "-c") : -1;
+  const commands = flag >= 0 && argv[flag + 1] !== undefined ? [argv[flag + 1]!] : [];
+  const runner = packageRunnerCommand(argv);
+  if (runner?.call !== undefined) commands.push(runner.call);
+  return commands;
+}
+
+/** Build a one-stage analysis for an exact argv vector so wrapped commands reuse every rule. */
+function argvAnalysis(argv: readonly string[]): BashAnalysis {
+  const vector = [...argv];
+  const stage: BashStage = {
+    index: 0,
+    start: 0,
+    end: 0,
+    text: vector.join(" "),
+    pipeline: 0,
+    argv: vector,
+    envAssignments: {},
+    redirections: [],
+    substitutions: [],
+    mutationIntent: mutationIndicators(vector, []),
+  };
+  return {
+    complete: true,
+    syntaxBalanced: true,
+    truncated: false,
+    operators: [],
+    stages: [stage],
+    redirections: [],
+    substitutions: [],
+    mutationIntent: { possible: stage.mutationIntent.length > 0, indicators: stage.mutationIntent },
+    errors: [],
+  };
 }
 
 function isEncodedDecoder(argv: string[]): boolean {
@@ -1452,7 +1678,7 @@ function inspectSuspiciousExecution(analysis: BashAnalysis, depth = 0): CheckPol
     const lowerArgs = argv.slice(1).map((arg) => arg.toLowerCase());
     const next = analysis.stages[index + 1];
     const nextName = commandName(effectiveArgv(next?.argv ?? [])[0]);
-    const commandFlag = shellCommandFlag(name, argv);
+    const runner = packageRunnerCommand(argv);
     const dynamicCommand = argv[0] !== undefined && /(?:\$\(|`|\$\{|\$[A-Za-z_])/.test(argv[0]);
     const encodedPowerShell = (name === "powershell" || name === "pwsh")
       && lowerArgs.some((arg) => arg === "-encodedcommand" || arg === "-enc");
@@ -1473,12 +1699,24 @@ function inspectSuspiciousExecution(analysis: BashAnalysis, depth = 0): CheckPol
     if (message) {
       addFinding(findings, { code: "suspicious-execution", severity: "review", message, stage: stage.index });
     }
+    if (runner?.remotePackage) {
+      addFinding(findings, {
+        code: "suspicious-execution",
+        severity: "review",
+        message: `${runner.label} downloads and executes a remote package`,
+        stage: stage.index,
+        path: runner.remotePackage,
+      });
+    }
 
     if (depth < 2) {
-      const nestedCommands = stage.substitutions.map((item) => item.text);
-      if (commandFlag >= 0 && argv[commandFlag + 1]) nestedCommands.push(argv[commandFlag + 1]!);
-      for (const nestedCommand of nestedCommands) {
-        for (const finding of inspectSuspiciousExecution(analyzeBashCommand(nestedCommand), depth + 1)) {
+      const nestedAnalyses = [
+        ...stage.substitutions.map((item) => analyzeBashCommand(item.text)),
+        ...embeddedShellCommands(argv).map((text) => analyzeBashCommand(text)),
+        ...findExecArgvs(argv).map((vector) => argvAnalysis(vector)),
+      ];
+      for (const nestedAnalysis of nestedAnalyses) {
+        for (const finding of inspectSuspiciousExecution(nestedAnalysis, depth + 1)) {
           addFinding(findings, { ...finding, stage: stage.index, message: `nested command: ${finding.message}` });
         }
       }
@@ -1528,6 +1766,8 @@ function stageNetworkCommand(stage: BashStage): string | undefined {
   const argv = effectiveArgv(stage.argv);
   const name = commandName(argv[0]);
   if (NETWORK_COMMANDS.has(name)) return name;
+  const runner = packageRunnerCommand(argv);
+  if (runner?.remotePackage) return runner.label;
   const subcommand = (argv[1] ?? "").toLowerCase();
   if (name === "git" && new Set(["clone", "fetch", "pull", "push", "ls-remote"]).has(subcommand)) return `git ${subcommand}`;
   if (name === "npm" && subcommand === "pack") {
@@ -1555,11 +1795,13 @@ export function checkNetworkIntent(analysis: BashAnalysis, depth = 0): CheckNetw
     if (direct) commands.push(direct);
     if (depth >= 2) continue;
     const argv = effectiveArgv(stage.argv);
-    const nested = stage.substitutions.map((substitution) => substitution.text);
-    const flag = shellCommandFlag(commandName(argv[0]), argv);
-    if (flag >= 0 && argv[flag + 1]) nested.push(argv[flag + 1]!);
-    for (const command of nested) {
-      commands.push(...checkNetworkIntent(analyzeBashCommand(command), depth + 1).commands);
+    const nestedAnalyses = [
+      ...stage.substitutions.map((substitution) => analyzeBashCommand(substitution.text)),
+      ...embeddedShellCommands(argv).map((command) => analyzeBashCommand(command)),
+      ...findExecArgvs(argv).map((vector) => argvAnalysis(vector)),
+    ];
+    for (const nestedAnalysis of nestedAnalyses) {
+      commands.push(...checkNetworkIntent(nestedAnalysis, depth + 1).commands);
     }
   }
   const unique = [...new Set(commands)].sort();

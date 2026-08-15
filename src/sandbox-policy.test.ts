@@ -3,6 +3,7 @@ import { analyzeCheckPolicy } from "./check-policy";
 import {
   buildSandboxPolicy,
   decideSandboxMode,
+  isSandboxEnvironmentVariableDenied,
   sanitizeSandboxEnvironment,
 } from "./sandbox-policy";
 
@@ -258,5 +259,57 @@ describe("sandbox environment and mode", () => {
       reason: expect.stringContaining("required"),
     }));
     expect(decideSandboxMode("auto", { state: "enforced", backend: "bubblewrap" })).toEqual({ action: "sandbox" });
+  });
+});
+
+describe("expanded credential and injection denials", () => {
+  test("masks the same credential stores the deterministic layer blocks", () => {
+    const command = "git status --short";
+    const result = analyzeCheckPolicy({
+      command,
+      cwd: "/work/repo",
+      profile: "balanced",
+      fileSystem: inertFileSystem,
+    });
+    const policy = buildSandboxPolicy({
+      command,
+      cwd: "/work/repo",
+      result,
+      executable: "/bin/bash",
+      args: ["-c", command],
+      privateTemp: "/tmp/pum-private",
+      environment: { PATH: "/bin" },
+      home: "/home/user",
+      platform: "linux",
+    });
+
+    for (const path of [
+      "/home/user/.config/gh", "/home/user/.config/gcloud", "/home/user/.config/rclone",
+      "/home/user/.pgpass", "/home/user/.terraformrc", "/home/user/.terraform.d",
+      "/home/user/.credentials.json", "/home/user/token.json", "/home/user/.boto",
+      "/home/user/.s3cfg", "/home/user/.htpasswd", "/home/user/credentials.toml",
+      "/work/repo/secrets.yaml", "/work/repo/secrets.yml", "/work/repo/secrets.json",
+      "/work/repo/.git-credentials",
+    ]) {
+      expect(policy.deniedPaths).toContain(path);
+    }
+  });
+
+  test("drops every loader and Git execution hook the deterministic layer denies", () => {
+    for (const name of [
+      "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+      "GIT_CONFIG", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+      "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXTERNAL_DIFF", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+      "GIT_PAGER", "PAGER", "BROWSER", "EDITOR", "VISUAL", "PYTHONSTARTUP", "DENO_FLAGS",
+    ]) {
+      expect(isSandboxEnvironmentVariableDenied(name)).toBe(true);
+    }
+    expect(sanitizeSandboxEnvironment({
+      PATH: "/bin",
+      LD_PRELOAD: "/tmp/evil.so",
+      GIT_SSH_COMMAND: "/tmp/evil.sh",
+      EDITOR: "/tmp/evil",
+      HOME: "/home/user",
+    })).toEqual({ HOME: "/home/user", PATH: "/bin" });
   });
 });
