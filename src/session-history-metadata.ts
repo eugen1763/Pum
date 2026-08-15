@@ -1,6 +1,7 @@
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readdir, stat, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
 export type KnownSessionTokens = {
@@ -28,6 +29,9 @@ type CacheEntry = {
   key: string;
   metadata: SessionHistoryMetadata;
 };
+
+/** Files written next to `<session>.jsonl` that live and die with it. */
+const COMPANION_SUFFIXES = [".news.json", ".stats.json", ".tool-groups.json"] as const;
 
 const DEFAULT_MAX_CACHE_ENTRIES = 256;
 const DEFAULT_CONCURRENCY = 8;
@@ -153,6 +157,31 @@ async function loadFileMetadata(path: string): Promise<{ key: string; metadata: 
   throw new Error("unreachable");
 }
 
+/**
+ * Delete companion files whose session JSONL is gone. One directory read, no
+ * removal on any read error, and every failure stays silent.
+ */
+export async function sweepOrphanedCompanions(directory: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(directory);
+  } catch {
+    return [];
+  }
+  const present = new Set(names);
+  const removed: string[] = [];
+  for (const name of names) {
+    const suffix = COMPANION_SUFFIXES.find((candidate) => name.endsWith(candidate));
+    if (!suffix) continue;
+    if (present.has(`${name.slice(0, -suffix.length)}.jsonl`)) continue;
+    try {
+      await unlink(join(directory, name));
+      removed.push(name);
+    } catch { /* another process removed it, or it is not ours to remove */ }
+  }
+  return removed;
+}
+
 export function sortSessionHistory(items: readonly SessionHistoryItem[]): SessionHistoryItem[] {
   return [...items].sort((a, b) => {
     const aLatest = a.historyMetadata.latestUserMessageAt?.getTime();
@@ -172,6 +201,7 @@ export function sortSessionHistory(items: readonly SessionHistoryItem[]): Sessio
 
 export class SessionHistoryIndex {
   private readonly cache = new Map<string, CacheEntry>();
+  private swept = false;
 
   constructor(
     private readonly maxCacheEntries = DEFAULT_MAX_CACHE_ENTRIES,
@@ -205,7 +235,16 @@ export class SessionHistoryIndex {
     }
   }
 
+  /** Sweep each session directory once per process, before the first listing. */
+  private async sweepOnce(sessions: readonly SessionInfo[]): Promise<void> {
+    if (this.swept) return;
+    this.swept = true;
+    const directories = new Set(sessions.map((session) => dirname(session.path)));
+    for (const directory of directories) await sweepOrphanedCompanions(directory);
+  }
+
   async load(sessions: readonly SessionInfo[]): Promise<SessionHistoryItem[]> {
+    await this.sweepOnce(sessions);
     const items = new Array<SessionHistoryItem>(sessions.length);
     let next = 0;
     const worker = async () => {

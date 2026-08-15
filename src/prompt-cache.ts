@@ -51,6 +51,79 @@ const DEFAULT_FILE_OPS: PromptCacheFileOps = {
 
 const MAX_SENT_ENTRIES = 100;
 
+/**
+ * Per working directory cache bounds. Both are far above any hand-built cache,
+ * so they only stop runaway `message_cache_add` growth.
+ */
+const MAX_STASH_ENTRIES = 500;
+const MAX_STASH_TEXT_CHARS = 1_000_000;
+
+const LOCK_STALE_MS = 10_000;
+const LOCK_TIMEOUT_MS = 2_000;
+const LOCK_RETRY_MS = 5;
+
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { /* the runtime forbids a blocking wait here */ }
+  }
+}
+
+function lockAgeMs(path: string, ops: PromptCacheFileOps): number | undefined {
+  try {
+    const parsed = JSON.parse(ops.read(path, "utf8") as string) as { at?: unknown };
+    return typeof parsed.at === "number" && Number.isFinite(parsed.at) ? Date.now() - parsed.at : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function releaseLock(path: string, token: string, ops: PromptCacheFileOps): void {
+  try {
+    const parsed = JSON.parse(ops.read(path, "utf8") as string) as { token?: unknown };
+    if (parsed.token !== token) return;
+  } catch {
+    return;
+  }
+  try {
+    ops.remove(path, { force: true });
+  } catch { /* another process already broke this lock */ }
+}
+
+/**
+ * Hold the cross-process cache lock around one read-modify-write. Breaks a lock
+ * left by a killed process, and proceeds unlocked rather than failing when the
+ * filesystem cannot lock at all.
+ */
+function acquireLock(path: string, ops: PromptCacheFileOps): () => void {
+  const token = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      ops.mkdir(dirname(path), { recursive: true });
+      ops.write(path, `${JSON.stringify({ token, pid: process.pid, at: Date.now() })}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
+      return () => releaseLock(path, token, ops);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") return () => {};
+      if (Date.now() >= deadline) return () => {};
+      const age = lockAgeMs(path, ops);
+      if (age !== undefined && age > LOCK_STALE_MS) {
+        try {
+          ops.remove(path, { force: true });
+        } catch { /* a concurrent breaker won the race */ }
+        continue;
+      }
+      sleepSync(LOCK_RETRY_MS);
+    }
+  }
+}
+
 function readJson(path: string, ops: PromptCacheFileOps): JsonFile {
   try {
     const parsed = JSON.parse(ops.read(path, "utf8") as string);
@@ -131,6 +204,25 @@ function sortStash(stash: readonly StashedPrompt[]): StashedPrompt[] {
   return [...stash].sort((first, second) => Number(second.executed) - Number(first.executed));
 }
 
+/**
+ * Bound one working directory cache. Entries arrive sorted executed first, so
+ * dropping from the front evicts delivered prompts before pending ones and the
+ * newest entry always survives.
+ */
+function capStash(stash: readonly StashedPrompt[]): StashedPrompt[] {
+  let characters = 0;
+  for (const entry of stash) characters += entry.text.length;
+  let start = 0;
+  while (
+    start < stash.length - 1
+    && (stash.length - start > MAX_STASH_ENTRIES || characters > MAX_STASH_TEXT_CHARS)
+  ) {
+    characters -= stash[start]!.text.length;
+    start++;
+  }
+  return start === 0 ? [...stash] : stash.slice(start);
+}
+
 function trimHistory(history: readonly string[], stash: readonly StashedPrompt[]): string[] {
   const cachedCounts = new Map<string, number>();
   for (const prompt of stash) cachedCounts.set(prompt.text, (cachedCounts.get(prompt.text) ?? 0) + 1);
@@ -202,14 +294,32 @@ function atomicWriteMany(changes: Array<{ path: string; value: JsonFile }>, ops:
 }
 
 export class PromptCacheStore {
+  private readonly lockPath: string;
+
   constructor(
     private readonly historyPath: string,
     private readonly stashPath: string,
     private readonly platform: RuntimePlatform = process.platform,
     private readonly ops: PromptCacheFileOps = DEFAULT_FILE_OPS,
-  ) {}
+  ) {
+    this.lockPath = `${historyPath}.lock`;
+  }
 
+  /** Serialize the read-modify-write against other PUM processes on the same cache. */
   private update(cwd: string, mutate?: (state: PromptCacheState) => void, strict = false): PromptCacheState {
+    const release = acquireLock(this.lockPath, this.ops);
+    try {
+      return this.updateLocked(cwd, mutate, strict);
+    } finally {
+      release();
+    }
+  }
+
+  private updateLocked(
+    cwd: string,
+    mutate: ((state: PromptCacheState) => void) | undefined,
+    strict: boolean,
+  ): PromptCacheState {
     const historyFile = readJson(this.historyPath, this.ops);
     const stashFile = readJson(this.stashPath, this.ops);
     const key = projectStorageKey(cwd, this.platform);
@@ -222,7 +332,7 @@ export class PromptCacheStore {
       stash: migrateStash(stashEntries, history, key),
     };
     mutate?.(state);
-    state.stash = sortStash(state.stash);
+    state.stash = capStash(sortStash(state.stash));
     state.history = trimHistory(state.history, state.stash);
 
     const nextHistoryFile = { ...historyFile, [key]: state.history };

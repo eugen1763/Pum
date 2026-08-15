@@ -256,3 +256,20 @@ describe("message cache atomic persistence", () => {
     expect(base.store.loadStash(base.cwd).find((item) => item.id === entry.id)?.executed).toBe(false);
   });
 });
+
+describe("message cache growth bounds", () => {
+  test("bounds repeated adds and evicts executed entries before pending ones", () => {
+    const { controller, store, cwd } = fixture();
+    const requester = { kind: "subagent", id: "agent-1", name: "worker" } as const;
+    const executed = Array.from({ length: 400 }, (_, index) => controller.add(requester, `executed ${index}`));
+    store.executeStashByIds(cwd, executed.map((entry) => entry.id));
+    for (let index = 0; index < 300; index++) controller.add(requester, `pending ${index}`);
+
+    const entries = controller.list();
+
+    expect(entries).toHaveLength(500);
+    expect(entries.filter((entry) => entry.executed)).toHaveLength(200);
+    expect(entries[0]!.text).toBe("executed 200");
+    expect(entries.at(-1)!.text).toBe("pending 299");
+  });
+});

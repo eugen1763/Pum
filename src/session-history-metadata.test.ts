@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { SessionInfo } from "@earendil-works/pi-coding-agent";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -9,6 +9,7 @@ import {
   knownTokensFromUsage,
   SessionHistoryIndex,
   sortSessionHistory,
+  sweepOrphanedCompanions,
   type SessionHistoryItem,
 } from "./session-history-metadata";
 
@@ -168,5 +169,49 @@ describe("session history metadata", () => {
     expect(formatSessionBytes(0)).toBe("0 B");
     expect(formatSessionBytes(1536)).toBe("1.5 KiB");
     expect(formatSessionBytes(12 * 1024)).toBe("12 KiB");
+  });
+});
+
+describe("orphaned session companions", () => {
+  test("removes companions of deleted sessions and keeps live ones", async () => {
+    const root = await tempRoot();
+    await writeFile(join(root, "live.jsonl"), "");
+    for (const suffix of [".news.json", ".stats.json", ".tool-groups.json"]) {
+      await writeFile(join(root, `live${suffix}`), "{}");
+      await writeFile(join(root, `gone${suffix}`), "{}");
+    }
+    await writeFile(join(root, "notes.json"), "{}");
+
+    const removed = await sweepOrphanedCompanions(root);
+
+    expect(removed.sort()).toEqual(["gone.news.json", "gone.stats.json", "gone.tool-groups.json"]);
+    expect((await readdir(root)).sort()).toEqual([
+      "live.jsonl",
+      "live.news.json",
+      "live.stats.json",
+      "live.tool-groups.json",
+      "notes.json",
+    ]);
+  });
+
+  test("stays silent when the directory cannot be read", async () => {
+    const root = await tempRoot();
+    expect(await sweepOrphanedCompanions(join(root, "missing"))).toEqual([]);
+  });
+
+  test("sweeps the session directory once while listing sessions", async () => {
+    const root = await tempRoot();
+    const path = join(root, "live.jsonl");
+    await writeFile(path, `${line({ type: "session", id: "live" })}\n`);
+    await writeFile(join(root, "live.stats.json"), "{}");
+    await writeFile(join(root, "gone.stats.json"), "{}");
+    const index = new SessionHistoryIndex();
+
+    await index.load([info(path)]);
+    expect((await readdir(root)).sort()).toEqual(["live.jsonl", "live.stats.json"]);
+
+    await writeFile(join(root, "later.news.json"), "{}");
+    await index.load([info(path)]);
+    expect(await readdir(root)).toContain("later.news.json");
   });
 });
