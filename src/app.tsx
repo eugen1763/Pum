@@ -25,8 +25,11 @@ import {
 import {
   CHECK_MODE_PROFILES,
   checkPathsForProject,
+  DEFAULT_TOOL_OUTPUT_LINES,
   MAX_ACTIVE_SUBAGENTS,
+  MAX_TOOL_OUTPUT_LINES,
   MIN_ACTIVE_SUBAGENTS,
+  MIN_TOOL_OUTPUT_LINES,
   SANDBOX_MODES,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
@@ -47,7 +50,7 @@ import {
   type PendingLine,
   type Role,
 } from "./transcript";
-import { editCounts, toolArg, type ToolCall } from "./tool-line";
+import { editCounts, toolArg, toolResultOutput, type ToolCall } from "./tool-line";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
 import { appendHistory, loadHistory, removeHistory } from "./history";
@@ -578,7 +581,7 @@ export function App({
     width - 2 - promptRightColumns - inputHint.length,
   );
   const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
-  const visibleSettingRows = filterSettingsRows(settingsQuery);
+  const visibleSettingRows = filterSettingsRows(settingsQuery, settings.explanationStrength);
   const visibleModels = useMemo(() => filterModels(
     modelRuntime.getAvailableSnapshot(),
     modelQuery,
@@ -1182,6 +1185,7 @@ export function App({
                   : event.toolName.startsWith("message_cache_")
                     ? messageCacheDetail(event.result)
                     : undefined,
+            output: toolResultOutput(event.result),
           });
           break;
         case "agent_start":
@@ -2039,6 +2043,12 @@ export function App({
     webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
+    toolOutputLines: { step: (step) => update({
+      toolOutputLines: Math.max(
+        MIN_TOOL_OUTPUT_LINES,
+        Math.min(MAX_TOOL_OUTPUT_LINES, (settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES) + step),
+      ),
+    }) },
     checkMode: { step: stepCheckMode },
     sandboxMode: { step: stepSandboxMode },
     checkModel: { enter: () => {
@@ -2087,6 +2097,7 @@ export function App({
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
+    toolOutputLines: `‹ ${settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES} ›`,
     checkMode: `‹ ${settings.checkMode} ›`,
     sandboxMode: `‹ ${settings.sandboxMode ?? "auto"} ›`,
     checkModel: `${settings.checkModel} ›`,
@@ -2099,7 +2110,7 @@ export function App({
   };
 
   const updateSettingsQuery = (query: string) => {
-    const rows = filterSettingsRows(query);
+    const rows = filterSettingsRows(query, settings.explanationStrength);
     setSettingsQuery(query);
     setSelectedSettingId((current) =>
       rows.some((row) => row.id === current) ? current : rows[0]?.id ?? null,
@@ -2848,7 +2859,14 @@ export function App({
             const workingCaret = visibleBusy && !visibleTx.stream && i === visibleTx.lines.length - 1;
             const row =
               line.kind === "tool" ? (
-                <ToolLine theme={theme} call={line.call} workingCaret={workingCaret} />
+                <ToolLine
+                  theme={theme}
+                  call={line.call}
+                  workingCaret={workingCaret}
+                  outputLines={settings.explanationStrength === "detailed"
+                    ? settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES
+                    : undefined}
+                />
               ) : line.kind === "agent-message" ? (
                 <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
               ) : (

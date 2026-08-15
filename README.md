@@ -292,6 +292,8 @@ Verifier prompts stay bounded. For an oversized Balanced review, PUM sends compl
 
 Web search is on by default for supported OpenAI Codex providers. Searches appear as transcript tool rows and persist in resumed sessions. Other providers continue without the hosted search tool. Disable web search in `Ctrl+P`.
 
+Detailed explanations show text results for every tool call, including `read`. The **Tool output lines** setting limits each result to five source lines by default. PUM shows this setting only while explanations are detailed.
+
 ### Themes and Markdown
 
 PUM includes `tokyonight`, `gruvbox`, `catppuccin`, `nord`, `dracula`, `rosepine`, `solarized`, `kanagawa`, and `github-light`. Select a preset in `Ctrl+P`.

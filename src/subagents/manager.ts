@@ -25,7 +25,7 @@ import {
   persistSearchCall,
   withSearchRoute,
 } from "../web-search";
-import { editCounts, toolArg, type ToolCall } from "../tool-line";
+import { editCounts, toolArg, toolResultOutput, type ToolCall } from "../tool-line";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
@@ -328,6 +328,7 @@ export class SubagentManager {
       arg: call.arg,
       state: call.state,
       detail: call.detail,
+      output: call.output,
     });
   }
 
@@ -788,6 +789,7 @@ export class SubagentManager {
                 : event.toolName.startsWith("message_cache_")
                   ? messageCacheDetail(event.result)
                   : undefined,
+          output: toolResultOutput(event.result),
         });
         break;
       case "agent_start":

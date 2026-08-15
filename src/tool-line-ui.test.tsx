@@ -197,6 +197,60 @@ describe("tool line state", () => {
     expect(setup.captureCharFrame().match(/file name\.ts · offset=2 · limit=8/g)).toHaveLength(5);
   });
 
+  test("shows read and command results with the same detailed line limit", async () => {
+    const setup = await createTestRenderer({ width: 52, height: 16 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <box style={{ flexDirection: "column", width: "100%" }}>
+        <ToolLine
+          theme={theme}
+          call={{
+            id: "read-output",
+            name: "read",
+            arg: "file.ts",
+            state: "ok",
+            output: "read one\nread two\nread three",
+          }}
+          outputLines={2}
+        />
+        <ToolLine
+          theme={theme}
+          call={{
+            id: "bash-output",
+            name: "bash",
+            arg: "printf output",
+            state: "ok",
+            output: "bash one\nbash two\nbash three",
+          }}
+          outputLines={2}
+        />
+        <ToolLine
+          theme={theme}
+          call={{
+            id: "hidden-output",
+            name: "read",
+            arg: "hidden.ts",
+            state: "ok",
+            output: "hidden result",
+          }}
+        />
+      </box>,
+    );
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("read one");
+    expect(frame).toContain("read two");
+    expect(frame).not.toContain("read three");
+    expect(frame).toContain("bash one");
+    expect(frame).toContain("bash two");
+    expect(frame).not.toContain("bash three");
+    expect(frame.match(/… 1 more line/g)).toHaveLength(2);
+    expect(frame).not.toContain("hidden result");
+  });
+
   test("wraps bash commands one column earlier inside the transcript scrollbox", async () => {
     const setup = await createTestRenderer({ width: 28, height: 4 });
     destroy = () => setup.renderer.destroy();

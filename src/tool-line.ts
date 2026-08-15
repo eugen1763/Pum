@@ -9,7 +9,39 @@ export type ToolCall = {
   state: "running" | "ok" | "error" | "rejected";
   /** "+3 −1" for edits, or an error note. */
   detail?: string;
+  /** Plain text returned by the tool. Rendering decides whether to show it. */
+  output?: string;
 };
+
+/** Extract plain text from a pi tool result without changing leading whitespace. */
+export function toolResultOutput(result: any): string | undefined {
+  const content = result?.content;
+  const chunks = typeof content === "string"
+    ? [content]
+    : Array.isArray(content)
+      ? content
+        .filter((block: any) => block?.type === "text" && typeof block.text === "string")
+        .map((block: any) => block.text)
+      : [];
+  const output = chunks.join("\n").replace(/\r\n?/g, "\n").trimEnd();
+  return output.trim() ? output : undefined;
+}
+
+export type ToolOutputPreview = {
+  text: string;
+  omittedLines: number;
+};
+
+/** Limit a tool result by source lines. Wrapped terminal rows do not change this limit. */
+export function toolOutputPreview(output: string, maxLines: number): ToolOutputPreview {
+  const lines = output.replace(/\r\n?/g, "\n").split("\n");
+  const limit = Math.max(1, Math.floor(maxLines));
+  const omittedLines = Math.max(0, lines.length - limit);
+  return {
+    text: lines.slice(0, limit).join("\n"),
+    omittedLines,
+  };
+}
 
 function isWindowsAbsolute(path: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");

@@ -176,6 +176,7 @@ describe("subagent transcript replay", () => {
         arg: "src/file.ts",
         state: "ok",
         detail: "+1 −1",
+        output: "applied",
       },
     });
   });
@@ -217,6 +218,7 @@ describe("subagent transcript replay", () => {
         name: "read",
         arg: "src/file name.ts · offset=12 · limit=40",
         state: "ok",
+        output: "file contents",
       },
     });
   });
