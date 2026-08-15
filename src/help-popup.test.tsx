@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import {
+  HELP_GROUPS,
   helpLayout,
   helpLines,
   HelpPopup,
@@ -35,6 +36,15 @@ async function renderHelp(width: number, height: number, scrollOffset: number) {
 }
 
 describe("Help popup layout", () => {
+  test("documents input mode, cache aliases, scoped history, and Processes", () => {
+    const controls = HELP_GROUPS.flatMap((group) => group.controls);
+    expect(controls).toContainEqual(["Ctrl+I", "Toggle multiline input mode"]);
+    expect(controls.some(([key]) => key === "Ctrl+Alt+Enter")).toBe(true);
+    expect(controls.some(([key, text]) => key === "Main ↑ / ↓" && text.includes("Sent history"))).toBe(true);
+    expect(controls.some(([key, text]) => key === "Ctrl+H" && text.includes("/history"))).toBe(true);
+    expect(controls).toContainEqual(["/triggers", "Open Processes on the Triggers tab"]);
+  });
+
   test("summarizes the main workflow", async () => {
     const frame = await renderHelp(80, 28, 0);
     expect(frame).toContain("PUM workflow");

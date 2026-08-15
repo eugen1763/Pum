@@ -22,6 +22,13 @@ describe("command suggestions", () => {
     expect(matchingCommands("/sta").map((command) => command.name)).toContain("/stats");
   });
 
+  test("keeps both Processes commands discoverable and explains the alias", () => {
+    expect(COMMANDS.find((command) => command.name === "/processes")?.description)
+      .toContain("triggers and shells");
+    expect(COMMANDS.find((command) => command.name === "/triggers")?.description)
+      .toBe("Open Processes on the Triggers tab");
+  });
+
   test("does not replace multiline input with command navigation", () => {
     expect(matchingCommands("/clear\nkeep this text")).toEqual([]);
   });
