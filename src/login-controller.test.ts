@@ -138,6 +138,86 @@ describe("login controller", () => {
     expect(JSON.stringify(pages)).not.toContain(key);
   });
 
+  test("supports cursor editing and paste insertion in custom fields", () => {
+    const pages: LoginPage[] = [];
+    const controller = new LoginController(
+      { getProviders: () => [] } as any,
+      () => ({}) as any,
+      (page) => pages.push(page),
+      () => {},
+      () => {},
+    );
+    controller.open();
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+
+    for (const character of "ac") controller.handleKey({ name: character, sequence: character });
+    controller.handleKey({ name: "left" });
+    controller.handleKey({ name: "b", sequence: "b" });
+    expect(pages.at(-1)).toMatchObject({ kind: "custom-endpoint", endpoint: "abc", cursor: 2 });
+
+    controller.handleKey({ name: "home" });
+    controller.handleKey({ name: "delete" });
+    expect(controller.pasteText("https://")).toBe(true);
+    controller.handleKey({ name: "end" });
+    controller.handleKey({ name: "backspace" });
+    expect(pages.at(-1)).toMatchObject({
+      kind: "custom-endpoint",
+      endpoint: "https://b",
+      cursor: "https://b".length,
+    });
+
+    controller.handleKey({ name: "enter" });
+    for (const character of "acd") controller.handleKey({ name: character, sequence: character });
+    controller.handleKey({ name: "home" });
+    controller.handleKey({ name: "right" });
+    expect(controller.pasteText("b")).toBe(true);
+    controller.handleKey({ name: "delete" });
+    expect(pages.at(-1)).toMatchObject({ kind: "custom-key", secretLength: 3, cursor: 2 });
+    expect(JSON.stringify(pages)).not.toContain("abd");
+  });
+
+  test("edits provider secrets at a private cursor without exposing them", async () => {
+    const pages: LoginPage[] = [];
+    let submitted = "";
+    const runtime = {
+      getProviders: () => [{ id: "api", name: "API", auth: { apiKey: {
+        name: "API key", login() {}, resolve() {},
+      } } }],
+      login: async (_id: string, _type: string, interaction: any) => {
+        submitted = await interaction.prompt({ type: "secret", message: "Enter API key" });
+      },
+      refresh: async () => ({ aborted: false, errors: new Map() }),
+      getAvailableSnapshot: () => [model],
+    } as any;
+    const controller = new LoginController(
+      runtime,
+      () => ({ setModel: async () => {} }) as any,
+      (page) => pages.push(page),
+      () => {},
+      () => {},
+    );
+    controller.open();
+    controller.handleKey({ name: "down" });
+    controller.handleKey({ name: "enter" });
+    await settle();
+
+    for (const character of "acd") controller.handleKey({ name: character, sequence: character });
+    controller.handleKey({ name: "home" });
+    controller.handleKey({ name: "right" });
+    expect(controller.pasteText("b")).toBe(true);
+    controller.handleKey({ name: "delete" });
+    expect(pages.at(-1)).toMatchObject({ kind: "prompt", secretLength: 3, cursor: 2 });
+    expect(JSON.stringify(pages)).not.toContain("abd");
+
+    controller.handleKey({ name: "end" });
+    controller.handleKey({ name: "enter" });
+    await settle();
+    await settle();
+    expect(submitted).toBe("abd");
+    expect(JSON.stringify(pages)).not.toContain("abd");
+  });
+
   test("shows device details and cancels an OAuth flow without starting a browser process", async () => {
     const pages: LoginPage[] = [];
     const launched: string[] = [];

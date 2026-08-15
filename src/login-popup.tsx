@@ -9,8 +9,8 @@ export type LoginPage =
   | { kind: "providers"; methods: readonly LoginMethod[]; cursor: number; query: string; searchFocused: boolean; customVisible: boolean }
   | { kind: "prompt"; providerName: string; prompt: AuthPrompt; event?: AuthEvent; cursor: number; value: string; secretLength: number }
   | { kind: "working"; providerName: string; event?: AuthEvent }
-  | { kind: "custom-endpoint"; endpoint: string }
-  | { kind: "custom-key"; endpoint: string; secretLength: number }
+  | { kind: "custom-endpoint"; endpoint: string; cursor: number }
+  | { kind: "custom-key"; endpoint: string; secretLength: number; cursor: number }
   | { kind: "custom-working"; endpoint: string; message: string }
   | { kind: "error"; title: string; message: string }
   | { kind: "success"; message: string };
@@ -24,14 +24,39 @@ function popupGeometry(width: number, height: number) {
   };
 }
 
-function InputRow({ theme, label, value, secret = false }: { theme: Theme; label: string; value: string; secret?: boolean }) {
+export function InputRow({
+  theme,
+  label,
+  value,
+  cursor,
+  secret = false,
+}: {
+  theme: Theme;
+  label: string;
+  value: string;
+  cursor: number;
+  secret?: boolean;
+}) {
+  const displayed = secret ? "•".repeat(value.length) : value;
+  const safeCursor = Math.max(0, Math.min(cursor, displayed.length));
   return (
     <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
       <box style={{ width: 12, flexShrink: 0 }}><text content={label} fg={theme.dim} bg={theme.popupBg} /></box>
-      <text content={secret ? "•".repeat(value.length) : value} fg={theme.fg} bg={theme.popupBg} wrapMode="none" />
+      <text content={displayed.slice(0, safeCursor)} fg={theme.fg} bg={theme.popupBg} wrapMode="none" />
       <text content="▌" fg={theme.accent} bg={theme.popupBg} />
+      <text content={displayed.slice(safeCursor)} fg={theme.fg} bg={theme.popupBg} wrapMode="none" />
     </box>
   );
+}
+
+export function loginTextFooter(
+  terminalWidth: number,
+  action: "continue" | "discover",
+  escape: "cancel" | "back",
+): string {
+  return terminalWidth < 48
+    ? "enter local ctrl+v/paste esc"
+    : `enter ${action}   paste / ctrl+v local   esc ${escape}`;
 }
 
 function EventDetails({ theme, event }: { theme: Theme; event?: AuthEvent }) {
@@ -162,8 +187,16 @@ export function LoginPopup({ theme, page, terminalWidth, terminalHeight, onProvi
             <text content={`${selected ? "› " : "  "}${option.label}`} fg={selected ? theme.accent : theme.fg} bg={selected ? theme.selectionBg : theme.popupBg} />
             {option.description ? <text content={`  ${option.description}`} fg={theme.dim} bg={selected ? theme.selectionBg : theme.popupBg} /> : null}
           </box>;
-        }) : <InputRow theme={theme} label={page.prompt.type === "secret" ? "API key" : "Value"} value={page.prompt.type === "secret" ? "x".repeat(page.secretLength) : page.value} secret={page.prompt.type === "secret"} />}
-        <text content="enter continue   esc cancel" fg={theme.dim} bg={theme.popupBg} style={{ marginTop: 1 }} />
+        }) : <InputRow theme={theme} label={page.prompt.type === "secret" ? "API key" : "Value"} value={page.prompt.type === "secret" ? "x".repeat(page.secretLength) : page.value} cursor={page.cursor} secret={page.prompt.type === "secret"} />}
+        <text
+          content={page.prompt.type === "select"
+            ? "↑↓ move   enter select   esc cancel"
+            : loginTextFooter(terminalWidth, "continue", "cancel")}
+          fg={theme.dim}
+          bg={theme.popupBg}
+          wrapMode="none"
+          style={{ marginTop: 1 }}
+        />
       </> : page.kind === "working" ? <>
         <text content={page.providerName} fg={theme.accent} bg={theme.popupBg} />
         <box style={{ height: 1, flexShrink: 0 }} />
@@ -172,15 +205,15 @@ export function LoginPopup({ theme, page, terminalWidth, terminalHeight, onProvi
       </> : page.kind === "custom-endpoint" ? <>
         <text content="Enter the server endpoint. PUM probes /models and configures OpenAI Chat Completions only after that probe succeeds." fg={theme.fg} bg={theme.popupBg} wrapMode="word" />
         <box style={{ height: 1, flexShrink: 0 }} />
-        <InputRow theme={theme} label="Endpoint" value={page.endpoint} />
+        <InputRow theme={theme} label="Endpoint" value={page.endpoint} cursor={page.cursor} />
         <text content="Example: http://localhost:11434/v1" fg={theme.dim} bg={theme.popupBg} />
-        <text content="enter continue   esc back" fg={theme.dim} bg={theme.popupBg} style={{ marginTop: 1 }} />
+        <text content={loginTextFooter(terminalWidth, "continue", "back")} fg={theme.dim} bg={theme.popupBg} wrapMode="none" style={{ marginTop: 1 }} />
       </> : page.kind === "custom-key" ? <>
         <text content="Enter the API key. Leave the field empty for a keyless local server." fg={theme.fg} bg={theme.popupBg} wrapMode="word" />
         <box style={{ height: 1, flexShrink: 0 }} />
-        <InputRow theme={theme} label="API key" value={"x".repeat(page.secretLength)} secret />
+        <InputRow theme={theme} label="API key" value={"x".repeat(page.secretLength)} cursor={page.cursor} secret />
         <text content="The key is stored in PUM auth.json. The key is not stored in models.json." fg={theme.dim} bg={theme.popupBg} wrapMode="word" />
-        <text content="enter discover   esc back" fg={theme.dim} bg={theme.popupBg} style={{ marginTop: 1 }} />
+        <text content={loginTextFooter(terminalWidth, "discover", "back")} fg={theme.dim} bg={theme.popupBg} wrapMode="none" style={{ marginTop: 1 }} />
       </> : page.kind === "custom-working" ? <>
         <text content={page.message} fg={theme.dim} bg={theme.popupBg} wrapMode="word" />
         <text content="Esc cancels." fg={theme.dim} bg={theme.popupBg} style={{ marginTop: 1 }} />

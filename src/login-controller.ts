@@ -51,8 +51,11 @@ export class LoginController {
   private controller?: AbortController;
   private promptWaiter?: PromptWaiter;
   private secret = "";
+  private secretCursor = 0;
   private endpoint = "";
+  private endpointCursor = 0;
   private customKey = "";
+  private customKeyCursor = 0;
   private providerCursor = 0;
   private providerQuery = "";
   private providerSearchFocused = true;
@@ -126,6 +129,7 @@ export class LoginController {
     this.promptWaiter?.reject(new Error("Login cancelled"));
     this.promptWaiter = undefined;
     this.secret = "";
+    this.secretCursor = 0;
   }
 
   close() {
@@ -187,6 +191,7 @@ export class LoginController {
       },
       prompt: (prompt: AuthPrompt) => new Promise<string>((resolve, reject) => {
         this.secret = "";
+        this.secretCursor = 0;
         const rejectPrompt = (error: Error) => {
           prompt.signal?.removeEventListener("abort", onAbort);
           reject(error);
@@ -245,14 +250,53 @@ export class LoginController {
     });
   }
 
-  private updateText(key: LoginKey, value: string, setValue: (next: string) => void): boolean {
+  private updateText(
+    key: LoginKey,
+    value: string,
+    cursor: number,
+    setValue: (next: string, nextCursor: number) => void,
+  ): boolean {
+    const safeCursor = Math.max(0, Math.min(cursor, value.length));
+    if (key.name === "left") {
+      setValue(value, Math.max(0, safeCursor - 1));
+      return true;
+    }
+    if (key.name === "right") {
+      setValue(value, Math.min(value.length, safeCursor + 1));
+      return true;
+    }
+    if (key.name === "home") {
+      setValue(value, 0);
+      return true;
+    }
+    if (key.name === "end") {
+      setValue(value, value.length);
+      return true;
+    }
     if (key.name === "backspace") {
-      setValue(value.slice(0, -1));
+      if (safeCursor > 0) {
+        setValue(
+          value.slice(0, safeCursor - 1) + value.slice(safeCursor),
+          safeCursor - 1,
+        );
+      }
+      return true;
+    }
+    if (key.name === "delete") {
+      if (safeCursor < value.length) {
+        setValue(
+          value.slice(0, safeCursor) + value.slice(safeCursor + 1),
+          safeCursor,
+        );
+      }
       return true;
     }
     const text = key.sequence ?? "";
     if (!key.ctrl && !key.meta && !key.option && text.length > 0 && !/[\u0000-\u001f\u007f]/.test(text)) {
-      setValue(value + text);
+      setValue(
+        value.slice(0, safeCursor) + text + value.slice(safeCursor),
+        safeCursor + text.length,
+      );
       return true;
     }
     return false;
@@ -272,22 +316,33 @@ export class LoginController {
     if (this.page.kind === "prompt") {
       const current = this.page;
       if (current.prompt.type === "secret") {
-        this.secret += pasted;
-        this.setPage({ ...current, secretLength: this.secret.length });
+        const cursor = Math.max(0, Math.min(this.secretCursor, this.secret.length));
+        this.secret = this.secret.slice(0, cursor) + pasted + this.secret.slice(cursor);
+        this.secretCursor = cursor + pasted.length;
+        this.setPage({ ...current, cursor: this.secretCursor, secretLength: this.secret.length });
       } else {
-        this.setPage({ ...current, value: current.value + pasted });
+        const cursor = Math.max(0, Math.min(current.cursor, current.value.length));
+        this.setPage({
+          ...current,
+          value: current.value.slice(0, cursor) + pasted + current.value.slice(cursor),
+          cursor: cursor + pasted.length,
+        });
       }
       return true;
     }
     if (this.page.kind === "custom-endpoint") {
-      this.endpoint = this.page.endpoint + pasted;
-      this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint });
+      const cursor = Math.max(0, Math.min(this.page.cursor, this.page.endpoint.length));
+      this.endpoint = this.page.endpoint.slice(0, cursor) + pasted + this.page.endpoint.slice(cursor);
+      this.endpointCursor = cursor + pasted.length;
+      this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint, cursor: this.endpointCursor });
       return true;
     }
     if (this.page.kind === "custom-key") {
       const current = this.page;
-      this.customKey += pasted;
-      this.setPage({ ...current, secretLength: this.customKey.length });
+      const cursor = Math.max(0, Math.min(this.customKeyCursor, this.customKey.length));
+      this.customKey = this.customKey.slice(0, cursor) + pasted + this.customKey.slice(cursor);
+      this.customKeyCursor = cursor + pasted.length;
+      this.setPage({ ...current, cursor: this.customKeyCursor, secretLength: this.customKey.length });
       return true;
     }
     return false;
@@ -297,7 +352,7 @@ export class LoginController {
     const enter = key.name === "return" || key.name === "enter" || key.name === "kpenter" || key.name === "linefeed";
     if (key.name === "escape") {
       if (this.page.kind === "providers" || this.page.kind === "success" || this.page.kind === "error") this.close();
-      else if (this.page.kind === "custom-key") this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint });
+      else if (this.page.kind === "custom-key") this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint, cursor: this.endpointCursor });
       else {
         this.cancelOperation();
         this.setPage(this.providerPage());
@@ -328,7 +383,10 @@ export class LoginController {
       } else if (enter) {
         const method = this.page.methods[this.page.cursor];
         if (method) this.startProvider(method);
-        else if (this.page.customVisible) this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint });
+        else if (this.page.customVisible) {
+          this.endpointCursor = this.endpoint.length;
+          this.setPage({ kind: "custom-endpoint", endpoint: this.endpoint, cursor: this.endpointCursor });
+        }
       }
       return true;
     }
@@ -352,23 +410,29 @@ export class LoginController {
         this.setPage({ kind: "working", providerName: this.page.providerName });
       } else if (this.page.prompt.type === "secret") {
         const current = this.page;
-        this.updateText(key, this.secret, (next) => {
+        this.updateText(key, this.secret, this.secretCursor, (next, nextCursor) => {
           this.secret = next;
-          this.setPage({ ...current, secretLength: next.length });
+          this.secretCursor = nextCursor;
+          this.setPage({ ...current, cursor: nextCursor, secretLength: next.length });
         });
       } else {
         const current = this.page;
-        this.updateText(key, current.value, (next) => this.setPage({ ...current, value: next }));
+        this.updateText(key, current.value, current.cursor, (next, nextCursor) => {
+          this.setPage({ ...current, value: next, cursor: nextCursor });
+        });
       }
       return true;
     }
     if (this.page.kind === "custom-endpoint") {
       if (enter) {
         this.endpoint = this.page.endpoint;
-        this.setPage({ kind: "custom-key", endpoint: this.endpoint, secretLength: this.customKey.length });
-      } else this.updateText(key, this.page.endpoint, (next) => {
+        this.endpointCursor = this.page.cursor;
+        this.customKeyCursor = this.customKey.length;
+        this.setPage({ kind: "custom-key", endpoint: this.endpoint, secretLength: this.customKey.length, cursor: this.customKeyCursor });
+      } else this.updateText(key, this.page.endpoint, this.page.cursor, (next, nextCursor) => {
         this.endpoint = next;
-        this.setPage({ kind: "custom-endpoint", endpoint: next });
+        this.endpointCursor = nextCursor;
+        this.setPage({ kind: "custom-endpoint", endpoint: next, cursor: nextCursor });
       });
       return true;
     }
@@ -376,9 +440,10 @@ export class LoginController {
       if (enter) this.startCustom();
       else {
         const current = this.page;
-        this.updateText(key, this.customKey, (next) => {
+        this.updateText(key, this.customKey, this.customKeyCursor, (next, nextCursor) => {
           this.customKey = next;
-          this.setPage({ ...current, secretLength: next.length });
+          this.customKeyCursor = nextCursor;
+          this.setPage({ ...current, cursor: nextCursor, secretLength: next.length });
         });
       }
       return true;
