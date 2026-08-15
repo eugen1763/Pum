@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   DEFAULT_BASH_OUTPUT,
+  cleanupBashOutputCaptures,
   createBashOutputCapture,
   collapseSimilarLines,
   compressRepeats,
@@ -17,6 +18,7 @@ import {
   withBashOutput,
   type BashOutputSettings,
 } from "./bash-output";
+import { validateSandboxPath } from "./filesystem-sandbox";
 
 const LINE = "some repeated filler content ####";
 const NOISY = [
@@ -211,6 +213,55 @@ describe("summarizeBashOutput", () => {
   test("empty output reports (no output)", () => {
     const s = summarizeBashOutput("", settings, { exitCode: 0 });
     expect(s.content).toBe("(no output)");
+  });
+});
+
+describe("bash output capture and the filesystem sandbox", () => {
+  test("the agent can read a capture path, but not an unrelated temp path", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pum-bash-sandbox-project-"));
+    const unrelated = mkdtempSync(join(tmpdir(), "pum-bash-sandbox-unrelated-"));
+    const capture = await createBashOutputCapture({
+      exec: async (_command, _cwd, options) => {
+        options.onData(Buffer.from("captured\n"));
+        return { exitCode: 0 };
+      },
+    });
+    try {
+      await capture.operations.exec("ignored", process.cwd(), { onData() {} });
+
+      await expect(validateSandboxPath(project, capture.path, [], "read")).resolves.toBeDefined();
+      await expect(validateSandboxPath(project, join(unrelated, "other.log"), [], "read"))
+        .rejects.toThrow("outside the sandbox");
+      await expect(validateSandboxPath(project, capture.path, [], "write"))
+        .rejects.toThrow("outside the sandbox");
+    } finally {
+      await capture.remove();
+      rmSync(project, { recursive: true, force: true });
+      rmSync(unrelated, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("cleanupBashOutputCaptures", () => {
+  test("removes the capture directory, withdraws the read root, and repeats safely", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pum-bash-cleanup-project-"));
+    try {
+      cleanupBashOutputCaptures(); // Nothing was ever created.
+      const capture = await createBashOutputCapture({
+        exec: async () => ({ exitCode: 0 }),
+      });
+      const captureDir = dirname(capture.path);
+      expect(existsSync(captureDir)).toBe(true);
+
+      cleanupBashOutputCaptures();
+      cleanupBashOutputCaptures();
+
+      expect(existsSync(captureDir)).toBe(false);
+      await expect(validateSandboxPath(project, capture.path, [], "read"))
+        .rejects.toThrow("outside the sandbox");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 });
 

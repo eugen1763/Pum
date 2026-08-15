@@ -7,7 +7,8 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { open, readFile, rm } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { mkdtemp, open, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -20,6 +21,7 @@ import {
   type BashToolOptions,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { registerSandboxTempReadRoot, unregisterSandboxTempReadRoot } from "./filesystem-sandbox";
 
 export type BashCutStrategy = "headTail" | "sample" | "tail" | "head" | "summary";
 
@@ -108,9 +110,56 @@ export type BashOutputCapture = {
   remove(): Promise<void>;
 };
 
+let captureDirectory: Promise<string> | null = null;
+let captureDirectoryPath: string | null = null;
+
+/**
+ * One private per-process directory holds every capture. The agent is told to
+ * read a capture path, and the filesystem sandbox allows only the project and
+ * configured roots, so this exact directory - created by PUM, never supplied by
+ * a model - is registered as a read-only sandbox root. It is created on the
+ * first capture, so a run that never captures output creates no directory.
+ */
+function ensureCaptureDirectory(): Promise<string> {
+  captureDirectory ??= mkdtemp(join(tmpdir(), "pum-bash-output-"))
+    .then((created) => {
+      registerSandboxTempReadRoot(created);
+      captureDirectoryPath = created;
+      return created;
+    })
+    .catch((error) => {
+      captureDirectory = null;
+      throw error;
+    });
+  return captureDirectory;
+}
+
+function removeCaptureDirectory(path: string): void {
+  unregisterSandboxTempReadRoot(path);
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    // Capture cleanup must not break shutdown.
+  }
+}
+
+/**
+ * Withdraw the sandbox read root and remove the private capture directory.
+ * Safe to call twice, and safe when no capture ever ran. A directory still
+ * being created is cleaned up as soon as it exists.
+ */
+export function cleanupBashOutputCaptures(): void {
+  const pending = captureDirectory;
+  const path = captureDirectoryPath;
+  captureDirectory = null;
+  captureDirectoryPath = null;
+  if (path) removeCaptureDirectory(path);
+  else if (pending) void pending.then(removeCaptureDirectory).catch(() => {});
+}
+
 /** Tee the exact process stream to a PUM-owned private temp file. */
 export async function createBashOutputCapture(inner: BashOperations): Promise<BashOutputCapture> {
-  const path = join(tmpdir(), `pum-bash-${randomBytes(8).toString("hex")}.log`);
+  const path = join(await ensureCaptureDirectory(), `pum-bash-${randomBytes(8).toString("hex")}.log`);
   const handle = await open(path, "wx", 0o600);
   let writes: Promise<void> = Promise.resolve();
   let failed = false;

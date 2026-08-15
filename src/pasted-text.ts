@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerSandboxTempReadRoot, unregisterSandboxTempReadRoot } from "./filesystem-sandbox";
 
 /** Pasted text at or below this size stays inline in the draft. */
 export const MAX_PASTED_TEXT_BYTES = 16 * 1024;
@@ -20,7 +21,14 @@ let pastedTextDir: string | null = null;
 let fileSequence = 0;
 
 function ensurePastedTextDir(): string {
-  pastedTextDir ??= mkdtempSync(join(tmpdir(), "pum-pasted-text-"));
+  if (pastedTextDir === null) {
+    const created = mkdtempSync(join(tmpdir(), "pum-pasted-text-"));
+    // The agent is told to read these files, and the filesystem sandbox allows
+    // only the project and configured roots. Register this exact directory,
+    // which PUM just created, as a read-only sandbox root.
+    registerSandboxTempReadRoot(created);
+    pastedTextDir = created;
+  }
   return pastedTextDir;
 }
 
@@ -56,6 +64,7 @@ export function removePendingPastedText(item: PendingPastedText): void {
 
 export function cleanupPendingPastedTexts(): void {
   if (!pastedTextDir) return;
+  unregisterSandboxTempReadRoot(pastedTextDir);
   try {
     rmSync(pastedTextDir, { recursive: true, force: true });
   } catch {

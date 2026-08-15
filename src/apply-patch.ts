@@ -199,6 +199,12 @@ export function parseApplyPatch(patch: string): PatchOperation[] {
           index++;
         }
         if (!changed) throw patchError("a hunk must add or remove at least one line", hunk.line);
+        if (hunk.oldLines.length === 0 && hunk.header === undefined && !hunk.endOfFile) {
+          throw patchError(
+            "an insertion hunk needs '@@ <context>', a context line, or '*** End of File' to place it",
+            hunk.line,
+          );
+        }
         hunks.push(hunk);
       }
       if (!moveTo && hunks.length === 0) throw patchError("Update File requires a hunk or Move to", line.number);
@@ -265,6 +271,13 @@ async function validateProjectPath(root: string, path: string, fs: ApplyPatchFil
     const metadata = await fs.lstat(path);
     if (metadata.isSymbolicLink()) throw new Error(`Patch paths cannot be symbolic links: ${path}`);
     if (metadata.isDirectory()) throw new Error(`Patch paths must be files: ${path}`);
+    // A hard link is an ordinary file to lstat and realpath, so an in-project
+    // name can share its inode with a file outside the project. st_nlink cannot
+    // say where the other links are, so every multiply linked file is refused.
+    // Residual limitation: a link created after this check still aliases.
+    if (metadata.isFile() && metadata.nlink > 1) {
+      throw new Error(`Patch paths cannot have more than one hard link: ${path}`);
+    }
   }
   return canonicalPath;
 }
@@ -341,7 +354,9 @@ function applyHunks(text: string, bom: string, path: string, hunks: PatchHunk[])
     }
 
     if (hunk.oldLines.length === 0) {
-      const start = hunk.endOfFile ? format.contents.length : anchor === undefined ? format.contents.length : anchor + 1;
+      // The parser rejects a context-free insertion, so a missing anchor here
+      // can only mean "*** End of File".
+      const start = hunk.endOfFile || anchor === undefined ? format.contents.length : anchor + 1;
       replacements.push({ start, length: 0, lines: hunk.newLines });
       searchStart = start;
       continue;
@@ -675,6 +690,7 @@ export const applyPatchExtension: InlineExtension = {
         "Use apply_patch for one atomic patch that changes one or more files.",
         "Start with *** Begin Patch and finish with *** End Patch.",
         "Use only project-relative paths in Add File, Update File, Delete File, and Move to headers.",
+        "Anchor every hunk: an insert-only hunk needs '@@ <context>', a context line, or '*** End of File'.",
       ],
       parameters: Type.Object({
         patch: Type.String({ description: "Complete OpenAI Codex patch text, including the Begin Patch and End Patch markers" }),

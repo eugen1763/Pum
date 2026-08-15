@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setCheckModeConfig } from "./check-mode";
 import {
   createFilesystemSandboxExtension,
   filesystemSandboxExtension,
+  registerSandboxTempReadRoot,
+  unregisterSandboxTempReadRoot,
   validateSandboxPatch,
   validateSandboxPath,
 } from "./filesystem-sandbox";
@@ -46,8 +48,7 @@ describe("filesystem sandbox", () => {
     await expect(validateSandboxPath(project, ".env")).rejects.toThrow("credential-sensitive");
   });
 
-  test("blocks escaping symbolic links", async () => {
-    if (process.platform === "win32") return;
+  test.skipIf(process.platform === "win32")("blocks escaping symbolic links", async () => {
     const project = directory("pum-sandbox-link-project-");
     const outside = directory("pum-sandbox-link-outside-");
     writeFileSync(join(outside, "secret.txt"), "secret\n");
@@ -67,6 +68,77 @@ describe("filesystem sandbox", () => {
     await expect(validateSandboxPatch(project, "*** Begin Patch\n"
       + "*** Add File: ../outside.txt\n+no\n"
       + "*** End Patch")).rejects.toThrow("parent traversal");
+  });
+
+  test.skipIf(process.platform === "win32")("validates the curly-apostrophe variant a read actually opens", async () => {
+    const project = directory("pum-sandbox-curly-project-");
+    const outside = directory("pum-sandbox-curly-outside-");
+    writeFileSync(join(outside, "secret.txt"), "secret\n");
+    // pi's read tool retries a U+2019 spelling when the straight apostrophe is
+    // missing, so the literal path must not be the one the sandbox checks.
+    symlinkSync(join(outside, "secret.txt"), join(project, "notes\u2019draft.md"));
+
+    await expect(validateSandboxPath(project, "notes'draft.md", [], "read"))
+      .rejects.toThrow("symbolic link");
+  });
+
+  test.skipIf(process.platform === "win32")("validates the NFD variant a read actually opens", async () => {
+    const project = directory("pum-sandbox-nfd-project-");
+    const outside = directory("pum-sandbox-nfd-outside-");
+    writeFileSync(join(outside, "secret.txt"), "secret\n");
+    symlinkSync(join(outside, "secret.txt"), join(project, "caf\u0065\u0301.md"));
+
+    await expect(validateSandboxPath(project, "caf\u00e9.md", [], "read"))
+      .rejects.toThrow("symbolic link");
+  });
+
+  test("keeps ordinary reads and missing write targets working", async () => {
+    const project = directory("pum-sandbox-plain-read-");
+    writeFileSync(join(project, "source.ts"), "export const value = 1;\n");
+
+    const read = await validateSandboxPath(project, "source.ts", [], "read");
+    expect(read.absolute).toBe(join(project, "source.ts"));
+    const missing = await validateSandboxPath(project, "nested/new.ts", [], "write");
+    expect(missing.absolute).toBe(join(project, "nested", "new.ts"));
+    await expect(validateSandboxPath(project, "missing.ts", [], "read")).resolves.toBeDefined();
+  });
+
+  test("allows registered temp read roots but not arbitrary temp paths", async () => {
+    const project = directory("pum-sandbox-temp-project-");
+    const staged = directory("pum-pasted-text-");
+    const unrelated = directory("pum-sandbox-unrelated-temp-");
+    writeFileSync(join(staged, "pasted-1.txt"), "pasted\n");
+    writeFileSync(join(staged, ".env"), "TOKEN=secret\n");
+    writeFileSync(join(unrelated, "other.txt"), "other\n");
+    registerSandboxTempReadRoot(staged);
+
+    try {
+      await expect(validateSandboxPath(project, join(staged, "pasted-1.txt"), [], "read")).resolves.toBeDefined();
+      await expect(validateSandboxPath(project, join(unrelated, "other.txt"), [], "read"))
+        .rejects.toThrow("outside the sandbox");
+      await expect(validateSandboxPath(project, join(staged, ".env"), [], "read"))
+        .rejects.toThrow("credential-sensitive");
+      await expect(validateSandboxPath(project, join(staged, "pasted-1.txt"), [], "write"))
+        .rejects.toThrow("outside the sandbox");
+    } finally {
+      unregisterSandboxTempReadRoot(staged);
+    }
+    await expect(validateSandboxPath(project, join(staged, "pasted-1.txt"), [], "read"))
+      .rejects.toThrow("outside the sandbox");
+  });
+
+  test.skipIf(process.platform === "win32")("blocks mutations of hard-linked files but still reads them", async () => {
+    const project = directory("pum-sandbox-hardlink-project-");
+    const outside = directory("pum-sandbox-hardlink-outside-");
+    const secret = join(outside, "secret.txt");
+    writeFileSync(secret, "secret\n");
+    linkSync(secret, join(project, "hard.txt"));
+
+    await expect(validateSandboxPath(project, "hard.txt", [], "write")).rejects.toThrow("hard link");
+    await expect(validateSandboxPath(project, "hard.txt", [], "read")).resolves.toBeDefined();
+    await expect(validateSandboxPatch(project, "*** Begin Patch\n"
+      + "*** Update File: hard.txt\n@@\n-secret\n+leaked\n"
+      + "*** End Patch")).rejects.toThrow("hard link");
   });
 
   test("blocks write, edit, and apply_patch for readonly children but preserves reads", async () => {

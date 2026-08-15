@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   cleanupPendingPastedTexts,
   MAX_PASTED_TEXT_BYTES,
@@ -9,6 +9,7 @@ import {
   removePendingPastedText,
   stagePastedText,
 } from "./pasted-text";
+import { validateSandboxPath } from "./filesystem-sandbox";
 
 afterEach(() => cleanupPendingPastedTexts());
 
@@ -18,7 +19,6 @@ function pastedTextDirs(): string[] {
 
 describe("stagePastedText", () => {
   test("writes the text to a private temp file under the system temp dir", () => {
-    const dirsBefore = pastedTextDirs();
     const text = "x".repeat(17 * 1024);
     const staged = stagePastedText(text);
 
@@ -28,8 +28,41 @@ describe("stagePastedText", () => {
     expect(existsSync(staged.path)).toBe(true);
     expect(readFileSync(staged.path, "utf8")).toBe(text);
 
-    const dirsAfter = pastedTextDirs();
-    expect(dirsAfter.length).toBe(dirsBefore.length + 1);
+    // Assert on this run's own directory: the system temp dir is shared, so a
+    // count of every `pum-pasted-text-*` directory races other processes.
+    expect(pastedTextDirs()).toContain(basename(dirname(staged.path)));
+  });
+});
+
+describe("staged pasted text and the filesystem sandbox", () => {
+  test("the agent can read a staged path, but not an unrelated temp path", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pum-paste-sandbox-project-"));
+    const unrelated = mkdtempSync(join(tmpdir(), "pum-paste-sandbox-unrelated-"));
+    try {
+      const staged = stagePastedText("e".repeat(20_000));
+
+      await expect(validateSandboxPath(project, staged.path, [], "read")).resolves.toBeDefined();
+      await expect(validateSandboxPath(project, join(unrelated, "other.txt"), [], "read"))
+        .rejects.toThrow("outside the sandbox");
+      await expect(validateSandboxPath(project, staged.path, [], "write"))
+        .rejects.toThrow("outside the sandbox");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+      rmSync(unrelated, { recursive: true, force: true });
+    }
+  });
+
+  test("cleanup withdraws the read root", async () => {
+    const project = mkdtempSync(join(tmpdir(), "pum-paste-sandbox-project-"));
+    try {
+      const staged = stagePastedText("f".repeat(20_000));
+      cleanupPendingPastedTexts();
+
+      await expect(validateSandboxPath(project, staged.path, [], "read"))
+        .rejects.toThrow("outside the sandbox");
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 });
 
@@ -68,12 +101,13 @@ describe("removePendingPastedText", () => {
 
 describe("cleanupPendingPastedTexts", () => {
   test("removes the whole dedicated temp directory", () => {
-    stagePastedText("d".repeat(20_000));
-    expect(pastedTextDirs().length).toBeGreaterThan(0);
+    const staged = stagePastedText("d".repeat(20_000));
+    const stagedDir = dirname(staged.path);
+    expect(existsSync(stagedDir)).toBe(true);
 
     cleanupPendingPastedTexts();
 
-    expect(pastedTextDirs().length).toBe(0);
+    expect(existsSync(stagedDir)).toBe(false);
   });
 });
 

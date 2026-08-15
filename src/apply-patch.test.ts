@@ -160,6 +160,43 @@ describe("apply_patch mutations", () => {
     expect(text(path)).toBe("same\nsame\nend\n");
   });
 
+  test("rejects a context-free insertion instead of appending at end of file", async () => {
+    const cwd = project();
+    const path = join(cwd, "file.txt");
+    writeFileSync(path, "one\ntwo\n");
+
+    await expect(applyPatch(cwd, `*** Begin Patch
+*** Update File: file.txt
+@@
++added
+*** End Patch`)).rejects.toThrow("an insertion hunk needs");
+    expect(text(path)).toBe("one\ntwo\n");
+
+    // The documented anchors still place a pure insertion.
+    await applyPatch(cwd, `*** Begin Patch
+*** Update File: file.txt
+@@
++appended
+*** End of File
+*** End Patch`);
+    expect(text(path)).toBe("one\ntwo\nappended\n");
+
+    await applyPatch(cwd, `*** Begin Patch
+*** Update File: file.txt
+@@ one
++second
+*** End Patch`);
+    expect(text(path)).toBe("one\nsecond\ntwo\nappended\n");
+
+    await applyPatch(cwd, `*** Begin Patch
+*** Update File: file.txt
+@@
+ two
++third
+*** End Patch`);
+    expect(text(path)).toBe("one\nsecond\ntwo\nthird\nappended\n");
+  });
+
   test("validates every file before any mutation", async () => {
     const cwd = project();
     const first = join(cwd, "first.txt");
