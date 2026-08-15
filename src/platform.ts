@@ -131,3 +131,26 @@ export function shutdownSignals(
 ): NodeJS.Signals[] {
   return platform === "win32" ? ["SIGINT", "SIGBREAK"] : ["SIGINT", "SIGTERM", "SIGHUP"];
 }
+
+/**
+ * Numbers for the signals PUM handles. The table is explicit rather than read
+ * from `os.constants`, so a Windows signal still maps on Linux and the value
+ * cannot drift between hosts.
+ */
+const SHUTDOWN_SIGNAL_NUMBERS: Record<string, number> = {
+  SIGHUP: 1,
+  SIGINT: 2,
+  SIGTERM: 15,
+  SIGBREAK: 21,
+};
+
+/**
+ * The conventional shell exit code for death by a signal: 128 plus the signal
+ * number, so 130 for SIGINT and 143 for SIGTERM. A script can then tell an
+ * interrupted run from a failing one, which plain 1 hides. An unknown signal
+ * falls back to 1.
+ */
+export function signalExitCode(signal: NodeJS.Signals): number {
+  const number = SHUTDOWN_SIGNAL_NUMBERS[signal];
+  return number === undefined ? 1 : 128 + number;
+}

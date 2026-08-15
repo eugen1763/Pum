@@ -194,6 +194,83 @@ describe("CLI argument parsing", () => {
     }
   });
 
+  test("rejects login after the mount directories", () => {
+    expect(parseCliArgs(["s", "/data", "login"])).toEqual({
+      kind: "error",
+      message: "'login' must come before mount directories",
+    });
+    expect(parseCliArgs(["sr", "/data", "/more", "login"])).toEqual({
+      kind: "error",
+      message: "'login' must come before mount directories",
+    });
+    // Before any mount it is still the login keyword.
+    expect(parseCliArgs(["s", "login", "/data"])).toEqual({
+      kind: "start",
+      options: {
+        login: true,
+        resume: false,
+        overrideStatsFile: false,
+        outerSandbox: { mode: "write", mounts: ["/data"] },
+      },
+    });
+  });
+
+  test("help and version win over a parse error", () => {
+    for (const flag of ["-h", "--help"]) {
+      expect(parseCliArgs([flag, "badcmd"])).toEqual({ kind: "help" });
+      expect(parseCliArgs(["badcmd", flag])).toEqual({ kind: "help" });
+      expect(parseCliArgs([flag, "--unknown"])).toEqual({ kind: "help" });
+      expect(parseCliArgs(["ss", flag])).toEqual({ kind: "help" });
+    }
+    for (const flag of ["-v", "--version"]) {
+      expect(parseCliArgs([flag, "badcmd"])).toEqual({ kind: "version" });
+      expect(parseCliArgs(["badcmd", flag])).toEqual({ kind: "version" });
+    }
+    // Help still beats version, and a prompt value still swallows the flag.
+    expect(parseCliArgs(["-v", "-h"])).toEqual({ kind: "help" });
+    expect(parseCliArgs(["-p", "-h", "badcmd"])).toEqual({
+      kind: "error",
+      message: "Unknown command: badcmd",
+    });
+  });
+
+  test("reports the first parse error, not the last", () => {
+    expect(parseCliArgs(["--unknown", "alsobad"])).toEqual({
+      kind: "error",
+      message: "Unknown option: --unknown",
+    });
+  });
+
+  test("treats arguments after -- as operands", () => {
+    expect(parseCliArgs(["--"])).toEqual({
+      kind: "start",
+      options: { login: false, resume: false, overrideStatsFile: false },
+    });
+    expect(parseCliArgs(["s", "--", "-weird", "login", "--help"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: false,
+        overrideStatsFile: false,
+        outerSandbox: { mode: "write", mounts: ["-weird", "login", "--help"] },
+      },
+    });
+    expect(parseCliArgs(["sr", "-r", "--", "-p"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: true,
+        overrideStatsFile: false,
+        outerSandbox: { mode: "read", mounts: ["-p"] },
+      },
+    });
+    // Without a sandbox command there is nowhere for an operand to go.
+    expect(parseCliArgs(["--", "-weird"])).toEqual({
+      kind: "error",
+      message: "Unknown command: -weird",
+    });
+  });
+
   test("rejects unknown options and commands", () => {
     expect(parseCliArgs(["--unknown"])).toEqual({
       kind: "error",
@@ -268,6 +345,20 @@ describe("non-interactive CLI", () => {
     expect(result.stderr).toContain("stats file already exists");
     expect(readFileSync(statsPath, "utf8")).toBe("keep me");
     await expectNoStartup(result);
+  });
+
+  test("help and version still print when a later argument is invalid", async () => {
+    const expected = helpText(await readPackageMetadata());
+    const help = await runCli("-h", "badcmd");
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toBe(expected);
+    expect(help.stderr).toBe("");
+    await expectNoStartup(help);
+
+    const version = await runCli("-v", "badcmd");
+    expect(version.exitCode).toBe(0);
+    expect(version.stderr).toBe("");
+    await expectNoStartup(version);
   });
 
   test("unknown long and short options fail with a concise help hint", async () => {

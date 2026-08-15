@@ -1,5 +1,8 @@
 node_modules/
-.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/pum-release/
 .claude/
 skills-lock.json
 .tmp-*.ts

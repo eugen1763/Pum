@@ -15,10 +15,17 @@ import { explanationStrengthExtension, setExplanationStrength } from "./explanat
 import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { applyPatchExtension } from "./apply-patch";
-import { installWebSearch, webSearch } from "./web-search";
+import {
+  installWebSearch,
+  observeSearchCalls,
+  persistSearchCall,
+  webSearch,
+  withSearchRoute,
+  type SearchCall,
+} from "./web-search";
 import { SandboxController } from "./sandbox";
 import { toolArg } from "./tool-line";
-import { shutdownSignals } from "./platform";
+import { shutdownSignals, signalExitCode } from "./platform";
 import { SessionStatsManager } from "./session-stats";
 import { prepareHeadlessStatsOutput, type HeadlessStatsOutput } from "./headless-stats";
 
@@ -29,6 +36,25 @@ import { prepareHeadlessStatsOutput, type HeadlessStatsOutput } from "./headless
  * need the running TUI for routing and notifications.
  */
 const HEADLESS_TOOL_NAMES = ["read", "write", "edit", "apply_patch", "bash"];
+
+/**
+ * Handle one hosted web-search call from a headless run.
+ *
+ * A hosted search is not a pi tool call, so it reaches neither the event
+ * stream nor the session file on its own. Report the start on stderr next to
+ * the tool lines, and persist every phase as a custom session entry so a later
+ * `pum -r` replays the search without adding it to LLM context.
+ */
+export function headlessSearchObserver(
+  sessionManager: Pick<SessionManager, "appendCustomEntry">,
+  write: (line: string) => void,
+): (call: SearchCall) => void {
+  return (call) => {
+    if (call.phase === "start") write(`· web_search ${call.query}\n`);
+    else if (!call.ok) write(`· web_search failed\n`);
+    persistSearchCall(sessionManager, call);
+  };
+}
 
 export interface HeadlessOptions {
   prompt: string;
@@ -55,8 +81,10 @@ export async function runPrompt(options: HeadlessOptions): Promise<number> {
     try {
       statsOutput = prepareHeadlessStatsOutput(options.statsFile, options.overrideStatsFile);
     } catch (error) {
+      // prepareHeadlessStatsOutput already names the reservation case, including
+      // the zero-byte file an interrupted run leaves behind.
       const message = error instanceof Error && (error as NodeJS.ErrnoException).code === "EEXIST"
-        ? `stats file already exists: ${options.statsFile}. Use --override to replace it.`
+        ? error.message
         : `cannot prepare stats file ${options.statsFile}: ${error instanceof Error ? error.message : String(error)}`;
       process.stderr.write(`pum: ${message}\n`);
       return 2;
@@ -227,7 +255,17 @@ async function runPromptSession(
       process.stderr.write(`pum: shutdown error: ${error instanceof Error ? error.message : String(error)}\n`);
     }
   };
-  const onSignal = () => { void dispose().finally(() => process.exit(writeStats(130))); };
+  // Hosted searches are bolted on outside pi, so route them to this session and
+  // record them the way the TUI does. Without this a headless run's searches
+  // are invisible to a later `pum -r`.
+  const unsubscribeSearch = observeSearchCalls(
+    session.sessionId,
+    headlessSearchObserver(session.sessionManager, (line) => process.stderr.write(line)),
+  );
+
+  const onSignal = (signal: NodeJS.Signals) => {
+    void dispose().finally(() => process.exit(writeStats(signalExitCode(signal))));
+  };
   const signals = shutdownSignals();
   for (const signal of signals) process.on(signal, onSignal);
 
@@ -235,7 +273,7 @@ async function runPromptSession(
     // prompt() resolves on settlement, including when an extension or slash
     // command handles the input and returns early, so no separate wait is
     // needed and the process cannot hang on a missing agent_settled event.
-    await session.prompt(options.prompt);
+    await withSearchRoute(session.sessionId, () => session.prompt(options.prompt));
     // A turn that ended in a provider or abort error prints no text; report it
     // and exit non-zero so a script does not read failure as success.
     const messages = session.state.messages;
@@ -250,6 +288,7 @@ async function runPromptSession(
     exitCode = 1;
   } finally {
     for (const signal of signals) process.off(signal, onSignal);
+    unsubscribeSearch();
     await dispose();
   }
   return exitCode;

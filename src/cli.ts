@@ -39,6 +39,8 @@ export async function readPackageMetadata(): Promise<PackageMetadata> {
   return { name: value.name, version: value.version, description: value.description };
 }
 
+const SETUP_ARGUMENTS_ERROR = "Command 'ss' does not accept arguments or options.";
+
 export function parseCliArgs(args: string[]): CliResult {
   let login = false;
   let resume = false;
@@ -48,43 +50,64 @@ export function parseCliArgs(args: string[]): CliResult {
   let overrideStatsFile = false;
   let help = false;
   let version = false;
+  let endOfOptions = false;
   let outerSandbox: OuterSandboxOptions | undefined;
+  // Help and version win over a bad argument, as they do in most CLIs, so the
+  // loop records the first error and keeps reading instead of returning at once.
+  let error: string | undefined;
+  const fail = (message: string): void => { if (error === undefined) error = message; };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
-    if (setup) return { kind: "error", message: "Command 'ss' does not accept arguments or options." };
+    if (!endOfOptions) {
+      if (arg === "--help" || arg === "-h") { help = true; continue; }
+      if (arg === "--version" || arg === "-v") { version = true; continue; }
+    }
+    if (setup) { fail(SETUP_ARGUMENTS_ERROR); continue; }
+    if (endOfOptions) {
+      // Everything after `--` is an operand, so a mount directory may start
+      // with `-` and a directory named `login` stays a directory.
+      if (outerSandbox) outerSandbox.mounts.push(arg);
+      else fail(`Unknown command: ${arg}`);
+      continue;
+    }
+    if (arg === "--") { endOfOptions = true; continue; }
 
-    if (arg === "--help" || arg === "-h") help = true;
-    else if (arg === "--version" || arg === "-v") version = true;
-    else if (arg === "--resume" || arg === "-r") resume = true;
+    if (arg === "--resume" || arg === "-r") resume = true;
     else if (arg === "--prompt" || arg === "-p") {
       const value = args[index + 1];
-      if (value === undefined) return { kind: "error", message: `Missing prompt text after ${arg}` };
-      if (prompt !== undefined) return { kind: "error", message: "Only one --prompt is supported" };
-      prompt = value;
+      if (value === undefined) { fail(`Missing prompt text after ${arg}`); continue; }
       index += 1;
+      if (prompt !== undefined) { fail("Only one --prompt is supported"); continue; }
+      prompt = value;
     } else if (arg === "--statsFile" || arg === "--stats-file") {
       const value = args[index + 1];
-      if (value === undefined) return { kind: "error", message: `Missing file path after ${arg}` };
-      if (statsFile !== undefined) return { kind: "error", message: "Only one --statsFile is supported" };
-      statsFile = value;
+      if (value === undefined) { fail(`Missing file path after ${arg}`); continue; }
       index += 1;
+      if (statsFile !== undefined) { fail("Only one --statsFile is supported"); continue; }
+      statsFile = value;
     } else if (arg === "--override") overrideStatsFile = true;
-    else if (arg.startsWith("-")) return { kind: "error", message: `Unknown option: ${arg}` };
+    else if (arg.startsWith("-")) fail(`Unknown option: ${arg}`);
     else if (arg === "ss" && !outerSandbox) {
       if (login || resume || prompt !== undefined || statsFile !== undefined || overrideStatsFile) {
-        return { kind: "error", message: "Command 'ss' does not accept arguments or options." };
+        fail(SETUP_ARGUMENTS_ERROR);
+        continue;
       }
       setup = true;
-    } else if (arg === "login" && !outerSandbox?.mounts.length) login = true;
-    else if (!outerSandbox && (arg === "s" || arg === "sr")) {
+    } else if (arg === "login") {
+      // The grammar is `pum s [login] [directory ...]`. A trailing `login` is a
+      // mistake, and silently mounting it fails later with a confusing message.
+      if (outerSandbox?.mounts.length) fail("'login' must come before mount directories");
+      else login = true;
+    } else if (!outerSandbox && (arg === "s" || arg === "sr")) {
       outerSandbox = { mode: arg === "s" ? "write" : "read", mounts: [] };
     } else if (outerSandbox) outerSandbox.mounts.push(arg);
-    else return { kind: "error", message: `Unknown command: ${arg}` };
+    else fail(`Unknown command: ${arg}`);
   }
 
   if (help) return { kind: "help" };
   if (version) return { kind: "version" };
+  if (error !== undefined) return { kind: "error", message: error };
   if (setup) return { kind: "sandboxSetup" };
   if (login && prompt !== undefined) return { kind: "error", message: "Cannot combine login with --prompt" };
   if (outerSandbox && prompt !== undefined) {
@@ -137,6 +160,7 @@ Options:
   -p, --prompt <text>  Run one prompt without the TUI, print the answer, and exit.
   --statsFile <path>   Write a versioned JSON statistics artifact after a headless run.
   --override           Permit --statsFile to replace an existing file.
+  --                   End the options. Later arguments are directories.
 
 Commands:
   login            Open PUM with the provider login panel.
@@ -147,6 +171,8 @@ Commands:
 Sandbox mounts:
   Plain extra directories use the command default. Add :ro or :rw to select
   explicit access. PUM validates and canonicalizes every directory before start.
+  "login" must come before the directories. Put -- before a directory whose
+  name starts with a dash or is called "login".
 
 Non-interactive mode:
   "pum -p" runs the coding tools (read, write, edit, apply_patch, bash) with

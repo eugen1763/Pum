@@ -31,7 +31,7 @@ import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
 import { cleanupPendingPastedTexts } from "./pasted-text";
 import { cleanupBashOutputCaptures } from "./bash-output";
-import { shutdownSignals } from "./platform";
+import { shutdownSignals, signalExitCode } from "./platform";
 import { createShutdown } from "./shutdown";
 import { settleSyntaxHighlighting } from "./syntax";
 import { applyPatchExtension } from "./apply-patch";
@@ -329,10 +329,13 @@ export async function start(options: StartupOptions): Promise<void> {
       process.exit(code);
     },
   });
+  // Signal death is not a failure, so it exits with the conventional
+  // 128 + signal number (130 for SIGINT, 143 for SIGTERM) the way headless
+  // mode does. Only the fatal-error path below keeps 1.
   for (const signal of shutdownSignals()) {
     process.on(signal, () => {
       shuttingDown = true;
-      void shutdown(1);
+      void shutdown(signalExitCode(signal));
     });
   }
   // OpenTUI installs its own uncaughtException and unhandledRejection handlers,

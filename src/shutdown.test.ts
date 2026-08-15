@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createShutdown } from "./shutdown";
+import { shutdownSignals, signalExitCode } from "./platform";
 
 describe("graceful shutdown", () => {
   test("cleans temporary files and disposes the session before exit", async () => {
@@ -100,5 +101,40 @@ describe("graceful shutdown", () => {
       "destroy",
       "exit",
     ]);
+  });
+});
+
+describe("signal exit codes", () => {
+  test("uses 128 plus the signal number", () => {
+    expect(signalExitCode("SIGINT")).toBe(130);
+    expect(signalExitCode("SIGTERM")).toBe(143);
+    expect(signalExitCode("SIGHUP")).toBe(129);
+    expect(signalExitCode("SIGBREAK")).toBe(149);
+  });
+
+  test("falls back to 1 for a signal PUM does not handle", () => {
+    expect(signalExitCode("SIGUSR1")).toBe(1);
+  });
+
+  test("maps every handled shutdown signal on both platforms", () => {
+    for (const platform of ["linux", "win32"] as const) {
+      for (const signal of shutdownSignals(platform)) {
+        expect(signalExitCode(signal)).toBeGreaterThan(128);
+      }
+    }
+  });
+
+  test("carries the signal code through to the exit action", async () => {
+    const calls: string[] = [];
+    const shutdown = createShutdown({
+      unmount: () => {},
+      cleanup: () => {},
+      dispose: async () => {},
+      destroy: () => {},
+      exit: (code) => calls.push(`exit:${code}`),
+    });
+
+    await shutdown(signalExitCode("SIGINT"));
+    expect(calls).toEqual(["exit:130"]);
   });
 });

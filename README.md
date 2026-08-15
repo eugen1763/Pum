@@ -109,11 +109,14 @@ pum
 
 The package is named `pum-agent` because the bare `pum` name is already owned. The installed command is still `pum`.
 
+PUM runs on [Bun](https://bun.sh), not on Node. Install Bun first. `npm i -g pum-agent` copies the files, but `pum` then fails with `env: 'bun': No such file or directory`, because the command starts with `#!/usr/bin/env bun`.
+
 ## Command-line options
 
 ```text
 pum [options]
 pum login [options]
+pum -p "<text>" [options]
 pum s [login] [options] [directory[:ro|:rw] ...]
 pum sr [login] [options] [directory[:ro|:rw] ...]
 pum ss
@@ -124,6 +127,10 @@ pum ss
 | `-h`, `--help` | Print the command-line manual and exit |
 | `-v`, `--version` | Print the exact `pum-agent` package version and exit |
 | `-r`, `--resume` | Resume the latest session for the current directory |
+| `-p`, `--prompt <text>` | Run one prompt without the TUI, print the answer, and exit |
+| `--statsFile <path>` | Write a JSON statistics artifact after a headless run |
+| `--override` | Let `--statsFile` replace an existing file |
+| `--` | End the options; later arguments are directories |
 | `login` | Start PUM with the provider login panel open |
 | `s` | Start PUM in a writable outer `claudebox` sandbox |
 | `sr` | Start PUM with the current directory read-only |
@@ -131,7 +138,9 @@ pum ss
 
 Plain extra directories use the command default. Add `:ro` or `:rw` to select explicit access. `pum sr` always keeps the launch directory read-only, but it permits an explicit writable extra directory. A custom `PUM_DIR` must remain outside the project for `pum sr`.
 
-Help, version, and sandbox setup checks do not initialize the TUI, credentials, or sessions. Unknown options and commands return an error and a help hint.
+Write `login` before the directories. PUM rejects a later `login` instead of mounting it. Put `--` before a directory whose name starts with a dash or is called `login`.
+
+Help, version, and sandbox setup checks do not initialize the TUI, credentials, or sessions. Help and version print even when a later argument is invalid. Other unknown options and commands return an error and a help hint.
 
 Set `PUM_DIR` to override PUM's complete configuration and data directory. Set `PUM_CLAUDEBOX` to select a specific `claudebox` executable. Run `pum --help` for a concise directory summary. Enter `?` on an empty in-app prompt to see all controls.
 
@@ -348,7 +357,7 @@ Set `PUM_DIR` to override the complete PUM data directory.
 | `auth.json` | Provider credentials and custom-provider keys |
 | `models.json` | Custom endpoints and model metadata; submitted keys are not stored here |
 | `settings.json` | Model and thinking level managed by pi |
-| `pum.json` | Theme, animation, transcript output, search, writing, explanation, Check mode, sandbox, and subagent settings |
+| `pum.json` | Theme, animation, thinking traces, transcript output, search, writing, explanation, Check mode, extra Check mode roots (`checkPaths`), sandbox, Bash output limits (`bashOutput`), and subagent settings |
 | `theme.json` | Optional semantic color overrides |
 | `history.json` | Prompt history by working directory |
 | `prompt-stash.json` | Cached prompts by working directory (legacy filename) |
