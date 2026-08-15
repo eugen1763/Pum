@@ -25,8 +25,11 @@ import {
 import {
   CHECK_MODE_PROFILES,
   checkPathsForProject,
+  DEFAULT_TOOL_OUTPUT_LINES,
   MAX_ACTIVE_SUBAGENTS,
+  MAX_TOOL_OUTPUT_LINES,
   MIN_ACTIVE_SUBAGENTS,
+  MIN_TOOL_OUTPUT_LINES,
   SANDBOX_MODES,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
@@ -43,11 +46,12 @@ import {
   StreamLine,
   TextLine,
   ToolLine,
+  transcriptForThinkingVisibility,
   type Line,
   type PendingLine,
   type Role,
 } from "./transcript";
-import { editCounts, toolArg, type ToolCall } from "./tool-line";
+import { editCounts, toolArg, toolResultOutput, type ToolCall } from "./tool-line";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
 import { appendHistory, loadHistory, removeHistory } from "./history";
@@ -70,6 +74,7 @@ import {
   withSearchRoute,
 } from "./web-search";
 import { matchingCommands, moveCommandSelection } from "./commands";
+import { applyPathCompletion, pathCompletions, type PathCompletion } from "./path-autocomplete";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
 import type { SessionHistoryItem } from "./session-history-metadata";
@@ -563,7 +568,10 @@ export function App({
     : undefined;
   const questionnaire = questionnaireManager?.current();
   const spawnPreview = spawnPreviewManager?.current();
-  const visibleTx = activeAgent?.transcript ?? tx;
+  const visibleTx = transcriptForThinkingVisibility(
+    activeAgent?.transcript ?? tx,
+    settings.showThinking,
+  );
   const visibleBusy = activeAgent
     ? activeAgent.status === "starting" || activeAgent.status === "running"
     : busy;
@@ -585,7 +593,7 @@ export function App({
     width - 2 - promptRightColumns - inputHint.length,
   );
   const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
-  const visibleSettingRows = filterSettingsRows(settingsQuery);
+  const visibleSettingRows = filterSettingsRows(settingsQuery, settings.explanationStrength);
   const visibleModels = useMemo(() => filterModels(
     modelRuntime.getAvailableSnapshot(),
     modelQuery,
@@ -605,6 +613,13 @@ export function App({
   const agentSelectorCursorRef = useRef(0);
   const triggerCursorRef = useRef(0);
   const commandCursorRef = useRef(0);
+  const pathCompletionCycle = useRef<{
+    sourceValue: string;
+    completions: PathCompletion[];
+    index: number;
+    currentValue: string;
+    currentCursor: number;
+  } | null>(null);
   const stashRef = useRef(stash);
   const stashOpenRef = useRef(false);
   const stashCursorRef = useRef(-1);
@@ -1189,6 +1204,7 @@ export function App({
                   : event.toolName.startsWith("message_cache_")
                     ? messageCacheDetail(event.result)
                     : undefined,
+            output: toolResultOutput(event.result),
           });
           break;
         case "agent_start":
@@ -2051,6 +2067,12 @@ export function App({
     webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
+    toolOutputLines: { step: (step) => update({
+      toolOutputLines: Math.max(
+        MIN_TOOL_OUTPUT_LINES,
+        Math.min(MAX_TOOL_OUTPUT_LINES, (settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES) + step),
+      ),
+    }) },
     checkMode: { step: stepCheckMode },
     sandboxMode: { step: stepSandboxMode },
     checkModel: { enter: () => {
@@ -2099,6 +2121,7 @@ export function App({
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
+    toolOutputLines: `‹ ${settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES} ›`,
     checkMode: `‹ ${settings.checkMode} ›`,
     sandboxMode: `‹ ${settings.sandboxMode ?? "auto"} ›`,
     checkModel: `${settings.checkModel} ›`,
@@ -2111,7 +2134,7 @@ export function App({
   };
 
   const updateSettingsQuery = (query: string) => {
-    const rows = filterSettingsRows(query);
+    const rows = filterSettingsRows(query, settings.explanationStrength);
     setSettingsQuery(query);
     setSelectedSettingId((current) =>
       rows.some((row) => row.id === current) ? current : rows[0]?.id ?? null,
@@ -2647,11 +2670,37 @@ export function App({
         queueMicrotask(() => inputRef.current?.focus());
         return;
       }
-      if (activeAgentId) return;
-      if (commandMatches.length > 0 && !/\s/.test(inputValue)) {
+      if (!activeAgentId && commandMatches.length > 0 && !/\s/.test(inputValue)) {
         key.stopPropagation();
         const selected = commandMatches[Math.min(commandCursorRef.current, commandMatches.length - 1)]!;
         setEditorText(selected.name);
+        return;
+      }
+
+      const inputCursor = inputRef.current?.cursorOffset ?? inputValue.length;
+      const previousCycle = pathCompletionCycle.current;
+      const continuing = previousCycle !== null
+        && previousCycle.currentValue === inputValue
+        && previousCycle.currentCursor === inputCursor;
+      const completions = continuing
+        ? previousCycle!.completions
+        : pathCompletions(inputValue, inputCursor, cwd);
+      if (completions.length > 0) {
+        key.stopPropagation();
+        const index = continuing
+          ? (previousCycle!.index + 1) % completions.length
+          : 0;
+        const sourceValue = continuing ? previousCycle!.sourceValue : inputValue;
+        const completed = applyPathCompletion(sourceValue, completions[index]!);
+        setEditorText(completed.value, completed.cursorOffset, true);
+        pathCompletionCycle.current = {
+          sourceValue,
+          completions,
+          index,
+          currentValue: completed.value,
+          currentCursor: completed.cursorOffset,
+        };
+        histCursor.current = null;
         return;
       }
     }
@@ -2860,7 +2909,14 @@ export function App({
             const workingCaret = visibleBusy && !visibleTx.stream && i === visibleTx.lines.length - 1;
             const row =
               line.kind === "tool" ? (
-                <ToolLine theme={theme} call={line.call} workingCaret={workingCaret} />
+                <ToolLine
+                  theme={theme}
+                  call={line.call}
+                  workingCaret={workingCaret}
+                  outputLines={settings.explanationStrength === "detailed"
+                    ? settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES
+                    : undefined}
+                />
               ) : line.kind === "agent-message" ? (
                 <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
               ) : (

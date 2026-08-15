@@ -13,7 +13,7 @@ import {
   useSpinner,
 } from "./animation";
 import type { Theme } from "./theme";
-import type { ToolCall } from "./tool-line";
+import { toolOutputPreview, type ToolCall } from "./tool-line";
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
@@ -38,6 +38,20 @@ export type PendingTranscriptState = {
   stream: { kind: "assistant" | "thinking"; text: string } | null;
   pending: PendingLine[];
 };
+
+/** Hide retained reasoning without changing the authoritative transcript state. */
+export function transcriptForThinkingVisibility<T extends PendingTranscriptState>(
+  value: T,
+  showThinking: boolean,
+): T {
+  if (showThinking) return value;
+  const lines = value.lines.filter(
+    (line) => line.kind !== "text" || line.role !== "thinking",
+  );
+  const stream = value.stream?.kind === "thinking" ? null : value.stream;
+  if (lines.length === value.lines.length && stream === value.stream) return value;
+  return { ...value, lines, stream };
+}
 
 /** OpenTUI 0.5.1 supports Markdown selection at runtime but omits the React prop. */
 function SelectableMarkdown({ ref, ...props }: MarkdownProps) {
@@ -390,10 +404,13 @@ export function ToolLine({
   theme,
   call,
   workingCaret = false,
+  outputLines,
 }: {
   theme: Theme;
   call: ToolCall;
   workingCaret?: boolean;
+  /** Omit this value to hide tool-result output. */
+  outputLines?: number;
 }) {
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
@@ -401,6 +418,9 @@ export function ToolLine({
   const toolColor = failed ? theme.error : rejected ? theme.rejection : theme.tool;
   const argColor = failed ? theme.error : rejected ? theme.rejection : theme.toolArg;
   const detailColor = failed ? theme.error : rejected ? theme.rejection : theme.dim;
+  const output = call.output && outputLines !== undefined
+    ? toolOutputPreview(call.output, outputLines)
+    : undefined;
 
   const prefix = call.arg
     ? new StyledText([fg(toolColor)(call.name), fg(detailColor)(" · ")])
@@ -454,6 +474,28 @@ export function ToolLine({
             wrapMode="word"
             style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
           />
+        </Row>
+      ) : null}
+      {output ? (
+        <Row glyph="│ " glyphColor={detailColor}>
+          <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+            <text
+              content={output.text}
+              fg={detailColor}
+              selectable
+              wrapMode="word"
+              style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+            />
+            {output.omittedLines > 0 ? (
+              <text
+                content={`… ${output.omittedLines} more line${output.omittedLines === 1 ? "" : "s"}`}
+                fg={theme.dim}
+                selectable
+                wrapMode="none"
+                style={{ flexShrink: 0 }}
+              />
+            ) : null}
+          </box>
         </Row>
       ) : null}
     </box>

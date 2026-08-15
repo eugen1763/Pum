@@ -1,5 +1,8 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { posix, win32 } from "node:path";
+import { isCredentialSensitivePath } from "./credential-path";
+
+export { isCredentialSensitivePath } from "./credential-path";
 
 export type CheckPolicyProfile = "strict" | "balanced" | "ask";
 export type CheckPolicyDecision = "allow" | "ask" | "block";
@@ -203,10 +206,6 @@ const PATH_OPERAND_COMMANDS = new Set([
 const PRIVILEGE_COMMANDS = new Set(["sudo", "doas", "su", "pkexec", "runas"]);
 const PERSISTENCE_COMMANDS = new Set(["crontab", "at", "schtasks", "launchctl"]);
 const CREDENTIAL_COMMANDS = new Set(["pass", "secret-tool", "security", "cmdkey", "keychain"]);
-const CREDENTIAL_SEGMENTS = new Set([
-  ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".npmrc", ".pypirc", ".netrc",
-  "credentials", "credentials.json", "auth.json", "id_rsa", "id_ed25519", "known_hosts",
-]);
 const SAFE_READ_COMMANDS = new Set([
   "pwd", "printf", "echo", "true", "false", "test", "[", "ls", "tree", "cat", "head", "tail",
   "wc", "stat", "file", "du", "realpath", "readlink", "grep", "rg", "git",
@@ -804,14 +803,6 @@ function isAllowedRoot(value: string, cwd: string, projectCwd: string, allowedPa
   const absolute = flavor.resolve(cwd, operand);
   return [projectCwd, ...allowedPaths]
     .some((root) => flavor.relative(flavor.resolve(root), absolute) === "");
-}
-
-export function isCredentialSensitivePath(value: string): boolean {
-  const lower = value.toLowerCase().replaceAll("\\", "/");
-  const segments = lower.split("/").filter(Boolean);
-  if (segments.some((segment) => CREDENTIAL_SEGMENTS.has(segment))) return true;
-  return segments.some((segment) => /^\.env(?:\..+)?$/.test(segment))
-    || lower.includes("secrets/") || lower.endsWith("/shadow") || lower.endsWith("/passwd");
 }
 
 function isNullDevice(value: string): boolean {

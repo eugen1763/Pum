@@ -18,6 +18,9 @@ export const SANDBOX_MODES = ["auto", "require", "off"] as const;
 export const MIN_ACTIVE_SUBAGENTS = 1;
 export const MAX_ACTIVE_SUBAGENTS = 25;
 export const DEFAULT_MAX_ACTIVE_SUBAGENTS = 10;
+export const MIN_TOOL_OUTPUT_LINES = 1;
+export const MAX_TOOL_OUTPUT_LINES = 50;
+export const DEFAULT_TOOL_OUTPUT_LINES = 5;
 export const MAX_CHECK_PATHS_PER_PROJECT = 16;
 
 export type CheckPathsByProject = Record<string, string[]>;
@@ -61,6 +64,15 @@ export function normalizeMaxActiveSubagents(value: unknown): number {
     : DEFAULT_MAX_ACTIVE_SUBAGENTS;
 }
 
+export function normalizeToolOutputLines(value: unknown): number {
+  return typeof value === "number"
+    && Number.isInteger(value)
+    && value >= MIN_TOOL_OUTPUT_LINES
+    && value <= MAX_TOOL_OUTPUT_LINES
+    ? value
+    : DEFAULT_TOOL_OUTPUT_LINES;
+}
+
 export function isCheckModeProfile(value: unknown): value is CheckModeProfile {
   return CHECK_MODE_PROFILES.includes(value as CheckModeProfile);
 }
@@ -94,6 +106,8 @@ export type PumSettings = {
   /** Additional canonical directory roots allowed by the filesystem sandbox and Check mode, keyed by launch project. */
   checkPaths?: CheckPathsByProject;
   maxActiveSubagents: number;
+  /** Tool-result source lines shown when detailed explanations are enabled. Legacy settings omit this field. */
+  toolOutputLines?: number;
 };
 
 const SETTINGS_PATH = join(AGENT_DIR, "pum.json");
@@ -111,6 +125,7 @@ const DEFAULTS: PumSettings = {
   sandboxMode: "auto",
   checkPaths: {},
   maxActiveSubagents: DEFAULT_MAX_ACTIVE_SUBAGENTS,
+  toolOutputLines: DEFAULT_TOOL_OUTPUT_LINES,
 };
 
 export function normalizeSettings(parsed: unknown): PumSettings {
@@ -140,6 +155,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     sandboxMode: isSandboxMode(merged.sandboxMode) ? merged.sandboxMode : DEFAULTS.sandboxMode,
     checkPaths: normalizeCheckPathsByProject(merged.checkPaths),
     maxActiveSubagents: normalizeMaxActiveSubagents(merged.maxActiveSubagents),
+    toolOutputLines: normalizeToolOutputLines(merged.toolOutputLines),
   };
 }
 

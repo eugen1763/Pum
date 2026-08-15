@@ -1,4 +1,5 @@
 import type { Model } from "@earendil-works/pi-ai";
+import type { ExplanationStrength } from "./explanation-strength";
 import type { Theme } from "./theme";
 import { PopupFrame } from "./popup-frame";
 
@@ -21,6 +22,7 @@ export type SettingRowId =
   | "thinkingLevel"
   | "showThinking"
   | "maxActiveSubagents"
+  | "toolOutputLines"
   | "providers"
   | "model";
 
@@ -43,6 +45,7 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "maxActiveSubagents", label: "Active subagents", category: "Agent", keywords: "parallel capacity maximum limit starting running workers", description: "Set the maximum number of starting and running managed subagents from 1 through 25." },
   { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose ste simplified technical english", description: "Add per-turn response guidance. STE requests concise Simplified Technical English." },
   { id: "explanationStrength", label: "Explanations", category: "Agent", keywords: "progress updates output none simple detailed rationale", description: "Choose how much regular output explains the agent plan, actions, decisions, and results." },
+  { id: "toolOutputLines", label: "Tool output lines", category: "Agent", keywords: "detailed result preview length limit read bash commands", description: "Set the source-line limit for every tool result shown with detailed explanations." },
   { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },
   { id: "checkMode", label: "Check mode", category: "Safety", keywords: "profile strict balanced ask verify tools hard block approval bash edit patch", description: "Choose off, strict, balanced, or ask. Hard security rules apply to every active profile." },
   { id: "sandboxMode", label: "Sandbox", category: "Safety", keywords: "os isolation auto require off enforcement fallback bash", description: "Choose automatic fallback, required OS enforcement, or no OS sandbox for Bash commands." },
@@ -51,10 +54,16 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "clearCheckApprovals", label: "Clear approvals", category: "Safety", keywords: "remove reset exact project approvals ask", description: "Remove exact Check mode approvals stored for this project." },
 ];
 
-export function filterSettingsRows(query: string): SettingRow[] {
+export function filterSettingsRows(
+  query: string,
+  explanationStrength: ExplanationStrength = "detailed",
+): SettingRow[] {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return [...SETTINGS_ROWS];
-  return SETTINGS_ROWS.filter((row) => {
+  const available = explanationStrength === "detailed"
+    ? SETTINGS_ROWS
+    : SETTINGS_ROWS.filter((row) => row.id !== "toolOutputLines");
+  if (terms.length === 0) return [...available];
+  return available.filter((row) => {
     const haystack = `${row.label} ${row.category} ${row.keywords} ${row.description}`.toLocaleLowerCase();
     return terms.every((term) => haystack.includes(term));
   });

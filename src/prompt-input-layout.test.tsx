@@ -147,6 +147,15 @@ describe("prompt input layout", () => {
     expect(frame.match(/❯/gu)).toHaveLength(1);
   });
 
+  test("completes a project path with Tab", async () => {
+    const setup = await renderApp(70, 20);
+    await setup.mockInput.typeText("review src/app.t");
+    setup.mockInput.pressTab();
+    await settle(setup);
+
+    expect(textarea(setup.renderer.root)?.plainText).toBe("review src/app.tsx");
+  });
+
   test("wraps four columns before the former terminal-edge boundary", async () => {
     const setup = await renderApp(40, 16);
 

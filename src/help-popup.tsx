@@ -60,7 +60,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/check-path", "Manage extra Check mode paths"],
       ["/triggers", "Manage external triggers"],
       ["/worktree", "Create a managed worktree"],
-      ["Tab", "Complete a command preview"],
+      ["Tab", "Complete a command or local path"],
     ],
   },
   {

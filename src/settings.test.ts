@@ -5,8 +5,11 @@ import { join } from "node:path";
 import {
   CHECK_MODE_PROFILES,
   DEFAULT_MAX_ACTIVE_SUBAGENTS,
+  DEFAULT_TOOL_OUTPUT_LINES,
   MAX_ACTIVE_SUBAGENTS,
+  MAX_TOOL_OUTPUT_LINES,
   MIN_ACTIVE_SUBAGENTS,
+  MIN_TOOL_OUTPUT_LINES,
   normalizeSettings,
   SANDBOX_MODES,
   WORKING_RULE_ANIMATION_MODES,
@@ -19,6 +22,7 @@ describe("PUM settings migration", () => {
     expect(settings.explanationStrength).toBe("simple");
     expect(settings.animations).toBe(true);
     expect(settings.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
+    expect(settings.toolOutputLines).toBe(DEFAULT_TOOL_OUTPUT_LINES);
     expect(settings.checkPaths).toEqual({});
     expect(settings.sandboxMode).toBe("auto");
   });
@@ -64,6 +68,18 @@ describe("PUM settings migration", () => {
     for (const invalid of [0, 26, 4.5, "12", null]) {
       expect(normalizeSettings({ maxActiveSubagents: invalid } as any).maxActiveSubagents)
         .toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
+    }
+  });
+
+  test("validates the detailed tool-output line limit", () => {
+    expect(MIN_TOOL_OUTPUT_LINES).toBe(1);
+    expect(MAX_TOOL_OUTPUT_LINES).toBe(50);
+    expect(normalizeSettings({ toolOutputLines: 1 }).toolOutputLines).toBe(1);
+    expect(normalizeSettings({ toolOutputLines: 17 }).toolOutputLines).toBe(17);
+    expect(normalizeSettings({ toolOutputLines: 50 }).toolOutputLines).toBe(50);
+    for (const invalid of [0, 51, 4.5, "5", null]) {
+      expect(normalizeSettings({ toolOutputLines: invalid } as any).toolOutputLines)
+        .toBe(DEFAULT_TOOL_OUTPUT_LINES);
     }
   });
 
@@ -136,6 +152,7 @@ describe("PUM settings persistence", () => {
       `  sandboxMode: "off",`,
       `  checkPaths: {},`,
       `  maxActiveSubagents: 7,`,
+      `  toolOutputLines: 9,`,
       `};`,
       `saveSettings(settings);`,
       `console.log(JSON.stringify(loadSettings()));`,
@@ -158,6 +175,7 @@ describe("PUM settings persistence", () => {
       sandboxMode: "off",
       checkPaths: {},
       maxActiveSubagents: 7,
+      toolOutputLines: 9,
     });
   });
 
@@ -183,5 +201,6 @@ describe("PUM settings persistence", () => {
     expect(loaded.checkMode).toBe("off");
     expect(loaded.sandboxMode).toBe("auto");
     expect(loaded.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
+    expect(loaded.toolOutputLines).toBe(DEFAULT_TOOL_OUTPUT_LINES);
   });
 });
