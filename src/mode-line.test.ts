@@ -97,8 +97,17 @@ describe("mode line narrow-terminal priority", () => {
     ]);
   });
 
+  test("the spare columns are shared, so neither text starves the other", () => {
+    const wordy = { state: "on", instructions: "a".repeat(300) } as const;
+    const labels = texts({ goal: goal("y".repeat(300)), afk: wordy, ruleWidth: 200 });
+    expect(labels[0]).toContain("AFK · on · aaa");
+    expect(labels[1]).toContain("GOAL · active · yyy");
+    const spread = labels.map((label) => statusTextWidth(label));
+    expect(Math.abs(spread[0]! - spread[1]!)).toBeLessThanOrEqual(10);
+  });
+
   test("the goal text goes first", () => {
-    expect(shrink(100)).toEqual(["AFK · on · prefer safe options  ", "GOAL · active  "]);
+    expect(shrink(60)).toEqual(["AFK · on · p  ", "GOAL · active  "]);
   });
 
   test("the AFK instruction preview goes next", () => {
@@ -129,11 +138,31 @@ describe("mode line narrow-terminal priority", () => {
     expect(shrink(34)).toEqual(["AFK · on  ", "GOAL · active  "]);
   });
 
-  test("a rule wide enough for the goal state never hides it for the preview", () => {
-    for (let ruleWidth = 12; ruleWidth <= 200; ruleWidth++) {
-      const labels = shrink(ruleWidth);
-      const showsPreview = labels[0]?.startsWith("AFK · on · ") ?? false;
-      if (showsPreview) expect(labels.length).toBe(2);
+  test("a narrowing rule drops in priority order and never puts anything back", () => {
+    const parts = (labels: string[]) => {
+      const afk = labels.find((label) => label.startsWith("AFK"));
+      const goal = labels.find((label) => label.startsWith("GOAL"));
+      return {
+        afkState: afk ? 1 : 0,
+        goalState: goal ? 1 : 0,
+        preview: afk && afk.split(" · ").length > 2 ? 1 : 0,
+        goalText: goal && goal.split(" · ").length > 2 ? 1 : 0,
+      };
+    };
+    for (const instructions of ["prefer safe options", "a".repeat(300)]) {
+      for (const text of ["ship the release", "模型".repeat(80)]) {
+        let previous = parts([]);
+        for (let ruleWidth = 0; ruleWidth <= 300; ruleWidth++) {
+          const now = parts(texts({ goal: goal(text), afk: { state: "on", instructions }, ruleWidth }));
+          for (const key of ["afkState", "goalState", "preview", "goalText"] as const) {
+            expect(now[key]).toBeGreaterThanOrEqual(previous[key]);
+          }
+          // The goal state outranks the preview, which outranks the goal text.
+          if (now.preview) expect(now.goalState).toBe(1);
+          if (now.goalText) expect(now.preview).toBe(1);
+          previous = now;
+        }
+      }
     }
   });
 });

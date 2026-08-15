@@ -34,6 +34,9 @@ export type AfkRuleState = {
   instructions?: string | null;
 };
 
+/** A preview needs the separator and a column of text to say anything at all. */
+const MIN_PREVIEW_COLUMNS = statusTextWidth(LABEL_SEPARATOR) + 1;
+
 /** Narrowest AFK label worth painting: the prefix, this state, the padding. */
 const afkMinColumns = (afk: AfkRuleState): number =>
   statusTextWidth(`${PREFIX}${LABEL_SEPARATOR}${afk.state}`) + GOAL_LABEL_RIGHT_PADDING;
@@ -105,8 +108,6 @@ export function modeLineLabels(input: ModeLineInput): WorkingRuleLabel[] {
   let left = budget;
 
   let afkPainted = afk ? afkLabel(afk, left, 0) : null;
-  // The budget already reserves the state, so this only satisfies the compiler.
-  if (afk && !afkPainted) return [];
   if (afkPainted) left -= afkPainted.width;
 
   let goalPainted = goal ? goalLabelWithin(goal, left, false) : null;
@@ -116,10 +117,15 @@ export function modeLineLabels(input: ModeLineInput): WorkingRuleLabel[] {
   // both, a stub of a preview is noise, so the goal takes it down with it.
   const goalSqueezedOut = goal !== null && goalPainted === null;
   if (afk && afkPainted && !goalSqueezedOut) {
-    const room = afkPainted.width + left;
+    // Long instructions would otherwise eat every spare column and the goal
+    // would never say what it is. Half the spare is the preview's, but it keeps
+    // its own minimum, so the goal text is the first of the two to run out.
+    const share = Math.max(MIN_PREVIEW_COLUMNS, Math.ceil(left / 2));
+    const spare = goalPainted ? Math.min(left, share) : left;
+    const room = afkPainted.width + spare;
     const withPreview = afkLabel(afk, room, room);
     if (withPreview) {
-      left = room - withPreview.width;
+      left -= withPreview.width - afkPainted.width;
       afkPainted = withPreview;
     }
   }
