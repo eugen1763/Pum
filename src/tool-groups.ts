@@ -4,6 +4,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { Type } from "typebox";
 import { GOAL_VERDICT_TOOL_NAME } from "./goal-judge";
 import { TODO_TOOL_NAMES } from "./todo-tools";
+import { AFK_ANSWER_TOOL_NAME } from "./afk-delegate";
 
 /**
  * Always-present tool that reveals hidden tool groups in this thread.
@@ -140,6 +141,13 @@ export function mainAllowedToolNames(): string[] {
 }
 
 /** The complete tool list of a goal judge session. */
+/** An AFK delegate holds one tool. No files, no shell, no network, no delegation. */
+export const AFK_TOOL_NAMES = [AFK_ANSWER_TOOL_NAME] as const;
+
+export function afkAllowedToolNames(): string[] {
+  return [...AFK_TOOL_NAMES];
+}
+
 export function judgeAllowedToolNames(): string[] {
   return [...JUDGE_TOOL_NAMES];
 }

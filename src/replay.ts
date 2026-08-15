@@ -11,6 +11,7 @@ import {
   AGENT_MESSAGE_CUSTOM_TYPE,
   AGENT_MESSAGE_DISPLAY_TYPE,
   SUBAGENT_WAKE_PREFIX,
+  AGENT_NOTICE_CUSTOM_TYPE,
   TOOL_EVENT_CUSTOM_TYPE,
   TRIGGER_EVENT_CUSTOM_TYPE,
   type AgentMessageData,
@@ -123,6 +124,15 @@ function managedShellReplayText(event: ManagedShellLifecycleEvent): string {
     : `${label} exited with ${result}.`;
 }
 
+/** A display-only notice PUM wrote into a transcript. Never model context. */
+function agentNoticeOf(entry: any): Line | undefined {
+  if (entry?.type !== "custom" || entry.customType !== AGENT_NOTICE_CUSTOM_TYPE) return undefined;
+  const line = entry.data?.line;
+  if (!line || typeof line.text !== "string" || line.kind !== "text") return undefined;
+  const role = line.role === "error" ? "error" : "system";
+  return { kind: "text", role, text: line.text };
+}
+
 function toolEventOf(entry: any): ToolCall | undefined {
   if (entry?.type !== "custom" || entry.customType !== TOOL_EVENT_CUSTOM_TYPE) return undefined;
   const data = entry.data;
@@ -211,6 +221,12 @@ export function replayEntries(
           text: triggerEvent.text,
         });
       }
+      continue;
+    }
+
+    const notice = agentNoticeOf(entry);
+    if (notice) {
+      lines.push(notice);
       continue;
     }
 
