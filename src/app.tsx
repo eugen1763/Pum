@@ -116,7 +116,7 @@ import { addTurnUsage, usageFromEntries } from "./agent-usage";
 import { AgentSelectorPopup, buildAgentTree, moveAgentSelection } from "./agent-selector";
 import { LoginPopup, type LoginPage } from "./login-popup";
 import { LoginController } from "./login-controller";
-import { providerLoginMethods, refreshAndSelectModel } from "./login-flow";
+import { providerLoginMethods } from "./login-flow";
 import { questionnaireDetail, QuestionnaireManager } from "./questionnaire";
 import { QuestionnairePopup } from "./questionnaire-popup";
 import {
@@ -1112,10 +1112,31 @@ export function App({
     setSelectedStash(-1);
   };
 
+  // The attachment goes to the selected transcript, so its model decides. An
+  // unknown child model keeps the main answer instead of blocking the paste.
+  const imageInputSupported = () => {
+    const targetId = activeAgentIdRef.current;
+    const targetModelId = targetId
+      ? subagentManager.getAgents().find((agent) => agent.id === targetId)?.modelId
+      : undefined;
+    const target = targetModelId
+      ? modelRuntime.getAvailableSnapshot().find(
+        (model) => `${model.provider}/${model.id}` === targetModelId,
+      )
+      : undefined;
+    return (target ?? session.agent.state.model).input.includes("image");
+  };
+
   const pasteClipboardImage = async () => {
     if (imagePasteBusy.current) return;
-    if (!session.agent.state.model.input.includes("image")) {
-      append({ kind: "text", role: "error", text: "the current model does not support image input" });
+    if (!imageInputSupported()) {
+      append({
+        kind: "text",
+        role: "error",
+        text: activeAgentIdRef.current
+          ? "the selected agent's model does not support image input"
+          : "the current model does not support image input",
+      });
       return;
     }
 
@@ -1242,6 +1263,18 @@ export function App({
       return { ...f, lines: [...f.lines, line] };
     });
 
+  /** A retried settlement delivery repeats its line, so keep one row per id. */
+  const appendMainLine = (line: Line) =>
+    setTx((t) => {
+      const messageId = line.kind === "agent-message" ? line.messageId : undefined;
+      const duplicate = messageId !== undefined && t.lines.some(
+        (item) => item.kind === "agent-message" && item.messageId === messageId,
+      );
+      if (duplicate) return t;
+      const f = flushed(t);
+      return { ...f, lines: [...f.lines, line] };
+    });
+
   const addPending = (pending: PendingLine) =>
     setTx((value) => ({ ...value, pending: [...value.pending, pending] }));
 
@@ -1302,7 +1335,7 @@ export function App({
 
   useEffect(
     () => subagentManager.subscribe((event) => {
-      if (event.type === "main-line") append(event.line);
+      if (event.type === "main-line") appendMainLine(event.line);
       else if (event.type === "main-pending-add") addPending(event.pending);
       else if (event.type === "main-pending-resolve") resolvePending(event.id);
       else if (event.type === "main-pending-drop") dropPending(event.id);
@@ -1718,21 +1751,6 @@ export function App({
     statsOpenRef.current = false;
     setLoginOpen(true);
     loginControllerRef.current?.open();
-  };
-
-  const finishLogin = async (providerId: string, providerName: string) => {
-    const selected = await refreshAndSelectModel(
-      modelRuntime,
-      providerId,
-      (model) => session.setModel(model),
-      AbortSignal.timeout(15_000),
-    );
-    if (selected) {
-      setModelId(selected.id);
-      setLoginPage({ kind: "success", message: `${providerName} is ready. Selected ${selected.id}.` });
-    } else {
-      setLoginPage({ kind: "success", message: `${providerName} is configured. Open Settings to select an available model.` });
-    }
   };
 
   const selectModel = (model: Model<any>) => {
@@ -2253,6 +2271,7 @@ export function App({
         line: userLine,
         deliveryText: promptText,
         recallable,
+        hasAttachments: images.length > 0,
       };
       addPending(pending);
       try {
@@ -3386,8 +3405,11 @@ export function App({
         const target = selected ?? "main";
         if (confirmsCancellation(lastCancelPress.current, cancelTarget.current, target, now)) {
           resetCancelArm();
-          if (selected) void subagentManager.abortAgent(selected);
-          else cancel();
+          if (selected) {
+            void subagentManager.abortAgent(selected).catch((error) =>
+              append({ kind: "text", role: "error", text: String(error) }),
+            );
+          } else cancel();
         } else {
           lastCancelPress.current = now;
           cancelTarget.current = target;

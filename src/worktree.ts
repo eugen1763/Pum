@@ -53,7 +53,9 @@ export function randomWorktreeName(): string {
   const bytes = randomBytes(4);
   const adjective = ADJECTIVES[bytes[0]! % ADJECTIVES.length]!;
   const noun = NOUNS[bytes[1]! % NOUNS.length]!;
-  return `${adjective}-${noun}-${bytes.toString("hex").slice(0, 4)}`;
+  // The suffix uses the two bytes the words did not consume. Reusing the word
+  // bytes would repeat what the words already say and add no entropy.
+  return `${adjective}-${noun}-${bytes.toString("hex").slice(4)}`;
 }
 
 async function repositoryRoot(cwd: string): Promise<string> {

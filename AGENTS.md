@@ -106,7 +106,7 @@ bun run start    # open the TUI in the current directory
 These were chosen deliberately. Change them only on purpose.
 
 - **Bun** as the runtime. OpenTUI's renderer needs it.
-- **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for direct TUI startup (or `src/headless.ts` for `-p`). Unknown options and commands exit with code 2. Startup accepts `login`, `-r`/`--resume`, and `-p`/`--prompt <text>`. `pum s` and `pum sr` launch the TUI through the outer sandbox. `pum ss` probes the runtime without starting the TUI.
+- **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for direct TUI startup (or `src/headless.ts` for `-p`). Unknown options and commands exit with code 2, but `-h`/`--help` and `-v`/`--version` print and exit 0 even when a later argument is invalid. `--` ends option parsing, so an operand may start with `-`. In `pum s`/`pum sr` the `login` keyword must come before any mount directory, so a directory genuinely named `login` stays mountable after `--`. Startup accepts `login`, `-r`/`--resume`, and `-p`/`--prompt <text>`. `pum s` and `pum sr` launch the TUI through the outer sandbox. `pum ss` probes the runtime without starting the TUI.
 - **`-p` is headless.** `pum -p "<text>"` runs one prompt in `src/headless.ts` with only read, write, edit, apply_patch, and bash. It keeps the configured Check mode (on/off), sandbox, writing style, and explanation strength. Interactive tools (questionnaire, enable_tools, subagents, triggers, message cache) are not registered. The session persists to the normal per-directory store, so `-r` and the TUI can continue it. Headless mode does not combine with `pum s` or `pum sr` in the current launcher protocol.
 - **`@earendil-works/pi-coding-agent`**, not `pi-ai` on its own. It brings the
   agent loop, session files, and the `read`/`write`/`edit`/`bash` tools. Using
@@ -260,6 +260,12 @@ These were chosen deliberately. Change them only on purpose.
   working-directory identity, history also retains the 100 most recent sent
   occurrences not reserved by the stash. Duplicate text uses occurrence counts,
   not a set. Loads and mutations reconcile legacy keys and persist atomically.
+  The stash itself is bounded per working directory (500 entries, 1M characters)
+  because agent tools can add to it without limit; eviction takes the oldest
+  executed entries first and never drops the newest. An exclusive lock guards the
+  read-modify-write, so two PUM processes sharing a config directory cannot drop
+  each other's keys; a stale lock expires and a lock that cannot be taken is
+  skipped rather than failing the write.
 - **Message-cache tools bind ownership and routing outside model input.** Legacy
   rows are user-owned. Agent rows store the exact creator identity and display
   name. An agent deletes only its own rows. Sends accept stable IDs and use the

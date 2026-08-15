@@ -1927,6 +1927,7 @@ export class SubagentManager {
       line: { kind: "text", role: "user", text: displayText },
       deliveryText: text,
       recallable,
+      hasAttachments: images.length > 0,
     };
     this.addPending(record, pending);
     record.userInstructionNotices ??= new Map();

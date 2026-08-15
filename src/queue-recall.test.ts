@@ -57,6 +57,42 @@ describe("queued user message recall", () => {
     expect(queue.queues().steering).toEqual(["agent event"]);
   });
 
+  test("refuses the recall when another queued message carries attachments", async () => {
+    const queue = queuedSession(["with image", "typed"]);
+    const pending = [
+      { ...user("image", "with image"), recallable: false, hasAttachments: true },
+      user("typed", "typed"),
+    ];
+
+    await expect(recallNewestQueuedUserMessage(queue.session, pending))
+      .rejects.toThrow("cannot recall: it would drop 1 queued message that cannot be restored");
+    expect(queue.queues()).toEqual({ steering: ["with image", "typed"], followUp: [] });
+  });
+
+  test("still recalls while a generated coordination prompt is queued", async () => {
+    // Generated prompts are not restored into the draft, but they carry no
+    // attachments, so they must not block recall of the user's own message.
+    const queue = queuedSession(["cached orchestration", "typed"]);
+    const recalled = await recallNewestQueuedUserMessage(queue.session, [
+      { ...user("cache", "cached orchestration"), recallable: false },
+      user("typed", "typed"),
+    ]);
+
+    expect(recalled).toEqual({ id: "typed", text: "typed" });
+    expect(queue.queues().steering).toEqual(["cached orchestration"]);
+  });
+
+  test("recalls when an unrestorable pending message already left the queue", async () => {
+    const queue = queuedSession(["typed"]);
+    const recalled = await recallNewestQueuedUserMessage(queue.session, [
+      { ...user("image", "delivered image"), recallable: false, hasAttachments: true },
+      user("typed", "typed"),
+    ]);
+
+    expect(recalled).toEqual({ id: "typed", text: "typed" });
+    expect(queue.queues().steering).toEqual([]);
+  });
+
   test("restores all messages when insertion wins the race before clearQueue", async () => {
     const queue = queuedSession(["race"]);
     const originalClear = queue.session.clearQueue;

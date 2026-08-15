@@ -10,6 +10,7 @@ import {
   listWorktrees,
   mergeWorktree,
   parseWorktreePorcelain,
+  randomWorktreeName,
   removeWorktree,
   worktreeStatus,
 } from "./worktree";
@@ -217,4 +218,29 @@ describe("PUM worktree merge target", () => {
     await removeWorktree(repo, record);
     expect(() => git(repo, "rev-parse", "--verify", record.branch)).toThrow();
   }, 30_000);
+});
+
+describe("random worktree names", () => {
+  test("draws the suffix from bytes that do not pick the adjective or noun", () => {
+    // The old suffix was the hex of the same two bytes the words came from, so
+    // every adjective carried one fixed suffix digit and every noun another.
+    const adjectiveDigits = new Map<string, Set<string>>();
+    const nounDigits = new Map<string, Set<string>>();
+    const record = (seen: Map<string, Set<string>>, word: string, digit: string) => {
+      const digits = seen.get(word) ?? new Set<string>();
+      digits.add(digit);
+      seen.set(word, digits);
+    };
+
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const name = randomWorktreeName();
+      const [adjective, noun, suffix] = name.split("-");
+      expect(suffix).toMatch(/^[0-9a-f]{4}$/);
+      record(adjectiveDigits, adjective!, suffix![1]!);
+      record(nounDigits, noun!, suffix![3]!);
+    }
+
+    expect([...adjectiveDigits.values()].some((digits) => digits.size > 1)).toBe(true);
+    expect([...nounDigits.values()].some((digits) => digits.size > 1)).toBe(true);
+  });
 });
