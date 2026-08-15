@@ -56,8 +56,25 @@ export function todoFileFor(sessionFile: string): string {
  * NUL truncates the text in C string APIs, and ESC lets task text repaint the
  * terminal the popup draws it into. Tab, newline and return collapse to a
  * space before this runs, so only the harmful controls reach it.
+ *
+ * Bidi overrides and isolates are here for the same reason: they cost no width
+ * and reorder what follows, so a task can render as text it does not contain.
+ * The joiners U+200C and U+200D are not blocked - they carry meaning in emoji
+ * and in Indic and Arabic scripts, and dropping them corrupts real text.
  */
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u200b\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/;
+
+/**
+ * Largest value `Date` accepts. A finite number past it survives JSON and the
+ * old guard, then throws in every consumer that formats it - including the one
+ * listing the tasks, which is where the id needed to delete it comes from.
+ */
+const MAX_TIME = 8.64e15;
+
+function isStorableTime(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value)
+    && value >= 0 && value <= MAX_TIME;
+}
 
 /** Flatten and check task text. Throws with the reason the caller should show. */
 export function normalizeTodoText(value: unknown): string {
@@ -160,8 +177,8 @@ function isTodoTask(value: unknown): value is TodoTask {
     task.text.length <= MAX_TODO_TEXT &&
     !CONTROL_CHARACTERS.test(task.text) &&
     isTodoStatus(task.status) &&
-    typeof task.createdAt === "number" && Number.isFinite(task.createdAt) &&
-    typeof task.updatedAt === "number" && Number.isFinite(task.updatedAt)
+    isStorableTime(task.createdAt) &&
+    isStorableTime(task.updatedAt)
   );
 }
 
@@ -220,7 +237,13 @@ function writeTodoTasks(sessionFile: string | undefined, tasks: readonly TodoTas
   // cannot clobber each other's half-written file before the rename.
   const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
-    writeFileSync(temporary, JSON.stringify(tasks.slice(0, MAX_TODOS), null, 2), "utf8");
+    // Storage keeps insertion order; the popup sorts for display. Only an
+    // overflowing list is sorted first, so the tasks that matter least drop
+    // instead of whatever happened to sit last.
+    const stored = tasks.length > MAX_TODOS
+      ? sortTodoTasks(tasks).slice(0, MAX_TODOS)
+      : tasks;
+    writeFileSync(temporary, JSON.stringify(stored, null, 2), "utf8");
     renameSync(temporary, file);
   } catch (error) {
     // The name is never reused, so a leftover temp file would sit there forever.
@@ -233,7 +256,12 @@ function writeTodoTasks(sessionFile: string | undefined, tasks: readonly TodoTas
   }
 }
 
-/** Persist the list atomically next to the session. Best effort only. */
+/**
+ * Persist the list atomically next to the session. Best effort only.
+ *
+ * This bypasses the serialization chain, so it can overwrite a task a tool
+ * added meanwhile. Seed state with it; mutate through `updateTodoTasks`.
+ */
 export function saveTodoTasks(
   sessionFile: string | undefined,
   tasks: readonly TodoTask[],

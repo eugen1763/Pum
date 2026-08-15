@@ -329,20 +329,28 @@ describe("todo tools", () => {
     expect((await main.call("todo_list")).details.count).toBe(1);
   });
 
-  test("todo_list survives an absurd timestamp in the file", async () => {
+  test("todo_list drops a task whose timestamp no consumer could format", async () => {
     const { call, todoFile } = fixture();
     const created = (await call("todo_add", { text: "hand edited" })).details.task as TodoTask;
     writeFileSync(
       todoFile,
-      JSON.stringify([{ ...created, createdAt: 1e20, updatedAt: 1e20 }]),
+      JSON.stringify([
+        { ...created, createdAt: 1e20, updatedAt: 1e20 },
+        { ...created, id: "kept00", text: "intact" },
+      ]),
       "utf8",
     );
 
+    // A time past the Date range is corrupt, not merely odd, so it is dropped
+    // like any other bad entry rather than kept to break whoever formats it.
     const listed = await call("todo_list");
     expect(listed.details.count).toBe(1);
-    expect(listed.content[0]!.text).toContain(String(1e20));
-    // The task stays reachable, so the agent can still delete it.
-    expect((await call("todo_delete", { id: created.id })).details.task.id).toBe(created.id);
+    expect(listed.content[0]!.text).toContain("intact");
+    expect(listed.content[0]!.text).not.toContain(String(1e20));
+
+    // The surviving task still writes cleanly, which drops the bad one for good.
+    await call("todo_add", { text: "after" });
+    expect((await call("todo_list")).details.count).toBe(2);
   });
 
   test("load rebinds the controller to a session started later", async () => {
