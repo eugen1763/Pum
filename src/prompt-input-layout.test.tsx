@@ -175,8 +175,13 @@ describe("prompt input layout", () => {
 
   test("shows when a cached prompt is checked out for editing", async () => {
     const setup = await renderApp(70, 20, [{ text: "cached draft", executed: false }]);
+    // Each press depends on the state the previous one committed: Tab opens the
+    // cache, Up selects a row, Tab checks that row out. Sending all three
+    // before React commits makes the last Tab complete a path instead.
     setup.mockInput.pressTab();
+    await settle(setup);
     setup.mockInput.pressArrow("up");
+    await settle(setup);
     setup.mockInput.pressTab();
     await settle(setup);
 

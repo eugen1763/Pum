@@ -101,9 +101,14 @@ async function render(options: {
   destroy = () => setup.renderer.destroy();
   createRoot(setup.renderer).render(
     <App session={session} modelRuntime={{ getAvailableSnapshot: () => [] } as any}
-      onNewSession={async () => (options.nextSessionFile
-        ? fakeSession(options.nextSessionFile, options.prompts)
-        : session)}
+      onNewSession={async () => {
+        // A real session switch is not instant. Delay it so the test proves
+        // the goal clears after the switch settles, not before it starts.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return options.nextSessionFile
+          ? fakeSession(options.nextSessionFile, options.prompts)
+          : session;
+      }}
       loadSessions={async () => []}
       onSwitchSession={async () => session}
       settings={settings} searchProviders={[]} subagentManager={manager}
@@ -397,6 +402,10 @@ describe("new sessions", () => {
     expect(setup.captureCharFrame()).toContain("GOAL · active");
 
     await type(setup, "/clear");
+    // Switching sessions is asynchronous, and the rule paints its label
+    // straight onto the renderable after the commit. Settle again so the
+    // assertion reads a frame that has both.
+    await settle(setup);
     expect(setup.captureCharFrame()).not.toContain("GOAL · active");
     // The old session keeps its own goal; the new one simply has none.
     expect(loadGoal(sessionFile)?.text).toBe("fix the flaky tests");
