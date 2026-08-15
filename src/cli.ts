@@ -11,10 +11,20 @@ export interface OuterSandboxOptions {
   mounts: string[];
 }
 
+export interface WorktreeOptions {
+  /**
+   * Repository directory the worktree branches from. Undefined means the
+   * current directory; the parser stays pure, so the caller resolves it.
+   */
+  directory?: string;
+}
+
 export interface StartupOptions {
   login: boolean;
   resume: boolean;
   outerSandbox?: OuterSandboxOptions;
+  /** Create an auto-named worktree and start PUM there, for `pum worktree`. */
+  worktree?: WorktreeOptions;
   /** Non-interactive one-shot prompt for `pum -p "<text>"`. */
   prompt?: string;
   /** Optional benchmark statistics output for headless mode. */
@@ -40,6 +50,7 @@ export async function readPackageMetadata(): Promise<PackageMetadata> {
 }
 
 const SETUP_ARGUMENTS_ERROR = "Command 'ss' does not accept arguments or options.";
+const WORKTREE_OPERAND_ERROR = "The worktree command accepts one directory";
 
 export function parseCliArgs(args: string[]): CliResult {
   let login = false;
@@ -52,10 +63,15 @@ export function parseCliArgs(args: string[]): CliResult {
   let version = false;
   let endOfOptions = false;
   let outerSandbox: OuterSandboxOptions | undefined;
+  let worktree: WorktreeOptions | undefined;
   // Help and version win over a bad argument, as they do in most CLIs, so the
   // loop records the first error and keeps reading instead of returning at once.
   let error: string | undefined;
   const fail = (message: string): void => { if (error === undefined) error = message; };
+  const addWorktreeDirectory = (target: WorktreeOptions, value: string): void => {
+    if (target.directory === undefined) target.directory = value;
+    else fail(WORKTREE_OPERAND_ERROR);
+  };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
@@ -68,6 +84,7 @@ export function parseCliArgs(args: string[]): CliResult {
       // Everything after `--` is an operand, so a mount directory may start
       // with `-` and a directory named `login` stays a directory.
       if (outerSandbox) outerSandbox.mounts.push(arg);
+      else if (worktree) addWorktreeDirectory(worktree, arg);
       else fail(`Unknown command: ${arg}`);
       continue;
     }
@@ -88,7 +105,7 @@ export function parseCliArgs(args: string[]): CliResult {
       statsFile = value;
     } else if (arg === "--override") overrideStatsFile = true;
     else if (arg.startsWith("-")) fail(`Unknown option: ${arg}`);
-    else if (arg === "ss" && !outerSandbox) {
+    else if (arg === "ss" && !outerSandbox && !worktree) {
       if (login || resume || prompt !== undefined || statsFile !== undefined || overrideStatsFile) {
         fail(SETUP_ARGUMENTS_ERROR);
         continue;
@@ -98,10 +115,14 @@ export function parseCliArgs(args: string[]): CliResult {
       // The grammar is `pum s [login] [directory ...]`. A trailing `login` is a
       // mistake, and silently mounting it fails later with a confusing message.
       if (outerSandbox?.mounts.length) fail("'login' must come before mount directories");
+      else if (worktree?.directory !== undefined) fail("'login' must come before the worktree directory");
       else login = true;
-    } else if (!outerSandbox && (arg === "s" || arg === "sr")) {
+    } else if (!outerSandbox && !worktree && (arg === "s" || arg === "sr")) {
       outerSandbox = { mode: arg === "s" ? "write" : "read", mounts: [] };
+    } else if (!outerSandbox && !worktree && (arg === "worktree" || arg === "w")) {
+      worktree = {};
     } else if (outerSandbox) outerSandbox.mounts.push(arg);
+    else if (worktree) addWorktreeDirectory(worktree, arg);
     else fail(`Unknown command: ${arg}`);
   }
 
@@ -112,6 +133,13 @@ export function parseCliArgs(args: string[]): CliResult {
   if (login && prompt !== undefined) return { kind: "error", message: "Cannot combine login with --prompt" };
   if (outerSandbox && prompt !== undefined) {
     return { kind: "error", message: "Cannot combine an outer sandbox command with --prompt" };
+  }
+  if (worktree && prompt !== undefined) {
+    return { kind: "error", message: "Cannot combine the worktree command with --prompt" };
+  }
+  if (worktree && resume) {
+    // A worktree is created fresh, so it has no earlier session to resume.
+    return { kind: "error", message: "Cannot combine the worktree command with --resume" };
   }
   if (prompt !== undefined && prompt.trim() === "") {
     return { kind: "error", message: "The prompt text is empty" };
@@ -133,6 +161,7 @@ export function parseCliArgs(args: string[]): CliResult {
       resume,
       overrideStatsFile,
       ...(outerSandbox ? { outerSandbox } : {}),
+      ...(worktree ? { worktree } : {}),
       ...(prompt !== undefined ? { prompt } : {}),
       ...(statsFile !== undefined ? { statsFile } : {}),
     },
@@ -149,6 +178,8 @@ export function helpText(metadata: PackageMetadata): string {
 Usage:
   pum [options]
   pum login [options]
+  pum worktree [login] [options] [directory]
+  pum w [login] [options] [directory]
   pum s [login] [options] [directory[:ro|:rw] ...]
   pum sr [login] [options] [directory[:ro|:rw] ...]
   pum ss
@@ -164,6 +195,8 @@ Options:
 
 Commands:
   login            Open PUM with the provider login panel.
+  worktree         Create an auto-named Git worktree and start PUM in it.
+  w                Short name for worktree.
   s                Start PUM in a writable outer sandbox.
   sr               Start PUM with the current directory read-only.
   ss               Check the outer sandbox runtime and show setup requirements.
@@ -173,6 +206,13 @@ Sandbox mounts:
   explicit access. PUM validates and canonicalizes every directory before start.
   "login" must come before the directories. Put -- before a directory whose
   name starts with a dash or is called "login".
+
+Worktrees:
+  "pum worktree" and "pum w" create an auto-named worktree of the repository
+  that holds the given directory and start PUM in that worktree. Without a
+  directory PUM uses the current one. Put -- before a directory whose name
+  starts with a dash or is called "login". These commands take no -p and no -r:
+  the new worktree runs the TUI and has no earlier session.
 
 Non-interactive mode:
   "pum -p" runs the coding tools (read, write, edit, apply_patch, bash) with

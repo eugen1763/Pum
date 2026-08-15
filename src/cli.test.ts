@@ -215,6 +215,106 @@ describe("CLI argument parsing", () => {
     });
   });
 
+  test("parses both worktree command names with an optional directory", () => {
+    for (const name of ["worktree", "w"]) {
+      expect(parseCliArgs([name])).toEqual({
+        kind: "start",
+        options: { login: false, resume: false, overrideStatsFile: false, worktree: {} },
+      });
+      expect(parseCliArgs([name, "/work/repo"])).toEqual({
+        kind: "start",
+        options: {
+          login: false,
+          resume: false,
+          overrideStatsFile: false,
+          worktree: { directory: "/work/repo" },
+        },
+      });
+      // "login" before the directory stays the keyword, as it does for mounts.
+      expect(parseCliArgs([name, "login"])).toEqual({
+        kind: "start",
+        options: { login: true, resume: false, overrideStatsFile: false, worktree: {} },
+      });
+    }
+  });
+
+  test("keeps a dash-leading or command-like worktree directory reachable", () => {
+    expect(parseCliArgs(["worktree", "--", "-x"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: false,
+        overrideStatsFile: false,
+        worktree: { directory: "-x" },
+      },
+    });
+    expect(parseCliArgs(["w", "--", "login"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: false,
+        overrideStatsFile: false,
+        worktree: { directory: "login" },
+      },
+    });
+    // Other command names in the operand slot are plain directories already.
+    for (const name of ["s", "sr", "ss", "worktree", "w"]) {
+      expect(parseCliArgs(["worktree", name])).toEqual({
+        kind: "start",
+        options: {
+          login: false,
+          resume: false,
+          overrideStatsFile: false,
+          worktree: { directory: name },
+        },
+      });
+    }
+    // The reverse still holds: after "s" a worktree name is a mount.
+    expect(parseCliArgs(["s", "worktree"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: false,
+        overrideStatsFile: false,
+        outerSandbox: { mode: "write", mounts: ["worktree"] },
+      },
+    });
+  });
+
+  test("rejects extra worktree operands and unusable flag combinations", () => {
+    expect(parseCliArgs(["worktree", "/a", "/b"])).toEqual({
+      kind: "error",
+      message: "The worktree command accepts one directory",
+    });
+    expect(parseCliArgs(["w", "--", "/a", "/b"])).toEqual({
+      kind: "error",
+      message: "The worktree command accepts one directory",
+    });
+    expect(parseCliArgs(["worktree", "/a", "login"])).toEqual({
+      kind: "error",
+      message: "'login' must come before the worktree directory",
+    });
+    expect(parseCliArgs(["worktree", "-p", "task"])).toEqual({
+      kind: "error",
+      message: "Cannot combine the worktree command with --prompt",
+    });
+    expect(parseCliArgs(["w", "-r"])).toEqual({
+      kind: "error",
+      message: "Cannot combine the worktree command with --resume",
+    });
+    expect(parseCliArgs(["worktree", "--unknown"])).toEqual({
+      kind: "error",
+      message: "Unknown option: --unknown",
+    });
+    expect(parseCliArgs(["ss", "worktree"])).toEqual({
+      kind: "error",
+      message: "Command 'ss' does not accept arguments or options.",
+    });
+    // Help and version still win over a bad worktree invocation.
+    expect(parseCliArgs(["worktree", "/a", "/b", "-h"])).toEqual({ kind: "help" });
+    expect(parseCliArgs(["-v", "w", "-r"])).toEqual({ kind: "version" });
+  });
+
   test("help and version win over a parse error", () => {
     for (const flag of ["-h", "--help"]) {
       expect(parseCliArgs([flag, "badcmd"])).toEqual({ kind: "help" });
@@ -306,6 +406,8 @@ describe("non-interactive CLI", () => {
       expect(result.stdout).toContain("pum s [login] [options] [directory[:ro|:rw] ...]");
       expect(result.stdout).toContain("pum sr [login] [options] [directory[:ro|:rw] ...]");
       expect(result.stdout).toContain("pum ss");
+      expect(result.stdout).toContain("pum worktree [login] [options] [directory]");
+      expect(result.stdout).toContain("pum w [login] [options] [directory]");
       expect(result.stdout).toContain("--statsFile");
       expect(result.stdout).toContain("PUM_DIR");
       expect(result.stdout).toContain("Executable: pum");
@@ -357,6 +459,38 @@ describe("non-interactive CLI", () => {
 
     const version = await runCli("-v", "badcmd");
     expect(version.exitCode).toBe(0);
+    expect(version.stderr).toBe("");
+    await expectNoStartup(version);
+  });
+
+  test("a bad worktree invocation exits 2 without starting the TUI", async () => {
+    const cases: [string[], string][] = [
+      [["worktree", "/a", "/b"], "The worktree command accepts one directory"],
+      [["w", "--", "/a", "/b"], "The worktree command accepts one directory"],
+      [["worktree", "-p", "task"], "Cannot combine the worktree command with --prompt"],
+      [["w", "-r"], "Cannot combine the worktree command with --resume"],
+      [["worktree", "-x"], "Unknown option: -x"],
+    ];
+    for (const [args, message] of cases) {
+      const result = await runCli(...args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe(formatCliError(message));
+      await expectNoStartup(result);
+    }
+  }, 20_000);
+
+  test("worktree help and version print before the operands are checked", async () => {
+    const metadata = await readPackageMetadata();
+    const help = await runCli("worktree", "/a", "/b", "--help");
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toBe(helpText(metadata));
+    expect(help.stderr).toBe("");
+    await expectNoStartup(help);
+
+    const version = await runCli("-v", "w", "-r");
+    expect(version.exitCode).toBe(0);
+    expect(version.stdout).toBe(`${metadata.version}\n`);
     expect(version.stderr).toBe("");
     await expectNoStartup(version);
   });
