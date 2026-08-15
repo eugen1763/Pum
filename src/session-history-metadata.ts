@@ -31,7 +31,17 @@ type CacheEntry = {
 };
 
 /** Files written next to `<session>.jsonl` that live and die with it. */
-const COMPANION_SUFFIXES = [".news.json", ".stats.json", ".tool-groups.json"] as const;
+/**
+ * Sidecars a session owns. A suffix missing here leaks one file per deleted
+ * session, so every new companion file must be added.
+ */
+export const COMPANION_SUFFIXES = [
+  ".news.json",
+  ".stats.json",
+  ".tool-groups.json",
+  ".goal.json",
+  ".todo.json",
+] as const;
 
 const DEFAULT_MAX_CACHE_ENTRIES = 256;
 const DEFAULT_CONCURRENCY = 8;
