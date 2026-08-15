@@ -906,4 +906,108 @@ describe("background subagents", () => {
     expect(existsSync(join(repo, ".pum", "worktrees", "closure-race-child"))).toBe(false);
     await manager.detachMain();
   });
+  test("keeps completed status and merge authorization after a failed removal", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const worktree = await createWorktree(repo, "failed-remove-agent");
+    const inWorktree = (...args: string[]) =>
+      execFileSync("git", args, { cwd: worktree.path, encoding: "utf8" });
+    inWorktree("config", "user.email", "pum@example.test");
+    inWorktree("config", "user.name", "PUM Test");
+    writeFileSync(join(worktree.path, "failed-remove.txt"), "work\n");
+    inWorktree("add", "failed-remove.txt");
+    inWorktree("commit", "-m", "unmerged work");
+    retainAgent(manager, "failed-remove-id", worktree, "completed");
+
+    await expect((manager as any).worktreeAction(repo, "remove", "failed-remove-id"))
+      .rejects.toThrow(`Branch ${worktree.branch} is not merged`);
+    expect(manager.getAgent("failed-remove-id")?.status).toBe("completed");
+
+    const merged = await (manager as any).worktreeAction(repo, "merge", "failed-remove-id");
+    expect(merged.content[0].text).toContain("Closed failed-remove-agent");
+    expect(manager.getAgent("failed-remove-id")).toBeUndefined();
+    expect(existsSync(worktree.path)).toBe(false);
+    await manager.detachMain();
+  });
+
+  test("retains a spawn that fails runtime setup across a resume", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const parent = SessionManager.inMemory(repo);
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain({
+      appendEntry(customType: string, data: unknown) { parent.appendCustomEntry(customType, data); },
+      sendMessage() {},
+    } as any, parent, repo);
+
+    await expect(manager.spawn({
+      task: "Fail during runtime setup.",
+      name: "failed-setup-agent",
+      modelId: "mock/missing-model",
+      thinkingLevel: "off",
+    })).rejects.toThrow("Model is unavailable");
+    const failed = manager.getAgents().find((agent) => agent.name === "failed-setup-agent");
+    expect(failed?.status).toBe("failed");
+    const events = parent.getEntries()
+      .filter((entry: any) => entry.type === "custom" && entry.customType === "pum.subagent")
+      .map((entry: any) => entry.data)
+      .filter((event: any) => event.id === failed!.id);
+    expect(events.map((event: any) => event.event)).toEqual(["spawned", "status"]);
+    await manager.detachMain();
+
+    const restored = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await restored.attachMain({
+      appendEntry(customType: string, data: unknown) { parent.appendCustomEntry(customType, data); },
+      sendMessage() {},
+    } as any, parent, repo);
+    expect(restored.getAgent(failed!.id)?.status).toBe("failed");
+    expect(restored.getAgent(failed!.id)?.name).toBe("failed-setup-agent");
+    await (restored as any).worktreeAction(repo, "remove", failed!.id);
+    expect(restored.getAgent(failed!.id)).toBeUndefined();
+    await restored.detachMain();
+  });
+
+  test("builds one child runtime for concurrent callers", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const parent = SessionManager.inMemory(repo);
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain({
+      appendEntry(customType: string, data: unknown) { parent.appendCustomEntry(customType, data); },
+      sendMessage() {},
+    } as any, parent, repo);
+    const child = await manager.spawn({
+      task: "Return to idle before the concurrent restart.",
+      name: "single-runtime-child",
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    });
+    await waitUntil(() => manager.getAgent(child.id)?.status === "idle");
+    await manager.stop(child.id, "stopped");
+    const record = (manager as any).records.get(child.id);
+    expect(record.session).toBeUndefined();
+    const spawnedBefore = parent.getEntries().filter((entry: any) =>
+      entry.type === "custom" && entry.customType === "pum.subagent"
+        && entry.data?.event === "spawned" && entry.data?.id === child.id).length;
+
+    await Promise.all([
+      (manager as any).ensureRuntime(record),
+      (manager as any).ensureRuntime(record),
+    ]);
+    const spawnedAfter = parent.getEntries().filter((entry: any) =>
+      entry.type === "custom" && entry.customType === "pum.subagent"
+        && entry.data?.event === "spawned" && entry.data?.id === child.id).length;
+
+    expect(record.session).toBeDefined();
+    expect(spawnedAfter - spawnedBefore).toBe(1);
+    await manager.detachMain();
+  });
 });

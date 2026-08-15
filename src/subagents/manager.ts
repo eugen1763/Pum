@@ -207,6 +207,17 @@ type RuntimeRecord = {
   statusBeforeTurn?: SubagentStatus;
   completionMessageIds?: Set<string>;
   completionResponse?: string;
+  /**
+   * Set while a user cancellation (Esc-Esc) aborts the current turn. pi reports
+   * an aborted request as an error, so without this flag the settle would
+   * classify a deliberate cancel as a failure and send an unsolicited failure
+   * notice to the spawner.
+   */
+  userAborted?: boolean;
+  /** In-flight runtime build, so concurrent callers share one session. */
+  runtimeReady?: Promise<void>;
+  /** Spawn tool schema registered for this child, refreshed with the Sandbox setting. */
+  spawnParameters?: ReturnType<typeof spawnSubagentParameters>;
 };
 
 type IdleOpenReminderState = {
@@ -330,7 +341,7 @@ export class SubagentManager {
   private readonly acceptedSettlementMessageIds = new Set<string>();
   private readonly settlementDeliveriesInFlight = new Set<string>();
   private readonly idleOpenReminderStates = new Map<string, IdleOpenReminderState>();
-  private readonly spawnParameterSchemas = new Set<ReturnType<typeof spawnSubagentParameters>>();
+  private mainSpawnParameters?: ReturnType<typeof spawnSubagentParameters>;
 
   constructor(options: ManagerOptions) {
     this.modelRuntime = options.modelRuntime;
@@ -891,6 +902,7 @@ export class SubagentManager {
         break;
       }
       case "agent_start":
+        record.userAborted = undefined;
         // Remember a terminal status before the turn overwrites it, so a
         // no-work turn can restore it at settle instead of downgrading to idle.
         if (TERMINAL_SUBAGENT_STATUSES.includes(record.snapshot.status)) {
@@ -940,20 +952,28 @@ export class SubagentManager {
           });
         }
         const error = record.session?.agent?.state?.errorMessage;
+        // A user cancellation surfaces as an abort error. Report it as stopped,
+        // like stop_subagent, instead of as a failure the spawner may respawn.
+        const userAborted = record.userAborted === true;
+        record.userAborted = undefined;
         // A turn clobbers a terminal status to "running", so the status that
         // matters for preservation and settlement is the one captured before
         // the turn, falling back to the current status when nothing was captured.
         const priorTerminal = record.statusBeforeTurn ?? record.snapshot.status;
-        const status: SubagentStatus = error
+        const status: SubagentStatus = error && !userAborted
           ? "failed"
           : record.finishRequested !== undefined
             ? "completed"
-            : TERMINAL_SUBAGENT_STATUSES.includes(priorTerminal)
-                && record.activityGeneration === record.idleNotifiedGeneration
-              ? priorTerminal
-              : "idle";
+            : userAborted
+              ? "stopped"
+              : TERMINAL_SUBAGENT_STATUSES.includes(priorTerminal)
+                  && record.activityGeneration === record.idleNotifiedGeneration
+                ? priorTerminal
+                : "idle";
         record.statusBeforeTurn = undefined;
-        const summary = record.finishRequested || error || record.snapshot.summary;
+        const summary = userAborted
+          ? record.snapshot.summary
+          : record.finishRequested || error || record.snapshot.summary;
         this.updateStatus(record, status, summary);
         if (record.session && !AVAILABLE_TRIGGER_TARGET_STATUSES.has(status)) {
           void this.triggerManager?.invalidateAgent(record.session.sessionId, record.snapshot.id);
@@ -971,12 +991,15 @@ export class SubagentManager {
             this.persistActivity(record);
             void this.recordSettlement(record, status, summary);
           }
-        } else if (status === "completed" || status === "failed") {
+        } else if (status === "completed" || status === "failed" || status === "stopped") {
           if (record.idleNotifiedGeneration !== record.activityGeneration) {
             record.idleNotifiedGeneration = record.activityGeneration;
             this.persistActivity(record);
           }
-          if (priorTerminal !== status || record.finishRequested !== undefined) {
+          // A cancelled cycle sends no notice at all, so the spawner sees the
+          // same silence as an explicit stop_subagent.
+          if (status !== "stopped"
+            && (priorTerminal !== status || record.finishRequested !== undefined)) {
             void this.recordSettlement(record, status, summary);
           }
         }
@@ -1087,7 +1110,7 @@ export class SubagentManager {
           label: "Spawn Subagent",
           description: "Start a nonblocking child subagent in a new Git worktree.",
           promptSnippet: "Start a child subagent in an isolated Git worktree",
-          parameters: this.trackedSpawnSubagentParameters(),
+          parameters: this.trackedSpawnSubagentParameters(agentId),
           execute: async (_id, params, signal, _update, ctx) => {
             const parent = this.records.get(agentId);
             if (!parent) throw new Error("Spawner subagent no longer exists");
@@ -1337,7 +1360,7 @@ export class SubagentManager {
             "Merge each successful agent only after its completion notification arrives and its status is completed, unless a concrete dependency or conflict requires waiting. Idle is not completion.",
             "Recursively close every retained descendant before merging a managed parent. Close the deepest descendants first.",
           ],
-          parameters: this.trackedSpawnSubagentParameters(),
+          parameters: this.trackedSpawnSubagentParameters(null),
           execute: async (_id, params, signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
             if (!ctx.model) throw new Error("No model is selected");
@@ -1478,16 +1501,30 @@ export class SubagentManager {
     this.maxActiveSubagents = normalizeMaxActiveSubagents(value);
   }
 
-  private trackedSpawnSubagentParameters() {
+  /**
+   * Track the live spawn schema per owner. A child session can be rebuilt many
+   * times, so a shared set would grow forever and keep mutating schemas of dead
+   * sessions.
+   */
+  private trackedSpawnSubagentParameters(agentId: string | null) {
     const schema = spawnSubagentParameters(this.sandboxModeSource() !== "off");
-    this.spawnParameterSchemas.add(schema);
+    if (agentId === null) this.mainSpawnParameters = schema;
+    else {
+      const record = this.records.get(agentId);
+      if (record) record.spawnParameters = schema;
+    }
     return schema;
   }
 
   /** Keep already registered spawn tool schemas aligned with the live Sandbox setting. */
   refreshSandboxMode(): void {
     const available = this.sandboxModeSource() !== "off";
-    for (const schema of this.spawnParameterSchemas) {
+    const schemas = [
+      this.mainSpawnParameters,
+      ...[...this.records.values()].map((record) => record.spawnParameters),
+    ];
+    for (const schema of schemas) {
+      if (!schema) continue;
       const properties = schema.properties as Record<string, unknown>;
       if (available) properties.readonly = readonlySpawnParameter();
       else delete properties.readonly;
@@ -1557,6 +1594,15 @@ export class SubagentManager {
           idleNotifiedGeneration: 0,
         };
         this.records.set(id, created);
+        // Register the agent before runtime setup can fail. A fresh spawn that
+        // fails ensureRuntime stays retained as failed, and without this event
+        // the resume loop would drop it while its worktree and branch survive.
+        this.persist({
+          event: "spawned",
+          id,
+          at: now,
+          snapshot: snapshotMetadata(snapshot),
+        });
         this.emit();
         return created;
       } catch (error) {
@@ -1600,11 +1646,23 @@ export class SubagentManager {
     return captureForkSource(parent.session.sessionManager, parentAgentId);
   }
 
+  /**
+   * Build the child runtime at most once. The build awaits several async steps,
+   * so two overlapping callers would otherwise each create a full AgentSession
+   * over the same session file and the second assignment would leak the first
+   * (never aborted, never disposed, subscriptions still live).
+   */
   private async ensureRuntime(record: RuntimeRecord, retrySettlements = true): Promise<void> {
-    if (record.session) {
-      if (retrySettlements) await this.retrySettlementsForParent(record.snapshot.id);
-      return;
+    if (!record.session) {
+      record.runtimeReady ??= this.buildRuntime(record).finally(() => {
+        record.runtimeReady = undefined;
+      });
+      await record.runtimeReady;
     }
+    if (retrySettlements) await this.retrySettlementsForParent(record.snapshot.id);
+  }
+
+  private async buildRuntime(record: RuntimeRecord): Promise<void> {
     if (!existsSync(record.snapshot.worktree.path)) throw new Error(`Missing worktree: ${record.snapshot.worktree.path}`);
 
     const model = this.resolveModel(record.snapshot.modelId);
@@ -1661,6 +1719,7 @@ export class SubagentManager {
       persistSearchCall(result.session.sessionManager, call);
     });
     record.dispose = async () => {
+      record.runtimeReady = undefined;
       record.unsubscribe?.();
       record.unsubscribe = undefined;
       record.unsubscribeSearch?.();
@@ -1677,13 +1736,14 @@ export class SubagentManager {
       available: true,
       settled: !result.session.isStreaming,
     });
+    // The record was already registered at spawn time; this update carries the
+    // resolved session file into the registry.
     this.persist({
       event: "spawned",
       id: record.snapshot.id,
       at: Date.now(),
       snapshot: snapshotMetadata(record.snapshot),
     });
-    if (retrySettlements) await this.retrySettlementsForParent(record.snapshot.id);
   }
 
   private async authorizeTriggerTarget(
@@ -1901,12 +1961,14 @@ export class SubagentManager {
     if (!recalled) return null;
     record.userInstructionNotices?.delete(recalled.id);
     this.dropPending(record, recalled.id);
+    await this.resendUndeliveredSettlementsForParent(record.snapshot.id);
     return recalled;
   }
 
   async abortAgent(id: string): Promise<void> {
     const record = this.findRecord(id);
     if (!record?.session) return;
+    if (record.session.isStreaming) record.userAborted = true;
     const queued = record.session.clearQueue();
     const remainingOccurrences = new Map<string, number>();
     for (const text of [...queued.steering, ...queued.followUp]) {
@@ -1977,6 +2039,7 @@ export class SubagentManager {
       }));
     }
     await record.session.abort();
+    await this.resendUndeliveredSettlementsForParent(record.snapshot.id);
   }
 
   private agentMessageLine(data: AgentMessageData): Extract<Line, { kind: "agent-message" }> {
@@ -2481,6 +2544,20 @@ export class SubagentManager {
   }
 
   /**
+   * Re-deliver settlement notices that a queue clear may have dropped for a
+   * managed parent. Cancelling a child turn or recalling one of its queued
+   * messages calls session.clearQueue(), which silently discards a notice
+   * queued to that streaming parent. The notice stays marked in flight, so
+   * every later retry skips it and the grandchild's merge stays blocked
+   * forever. This is the child-side counterpart of
+   * resendUndeliveredMainSettlements.
+   */
+  private async resendUndeliveredSettlementsForParent(parentAgentId: string): Promise<void> {
+    this.clearSettlementDeliveriesForParent(parentAgentId);
+    await this.retrySettlementsForParent(parentAgentId);
+  }
+
+  /**
    * Re-deliver main-bound completion notices that a queue clear may have
    * dropped. Cancelling the main turn or recalling a queued message calls
    * session.clearQueue(), which silently discards a completion notice queued to
@@ -2639,8 +2716,20 @@ export class SubagentManager {
         const record = managedAgent?.snapshot.worktree
           ?? (await listWorktrees(cwd)).find((item) => item.name === target || item.branch === target);
         if (!record) throw new Error(`Unknown worktree: ${target}`);
+        // The session stops first so it releases the worktree files before
+        // removal. A rejected removal must not keep that downgrade: an
+        // authoritative "completed" is the only status a later managed merge
+        // accepts, so losing it would block the correct recovery forever.
+        const priorStatus = managedAgent?.snapshot.status;
         if (managedAgent) await this.stop(managedAgent.snapshot.id, "stopped");
-        await removeWorktree(cwd, record, force);
+        try {
+          await removeWorktree(cwd, record, force);
+        } catch (error) {
+          if (managedAgent && priorStatus && managedAgent.snapshot.status !== priorStatus) {
+            this.updateStatus(managedAgent, priorStatus);
+          }
+          throw error;
+        }
         if (managedAgent) this.forgetManagedAgent(managedAgent);
         return textResult(`Removed ${record.name}`, record);
       });

@@ -204,9 +204,34 @@ export async function worktreeStatus(
   return status || `## ${record.branch}`;
 }
 
+/**
+ * Refuse a merge that would land on the wrong branch. A worktree records the
+ * branch it was created from, and the merge runs in the repository root against
+ * whatever is checked out there. Without this check a detached HEAD or an
+ * unrelated branch silently absorbs the work, and the later branch removal makes
+ * it look merged. Records from `git worktree list` carry no base branch, so an
+ * empty value keeps the old unchecked behavior instead of failing.
+ */
+async function assertMergeTarget(root: string, record: WorktreeRecord): Promise<void> {
+  if (!record.baseBranch) return;
+  const current = await git(root, ["branch", "--show-current"]);
+  if (!current) {
+    throw new Error(
+      `Cannot merge ${record.branch} onto a detached HEAD; check out ${record.baseBranch} first`,
+    );
+  }
+  if (current !== record.baseBranch) {
+    throw new Error(
+      `Cannot merge ${record.branch} into ${current}; it was created from ${record.baseBranch}. `
+        + `Check out ${record.baseBranch} and merge again.`,
+    );
+  }
+}
+
 export async function mergeWorktree(cwd: string, record: WorktreeRecord): Promise<string> {
   const root = await repositoryRoot(cwd);
   const path = await managedWorktreePath(root, record.path);
+  await assertMergeTarget(root, record);
   const mainStatus = await git(root, ["status", "--porcelain"]);
   if (mainStatus) throw new Error(`The current worktree must be clean before merging:\n${mainStatus}`);
   const childStatus = await git(path, ["status", "--porcelain"]);
@@ -225,6 +250,17 @@ export async function mergeWorktree(cwd: string, record: WorktreeRecord): Promis
   }
 }
 
+async function branchExists(root: string, branch: string): Promise<boolean> {
+  return git(root, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])
+    .then(() => true)
+    .catch(() => false);
+}
+
+async function branchIsMerged(root: string, branch: string): Promise<boolean> {
+  const merged = await git(root, ["branch", "--merged", "HEAD", "--format=%(refname:short)"]);
+  return merged.split(/\r?\n/).includes(branch);
+}
+
 export async function removeWorktree(
   cwd: string,
   record: WorktreeRecord,
@@ -241,16 +277,24 @@ export async function removeWorktree(
     // closed instead of blocking its parent forever.
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
       await git(root, ["worktree", "prune"]).catch(() => {});
-      await git(root, ["branch", "-D", record.branch]).catch(() => {});
+      // A missing directory is not permission to discard commits. Apply the
+      // same merged check as a normal removal so a non-force close cannot
+      // delete an unmerged branch, and delete it safely when it is merged.
+      if (!force
+        && await branchExists(root, record.branch)
+        && !await branchIsMerged(root, record.branch)) {
+        throw new Error(
+          `The worktree directory for ${record.name} is missing and branch ${record.branch} is not merged. `
+            + `Its commits are kept. Merge ${record.branch} first and remove it again, or remove it with force.`,
+        );
+      }
+      await git(root, ["branch", force ? "-D" : "-d", record.branch]).catch(() => {});
       return;
     }
     throw error;
   }
-  if (!force) {
-    const merged = await git(root, ["branch", "--merged", "HEAD", "--format=%(refname:short)"]);
-    if (!merged.split(/\r?\n/).includes(record.branch)) {
-      throw new Error(`Branch ${record.branch} is not merged; use force to remove it`);
-    }
+  if (!force && !await branchIsMerged(root, record.branch)) {
+    throw new Error(`Branch ${record.branch} is not merged; use force to remove it`);
   }
   await git(root, ["worktree", "remove", ...(force ? ["--force"] : []), path]);
   await git(root, ["branch", force ? "-D" : "-d", record.branch]);

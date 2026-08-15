@@ -139,3 +139,82 @@ describe("PUM worktrees", () => {
     expect((await listWorktrees(root)).some((item) => item.name === record.name)).toBe(false);
   }, 30_000);
 });
+
+describe("PUM worktree merge target", () => {
+  const setup = (name: string) => {
+    const repo = mkdtempSync(join(root, `${name}-`));
+    git(repo, "init", "-b", "main");
+    git(repo, "config", "user.email", "pum@example.test");
+    git(repo, "config", "user.name", "PUM Test");
+    writeFileSync(join(repo, "file.txt"), "main\n");
+    git(repo, "add", "file.txt");
+    git(repo, "commit", "-m", "initial");
+    return repo;
+  };
+
+  test("refuses a merge onto another branch or a detached HEAD", async () => {
+    const repo = setup("merge-target");
+    const record = await createWorktree(repo, "target-agent");
+    git(record.path, "config", "user.email", "pum@example.test");
+    git(record.path, "config", "user.name", "PUM Test");
+    writeFileSync(join(record.path, "file.txt"), "agent\n");
+    git(record.path, "add", "file.txt");
+    git(record.path, "commit", "-m", "agent change");
+
+    git(repo, "checkout", "-b", "release");
+    await expect(mergeWorktree(repo, record)).rejects.toThrow(
+      "Cannot merge pum/target-agent into release; it was created from main",
+    );
+    expect(git(repo, "rev-parse", "release")).toBe(git(repo, "rev-parse", "main"));
+
+    git(repo, "checkout", "--detach", "main");
+    await expect(mergeWorktree(repo, record)).rejects.toThrow(
+      "Cannot merge pum/target-agent onto a detached HEAD; check out main first",
+    );
+
+    git(repo, "checkout", "main");
+    await mergeWorktree(repo, record);
+    expect(normalizeGitCheckoutLineEndings(
+      readFileSync(join(repo, "file.txt"), "utf8"),
+    )).toBe("agent\n");
+    await removeWorktree(repo, record);
+  }, 30_000);
+
+  test("merges a legacy record without a recorded base branch", async () => {
+    const repo = setup("merge-legacy");
+    const record = await createWorktree(repo, "legacy-agent");
+    git(record.path, "config", "user.email", "pum@example.test");
+    git(record.path, "config", "user.name", "PUM Test");
+    writeFileSync(join(record.path, "file.txt"), "legacy\n");
+    git(record.path, "add", "file.txt");
+    git(record.path, "commit", "-m", "legacy change");
+
+    git(repo, "checkout", "-b", "other");
+    await mergeWorktree(repo, { ...record, baseBranch: "" });
+    expect(normalizeGitCheckoutLineEndings(
+      readFileSync(join(repo, "file.txt"), "utf8"),
+    )).toBe("legacy\n");
+  }, 30_000);
+
+  test("keeps an unmerged branch when the worktree directory is missing", async () => {
+    const repo = setup("missing-directory");
+    const record = await createWorktree(repo, "stranded-agent");
+    git(record.path, "config", "user.email", "pum@example.test");
+    git(record.path, "config", "user.name", "PUM Test");
+    writeFileSync(join(record.path, "file.txt"), "stranded\n");
+    git(record.path, "add", "file.txt");
+    git(record.path, "commit", "-m", "stranded change");
+    const stranded = git(record.path, "rev-parse", "HEAD");
+    rmSync(record.path, { recursive: true, force: true });
+
+    await expect(removeWorktree(repo, record)).rejects.toThrow(
+      "branch pum/stranded-agent is not merged",
+    );
+    expect(git(repo, "rev-parse", record.branch)).toBe(stranded);
+
+    // The same missing directory with a merged branch still closes the agent.
+    git(repo, "merge", "--no-ff", "-m", "merge stranded", record.branch);
+    await removeWorktree(repo, record);
+    expect(() => git(repo, "rev-parse", "--verify", record.branch)).toThrow();
+  }, 30_000);
+});

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadNewsItems, saveNewsItems } from "../news";
@@ -16,6 +16,19 @@ import {
 import { MESSAGE_CACHE_TOOLS } from "../message-cache";
 import { TRIGGER_EVENT_CUSTOM_TYPE, type SubagentStatus, type TriggerEventData } from "./types";
 import { SpawnPreviewManager } from "./spawn-preview";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+/** Session file in a temp directory that the afterEach hook removes. */
+function temporarySessionFile(prefix: string): string {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return join(directory, "main.jsonl");
+}
 
 function triggerEvent(overrides: Partial<TriggerEventData> = {}): TriggerEventData {
   return {
@@ -681,7 +694,7 @@ describe("SubagentManager extension", () => {
       },
     };
     (manager as any).parentSessionId = "main-session";
-    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-finish-news-")), "main.jsonl");
+    const sessionFile = temporarySessionFile("pum-finish-news-");
     (manager as any).mainSessionManager = { getSessionFile: () => sessionFile };
 
     const tools = new Map<string, any>();
@@ -738,7 +751,7 @@ describe("SubagentManager extension", () => {
       appendEntry() {},
       sendMessage(message: any) { mainDeliveries.push(message); },
     };
-    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-nested-finish-news-")), "main.jsonl");
+    const sessionFile = temporarySessionFile("pum-nested-finish-news-");
     (manager as any).mainSessionManager = { getSessionFile: () => sessionFile };
     const parent = (manager as any).records.get("parent");
     parent.session = {
@@ -1065,7 +1078,7 @@ describe("SubagentManager extension", () => {
   });
 
   test("reconciles one completed finish News item from the registry on resume", async () => {
-    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-resume-finish-news-")), "main.jsonl");
+    const sessionFile = temporarySessionFile("pum-resume-finish-news-");
     const messageId = "settlement-worker:1:completed";
     saveNewsItems(sessionFile, [{
       id: `subagent-finish:${messageId}`,
@@ -1927,5 +1940,159 @@ describe("SubagentManager extension", () => {
 
     expect((manager as any).parentSessionId).toBe("main-session");
     expect((manager as any).mainApi).toBe(pi);
+  });
+
+  test("redelivers a nested completion notice that a parent cancellation dropped", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "running");
+    addTestAgent(manager, "child", "completed", "parent");
+    const parent = (manager as any).records.get("parent");
+    const child = (manager as any).records.get("child");
+    const queued: string[] = [];
+    const deliveries: any[] = [];
+    parent.session = {
+      sessionId: "parent-session",
+      isStreaming: true,
+      sessionManager: { getEntries: () => [], appendCustomEntry() {} },
+      clearQueue: () => ({ steering: queued.splice(0), followUp: [] }),
+      abort: async () => {},
+    };
+    parent.api = {
+      sendMessage(message: any) {
+        deliveries.push(message);
+        queued.push(message.content);
+      },
+    };
+    child.activityGeneration = 1;
+
+    await (manager as any).recordSettlement(child, "completed", "Child work done.");
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].details.kind).toBe("completion");
+    expect(() => (manager as any).assertManagedMergeReady(child))
+      .toThrow("before its completion notice arrives");
+
+    // Cancelling the streaming parent discards the queued notice.
+    await manager.abortAgent("parent");
+    expect(queued).toEqual([deliveries[0].content]);
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[1].details.id).toBe(deliveries[0].details.id);
+
+    processAgentEvent(manager, "parent", {
+      type: "message_start",
+      message: {
+        role: "custom",
+        customType: "pum.agent_message",
+        details: deliveries[1].details,
+      },
+    });
+    expect(() => (manager as any).assertManagedMergeReady(child)).not.toThrow();
+  });
+
+  test("redelivers a nested completion notice that a parent message recall dropped", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "running");
+    addTestAgent(manager, "child", "completed", "parent");
+    const parent = (manager as any).records.get("parent");
+    const child = (manager as any).records.get("child");
+    const steering: string[] = ["Recall me."];
+    const deliveries: any[] = [];
+    parent.session = {
+      sessionId: "parent-session",
+      isStreaming: true,
+      sessionManager: { getEntries: () => [], appendCustomEntry() {} },
+      getSteeringMessages: () => steering,
+      getFollowUpMessages: () => [],
+      clearQueue: () => ({ steering: steering.splice(0), followUp: [] }),
+      steer: async (text: string) => { steering.push(text); },
+      followUp: async () => {},
+    };
+    parent.api = {
+      sendMessage(message: any) {
+        deliveries.push(message);
+        steering.push(message.content);
+      },
+    };
+    child.activityGeneration = 1;
+    await (manager as any).recordSettlement(child, "completed", "Child work done.");
+    (manager as any).addPending(parent, {
+      id: "recall",
+      line: { kind: "text", role: "user", text: "Recall me." },
+      deliveryText: "Recall me.",
+    });
+
+    expect(deliveries).toHaveLength(1);
+    await expect(manager.recallQueuedUserMessage("parent"))
+      .resolves.toEqual({ id: "recall", text: "Recall me." });
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[1].details.id).toBe(deliveries[0].details.id);
+  });
+
+  test("reports a user cancellation as stopped without a failure notice", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const record = (manager as any).records.get("worker");
+    const deliveries: any[] = [];
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); },
+    };
+    record.activityGeneration = 1;
+    record.session = {
+      sessionId: "child-session",
+      isStreaming: true,
+      agent: { state: { errorMessage: "Request aborted" } },
+      clearQueue: () => ({ steering: [], followUp: [] }),
+      abort: async () => {},
+    };
+
+    await manager.abortAgent("worker");
+    settleAgent(manager, "worker");
+
+    expect(manager.getAgent("worker")?.status).toBe("stopped");
+    expect(manager.getAgent("worker")?.summary).toBeUndefined();
+    expect(deliveries).toEqual([]);
+  });
+
+  test("still reports a genuine runtime error as failed", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const record = (manager as any).records.get("worker");
+    const deliveries: any[] = [];
+    (manager as any).mainApi = {
+      appendEntry() {},
+      sendMessage(message: any) { deliveries.push(message); return true; },
+    };
+    record.activityGeneration = 1;
+    record.session = {
+      sessionId: "child-session",
+      isStreaming: false,
+      agent: { state: { errorMessage: "Provider request failed" } },
+    };
+
+    settleAgent(manager, "worker");
+
+    expect(manager.getAgent("worker")?.status).toBe("failed");
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].details.kind).toBe("status");
+    expect(deliveries[0].content).toContain("Subagent worker failed.");
+  });
+
+  test("clears a stale cancellation flag when a later turn starts", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    const record = (manager as any).records.get("worker");
+    (manager as any).mainApi = { appendEntry() {}, sendMessage() { return true; } };
+    record.session = {
+      sessionId: "child-session",
+      isStreaming: true,
+      agent: { state: { errorMessage: undefined } },
+      clearQueue: () => ({ steering: [], followUp: [] }),
+      abort: async () => {},
+    };
+
+    await manager.abortAgent("worker");
+    expect(record.userAborted).toBe(true);
+    processAgentEvent(manager, "worker", { type: "agent_start" });
+    expect(record.userAborted).toBeUndefined();
   });
 });
