@@ -126,8 +126,10 @@ function pathParts(fragment: string): { directory: string; basename: string; sep
 
 /**
  * List safe path completions for the token under the cursor. A relative token
- * stays inside the project; an absolute or `~` token completes where it points.
- * The function excludes credential paths, special files, and symbolic links.
+ * stays inside the project and may not reach it through a symbolic link; an
+ * absolute or `~` token names its own place, so a linked directory it spells
+ * out is followed. Either way the function offers no credential path, no
+ * special file, and no symbolic link.
  */
 export function pathCompletions(
   input: string,

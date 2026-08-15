@@ -30,7 +30,8 @@ function project() {
 
 /**
  * os.homedir() answers from the account, not from $HOME, so a home test needs a
- * throwaway directory in the real home. Returns its name for `~/<name>/` fragments.
+ * throwaway directory in the real home; afterEach removes it. Returns its name
+ * for `~/<name>/` fragments.
  */
 function homeSandbox() {
   home = mkdtempSync(join(homedir(), ".pum-path-"));
@@ -38,7 +39,6 @@ function homeSandbox() {
   mkdirSync(join(home, "my papers"));
   writeFileSync(join(home, "todo.md"), "");
   mkdirSync(join(home, ".ssh"));
-  writeFileSync(join(home, ".ssh", "id_rsa"), "secret");
   return { directory: home, name: basename(home) };
 }
 
@@ -127,8 +127,8 @@ describe("path autocomplete", () => {
     const replacements = pathCompletions("~", 1, root).map((item) => item.replacement);
 
     expect(replacements).toContain(`~/${name}/`);
-    expect(replacements.every((item) => item.startsWith("~/"))).toBe(true);
-    expect(replacements).not.toContain("~/.ssh/");
+    // A bare `~` must list exactly what `~/` lists.
+    expect(replacements).toEqual(pathCompletions("~/", 2, root).map((item) => item.replacement));
   });
 
   test("treats ~user as a relative fragment", () => {
@@ -146,6 +146,13 @@ describe("path autocomplete", () => {
     expect(pathCompletions(inside, inside.length, root)).toEqual([]);
     const absolute = `${directory}/.ssh/id`;
     expect(pathCompletions(absolute, absolute.length, root)).toEqual([]);
+    // An empty basename lists everything, so the filter is the only thing hiding .ssh.
+    const listing = `~/${name}/`;
+    expect(pathCompletions(listing, listing.length, root).map((item) => item.replacement)).toEqual([
+      `~/${name}/my papers/`,
+      `~/${name}/notes/`,
+      `~/${name}/todo.md`,
+    ]);
 
     if (process.platform !== "win32") {
       symlinkSync(join(directory, "notes"), join(directory, "linked-notes"));
@@ -159,14 +166,16 @@ describe("path autocomplete", () => {
     const outside = mkdtempSync(join(tmpdir(), "pum-path-locked-"));
     // Root ignores the permission bits, so only test the denial as a normal user.
     const canDeny = process.platform !== "win32" && process.getuid?.() !== 0;
+    if (canDeny) {
+      mkdirSync(join(outside, "locked"));
+      writeFileSync(join(outside, "locked", "note.txt"), "");
+      chmodSync(join(outside, "locked"), 0o000);
+    }
     try {
       const missing = `${outside}/gone/x`;
       expect(pathCompletions(missing, missing.length, root)).toEqual([]);
 
       if (canDeny) {
-        mkdirSync(join(outside, "locked"));
-        writeFileSync(join(outside, "locked", "note.txt"), "");
-        chmodSync(join(outside, "locked"), 0o000);
         const locked = `${outside}/locked/n`;
         expect(pathCompletions(locked, locked.length, root)).toEqual([]);
       }
