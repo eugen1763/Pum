@@ -116,7 +116,7 @@ async function renderApp(showThinking: boolean) {
     />,
   );
   await settle(setup);
-  setup.mockInput.pressKey("tab", { shift: true });
+  setup.mockInput.pressTab({ shift: true });
   await settle(setup);
   return setup.captureCharFrame();
 }

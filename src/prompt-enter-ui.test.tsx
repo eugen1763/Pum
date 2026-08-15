@@ -230,7 +230,7 @@ describe("prompt newline entry (Shift/Ctrl+Enter)", () => {
   test("preserves internal spaces and tabs in displayed and delivered text", async () => {
     const sent: string[] = [];
     const setup = await renderApp({ onPrompt: (text) => sent.push(text) });
-    await setup.mockInput.typeText("  alpha  beta\tgamma  ");
+    await setup.mockInput.pasteBracketedText("  alpha  beta\tgamma  ");
     setup.mockInput.pressEnter();
     await settle(setup);
 

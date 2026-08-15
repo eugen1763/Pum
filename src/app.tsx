@@ -899,10 +899,16 @@ export function App({
   const syncInputMetrics = () => {
     const input = inputRef.current;
     if (!input) return;
-    const rows = Math.min(
-      MAX_INPUT_ROWS,
-      Math.max(1, input.editorView.getTotalVirtualLineCount()),
-    );
+    let totalRows: number;
+    try {
+      totalRows = input.editorView.getTotalVirtualLineCount();
+    } catch (error) {
+      // A queued frame or microtask can run after OpenTUI destroys the editor
+      // during a narrow-layout reconciliation or test teardown.
+      if (error instanceof Error && error.message === "EditorView is destroyed") return;
+      throw error;
+    }
+    const rows = Math.min(MAX_INPUT_ROWS, Math.max(1, totalRows));
     const cursorRow = input.cursorOffset >= input.plainText.length
       ? rows - 1
       : Math.max(0, Math.min(rows - 1, input.visualCursor.visualRow));

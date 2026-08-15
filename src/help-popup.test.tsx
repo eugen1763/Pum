@@ -43,7 +43,7 @@ describe("Help popup layout", () => {
     expect(controls.some(([key]) => key === "Ctrl+Alt+Enter")).toBe(true);
     expect(controls.some(([key, text]) => key === "Main ↑ / ↓" && text.includes("Sent history"))).toBe(true);
     expect(controls.some(([key, text]) => key === "Ctrl+H" && text.includes("/history"))).toBe(true);
-    expect(controls).toContainEqual(["/triggers", "Open Processes on the Triggers tab"]);
+    expect(controls.some(([key, text]) => key === "/processes" && text.includes("/triggers"))).toBe(true);
   });
 
   test("summarizes the main workflow", async () => {
@@ -63,7 +63,7 @@ describe("Help popup layout", () => {
     expect(frame).toContain("Prompt");
     expect(frame).toContain("History and sessions");
     expect(frame).toContain("Commands");
-    expect(frame).toContain("/ in Settings");
+    expect(frame).toContain("Ctrl+P /");
     expect(frame).toContain("Ctrl+End");
     expect(frame).toContain("Close popup; clear; twice quits");
     expect(frame).toContain("esc or ? close");

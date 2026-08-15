@@ -178,7 +178,13 @@ describe("subagent transcript replay", () => {
         arg: "src/file.ts",
         state: "ok",
         detail: "+1 −1",
-        output: "applied",
+        input: {
+          patch: "*** Begin Patch\n*** Update File: src/file.ts\n@@\n-old\n+new\n*** End Patch",
+        },
+        result: {
+          content: [{ type: "text", text: "applied" }],
+          isError: false,
+        },
       },
     });
   });
@@ -220,7 +226,15 @@ describe("subagent transcript replay", () => {
         name: "read",
         arg: "src/file name.ts · offset=12 · limit=40",
         state: "ok",
-        output: "file contents",
+        input: {
+          path: "/repo/src/file name.ts",
+          offset: 12,
+          limit: 40,
+        },
+        result: {
+          content: [{ type: "text", text: "file contents" }],
+          isError: false,
+        },
       },
     });
   });
