@@ -61,6 +61,20 @@ if (result.kind === "help") {
     overrideStatsFile: result.options.overrideStatsFile,
     pumVersion: metadata.version,
   });
+} else if (result.options.worktree) {
+  // Create the worktree before the TUI loads. main.tsx reads process.cwd() as
+  // it mounts, so the move has to happen while nothing has captured it yet.
+  const { startWorktree, worktreeStartMessage } = await import("./worktree-start");
+  try {
+    const started = await startWorktree(result.options.worktree.directory);
+    process.stdout.write(`${worktreeStartMessage(started)}\n`);
+    process.chdir(started.worktree.path);
+    const { start } = await import("./main");
+    await start(result.options, { worktreeSourceRoot: started.sourceRoot });
+  } catch (error) {
+    process.stderr.write(formatCliError(errorMessage(error)));
+    process.exitCode = 1;
+  }
 } else {
   const { start } = await import("./main");
   await start(result.options);

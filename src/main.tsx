@@ -70,7 +70,19 @@ import {
   lifecycleEventFromSnapshot,
 } from "./shells/lifecycle";
 
-export async function start(options: StartupOptions): Promise<void> {
+/**
+ * Process-local launch context. These are facts about how this process was
+ * started, never user settings, so nothing here reaches pum.json.
+ */
+export type LaunchContext = {
+  /** Source repository of a `pum worktree` launch, authorized as a writable root. */
+  worktreeSourceRoot?: string;
+};
+
+export async function start(
+  options: StartupOptions,
+  context: LaunchContext = {},
+): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
 
   const modelRuntime = await ModelRuntime.create({
@@ -81,9 +93,13 @@ export async function start(options: StartupOptions): Promise<void> {
 
   const settings = loadSettings();
   const outerSandbox = outerSandboxContext();
-  const forcedCheckPaths = outerSandbox
-    ? outerSandboxAdditionalRoots(outerSandbox, process.cwd())
-    : [];
+  // The source repository joins the outer-sandbox roots rather than the saved
+  // check paths: it is true of this process only, and `/check-path` must not
+  // learn about it.
+  const forcedCheckPaths = [
+    ...(outerSandbox ? outerSandboxAdditionalRoots(outerSandbox, process.cwd()) : []),
+    ...(context.worktreeSourceRoot ? [context.worktreeSourceRoot] : []),
+  ];
   const sandboxController = new SandboxController({
     mode: outerSandbox ? "off" : settings.sandboxMode ?? "auto",
     agentDir: AGENT_DIR,

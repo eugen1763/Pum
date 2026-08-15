@@ -395,6 +395,26 @@ describe("non-interactive CLI", () => {
     }
   });
 
+  test("a worktree that cannot be created fails without starting the TUI", async () => {
+    // The parser accepts any directory, so the only thing standing between a
+    // bad path and a launched TUI is the dispatch. Exit 1, not the parser's 2.
+    const missing = join(temporaryRoot, "definitely-not-here");
+    const result = await runCli("worktree", missing);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("pum:");
+    expect(result.stdout).toBe("");
+    await expectNoStartup(result);
+  });
+
+  test("a directory outside a repository is refused before the TUI loads", async () => {
+    const plain = join(temporaryRoot, "plain-directory");
+    mkdirSync(plain, { recursive: true });
+    const result = await runCli("worktree", plain);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    await expectNoStartup(result);
+  });
+
   test("long and short help flags print the manual", async () => {
     const expected = helpText(await readPackageMetadata());
     for (const flag of ["--help", "-h"]) {
