@@ -44,6 +44,18 @@ export function watchBranch(cwd: string, onChange: () => void): () => void {
       clearTimeout(timer);
       timer = setTimeout(onChange, 100);
     });
+    // The watched directory can go away under us - a relocated session watches
+    // a worktree, and /worktree remove deletes one. Windows reports that as an
+    // asynchronous error event rather than a throw here, and an unhandled one
+    // takes the process down. Losing the watcher only costs a stale branch.
+    watcher.on("error", () => {
+      clearTimeout(timer);
+      try {
+        watcher.close();
+      } catch {
+        // Already closed by the failure that raised the error.
+      }
+    });
     return () => {
       clearTimeout(timer);
       watcher.close();
