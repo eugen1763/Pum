@@ -70,6 +70,7 @@ import {
   withSearchRoute,
 } from "./web-search";
 import { matchingCommands, moveCommandSelection } from "./commands";
+import { applyPathCompletion, pathCompletions, type PathCompletion } from "./path-autocomplete";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
 import type { SessionHistoryItem } from "./session-history-metadata";
@@ -598,6 +599,13 @@ export function App({
   const agentSelectorCursorRef = useRef(0);
   const triggerCursorRef = useRef(0);
   const commandCursorRef = useRef(0);
+  const pathCompletionCycle = useRef<{
+    sourceValue: string;
+    completions: PathCompletion[];
+    index: number;
+    currentValue: string;
+    currentCursor: number;
+  } | null>(null);
   const stashRef = useRef(stash);
   const stashOpenRef = useRef(false);
   const stashCursorRef = useRef(-1);
@@ -2635,11 +2643,37 @@ export function App({
         queueMicrotask(() => inputRef.current?.focus());
         return;
       }
-      if (activeAgentId) return;
-      if (commandMatches.length > 0 && !/\s/.test(inputValue)) {
+      if (!activeAgentId && commandMatches.length > 0 && !/\s/.test(inputValue)) {
         key.stopPropagation();
         const selected = commandMatches[Math.min(commandCursorRef.current, commandMatches.length - 1)]!;
         setEditorText(selected.name);
+        return;
+      }
+
+      const inputCursor = inputRef.current?.cursorOffset ?? inputValue.length;
+      const previousCycle = pathCompletionCycle.current;
+      const continuing = previousCycle !== null
+        && previousCycle.currentValue === inputValue
+        && previousCycle.currentCursor === inputCursor;
+      const completions = continuing
+        ? previousCycle!.completions
+        : pathCompletions(inputValue, inputCursor, cwd);
+      if (completions.length > 0) {
+        key.stopPropagation();
+        const index = continuing
+          ? (previousCycle!.index + 1) % completions.length
+          : 0;
+        const sourceValue = continuing ? previousCycle!.sourceValue : inputValue;
+        const completed = applyPathCompletion(sourceValue, completions[index]!);
+        setEditorText(completed.value, completed.cursorOffset, true);
+        pathCompletionCycle.current = {
+          sourceValue,
+          completions,
+          index,
+          currentValue: completed.value,
+          currentCursor: completed.cursorOffset,
+        };
+        histCursor.current = null;
         return;
       }
     }

@@ -85,7 +85,7 @@ bun run start    # open the TUI in the current directory
 | Ctrl+H | Open session history when the terminal reports it distinctly |
 | Ctrl+N | Open recent answers (News); `n` jumps to the answer, `p` to the user prompt, and `c` copies the selected answer |
 | Ctrl+End | Scroll to the end of the selected transcript |
-| Tab | Open/close the prompt stash on an empty input |
+| Tab | Open/close the prompt stash on empty input; complete commands or local paths otherwise |
 | Shift+Up / Shift+Down | Extend a prompt-stash selection |
 | Enter on a stash selection | Ask the main agent to coordinate and merge worktree subagents |
 | Shift+Tab / Ctrl+Shift+Tab | Cycle agent transcripts forward/backward |
