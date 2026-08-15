@@ -2580,7 +2580,6 @@ export function App({
         name: "escape",
         ctrl: false,
         sequence: "\u001b",
-        raw: "\u001b",
       });
       return;
     }
