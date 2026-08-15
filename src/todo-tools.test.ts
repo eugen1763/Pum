@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_TODOS, todoFileFor, type TodoTask } from "./todo";
+import { MAX_TODO_TEXT, MAX_TODOS, TODO_STATUSES, todoFileFor, type TodoTask } from "./todo";
 import { TODO_TOOL_NAMES, TodoToolsController } from "./todo-tools";
 
 const directories: string[] = [];
@@ -10,9 +10,19 @@ const directories: string[] = [];
 type Tool = {
   name: string;
   description: string;
+  executionMode: string;
   parameters: any;
   execute: (id: string, params: any) => Promise<{ content: { text: string }[]; details: any }>;
 };
+
+function register(controller: TodoToolsController) {
+  const tools = new Map<string, Tool>();
+  controller.registerTool({ registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
+  return {
+    tools,
+    call: (name: string, params: any = {}) => (tools.get(name) as Tool).execute("call", params),
+  };
+}
 
 function fixture(audience: "main" | "subagent" = "main") {
   const directory = mkdtempSync(join(tmpdir(), "pum-todo-tools-"));
@@ -20,10 +30,13 @@ function fixture(audience: "main" | "subagent" = "main") {
   const sessionFile = join(directory, "session.jsonl");
   const controller = new TodoToolsController(audience);
   controller.load(sessionFile);
-  const tools = new Map<string, Tool>();
-  controller.registerTool({ registerTool(tool: any) { tools.set(tool.name, tool); } } as any);
-  const call = (name: string, params: any = {}) => (tools.get(name) as Tool).execute("call", params);
-  return { controller, directory, sessionFile, todoFile: todoFileFor(sessionFile), tools, call };
+  return {
+    controller,
+    directory,
+    sessionFile,
+    todoFile: todoFileFor(sessionFile),
+    ...register(controller),
+  };
 }
 
 afterEach(() => {
@@ -38,14 +51,35 @@ describe("todo tools", () => {
 
   test("no tool takes an owner, agent, session or path", () => {
     const { tools } = fixture();
-    for (const tool of tools.values()) {
-      expect(tool.parameters.additionalProperties).toBe(false);
-      const keys = Object.keys(tool.parameters.properties ?? {});
-      expect(keys.every((key) => ["id", "text", "status"].includes(key))).toBe(true);
-      for (const key of keys) {
+    const expected: Record<string, { properties: string[]; required: string[] }> = {
+      todo_list: { properties: ["status"], required: [] },
+      todo_add: { properties: ["text", "status"], required: ["text"] },
+      todo_update: { properties: ["id", "text", "status"], required: ["id"] },
+      todo_complete: { properties: ["id"], required: ["id"] },
+      todo_delete: { properties: ["id"], required: ["id"] },
+    };
+    for (const [name, shape] of Object.entries(expected)) {
+      const schema = (tools.get(name) as Tool).parameters;
+      expect(schema.additionalProperties).toBe(false);
+      expect(Object.keys(schema.properties).sort()).toEqual([...shape.properties].sort());
+      expect([...(schema.required ?? [])].sort()).toEqual([...shape.required].sort());
+      for (const key of Object.keys(schema.properties)) {
         expect(/agent|session|owner|path|file|dir/i.test(key)).toBe(false);
       }
     }
+  });
+
+  test("the schemas bound text and status", () => {
+    const { tools } = fixture();
+    const add = (tools.get("todo_add") as Tool).parameters;
+    expect(add.properties.text.minLength).toBe(1);
+    expect(add.properties.text.maxLength).toBe(MAX_TODO_TEXT);
+    expect(add.properties.status.anyOf.map((option: any) => option.const)).toEqual([...TODO_STATUSES]);
+  });
+
+  test("every tool runs sequentially, which is what makes a plain read safe", () => {
+    const { tools } = fixture();
+    for (const tool of tools.values()) expect(tool.executionMode).toBe("sequential");
   });
 
   test("todo_add defaults to pending and returns the created task", async () => {
@@ -60,6 +94,29 @@ describe("todo tools", () => {
     expect(task.status).toBe("pending");
     expect(task.createdAt).toBe(task.updatedAt);
     expect(result.content[0]!.text).toContain(task.id);
+  });
+
+  test("todo_add reports the task it created, not whichever one sorts last", async () => {
+    const { call } = fixture();
+    await call("todo_add", { text: "sorts first", status: "active" });
+    await call("todo_add", { text: "sorts last", status: "cancelled" });
+
+    const added = await call("todo_add", { text: "the new one" });
+    expect(added.details.task.text).toBe("the new one");
+    const listed = (await call("todo_list")).details.tasks as TodoTask[];
+    expect(listed.find((task) => task.id === added.details.task.id)?.text).toBe("the new one");
+  });
+
+  test("todo_add refuses text the state layer will not store", async () => {
+    const { call, todoFile } = fixture();
+    await expect(call("todo_add", { text: "x".repeat(MAX_TODO_TEXT + 1) })).rejects.toThrow(
+      `a task is at most ${MAX_TODO_TEXT} characters`,
+    );
+    await expect(call("todo_add", { text: "repaint \u001b[2J" })).rejects.toThrow(
+      "task text cannot hold control characters",
+    );
+    await expect(call("todo_add", { text: "   " })).rejects.toThrow("a task needs text");
+    expect(existsSync(todoFile)).toBe(false);
   });
 
   test("todo_add takes a status and persists it", async () => {
@@ -169,13 +226,26 @@ describe("todo tools", () => {
 
     const first = await call("todo_complete", { id: created.id });
     expect(first.details.task.status).toBe("completed");
+    expect(first.details.changed).toBe(true);
     await Bun.sleep(2);
 
     const second = await call("todo_complete", { id: created.id });
     expect(second.details.task.status).toBe("completed");
-    // A repeat is a no-op, so nothing about the task moves.
+    // A repeat is a no-op, so nothing about the task moves and it says so.
+    expect(second.details.changed).toBe(false);
     expect(second.details.task.updatedAt).toBe(first.details.task.updatedAt);
+    expect(second.content[0]!.text).toContain("was already completed");
     expect((await call("todo_list")).details.count).toBe(1);
+  });
+
+  test("todo_update reports a change that changes nothing as such", async () => {
+    const { call } = fixture();
+    const created = (await call("todo_add", { text: "same text" })).details.task as TodoTask;
+
+    const again = await call("todo_update", { id: created.id, text: "same text" });
+    expect(again.details.changed).toBe(false);
+    expect(again.details.task.updatedAt).toBe(created.updatedAt);
+    expect(again.content[0]!.text).toContain("nothing changed");
   });
 
   test("todo_delete removes a task of any status and reports its identity", async () => {
@@ -223,7 +293,7 @@ describe("todo tools", () => {
     const before = readFileSync(todoFile, "utf8");
 
     await expect(call("todo_add", { text: "one too many" })).rejects.toThrow(
-      `the list holds at most ${MAX_TODOS} tasks`,
+      `the list holds at most ${MAX_TODOS} tasks. Complete or delete one before adding another.`,
     );
     expect(readFileSync(todoFile, "utf8")).toBe(before);
 
@@ -283,6 +353,53 @@ describe("todo tools", () => {
     controller.load(later);
     expect(controller.sessionFile).toBe(later);
     expect(controller.list()).toHaveLength(0);
+  });
+
+  test("a constructed session file needs no load", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pum-todo-tools-"));
+    directories.push(directory);
+    const sessionFile = join(directory, "session.jsonl");
+    const controller = new TodoToolsController("subagent", sessionFile);
+
+    expect(controller.sessionFile).toBe(sessionFile);
+    await register(controller).call("todo_add", { text: "bound at birth" });
+    expect(existsSync(todoFileFor(sessionFile))).toBe(true);
+  });
+
+  test("no session file unbinds, so a reused controller never writes to the old one", async () => {
+    const { controller, todoFile } = fixture();
+    await controller.add("first run");
+
+    controller.load(undefined);
+    expect(controller.sessionFile).toBeUndefined();
+    controller.load(null);
+    expect(controller.sessionFile).toBeUndefined();
+    controller.load("");
+    expect(controller.sessionFile).toBeUndefined();
+
+    const before = readFileSync(todoFile, "utf8");
+    await controller.add("second run");
+    expect(readFileSync(todoFile, "utf8")).toBe(before);
+    // Clean up the process-wide sessionless list this test just wrote to.
+    for (const task of controller.list()) await controller.delete(task.id);
+  });
+
+  test("a child with no session file gets no list rather than the main one", async () => {
+    const main = new TodoToolsController("main");
+    const child = new TodoToolsController("subagent");
+    const message = "this agent has no todo list";
+
+    const mine = await main.add("main only");
+    try {
+      expect(main.list().some((task) => task.id === mine.id)).toBe(true);
+      expect(() => child.list()).toThrow(message);
+      await expect(child.add("child task")).rejects.toThrow(message);
+      await expect(child.complete(mine.id)).rejects.toThrow(message);
+      await expect(child.update(mine.id, { status: "cancelled" })).rejects.toThrow(message);
+      await expect(child.delete(mine.id)).rejects.toThrow(message);
+    } finally {
+      await main.delete(mine.id);
+    }
   });
 
   test("the extension name carries the audience", () => {

@@ -35,6 +35,9 @@ export type TodoToolName = (typeof TODO_TOOL_NAMES)[number];
 
 export type TodoAudience = "main" | "subagent";
 
+/** A mutation and whether it moved anything. A repeat is success, not change. */
+export type TodoChange = { task: TodoTask; changed: boolean };
+
 const StatusSchema = Type.Union(TODO_STATUSES.map((status) => Type.Literal(status)), {
   description: `Task status, one of: ${TODO_STATUSES.join(", ")}`,
 });
@@ -86,13 +89,20 @@ function taskDetails(task: TodoTask) {
 }
 
 /**
- * The state layer says which id it did not find; only the tool layer knows
- * which call recovers it. Stale ids are the one error a model can fix alone.
+ * The state layer says what went wrong; only the tool layer knows which call
+ * recovers it. A stale id and a full list are the two errors a model can fix
+ * on its own, so both leave with the next move attached.
  */
-function withIdHint(error: unknown): never {
+function withHint(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
   if (message.startsWith("unknown task id")) {
-    throw new Error(`${message}. Call todo_list for the ids that still exist.`);
+    throw new Error(`${message}. Call todo_list for the ids that still exist.`, { cause: error });
+  }
+  if (message.startsWith("the list holds at most")) {
+    throw new Error(
+      `${message}. Complete or delete one before adding another.`,
+      { cause: error },
+    );
   }
   throw error;
 }
@@ -101,9 +111,9 @@ export class TodoToolsController {
   readonly audience: TodoAudience;
   private file: string | undefined;
 
-  constructor(audience: TodoAudience = "main", sessionFile?: string) {
+  constructor(audience: TodoAudience = "main", sessionFile?: string | null) {
+    this.file = sessionFile || undefined;
     this.audience = audience;
-    this.file = sessionFile;
   }
 
   /** The session file currently bound, if any. */
@@ -113,56 +123,86 @@ export class TodoToolsController {
 
   /**
    * Bind the session file. A session names its file only once it starts, so
-   * the controller is built first and pointed at the list afterwards.
+   * the controller is built first and pointed at the list afterwards. No name
+   * unbinds: a controller reused for a fresh run must not keep writing to the
+   * list of the session it served before.
    */
-  load(sessionFile?: string): void {
-    if (sessionFile !== undefined) this.file = sessionFile;
+  load(sessionFile?: string | null): void {
+    this.file = sessionFile || undefined;
+  }
+
+  /**
+   * The file this agent's list lives in.
+   *
+   * A run with no session file keeps its list in memory, and every unbound
+   * writer in the process shares that one list. The main agent is the only
+   * one of its kind, so it can own it; a child with no file of its own would
+   * be reading the main agent's tasks, and gets no list at all instead.
+   */
+  private bound(): string | undefined {
+    if (this.file === undefined && this.audience !== "main") {
+      throw new Error("this agent has no todo list: its session started without a file to keep one in");
+    }
+    return this.file;
   }
 
   /** This agent's tasks in canonical order, optionally one status only. */
   list(status?: TodoStatus): TodoTask[] {
-    const tasks = sortTodoTasks(loadTodoTasks(this.file));
+    // A plain read is enough: a write lands whole through a rename, and the
+    // tools run one at a time, so there is no half-written list to catch.
+    const tasks = sortTodoTasks(loadTodoTasks(this.bound()));
     return status ? tasks.filter((task) => task.status === status) : tasks;
   }
 
   async add(text: string, status?: TodoStatus): Promise<TodoTask> {
     let created: TodoTask | undefined;
-    await updateTodoTasks(this.file, (tasks) => {
+    await updateTodoTasks(this.bound(), (tasks) => {
+      // By id, not by position: where the new task lands is not this layer's
+      // business, and reporting the wrong one would be silent.
+      const before = new Set(tasks.map((task) => task.id));
       const next = addTodoTask(tasks, text, status);
-      created = next[next.length - 1];
+      created = next.find((task) => !before.has(task.id));
       return next;
-    });
-    // The mutation ran and returned, so the appended task exists.
+    }).catch(withHint);
     return created as TodoTask;
   }
 
-  async update(id: string, changes: { text?: string; status?: TodoStatus }): Promise<TodoTask> {
+  async update(id: string, changes: { text?: string; status?: TodoStatus }): Promise<TodoChange> {
     if (changes.text === undefined && changes.status === undefined) {
       throw new Error("nothing to change: pass text, status, or both");
     }
-    const tasks = await updateTodoTasks(
-      this.file,
-      (current) => updateTodoTask(current, id, changes),
-    ).catch(withIdHint);
-    return tasks.find((task) => task.id === id) as TodoTask;
+    return this.apply(id, changes);
   }
 
   /** Completing a completed task is a no-op, not an error. */
-  async complete(id: string): Promise<TodoTask> {
-    const tasks = await updateTodoTasks(
-      this.file,
-      (current) => updateTodoTask(current, id, { status: "completed" }),
-    ).catch(withIdHint);
-    return tasks.find((task) => task.id === id) as TodoTask;
+  async complete(id: string): Promise<TodoChange> {
+    return this.apply(id, { status: "completed" });
   }
 
   async delete(id: string): Promise<TodoTask> {
     let deleted: TodoTask | undefined;
-    await updateTodoTasks(this.file, (tasks) => {
+    await updateTodoTasks(this.bound(), (tasks) => {
       deleted = tasks.find((task) => task.id === id);
       return deleteTodoTask(tasks, id);
-    }).catch(withIdHint);
+    }).catch(withHint);
     return deleted as TodoTask;
+  }
+
+  private async apply(
+    id: string,
+    changes: { text?: string; status?: TodoStatus },
+  ): Promise<TodoChange> {
+    let before: TodoTask | undefined;
+    const tasks = await updateTodoTasks(this.bound(), (current) => {
+      before = current.find((task) => task.id === id);
+      return updateTodoTask(current, id, changes);
+    }).catch(withHint);
+    // The mutation returned, so the id is there.
+    const task = tasks.find((candidate) => candidate.id === id) as TodoTask;
+    // Comparing the fields, not updatedAt: two changes in one millisecond
+    // share a timestamp and the second would read as a no-op.
+    const changed = !before || before.text !== task.text || before.status !== task.status;
+    return { task, changed };
   }
 
   registerTool(pi: Pick<ExtensionAPI, "registerTool">): void {
@@ -235,10 +275,16 @@ export class TodoToolsController {
       }, { additionalProperties: false }),
       executionMode: "sequential",
       execute: async (_id, params) => {
-        const task = await controller.update(params.id, { text: params.text, status: params.status });
+        const { task, changed } = await controller.update(params.id, {
+          text: params.text,
+          status: params.status,
+        });
+        const headline = changed
+          ? `Updated task ${task.id}.`
+          : `Task ${task.id} already read that way; nothing changed.`;
         return {
-          content: [{ type: "text" as const, text: `Updated task ${task.id}.\n${taskLine(task)}` }],
-          details: { action: "update", count: 1, task: taskDetails(task) },
+          content: [{ type: "text" as const, text: `${headline}\n${taskLine(task)}` }],
+          details: { action: "update", count: 1, changed, task: taskDetails(task) },
         };
       },
     });
@@ -254,10 +300,13 @@ export class TodoToolsController {
       parameters: Type.Object({ id: IdSchema }, { additionalProperties: false }),
       executionMode: "sequential",
       execute: async (_id, params) => {
-        const task = await controller.complete(params.id);
+        const { task, changed } = await controller.complete(params.id);
+        const headline = changed
+          ? `Completed task ${task.id}.`
+          : `Task ${task.id} was already completed.`;
         return {
-          content: [{ type: "text" as const, text: `Completed task ${task.id}.\n${taskLine(task)}` }],
-          details: { action: "complete", count: 1, task: taskDetails(task) },
+          content: [{ type: "text" as const, text: `${headline}\n${taskLine(task)}` }],
+          details: { action: "complete", count: 1, changed, task: taskDetails(task) },
         };
       },
     });
