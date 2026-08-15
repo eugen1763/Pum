@@ -1908,18 +1908,72 @@ export class SubagentManager {
     const record = this.findRecord(id);
     if (!record?.session) return;
     const queued = record.session.clearQueue();
-    const cancelled = new Set([...queued.steering, ...queued.followUp]);
-    if (cancelled.size > 0) {
-      for (const pending of record.snapshot.transcript.pending) {
-        if (pending.deliveryText && cancelled.has(pending.deliveryText)) {
-          record.userInstructionNotices?.delete(pending.id);
-        }
+    const remainingOccurrences = new Map<string, number>();
+    for (const text of [...queued.steering, ...queued.followUp]) {
+      remainingOccurrences.set(text, (remainingOccurrences.get(text) ?? 0) + 1);
+    }
+
+    const cancelledUserPending: PendingLine[] = [];
+    for (const pending of record.snapshot.transcript.pending) {
+      if (
+        pending.delivered
+        || pending.line.kind !== "text"
+        || pending.line.role !== "user"
+        || !pending.deliveryText
+      ) continue;
+      const remaining = remainingOccurrences.get(pending.deliveryText) ?? 0;
+      if (remaining <= 0) continue;
+      remainingOccurrences.set(pending.deliveryText, remaining - 1);
+      cancelledUserPending.push(pending);
+    }
+
+    const recoveredIds = new Set<string>();
+    let unrecoverableAttachments = 0;
+    for (const pending of cancelledUserPending) {
+      record.userInstructionNotices?.delete(pending.id);
+      if (pending.recallable === false) {
+        unrecoverableAttachments += 1;
+        continue;
       }
+      if (!this.messageCacheController) continue;
+      try {
+        this.messageCacheController.add(
+          { kind: "subagent", id: record.snapshot.id, name: record.snapshot.name },
+          pending.line.text,
+        );
+        recoveredIds.add(pending.id);
+      } catch {
+        // Cancellation must still reach the child. The transcript fallback below
+        // keeps the exact user text visible when durable cache persistence fails.
+      }
+    }
+
+    if (cancelledUserPending.length > 0) {
+      const cancelledIds = new Set(cancelledUserPending.map((pending) => pending.id));
+      const uncached = cancelledUserPending.filter(
+        (pending) => pending.recallable !== false && !recoveredIds.has(pending.id),
+      );
       this.updateTranscript(record, (value) => ({
         ...value,
-        pending: value.pending.filter(
-          (pending) => !pending.deliveryText || !cancelled.has(pending.deliveryText),
-        ),
+        lines: [
+          ...value.lines,
+          ...(recoveredIds.size > 0 ? [{
+            kind: "text" as const,
+            role: "system" as const,
+            text: `cancelled; preserved ${recoveredIds.size} queued user message${recoveredIds.size === 1 ? "" : "s"} in the cache`,
+          }] : []),
+          ...uncached.map((pending) => ({
+            kind: "text" as const,
+            role: "error" as const,
+            text: `cancelled queued message could not be cached; copy it to retry:\n${pending.line.text}`,
+          })),
+          ...(unrecoverableAttachments > 0 ? [{
+            kind: "text" as const,
+            role: "error" as const,
+            text: `cancelled ${unrecoverableAttachments} queued attachment message${unrecoverableAttachments === 1 ? "" : "s"}; attachments could not be preserved`,
+          }] : []),
+        ],
+        pending: value.pending.filter((pending) => !cancelledIds.has(pending.id)),
       }));
     }
     await record.session.abort();
