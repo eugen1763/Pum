@@ -61,6 +61,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/history", "Browse saved sessions"],
       ["/login", "Add or update a provider"],
       ["/news", "Open recent answers (News)"],
+      ["/todo", "Show the agent's todo list"],
       ["/stats", "Show session statistics"],
       ["/check-path", "Manage extra Check mode paths"],
       ["/processes", "Open Processes on last tab"],
@@ -74,6 +75,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     controls: [
       ["Ctrl+P", "Open Settings"],
       ["Ctrl+N", "Open News; n answer / p source"],
+      ["Ctrl+O", "Open the agent's todo list"],
       ["Ctrl+T", "Open Processes"],
       ["Ctrl+End", "Scroll transcript to the end"],
       ["/ in Settings", "Focus the settings search"],

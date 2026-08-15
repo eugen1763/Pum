@@ -47,8 +47,12 @@ import {
 import {
   ToolGroupsController,
   childAllowedToolNames,
+  afkAllowedToolNames,
   judgeAllowedToolNames,
 } from "../tool-groups";
+import { isInternalRole } from "./types";
+import { AFK_ANSWER_TOOL_NAME, afkAnswerParameters } from "../afk-delegate";
+import { TodoToolsController } from "../todo-tools";
 import {
   registerTriggerTools,
   type TriggerRuntimeManager,
@@ -79,6 +83,7 @@ import {
   AGENT_MESSAGE_CUSTOM_TYPE,
   AGENT_MESSAGE_DISPLAY_TYPE,
   SUBAGENT_CUSTOM_TYPE,
+  AGENT_NOTICE_CUSTOM_TYPE,
   TOOL_EVENT_CUSTOM_TYPE,
   TRIGGER_EVENT_CUSTOM_TYPE,
   type AgentMessageData,
@@ -170,7 +175,7 @@ export function countActiveSubagents(
 ): number {
   let count = 0;
   for (const agent of agents) {
-    if (agent.role === "judge") continue;
+    if (isInternalRole(agent.role)) continue;
     if (ACTIVE_SUBAGENT_STATUSES.has(agent.status)) count += 1;
   }
   return count;
@@ -207,6 +212,7 @@ type RuntimeRecord = {
   finishRequested?: string;
   userInstructionNotices?: Map<string, string>;
   toolGroups?: ToolGroupsController;
+  todoTools?: TodoToolsController;
   activityGeneration: number;
   idleNotifiedGeneration: number;
   /**
@@ -231,6 +237,7 @@ type RuntimeRecord = {
   spawnParameters?: ReturnType<typeof spawnSubagentParameters>;
   /** Set only for a goal judge: where its single structured verdict is delivered. */
   goalVerdict?: (raw: unknown) => void;
+  afkAnswer?: (raw: unknown) => void;
 };
 
 type IdleOpenReminderState = {
@@ -480,7 +487,7 @@ export class SubagentManager {
     for (const restoredSnapshot of restored.values()) {
       // A judge belongs to one review of one live session. Resuming one would
       // retain a record that no verdict can ever close, so drop it here.
-      if (restoredSnapshot.role === "judge") {
+      if (isInternalRole(restoredSnapshot.role)) {
         this.persist({ event: "removed", id: restoredSnapshot.id, at: Date.now() });
         continue;
       }
@@ -596,6 +603,24 @@ export class SubagentManager {
     this.emit();
   }
 
+  /**
+   * Show one line in a child's transcript and keep it across resume.
+   *
+   * The custom entry is display-only: it is replayed for the user and never
+   * re-enters the model's context, because whatever produced it already told
+   * the agent through its own tool result.
+   */
+  appendAgentLine(agentId: string, line: Line): void {
+    const record = this.records.get(agentId);
+    if (!record) return;
+    this.appendLine(record, line);
+    try {
+      record.session?.sessionManager.appendCustomEntry(AGENT_NOTICE_CUSTOM_TYPE, { agentId, line });
+    } catch {
+      // The row is already on screen; failing to persist it must not throw here.
+    }
+  }
+
   private updateTranscript(record: RuntimeRecord, update: (value: AgentTranscript) => AgentTranscript): void {
     record.snapshot.transcript = update(record.snapshot.transcript);
     record.snapshot.updatedAt = Date.now();
@@ -681,7 +706,7 @@ export class SubagentManager {
     const subagents = (agentId === null
       ? [...this.records.values()]
       : this.retainedDescendants(agentId).map(({ record }) => record)
-    ).filter((record) => record.snapshot.role !== "judge");
+    ).filter((record) => !isInternalRole(record.snapshot.role));
     const targetSessionId = agentId === null ? undefined : this.records.get(agentId)?.session?.sessionId;
     const triggers = (this.triggerManager?.getTriggers?.() ?? []).filter((trigger) =>
       !CLOSED_TRIGGER_STATES.has(trigger.state)
@@ -1059,6 +1084,14 @@ export class SubagentManager {
         pi.on("before_agent_start", (event) => {
           const record = this.records.get(agentId);
           if (!record) return;
+          if (record.snapshot.role === "afk") {
+            return {
+              systemPrompt: `${event.systemPrompt}\n\nYou are the PUM AFK delegate (${agentId}). `
+                + "You answer one questionnaire on the user's behalf while they are away. "
+                + "You have no files, no shell and no network - the answer tool is all you have. "
+                + `Answer every question once with ${AFK_ANSWER_TOOL_NAME} and stop.`,
+            };
+          }
           if (record.snapshot.role === "judge") {
             return {
               systemPrompt: `${event.systemPrompt}\n\nYou are the PUM goal judge (${agentId}). `
@@ -1109,6 +1142,29 @@ export class SubagentManager {
           return;
         }
 
+        // The delegate owns one tool. It must not get the questionnaire tool in
+        // particular: the queue is global and single-file, so a delegate that
+        // could raise its own questionnaire would wait behind itself forever.
+        if (this.records.get(agentId)?.snapshot.role === "afk") {
+          pi.registerTool({
+            name: AFK_ANSWER_TOOL_NAME,
+            label: "AFK Answer",
+            description: "Answer every question in the current questionnaire, then stop.",
+            promptSnippet: "Answer the questionnaire once",
+            parameters: afkAnswerParameters,
+            execute: async (_id, params) => {
+              const record = this.records.get(agentId);
+              if (!record?.afkAnswer) throw new Error("This questionnaire is no longer live.");
+              // One answer per delegate. A second call must not start another turn.
+              const deliver = record.afkAnswer;
+              record.afkAnswer = undefined;
+              deliver(params);
+              return { ...textResult("Answer recorded."), terminate: true };
+            },
+          });
+          return;
+        }
+
         const questionnaireRecord = this.records.get(agentId);
         if (questionnaireRecord) {
           this.questionnaireManager?.registerTool(pi, {
@@ -1127,6 +1183,9 @@ export class SubagentManager {
         const toolGroupsRecord = this.records.get(agentId);
         if (toolGroupsRecord?.toolGroups) {
           toolGroupsRecord.toolGroups.registerTool(pi);
+        }
+        if (toolGroupsRecord?.todoTools) {
+          toolGroupsRecord.todoTools.registerTool(pi);
         }
         if (this.triggerManager) {
           registerTriggerTools(
@@ -1632,9 +1691,45 @@ export class SubagentManager {
 
   /** Stop and forget a judge. It owns no worktree, so nothing is merged or removed. */
   async removeGoalJudge(id: string): Promise<void> {
+    await this.removeInternalAgent(id, "judge");
+  }
+
+  /**
+   * One restricted agent that answers a single questionnaire for AFK mode.
+   *
+   * It gets no filesystem, no bash and no network: the answer tool is its whole
+   * world. That is why `readonly` stays false - the allowlist already denies
+   * everything readonly would, and readonly would demand an OS sandbox PUM does
+   * not need here.
+   */
+  async spawnAfkDelegate(options: {
+    task: string;
+    modelId: string;
+    thinkingLevel: string;
+    onAnswer: (raw: unknown) => void;
+  }): Promise<SubagentSnapshot> {
+    return this.spawn({
+      task: options.task,
+      modelId: options.modelId,
+      thinkingLevel: options.thinkingLevel,
+      readonly: false,
+      createWorktree: false,
+      role: "afk",
+      parentAgentId: null,
+      onAfkAnswer: options.onAnswer,
+    });
+  }
+
+  /** Stop and forget an AFK delegate. Like a judge, it owns nothing to clean up. */
+  async removeAfkDelegate(id: string): Promise<void> {
+    await this.removeInternalAgent(id, "afk");
+  }
+
+  private async removeInternalAgent(id: string, role: SubagentRole): Promise<void> {
     const record = this.records.get(id);
-    if (!record || record.snapshot.role !== "judge") return;
+    if (!record || record.snapshot.role !== role) return;
     record.goalVerdict = undefined;
+    record.afkAnswer = undefined;
     await this.stop(id, "stopped", false);
     this.statsManager?.closeAgent(id);
     this.records.delete(id);
@@ -1653,7 +1748,7 @@ export class SubagentManager {
     let allocatedSessionFile: string | undefined;
     const record = await this.withWorktreeLock(async () => {
       // The judge is not a worker, so the parallel-work limit does not apply.
-      if (options.role !== "judge" && this.activeCount() >= this.maxActiveSubagents) {
+      if (!isInternalRole(options.role) && this.activeCount() >= this.maxActiveSubagents) {
         throw activeLimitError(this.maxActiveSubagents);
       }
       if (this.records.size >= MAX_RETAINED_AGENTS) throw new Error(`At most ${MAX_RETAINED_AGENTS} subagents can be retained`);
@@ -1664,12 +1759,13 @@ export class SubagentManager {
       }
 
       const id = randomUUID().slice(0, 8);
-      // A judge inspects the launch project itself, so it gets no worktree and
-      // no branch. Nothing has to be merged or removed when it is cleaned up.
+      // An internal agent works against the launch project itself, so it gets
+      // no worktree and no branch. Nothing has to be merged or removed when it
+      // is cleaned up.
       const managed = options.createWorktree !== false;
       const worktree = managed
         ? await createWorktree(this.mainCwd, options.name)
-        : this.projectWorktreeRecord(options.name ?? `judge-${id}`);
+        : this.projectWorktreeRecord(options.name ?? `${options.role ?? "internal"}-${id}`);
       try {
         const now = Date.now();
         const snapshot: SubagentSnapshot = {
@@ -1704,6 +1800,7 @@ export class SubagentManager {
           activityGeneration: 0,
           idleNotifiedGeneration: 0,
           goalVerdict: options.onGoalVerdict,
+        afkAnswer: options.onAfkAnswer,
         };
         this.records.set(id, created);
         // Register the agent before runtime setup can fail. A fresh spawn that
@@ -1785,10 +1882,15 @@ export class SubagentManager {
       : SessionManagerClass.create(record.snapshot.worktree.path, sessionDir);
     // Each child tracks its own enabled tool groups, persisted next to its
     // session file. Restore before the child's enable_tools tool registers.
+    const internal = isInternalRole(record.snapshot.role);
     const judge = record.snapshot.role === "judge";
-    if (!judge) {
+    if (!internal) {
       record.toolGroups = new ToolGroupsController("subagent", undefined, record.snapshot.readonly);
       record.toolGroups.load(sessionManager.getSessionFile());
+      // Each child owns its own list. Binding it to the child's session file is
+      // what keeps one agent out of another's plan.
+      record.todoTools = new TodoToolsController("subagent");
+      record.todoTools.load(sessionManager.getSessionFile());
     }
     const services = await createAgentSessionServices({
       cwd: record.snapshot.worktree.path,
@@ -1811,7 +1913,9 @@ export class SubagentManager {
       sessionManager,
       model,
       thinkingLevel: record.snapshot.thinkingLevel as any,
-      tools: judge ? judgeAllowedToolNames() : childAllowedToolNames(record.snapshot.readonly),
+      tools: record.snapshot.role === "afk"
+        ? afkAllowedToolNames()
+        : judge ? judgeAllowedToolNames() : childAllowedToolNames(record.snapshot.readonly),
     });
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
@@ -2496,7 +2600,7 @@ export class SubagentManager {
   ): Promise<void> {
     // A judge reports through goal_verdict only. It never sends a lifecycle
     // notice, so it can neither create a News item nor start an ack loop.
-    if (record.snapshot.role === "judge") return;
+    if (isInternalRole(record.snapshot.role)) return;
     const id = this.settlementId(record, status);
     let settlement = this.settlements.get(id);
     if (!settlement) {
@@ -2788,8 +2892,8 @@ export class SubagentManager {
     if (action === "merge") {
       return this.withWorktreeLock(async () => {
         const managedAgent = this.findRecord(target);
-        if (managedAgent?.snapshot.role === "judge") {
-          throw new Error("A goal judge holds no worktree and nothing to merge.");
+        if (isInternalRole(managedAgent?.snapshot.role)) {
+          throw new Error(`A ${managedAgent!.snapshot.role} agent holds no worktree and nothing to merge.`);
         }
         if (managedAgent) {
           this.assertNoRetainedDescendants(managedAgent, "merge");
@@ -2822,8 +2926,10 @@ export class SubagentManager {
     if (action === "remove") {
       return this.withWorktreeLock(async () => {
         const managedAgent = this.findRecord(target);
-        if (managedAgent?.snapshot.role === "judge") {
-          throw new Error("A goal judge holds no worktree and is closed by the goal lifecycle.");
+        if (isInternalRole(managedAgent?.snapshot.role)) {
+          throw new Error(
+            `A ${managedAgent!.snapshot.role} agent holds no worktree; PUM closes it itself.`,
+          );
         }
         if (managedAgent && ["starting", "running"].includes(managedAgent.snapshot.status)) {
           throw new Error(`Stop ${managedAgent.snapshot.name} before ${action}`);

@@ -447,6 +447,26 @@ describe("PUM settings-file scope and identity gating", () => {
     expect(verifier.calls).toBe(0);
   });
 
+  test("blocks a main settings-file write when no allowance is granted", async () => {
+    // Nothing in PUM grants one any more: settings changes belong to the
+    // session, and only the Settings popup promotes them to global.
+    const cwd = tempProject("pum-settings-project-");
+    const settingsDir = tempProject("pum-settings-dir-");
+    const verifier = runtime([]);
+    const command = `printf '{}' > '${join(settingsDir, "pum.json")}'`;
+
+    // The identical call with an explicit allowance is allowed above, so this
+    // isolates the allowance itself rather than the external-write rule.
+    expect(await evaluateToolCall(verifier, {
+      toolName: "bash", input: { command }, cwd, config, requester: { kind: "main" },
+    })).toMatchObject({ decision: "block" });
+    expect(await evaluateToolCall(verifier, {
+      toolName: "bash", input: { command }, cwd, config, requester: { kind: "main" },
+      settingsFiles: settingsNames.map((name) => join(settingsDir, name)),
+    })).toMatchObject({ decision: "allow" });
+    expect(verifier.calls).toBe(0);
+  });
+
   test("keeps auth.json and session writes blocked for main even with settings enabled", async () => {
     const cwd = tempProject("pum-settings-project-");
     const settingsDir = tempProject("pum-settings-dir-");

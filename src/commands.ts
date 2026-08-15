@@ -38,6 +38,10 @@ export const COMMANDS: Command[] = [
     description: "Open recent answers (News)",
   },
   {
+    name: "/todo",
+    description: "Show the selected agent's todo list",
+  },
+  {
     name: "/stats",
     description: "Show session statistics",
   },
@@ -62,6 +66,10 @@ export const COMMANDS: Command[] = [
 export function matchingCommands(input: string): Command[] {
   if (!input.startsWith("/") || input.includes("\n")) return [];
   const name = input.split(/\s/, 1)[0]!;
+  // No command name holds a second separator, so one means the user is typing
+  // an absolute path. Leaving it to prefix matching would let Tab on /u turn
+  // /usr/lib into /new.
+  if (/[/\\]/.test(name.slice(1))) return [];
   return COMMANDS.filter((command) =>
     /\s/.test(input) ? command.name === name : command.name.startsWith(input),
   );

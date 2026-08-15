@@ -100,7 +100,8 @@ bun run start    # open the TUI in the current directory
 | Shift+Tab / Ctrl+Shift+Tab | Cycle agent transcripts forward/backward |
 | Ctrl+L | Open the agent transcript tree; use Up/Down and Right/Enter to select |
 | Esc | Once warns, twice within 2s cancels the selected agent's running turn |
-| Ctrl+P | Open settings; Esc closes, or steps back from the model list |
+| Ctrl+P | Open settings; `s` saves them as global; Esc closes, or steps back from the model list |
+| Ctrl+O | Open the selected agent's todo list; `f` filters, Esc closes |
 | Ctrl+T | Open process-local external triggers |
 | Ctrl+C | Clear the selected non-empty draft; on an empty draft, once arms and twice within 2s quits |
 | Questionnaire: ↑/↓, ←/→ or Tab, Enter, Esc | Select options, move questions, confirm, or cancel |
@@ -198,16 +199,20 @@ These were chosen deliberately. Change them only on purpose.
   blocks external
   location changes, writes, execution operands, ambiguous access, credential
   access, escaping links or junctions, broad deletion, and other hard rules.
-- **The main agent can deliberately edit exact PUM settings files.** The
-  authoritative main agent may `edit` or `bash`-write `settings.json`, `pum.json`,
-  and `theme.json` directly inside the PUM agent directory. The allowlist is
-  exact file names, never the whole config directory. Credentials stay denied:
-  `auth.json`, `models.json` key material, session content, and any other file
-  or subdirectory under the config directory keep the protected-path and
-  credential hard blocks. Managed subagents are blocked because they share the
-  host config directory. The native sandbox still denies the whole PUM config
-  root, so an enforced sandbox backend keeps config-root writes blocked even
-  when the deterministic layer approves them.
+- **No agent writes the PUM config directory.** Settings changed in the popup
+  belong to the session, not to `pum.json`, and `s` in the Settings popup is the
+  one deliberate promotion to global - performed by PUM itself, never through a
+  tool. The deterministic layer still supports an exact-file allowance, but
+  nothing grants one, so `settings.json`, `pum.json` and `theme.json` are
+  blocked for the main agent and for every subagent. `auth.json`, `models.json`
+  key material and session content keep their existing hard blocks, and the
+  native sandbox still denies the whole config root.
+- **Session settings live beside the session.** `<session>.settings.json` holds
+  only the fields that differ from global, following the same atomic-write and
+  defensive-load rules as the goal and todo companions. An empty overlay deletes
+  the file rather than leaving a stub beside every session. `/clear` and `/new`
+  start from the global settings, because the overlay belongs to the session
+  that set it.
 - **Null devices and Git Bash drive paths are policy-friendly.** `/dev/null` is
   a null device in every path flavor, so `2>/dev/null` and `> /dev/null` no
   longer classify as external writes on a Windows cwd. A Git Bash / MSYS drive

@@ -1,5 +1,6 @@
 import type { InlineExtension } from "@earendil-works/pi-coding-agent";
 import { rejectedToolDetails } from "../check-mode";
+import { TODO_TOOL_NAMES } from "../todo-tools";
 
 const SAFE_TOOLS = new Set([
   "read",
@@ -17,6 +18,9 @@ const SAFE_TOOLS = new Set([
   "cancel_trigger",
   "web_search",
   "goal_verdict",
+  // Todo tools touch one companion file the child already owns. Listing a task
+  // is not a project mutation, so a readonly child keeps its own plan.
+  ...TODO_TOOL_NAMES,
 ]);
 
 export function readonlyToolBlockReason(

@@ -12,12 +12,23 @@ export const SUBAGENT_CUSTOM_TYPE = "pum.subagent";
 export const AGENT_MESSAGE_CUSTOM_TYPE = "pum.agent_message";
 export const AGENT_MESSAGE_DISPLAY_TYPE = "pum.agent_message_display";
 export const TOOL_EVENT_CUSTOM_TYPE = "pum.tool_event";
+/** A display-only notice PUM wrote into an agent's transcript, replayed on resume. */
+export const AGENT_NOTICE_CUSTOM_TYPE = "pum.agent_notice";
 export const TRIGGER_EVENT_CUSTOM_TYPE = EXTERNAL_TRIGGER_CUSTOM_TYPE;
 /** Hidden user-message prefix used only to guarantee that the main loop wakes. */
 export const SUBAGENT_WAKE_PREFIX = "[PUM internal subagent wake]";
 
 /** A plain worker, or the goal judge that reviews after a settled turn. */
-export type SubagentRole = "worker" | "judge";
+export type SubagentRole = "worker" | "judge" | "afk";
+
+/**
+ * Roles PUM drives for itself. They never join the managed tree, never count
+ * toward capacity, and never own a worktree, so every place that walks the
+ * user's agents has to skip them.
+ */
+export function isInternalRole(role: SubagentRole | undefined): boolean {
+  return role === "judge" || role === "afk";
+}
 
 export type SubagentStatus =
   | "starting"
@@ -151,6 +162,8 @@ export type SpawnSubagentOptions = {
   forkSource?: ForkSource;
   /** Runtime-only judge sink. Set before the first turn so no verdict can race it. */
   onGoalVerdict?: (raw: unknown) => void;
+  /** Receives the delegate's single AFK answer. Set before the first turn. */
+  onAfkAnswer?: (raw: unknown) => void;
 };
 
 export type RoutedPrompt = {

@@ -33,3 +33,20 @@ describe("command suggestions", () => {
     expect(matchingCommands("/clear\nkeep this text")).toEqual([]);
   });
 });
+
+describe("absolute paths are not commands", () => {
+  test("a second separator ends command matching, so paths complete instead", () => {
+    // /c still reaches /clear and /compress; /c/ is a path the user is typing.
+    expect(matchingCommands("/c").length).toBeGreaterThan(0);
+    expect(matchingCommands("/c/")).toEqual([]);
+    expect(matchingCommands("/usr/l")).toEqual([]);
+    expect(matchingCommands("/n/ew")).toEqual([]);
+    expect(matchingCommands("/etc/hosts")).toEqual([]);
+  });
+
+  test("a separator after the command name still matches the command", () => {
+    // The rule looks at the first token only, so an argument may hold a path.
+    expect(matchingCommands("/check-path /usr/lib").map((command) => command.name))
+      .toEqual(["/check-path"]);
+  });
+});

@@ -35,6 +35,7 @@ import {
   MAX_ACTIVE_SUBAGENTS,
   MIN_ACTIVE_SUBAGENTS,
   SANDBOX_MODES,
+  normalizeSettings,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
   type PumSettings,
@@ -79,6 +80,35 @@ import {
   withSearchRoute,
 } from "./web-search";
 import { matchingCommands, moveCommandSelection } from "./commands";
+import { truncateStatusText } from "./status-metadata";
+import { modeLineLabels } from "./mode-line";
+import {
+  loadSessionSettings,
+  mergeSessionSettings,
+  saveSessionSettings,
+  sessionSettingsDiff,
+  type SessionSettings,
+} from "./session-settings";
+import { AfkController, type AfkStatus } from "./afk";
+import { parseAfkCommand } from "./afk-command";
+import {
+  afkAnswerFailureText,
+  buildAfkTask,
+  validateAfkAnswer,
+} from "./afk-delegate";
+import type {
+  QuestionnaireRequest,
+  QuestionnaireResult,
+} from "./questionnaire";
+import { loadTodoTasks } from "./todo";
+import {
+  cycleTodoFilter,
+  moveTodoSelection,
+  TodoPopup,
+  todoPopupLayout,
+  visibleTodoTasks,
+  type TodoFilter,
+} from "./todo-popup";
 import { applyPathCompletion, pathCompletions, type PathCompletion } from "./path-autocomplete";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
@@ -331,7 +361,7 @@ function WorkingRule({
   dimmed?: boolean;
   mode: WorkingRuleAnimationMode;
   role: WorkingRuleRole;
-  label?: WorkingRuleLabel | null;
+  label?: WorkingRuleLabel | readonly WorkingRuleLabel[] | null;
 }) {
   const ref = useWorkingRule({
     width,
@@ -644,7 +674,18 @@ export function App({
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsSearchFocused, setSettingsSearchFocused] = useState(true);
   const [selectedSettingId, setSelectedSettingId] = useState<SettingRowId | null>(SETTINGS_ROWS[0]!.id);
-  const [settings, setSettings] = useState(initial);
+  // `initial` is the global config. A session lays its own overrides over it,
+  // so both have to be tracked: one to write back on `s`, one to persist here.
+  // Normalize the baseline: comparing raw props against normalized state would
+  // report every default the normalizer filled in as a session override.
+  const globalSettingsRef = useRef(normalizeSettings(initial));
+  const [sessionOverrides, setSessionOverrides] = useState<SessionSettings>(
+    () => loadSessionSettings(initialSession.sessionFile),
+  );
+  const sessionOverridesRef = useRef(sessionOverrides);
+  const [settings, setSettings] = useState(
+    () => mergeSessionSettings(globalSettingsRef.current, sessionOverridesRef.current),
+  );
   // Mirrors settings for update(): a keypress or an async .then can fire a
   // second update before React commits the first, so update() must build the
   // next value from the latest pending settings, not the render closure.
@@ -695,6 +736,12 @@ export function App({
   const [shellTails, setShellTails] = useState<Record<string, string>>({});
 
   const [newsOpen, setNewsOpen] = useState(false);
+  const [todoOpen, setTodoOpen] = useState(false);
+  const todoOpenRef = useRef(false);
+  const [todoFilter, setTodoFilter] = useState<TodoFilter>("all");
+  const todoFilterRef = useRef<TodoFilter>("all");
+  const [todoSelectedId, setTodoSelectedId] = useState<string | null>(null);
+  const todoSelectedIdRef = useRef<string | null>(null);
   const newsOpenRef = useRef(false);
   const [newsCursor, setNewsCursor] = useState(0);
   const newsCursorRef = useRef(0);
@@ -710,12 +757,6 @@ export function App({
   const animations = settings.animations && supportsTrueColor();
   // The goal rides the input-top rule, not the status bar. It is rebuilt only
   // when the goal, the terminal width, or the theme changes.
-  const goalRuleLabel = useMemo<WorkingRuleLabel | null>(() => {
-    const label = goalLabel(goal, Math.max(0, width));
-    return label
-      ? { text: label.text, width: label.width, color: goalLabelColor(theme, label.state) }
-      : null;
-  }, [goal?.text, goal?.state, width, theme]);
   const agents = subagentManager.getAgents();
   const activeSubagentCount = countActiveSubagents(agents);
   // Layout effect, like the transcript mirror: an event handler can read this
@@ -728,6 +769,37 @@ export function App({
     : undefined;
   const questionnaire = questionnaireManager?.current();
   const spawnPreview = spawnPreviewManager?.current();
+  // One controller for the process. It lives in a ref so /clear, session
+  // switches and transcript switches leave it alone; only an explicit toggle,
+  // or the process ending, can stop AFK.
+  const afkRef = useRef<AfkController | undefined>(undefined);
+  afkRef.current ??= new AfkController();
+  const afk = afkRef.current;
+  const [afkStatus, setAfkStatus] = useState<AfkStatus>(() => afk.status());
+  useEffect(() => afk.subscribe(() => setAfkStatus(afk.status())), [afk]);
+
+  // While a delegate answers, the popup stays down but the prompt stays live,
+  // so the user can always type /afk to take the questionnaire back.
+  const afkAnswering = Boolean(questionnaire) && afkStatus.active;
+  const visibleQuestionnaire = afkAnswering ? undefined : questionnaire;
+
+  const ruleLabels = useMemo<WorkingRuleLabel[]>(() => modeLineLabels({
+    goal,
+    afk: afkStatus.active
+      ? { state: afkAnswering ? "answering" : "on", instructions: afkStatus.instructions }
+      : null,
+    ruleWidth: Math.max(0, width),
+    theme,
+  }), [
+    goal?.text, goal?.state, width, theme,
+    afkStatus.active, afkStatus.instructions, afkAnswering,
+  ]);
+
+  // Every other popup outranks this one. Deriving visibility instead of closing
+  // it from each opener means a popup added later cannot forget a line here.
+  const todoVisible = todoOpen
+    && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen
+    && !triggersOpen && !loginOpen && !newsOpen && !visibleQuestionnaire && !spawnPreview;
   const visibleTx = transcriptForThinkingVisibility(
     activeAgent?.transcript ?? tx,
     settings.showThinking,
@@ -1306,6 +1378,7 @@ export function App({
       helpOpen ||
       historyOpen ||
       newsOpenRef.current ||
+      todoOpenRef.current ||
       statsOpenRef.current ||
       settingsOpenRef.current
     ) return;
@@ -1508,6 +1581,14 @@ export function App({
     // companion file, so the old goal cannot follow the user into it.
     clearGoalJudge();
     goalFormulationRef.current = null;
+    // Settings belong to one session too, so /clear and /new fall back to the
+    // global defaults rather than carrying the old session's overrides in.
+    const loadedOverrides = loadSessionSettings(session.sessionFile);
+    sessionOverridesRef.current = loadedOverrides;
+    setSessionOverrides(loadedOverrides);
+    const mergedSettings = mergeSessionSettings(globalSettingsRef.current, loadedOverrides);
+    settingsRef.current = mergedSettings;
+    setSettings(mergedSettings);
     const loadedGoal = loadGoal(session.sessionFile);
     goalRef.current = loadedGoal;
     setGoalState(loadedGoal);
@@ -1834,7 +1915,24 @@ export function App({
     if (patch.maxActiveSubagents !== undefined) {
       subagentManager.setMaxActiveSubagents(patch.maxActiveSubagents);
     }
+    // Session-scoped: the popup never writes the global config, which the
+    // sandboxes keep read-only. `s` in the popup is the one way to promote.
+    const overrides = sessionSettingsDiff(globalSettingsRef.current, next);
+    sessionOverridesRef.current = overrides;
+    setSessionOverrides(overrides);
+    saveSessionSettings(session.sessionFile, overrides);
+  };
+
+  /** Promote this session's settings to the global defaults, on `s` in the popup. */
+  const promoteSessionSettings = () => {
+    const next = settingsRef.current;
+    globalSettingsRef.current = next;
     saveSettings(next);
+    // Nothing differs from global any more, so the session owns no overrides.
+    sessionOverridesRef.current = {};
+    setSessionOverrides({});
+    saveSessionSettings(session.sessionFile, {});
+    appendMainLine({ kind: "text", role: "system", text: "Saved these settings as the global defaults." });
   };
 
   const stepThinking = (step: number) => {
@@ -1956,6 +2054,8 @@ export function App({
     setLoginOpen(false);
     setStatsOpen(false);
     statsOpenRef.current = false;
+    todoOpenRef.current = false;
+    setTodoOpen(false);
     newsCursorRef.current = 0;
     setNewsCursor(0);
     newsOpenRef.current = true;
@@ -1965,6 +2065,209 @@ export function App({
   const closeNews = () => {
     newsOpenRef.current = false;
     setNewsOpen(false);
+    queueMicrotask(() => inputRef.current?.focus());
+  };
+
+  // Re-read on every transcript change while the popup is open: a todo tool call
+  // always adds a line, so the list follows the agent without an event bus.
+  const todoSessionFile = activeAgent?.sessionFile ?? session.sessionFile;
+  const todoTasks = useMemo(
+    () => (todoVisible ? visibleTodoTasks(loadTodoTasks(todoSessionFile), todoFilter) : []),
+    [todoVisible, todoSessionFile, todoFilter, visibleLines.length, visibleBusy],
+  );
+  const todoPageSize = Math.max(1, todoPopupLayout(width, height).listHeight);
+
+  const applyTodoSelection = (next: string | null) => {
+    todoSelectedIdRef.current = next;
+    setTodoSelectedId(next);
+  };
+
+  const moveTodoCursor = (step: number) => {
+    if (todoTasks.length === 0) return;
+    const current = todoSelectedIdRef.current;
+    const index = todoTasks.findIndex((task) => task.id === current);
+    const from = index < 0 ? 0 : index;
+    const to = Math.min(todoTasks.length - 1, Math.max(0, from + step));
+    // Single steps wrap, a page jump clamps: paging past the end should land on
+    // the end, not on the row the user started from.
+    const wrapped = Math.abs(step) === 1
+      ? moveTodoSelection(todoTasks, current, step as -1 | 1)
+      : todoTasks[to]?.id ?? null;
+    applyTodoSelection(wrapped);
+  };
+
+  const moveTodoCursorTo = (edge: "first" | "last") => {
+    if (todoTasks.length === 0) return;
+    applyTodoSelection((edge === "first" ? todoTasks[0] : todoTasks.at(-1))?.id ?? null);
+  };
+
+  const cycleTodoFilterState = () => {
+    const next = cycleTodoFilter(todoFilterRef.current);
+    todoFilterRef.current = next;
+    setTodoFilter(next);
+    // The old selection may not survive the new filter; let the popup reseat it.
+    applyTodoSelection(null);
+  };
+
+  /** The transcript of whoever asked, so the delegate decides with their context. */
+  const transcriptForRequester = (requesterId: string) => {
+    if (requesterId === "main") return txRef.current;
+    return agents.find((agent) => agent.id === requesterId)?.transcript ?? txRef.current;
+  };
+
+  /**
+   * A durable row in the requesting agent's transcript for every automatic
+   * answer. The questionnaire tool result already carries the answers, so this
+   * is for the user only and never re-enters the model's context.
+   */
+  const appendAfkAudit = (request: QuestionnaireRequest, result: QuestionnaireResult) => {
+    const lines = request.questions.map((question) => {
+      const answer = result.answers.find((entry) => entry.questionId === question.id);
+      const asked = question.label ?? question.prompt;
+      const flat = asked.replace(/\s+/g, " ").trim();
+      return `  ${truncateStatusText(flat, 60) ?? flat} → ${answer?.label ?? "?"}`;
+    });
+    const row = {
+      kind: "text" as const,
+      role: "system" as const,
+      text: [`AFK answered for ${request.requester.name}`, ...lines].join("\n"),
+    };
+    if (request.requester.id === "main") appendMainLine(row);
+    else subagentManager.appendAgentLine(request.requester.id, row);
+  };
+
+  const afkDelegateRef = useRef<{
+    id: string | null;
+    requestId: string;
+    generation: number;
+    settled: boolean;
+  } | null>(null);
+  const afkStartingRef = useRef(false);
+
+  const stopAfkDelegate = async () => {
+    const running = afkDelegateRef.current;
+    afkDelegateRef.current = null;
+    if (running?.id) await subagentManager.removeAfkDelegate(running.id).catch(() => {});
+  };
+
+  /**
+   * Give up on automatic answers and hand the questionnaire back.
+   *
+   * Every failure path lands here rather than retrying: a delegate that cannot
+   * answer once is unlikely to answer better twice, and the user is the safe
+   * fallback. The original request is untouched, so its popup simply reappears.
+   */
+  const surrenderAfk = (reason: string) => {
+    void stopAfkDelegate();
+    afk.stop();
+    appendMainLine({ kind: "text", role: "error", text: `AFK off: ${reason}` });
+  };
+
+  const processAfkAnswer = async (
+    ticket: { requestId: string; generation: number },
+    raw: unknown,
+  ) => {
+    const running = afkDelegateRef.current;
+    // Stale on any count: a newer request, a newer AFK run, or an answer that
+    // arrived after the user already took over.
+    if (!running || running.settled) return;
+    if (running.requestId !== ticket.requestId || running.generation !== ticket.generation) return;
+    if (afk.generation() !== ticket.generation) return;
+    running.settled = true;
+
+    const request = questionnaireManager?.current();
+    if (!request || request.id !== ticket.requestId) {
+      await stopAfkDelegate();
+      return;
+    }
+    const outcome = validateAfkAnswer(request, String(ticket.generation), raw);
+    if (!outcome.ok) {
+      surrenderAfk(afkAnswerFailureText(outcome.failure));
+      return;
+    }
+    const accepted = questionnaireManager?.completeCurrent(request.id, outcome.result) ?? false;
+    await stopAfkDelegate();
+    if (!accepted) return;
+    appendAfkAudit(request, outcome.result);
+  };
+
+  const startAfkDelegate = async (request: QuestionnaireRequest) => {
+    const begun = afk.begin();
+    if (!begun) return;
+    afkStartingRef.current = true;
+    const ticket = { requestId: request.id, generation: begun.generation };
+    afkDelegateRef.current = { id: null, requestId: request.id, generation: begun.generation, settled: false };
+    try {
+      const task = buildAfkTask({
+        request,
+        guidance: begun.guidance,
+        requesterName: request.requester.name,
+        context: judgeTranscript(transcriptForRequester(request.requester.id).lines),
+        generation: String(begun.generation),
+      });
+      const agent = await subagentManager.spawnAfkDelegate({
+        task,
+        modelId: session.agent.state.model.id,
+        thinkingLevel: String(session.agent.state.thinkingLevel),
+        onAnswer: (raw) => void processAfkAnswer(ticket, raw),
+      });
+      if (afkDelegateRef.current?.requestId === request.id) afkDelegateRef.current.id = agent.id;
+      else await subagentManager.removeAfkDelegate(agent.id).catch(() => {});
+    } catch (error) {
+      surrenderAfk(`the delegate could not start (${String(error)})`);
+    } finally {
+      afkStartingRef.current = false;
+    }
+  };
+
+  const runAfkCommand = (text: string): boolean => {
+    const command = parseAfkCommand(text);
+    if (!command) return false;
+    if (command.kind === "error") {
+      // Keep the draft: the user still has to fix it.
+      setEditorText(text, text.length, true);
+      appendMainLine({ kind: "text", role: "error", text: command.message });
+      return true;
+    }
+    const result = command.kind === "toggle" ? afk.toggle() : afk.toggle(command.text);
+    if (result.kind === "rejected") {
+      setEditorText(text, text.length, true);
+      appendMainLine({ kind: "text", role: "error", text: result.message });
+      return true;
+    }
+    if (result.kind === "stopped") {
+      void stopAfkDelegate();
+      appendMainLine({ kind: "text", role: "system", text: "AFK off." });
+      return true;
+    }
+    const verb = result.kind === "started" ? "on" : "steered";
+    appendMainLine({
+      kind: "text",
+      role: "system",
+      text: result.instructions ? `AFK ${verb}: ${result.instructions}` : `AFK ${verb}.`,
+    });
+    return true;
+  };
+
+  const openTodo = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setTriggerPopup(false, false);
+    setLoginOpen(false);
+    setStatsOpen(false);
+    statsOpenRef.current = false;
+    newsOpenRef.current = false;
+    setNewsOpen(false);
+    todoOpenRef.current = true;
+    setTodoOpen(true);
+  };
+
+  const closeTodo = () => {
+    todoOpenRef.current = false;
+    setTodoOpen(false);
     queueMicrotask(() => inputRef.current?.focus());
   };
 
@@ -2291,9 +2594,10 @@ export function App({
     const triggersCommand = trimmed === "/triggers";
     const processesCommand = trimmed === "/processes";
     const newsCommand = trimmed === "/news";
+    const todoCommand = trimmed === "/todo";
     const statsCommand = trimmed === "/stats";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !statsCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
     setEditingStash(null);
 
     if (historyCommand) {
@@ -2319,6 +2623,11 @@ export function App({
     if (newsCommand) {
       setEditorText("");
       openNews();
+      return true;
+    }
+    if (todoCommand) {
+      setEditorText("");
+      openTodo();
       return true;
     }
     if (statsCommand) {
@@ -2875,6 +3184,14 @@ export function App({
       return;
     }
 
+    // AFK is process-global, so it is intercepted above the child routing below.
+    // Anything past that point belongs to one transcript, and /afk belongs to
+    // none of them - including keeping its instructions out of prompt history.
+    if (attachments.length === 0 && runAfkCommand(promptText)) {
+      setEditorText("");
+      return;
+    }
+
     if (selectedAgentId) {
       void subagentManager
         .sendUserMessage(selectedAgentId, promptText, images, displayText)
@@ -3218,9 +3535,9 @@ export function App({
       return;
     }
 
-    if (key.ctrl && key.name === "c" && questionnaire) {
+    if (key.ctrl && key.name === "c" && visibleQuestionnaire) {
       key.stopPropagation();
-      if (questionnaire.customInput) {
+      if (visibleQuestionnaire.customInput) {
         questionnaireInputRef.current?.setText("");
         questionnaireManager?.cancelCustom();
       } else {
@@ -3276,7 +3593,7 @@ export function App({
       key.stopPropagation();
       resetCancelArm();
       const promptOwnsInput =
-        !questionnaire &&
+        !visibleQuestionnaire &&
         !spawnPreview &&
         !loginOpen &&
         !triggersOpenRef.current &&
@@ -3308,13 +3625,13 @@ export function App({
     if (lastQuitPress.current) resetQuitArm();
     if (key.name !== "escape" && lastCancelPress.current !== null) resetCancelArm();
 
-    if (questionnaire) {
+    if (visibleQuestionnaire) {
       const isQuestionnaireReturn =
         key.name === "return" ||
         key.name === "enter" ||
         key.name === "kpenter" ||
         key.name === "linefeed";
-      if (questionnaire.customInput) {
+      if (visibleQuestionnaire.customInput) {
         if (key.name === "escape") {
           key.stopPropagation();
           questionnaireInputRef.current?.setText("");
@@ -3516,6 +3833,25 @@ export function App({
       return;
     }
 
+    if (key.ctrl && printableKey === "o") {
+      key.stopPropagation();
+      if (todoOpenRef.current) closeTodo();
+      else openTodo();
+      return;
+    }
+    if (todoVisible) {
+      key.stopPropagation();
+      if (key.name === "escape") closeTodo();
+      else if (key.name === "up") moveTodoCursor(-1);
+      else if (key.name === "down") moveTodoCursor(1);
+      else if (key.name === "pageup") moveTodoCursor(-todoPageSize);
+      else if (key.name === "pagedown") moveTodoCursor(todoPageSize);
+      else if (key.name === "home") moveTodoCursorTo("first");
+      else if (key.name === "end") moveTodoCursorTo("last");
+      else if (printableKey === "f") cycleTodoFilterState();
+      return;
+    }
+
     // `?` on an empty prompt opens help instead of typing a question mark.
     // With text already in the line it is just a character.
     if (key.sequence === "?" && !settingsOpen && !inputRef.current?.plainText) {
@@ -3578,6 +3914,12 @@ export function App({
       }
 
       key.stopPropagation();
+      // Reachable only with the search unfocused, so `s` never eats a keystroke
+      // meant for the filter.
+      if (printableKeyCharacter(key.name, key.sequence, key.raw) === "s") {
+        promoteSessionSettings();
+        return;
+      }
       const action = selectedSettingId ? rowActions[selectedSettingId] : undefined;
       const confirming = key.name === "space" || key.sequence === " " || isSettingsReturn;
       if (key.name === "up" || key.name === "down") {
@@ -3934,9 +4276,23 @@ export function App({
   // Reset keys for the render boundaries: a shown error clears as soon as the
   // transcript or the open popup changes, so the next state gets a fresh try.
   const transcriptResetKey = `${activeAgentId ?? "main"}:${visibleLines.length}`;
+  useEffect(() => {
+    if (!afkStatus.active || !questionnaire) return;
+    if (afkStartingRef.current) return;
+    // One delegate in flight. The next queued request starts only once this
+    // one has durably resolved, which is what clearing the ref means.
+    if (afkDelegateRef.current) return;
+    void startAfkDelegate(questionnaire);
+  }, [afkStatus.active, afkStatus.generation, questionnaire?.id]);
+
+  useEffect(() => {
+    // The user took AFK off, or the request went away under the delegate.
+    if (!afkStatus.active && afkDelegateRef.current) void stopAfkDelegate();
+  }, [afkStatus.active]);
+
   const popupResetKey = [
     loginOpen, spawnPreview?.id ?? "", Boolean(questionnaire), helpOpen, triggersOpen,
-    agentSelectorOpen, historyOpen, newsOpen, statsOpen, settingsOpen, page,
+    agentSelectorOpen, historyOpen, newsOpen, todoVisible, statsOpen, settingsOpen, page,
   ].join(":");
   const streamGap = visibleTx.stream
     ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
@@ -4088,7 +4444,7 @@ export function App({
           dimmed={stashOpen}
           mode={settings.workingRuleAnimation}
           role="inputTop"
-          label={goalRuleLabel}
+          label={ruleLabels}
         />
         {stashOpen ? (
           <PromptStash
@@ -4162,7 +4518,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="word"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !newsOpen}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -4201,10 +4557,10 @@ export function App({
               inputRef={spawnPreviewInputRef}
             />
           ) : null}
-          {questionnaire ? (
+          {visibleQuestionnaire ? (
             <QuestionnairePopup
               theme={theme}
-              request={questionnaire}
+              request={visibleQuestionnaire}
               terminalWidth={width}
               terminalHeight={height}
               inputRef={questionnaireInputRef}
@@ -4255,6 +4611,17 @@ export function App({
               cursor={newsCursor}
               terminalWidth={width}
               terminalHeight={height}
+            />
+          ) : null}
+          {todoVisible ? (
+            <TodoPopup
+              theme={theme}
+              terminalWidth={width}
+              terminalHeight={height}
+              agentName={activeAgent?.name ?? "main"}
+              tasks={todoTasks}
+              filter={todoFilter}
+              selectedId={todoSelectedId}
             />
           ) : null}
           {statsOpen ? (
