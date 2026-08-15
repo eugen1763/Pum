@@ -1,0 +1,4 @@
+[test]
+# Redirect PUM_DIR at a fresh temp directory before any test module loads, so
+# the suite never writes into the developer's real agent directory.
+preload = ["./scripts/test-setup.ts"]

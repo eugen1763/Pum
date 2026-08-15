@@ -175,8 +175,7 @@ test("probe reports an enforced native ProcessContainer", async () => {
 	expect(result).toEqual({ state: "enforced", backend: "mxc" });
 });
 
-test("default probe imports MXC with native Windows whoami first", async () => {
-	if (process.platform !== "win32") return;
+test.skipIf(process.platform !== "win32")("default probe imports MXC with native Windows whoami first", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pum-mxc-whoami-"));
 	const marker = join(root, "gnu-whoami-selected");
 	const fakeWhoami = join(root, "whoami.cmd");

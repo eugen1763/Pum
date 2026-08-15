@@ -68,8 +68,7 @@ describe("mutation previews", () => {
     await expect(previewMutation("edit", cwd, { path: "\\\\server\\share\\secret", edits: [{ oldText: "a", newText: "b" }] })).rejects.toThrow("outside");
   });
 
-  test("rejects symbolic-link targets before approval", async () => {
-    if (process.platform === "win32") return;
+  test.skipIf(process.platform === "win32")("rejects symbolic-link targets before approval", async () => {
     const cwd = project();
     const outside = project();
     writeFileSync(join(outside, "secret"), "value\n");

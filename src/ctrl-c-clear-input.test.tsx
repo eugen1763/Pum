@@ -186,11 +186,16 @@ describe("Ctrl+C prompt clearing", () => {
   test("clears multiline text with one press", async () => {
     const { setup, calls } = await renderApp();
     await setup.mockInput.typeText("first line");
-    setup.mockInput.pressKey("enter", { shift: true });
+    // Raw kitty Shift+Enter. pressKey("enter") types the literal word, which
+    // leaves a single-line draft and no multiline case left to clear.
+    setup.mockInput.pressKey("\x1b[13;2u");
     await setup.mockInput.typeText("second line");
     await settle(setup);
-    expect(setup.captureCharFrame()).toContain("first line");
-    expect(setup.captureCharFrame()).toContain("second line");
+    const drafted = setup.captureCharFrame().split("\n");
+    const firstRow = drafted.findIndex((row) => row.includes("first line"));
+    const secondRow = drafted.findIndex((row, index) => index > firstRow && row.includes("second line"));
+    expect(firstRow).toBeGreaterThanOrEqual(0);
+    expect(secondRow).toBe(firstRow + 1);
 
     pressCtrlC(setup);
     await settle(setup);

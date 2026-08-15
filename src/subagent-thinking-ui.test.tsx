@@ -2,12 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App } from "./app";
+import { settleSyntaxHighlighting } from "./syntax";
 import type { PumSettings } from "./settings";
 import type { SubagentSnapshot } from "./subagents/types";
 
-let destroy: (() => void) | undefined;
-afterEach(() => {
-  destroy?.();
+let destroy: (() => void | Promise<void>) | undefined;
+afterEach(async () => {
+  await destroy?.();
   destroy = undefined;
 });
 
@@ -87,13 +88,18 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.renderOnce();
   await setup.flush();
   await new Promise((resolve) => setTimeout(resolve, 10));
+  // Assistant rows render as Markdown, which highlights asynchronously. A cold
+  // tree-sitter client takes longer than the timer, so without this wait the
+  // text is missing from the frame unless another test file warmed the client
+  // first. Waiting here makes the file pass on its own.
+  await settleSyntaxHighlighting(setup.renderer.root);
+  await setup.renderer.idle();
   await setup.renderOnce();
   await setup.flush();
 }
 
 async function renderApp(showThinking: boolean) {
   const setup = await createTestRenderer({ width: 90, height: 26, kittyKeyboard: true });
-  destroy = () => setup.renderer.destroy();
   const session = fakeSession();
   const agent = subagent();
   const manager = {
@@ -103,7 +109,15 @@ async function renderApp(showThinking: boolean) {
     abortAgent: async () => {},
     sendUserMessage: async () => {},
   } as any;
-  createRoot(setup.renderer).render(
+  const root = createRoot(setup.renderer);
+  destroy = async () => {
+    await settleSyntaxHighlighting(setup.renderer.root);
+    root.unmount();
+    await setup.flush();
+    await setup.renderer.idle();
+    setup.renderer.destroy();
+  };
+  root.render(
     <App
       session={session}
       modelRuntime={{ getAvailableSnapshot: () => [], getProviders: () => [] } as any}

@@ -12,12 +12,10 @@ function backend(): SandboxBackend | undefined {
   return undefined;
 }
 
-test("a real enforced backend denies writes to a protected file", async () => {
-  const active = backend();
-  if (!active) return;
-  const capability = await active.probe();
-  if (capability.state !== "enforced") return;
+const active = backend();
+const enforced = active !== undefined && (await active.probe()).state === "enforced";
 
+test.skipIf(!enforced)("a real enforced backend denies writes to a protected file", async () => {
   const root = await mkdtemp(join(tmpdir(), "pum-real-sandbox-"));
   const privateTemp = join(root, "private-temp");
   const denied = join(root, "protected.txt");
@@ -50,7 +48,7 @@ test("a real enforced backend denies writes to a protected file", async () => {
   };
 
   try {
-    const handle = active.spawn(policy, { onStdout() {}, onStderr() {}, timeoutSeconds: 10 });
+    const handle = active!.spawn(policy, { onStdout() {}, onStderr() {}, timeoutSeconds: 10 });
     const result = await handle.completed.catch(() => ({ exitCode: 1, signal: null }));
     expect(result.exitCode).not.toBe(0);
     expect(await readFile(denied, "utf8")).toBe("original");

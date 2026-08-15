@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,6 +9,20 @@ import {
   providerLoginMethods,
   safeError,
 } from "./login-flow";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+async function temporaryDirectory(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "pum-models-"));
+  temporaryDirectories.push(directory);
+  return directory;
+}
 
 describe("provider registry coverage", () => {
   test("includes every auth method exposed by providers", () => {
@@ -49,7 +63,7 @@ describe("custom OpenAI-compatible provider", () => {
   });
 
   test("preserves other providers and writes no key", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "pum-models-"));
+    const dir = await temporaryDirectory();
     const path = join(dir, "models.json");
     await Bun.write(path, JSON.stringify({ providers: { existing: { baseUrl: "https://old.test" } } }));
     await persistCustomProvider("custom-host", "https://host.test/v1", [{ id: "model-a" }], path);
@@ -61,7 +75,7 @@ describe("custom OpenAI-compatible provider", () => {
   });
 
   test("preserves hand-tuned model settings on re-login", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "pum-models-"));
+    const dir = await temporaryDirectory();
     const path = join(dir, "models.json");
     await Bun.write(path, JSON.stringify({
       providers: {

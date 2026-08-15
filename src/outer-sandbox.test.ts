@@ -177,8 +177,7 @@ describe("outer sandbox launch planning", () => {
     })).rejects.toThrow("not a directory");
   });
 
-  test("rejects symbolic-link path components and boundaries", async () => {
-    if (process.platform === "win32") return;
+  test.skipIf(process.platform === "win32")("rejects symbolic-link path components and boundaries", async () => {
     const project = directory("pum-outer-link-project-");
     const target = directory("pum-outer-link-target-");
     const nested = join(target, "nested");
