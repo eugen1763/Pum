@@ -245,7 +245,9 @@ describe("random worktree names", () => {
   });
 });
 
-describe("a repository whose name ends in a space", () => {
+// Windows strips a trailing space from a path component, so "repo dir " is
+// created as "repo dir" and the case this guards cannot be built there.
+describe.skipIf(process.platform === "win32")("a repository whose name ends in a space", () => {
   test("resolves rather than being trimmed into a path that does not exist", async () => {
     // git prints the toplevel followed by a newline. Trimming that output also
     // ate a trailing space in the directory name, and every later call landed
