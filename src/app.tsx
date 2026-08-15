@@ -419,6 +419,9 @@ export function App({
   startupWarnings = [],
   onSandboxModeChange,
   sandboxWarningSource,
+  forcedCheckMode,
+  forcedSandboxMode,
+  forcedCheckPaths = [],
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -450,6 +453,10 @@ export function App({
   startupWarnings?: readonly string[];
   onSandboxModeChange?: (mode: NonNullable<PumSettings["sandboxMode"]>) => void;
   sandboxWarningSource?: { subscribeWarnings(listener: (warning: string) => void): () => void };
+  /** Process-local safety floors that do not overwrite persisted user settings. */
+  forcedCheckMode?: PumSettings["checkMode"];
+  forcedSandboxMode?: NonNullable<PumSettings["sandboxMode"]>;
+  forcedCheckPaths?: readonly string[];
 }) {
   const cwd = process.cwd();
   const [session, setSession] = useState(initialSession);
@@ -1353,12 +1360,17 @@ export function App({
     if (patch.explanationStrength !== undefined) {
       setExplanationStrength(patch.explanationStrength);
     }
-    if (patch.sandboxMode !== undefined) onSandboxModeChange?.(patch.sandboxMode);
+    if (patch.sandboxMode !== undefined) {
+      onSandboxModeChange?.(forcedSandboxMode ?? patch.sandboxMode);
+    }
     if (patch.checkMode !== undefined || patch.checkModel !== undefined || patch.checkPaths !== undefined) {
       setCheckModeConfig({
-        profile: next.checkMode,
+        profile: forcedCheckMode ?? next.checkMode,
         model: next.checkModel,
-        additionalPaths: checkPathsForProject(next, cwd),
+        additionalPaths: [...new Set([
+          ...checkPathsForProject(next, cwd),
+          ...forcedCheckPaths,
+        ])],
       });
     }
     if (patch.showThinking !== undefined) showThinkingRef.current = patch.showThinking;

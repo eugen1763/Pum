@@ -50,6 +50,10 @@ import {
   createFilesystemSandboxExtension,
   filesystemSandboxExtension,
 } from "./filesystem-sandbox";
+import {
+  outerSandboxAdditionalRoots,
+  outerSandboxContext,
+} from "./outer-sandbox-launch";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -61,8 +65,12 @@ export async function start(options: StartupOptions): Promise<void> {
   const loginRequired = options.login || (await modelRuntime.getAvailable()).length === 0;
 
   const settings = loadSettings();
+  const outerSandbox = outerSandboxContext();
+  const forcedCheckPaths = outerSandbox
+    ? outerSandboxAdditionalRoots(outerSandbox, process.cwd())
+    : [];
   const sandboxController = new SandboxController({
-    mode: settings.sandboxMode ?? "auto",
+    mode: outerSandbox ? "off" : settings.sandboxMode ?? "auto",
     agentDir: AGENT_DIR,
   });
   setSandboxModeSource(() => sandboxController.mode);
@@ -76,9 +84,12 @@ export async function start(options: StartupOptions): Promise<void> {
   const sessionHistoryIndex = new SessionHistoryIndex();
   const messageCacheController = new MessageCacheController(process.cwd());
   setCheckModeConfig({
-    profile: settings.checkMode,
+    profile: outerSandbox ? "strict" : settings.checkMode,
     model: settings.checkModel,
-    additionalPaths: checkPathsForProject(settings, process.cwd()),
+    additionalPaths: [...new Set([
+      ...checkPathsForProject(settings, process.cwd()),
+      ...forcedCheckPaths,
+    ])],
   });
   const checkApprovalCoordinator = new CheckApprovalCoordinator();
   const checkApprovalStore = new CheckApprovalStore();
@@ -258,11 +269,19 @@ export async function start(options: StartupOptions): Promise<void> {
       spawnPreviewManager={spawnPreviewManager}
       messageCacheController={messageCacheController}
       terminalTitle={terminalTitle}
-      startupWarnings={sandboxWarning ? [sandboxWarning] : []}
+      startupWarnings={[
+        ...(sandboxWarning ? [sandboxWarning] : []),
+        ...(outerSandbox ? [
+          `Outer claudebox sandbox active (${outerSandbox.mode}). Strict Check mode is forced. The nested Bash sandbox is disabled.`,
+        ] : []),
+      ]}
       onSandboxModeChange={(mode) => {
-        sandboxController.setMode(mode);
+        sandboxController.setMode(outerSandbox ? "off" : mode);
         subagentManager.refreshSandboxMode();
       }}
+      forcedCheckMode={outerSandbox ? "strict" : undefined}
+      forcedSandboxMode={outerSandbox ? "off" : undefined}
+      forcedCheckPaths={forcedCheckPaths}
       sandboxWarningSource={sandboxController}
       loginRequired={loginRequired}
       checkApprovalCoordinator={checkApprovalCoordinator}

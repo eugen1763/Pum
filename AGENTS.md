@@ -14,6 +14,9 @@ bun run start    # open the TUI in the current directory
 |---|---|
 | `src/index.tsx` | Side-effect-free CLI dispatch for help, version, errors, and dynamic startup |
 | `src/cli.ts` | CLI parsing, package metadata, help text, and error formatting |
+| `src/outer-sandbox.ts` | Canonical mount validation and deterministic claudebox launch planning |
+| `src/outer-sandbox-launch.ts` | PUM child command, runtime/state mounts, and outer child context |
+| `src/outer-sandbox-process.ts` | Protocol probe and shell-free claudebox process execution |
 | `src/main.tsx` | Boot: config dir, login hand-off, credential check, session, render |
 | `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
 | `src/theme.ts` | Semantic colour tokens, nine presets, `theme.json` merge |
@@ -101,7 +104,7 @@ bun run start    # open the TUI in the current directory
 These were chosen deliberately. Change them only on purpose.
 
 - **Bun** as the runtime. OpenTUI's renderer needs it.
-- **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for TUI startup. Unknown options and commands exit with code 2. The supported startup arguments are `login`, `-r`, and `--resume`.
+- **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for direct TUI startup. Unknown options and commands exit with code 2. Startup accepts `login`, `-r`, and `--resume`. `pum s` and `pum sr` launch the TUI through the outer sandbox. `pum ss` probes the runtime without starting the TUI.
 - **`@earendil-works/pi-coding-agent`**, not `pi-ai` on its own. It brings the
   agent loop, session files, and the `read`/`write`/`edit`/`bash` tools. Using
   `pi-ai` alone would mean writing all of that here.
@@ -110,6 +113,20 @@ These were chosen deliberately. Change them only on purpose.
   It does not share pi's `~/.pi/agent`, so it needs its own login. pi stores
   auth, settings, and sessions together under one directory, so this is all or
   nothing.
+- **Outer sandbox commands use claudebox protocol 1.** `pum s` keeps the launch
+  directory read-write. `pum sr` keeps it read-only. Positional existing real
+  directories become temporary tool roots and accept final `:ro` or `:rw`
+  suffixes. The launch cwd mode cannot be overridden by repeating the cwd as an
+  extra mount. PUM rejects missing paths, files, links, junctions, nested outer
+  launches, unsupported platforms, missing runtimes, and older protocols before
+  TUI startup. Linux is native. Windows support means running Linux PUM inside
+  WSL 2. The launcher hides home, then mounts the project, explicit roots, PUM
+  runtime paths, and PUM's config directory. `pum sr` rejects a custom PUM_DIR
+  inside the read-only project. The child forces Strict Check mode,
+  disables nested Bubblewrap, and keeps launch roots as process-local Check and
+  file-tool roots without overwriting saved user settings. This MVP places PUM
+  credentials inside gVisor. Strict Check mode is a policy boundary, not a
+  second OS credential boundary. A future host broker can remove that exposure.
 - **Login runs inside PUM.** Startup without an available provider opens the
   login popup. `/login` opens the same popup. The provider list comes from
   `ModelRuntime.getProviders()` and must not be replaced with a local allowlist.

@@ -60,6 +60,52 @@ describe("CLI argument parsing", () => {
     });
   });
 
+  test("parses writable and read-only outer sandbox launches", () => {
+    expect(parseCliArgs(["s", "/work/a", "/work/b:ro", "-r"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: true,
+        outerSandbox: {
+          mode: "write",
+          mounts: ["/work/a", "/work/b:ro"],
+        },
+      },
+    });
+    expect(parseCliArgs(["sr", "login", "/data:rw"])).toEqual({
+      kind: "start",
+      options: {
+        login: true,
+        resume: false,
+        outerSandbox: {
+          mode: "read",
+          mounts: ["/data:rw"],
+        },
+      },
+    });
+  });
+
+  test("keeps mount permission suffixes raw for launch planning", () => {
+    expect(parseCliArgs(["s", "/data:custom"])).toEqual({
+      kind: "start",
+      options: {
+        login: false,
+        resume: false,
+        outerSandbox: { mode: "write", mounts: ["/data:custom"] },
+      },
+    });
+  });
+
+  test("parses sandbox setup as a non-startup command", () => {
+    expect(parseCliArgs(["ss"])).toEqual({ kind: "sandboxSetup" });
+    for (const args of [["ss", "-r"], ["-r", "ss"], ["login", "ss"]]) {
+      expect(parseCliArgs(args)).toEqual({
+        kind: "error",
+        message: "Command 'ss' does not accept arguments or options.",
+      });
+    }
+  });
+
   test("rejects unknown options and commands", () => {
     expect(parseCliArgs(["--unknown"])).toEqual({
       kind: "error",
@@ -92,6 +138,9 @@ describe("non-interactive CLI", () => {
       expect(result.stdout).toBe(expected);
       expect(result.stderr).toBe("");
       expect(result.stdout).toContain("Usage:\n");
+      expect(result.stdout).toContain("pum s [login] [options] [directory[:ro|:rw] ...]");
+      expect(result.stdout).toContain("pum sr [login] [options] [directory[:ro|:rw] ...]");
+      expect(result.stdout).toContain("pum ss");
       expect(result.stdout).toContain("PUM_DIR");
       expect(result.stdout).toContain("Executable: pum");
       await expectNoStartup(result);

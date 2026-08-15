@@ -114,6 +114,9 @@ The package is named `pum-agent` because the bare `pum` name is already owned. T
 ```text
 pum [options]
 pum login [options]
+pum s [login] [options] [directory[:ro|:rw] ...]
+pum sr [login] [options] [directory[:ro|:rw] ...]
+pum ss
 ```
 
 | Option or command | Action |
@@ -122,10 +125,25 @@ pum login [options]
 | `-v`, `--version` | Print the exact `pum-agent` package version and exit |
 | `-r`, `--resume` | Resume the latest session for the current directory |
 | `login` | Start PUM with the provider login panel open |
+| `s` | Start PUM in a writable outer `claudebox` sandbox |
+| `sr` | Start PUM with the current directory read-only |
+| `ss` | Check the `claudebox` runtime and protocol version |
 
-Help and version handling do not initialize the TUI, configuration, credentials, or sessions. Unknown options and commands return an error and a help hint.
+Plain extra directories use the command default. Add `:ro` or `:rw` to select explicit access. `pum sr` always keeps the launch directory read-only, but it permits an explicit writable extra directory. A custom `PUM_DIR` must remain outside the project for `pum sr`.
 
-Set `PUM_DIR` to override PUM's complete configuration and data directory. Run `pum --help` for a concise directory summary. Enter `?` on an empty in-app prompt to see all controls.
+Help, version, and sandbox setup checks do not initialize the TUI, credentials, or sessions. Unknown options and commands return an error and a help hint.
+
+Set `PUM_DIR` to override PUM's complete configuration and data directory. Set `PUM_CLAUDEBOX` to select a specific `claudebox` executable. Run `pum --help` for a concise directory summary. Enter `?` on an empty in-app prompt to see all controls.
+
+### Outer sandbox MVP
+
+`pum s` and `pum sr` currently require Linux. On Windows, install PUM and `claudebox` inside WSL 2 and run the commands there.
+
+PUM requires `claudebox` launcher protocol 1. Run `pum ss` to verify the executable and protocol. The runtime also needs `runsc`, `pasta`, `iptables`, `ip6tables`, `ip`, `nsenter`, and `unshare`.
+
+The launcher hides the normal home mount. It mounts the project, explicit extra directories, the required PUM runtime files, and the PUM configuration directory. The sandboxed child forces Strict Check mode and disables nested Bubblewrap.
+
+This MVP mounts the PUM configuration directory, including provider credentials, inside gVisor. Strict Check mode blocks credential access through supported tools, but it is not a second OS boundary. A host-side credential broker is planned for stronger separation.
 
 ## Essential controls
 
