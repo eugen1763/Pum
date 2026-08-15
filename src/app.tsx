@@ -360,6 +360,27 @@ function messageText(message: any): string {
     .trim();
 }
 
+/** Match recallable pending user lines to the cleared steering queue in queue order. */
+export function queuedUserSteersInOrder(
+  steering: readonly string[],
+  pending: readonly PendingLine[],
+): string[] {
+  const candidates = pending.filter((item) =>
+    !item.delivered &&
+    item.recallable !== false &&
+    item.line.kind === "text" &&
+    item.line.role === "user" &&
+    Boolean(item.deliveryText),
+  );
+  const remaining = [...candidates];
+  return steering.flatMap((deliveryText) => {
+    const index = remaining.findIndex((item) => item.deliveryText === deliveryText);
+    if (index < 0) return [];
+    const [item] = remaining.splice(index, 1);
+    return item?.line.kind === "text" ? [item.line.text] : [];
+  });
+}
+
 export type PromptHistoryStore = {
   load: (cwd: string) => string[];
   append: (cwd: string, prompt: string) => string[];
@@ -529,6 +550,8 @@ export function App({
   const [stashOpen, setStashOpen] = useState(false);
   const [commandInput, setCommandInput] = useState("");
   const [commandCursor, setCommandCursor] = useState(0);
+  const [commandSuggestionsDismissed, setCommandSuggestionsDismissed] = useState(false);
+  const [editingStashIndexState, setEditingStashIndexState] = useState<number | null>(null);
   const [inputRows, setInputRows] = useState(1);
   const [inputCursorRow, setInputCursorRow] = useState(0);
   const [inputMode, setInputMode] = useState(false);
@@ -610,13 +633,19 @@ export function App({
     ? " esc again to cancel "
     : quitArmed
       ? " ctrl+c again to quit "
-      : "";
+      : editingStashIndexState !== null
+        ? ` editing cache #${editingStashIndexState + 1} `
+        : "";
   const promptRightColumns = width >= 12 ? 6 : Math.max(2, width - 3);
+  const availableHintColumns = Math.max(0, width - 2 - promptRightColumns - 1);
+  const visibleInputHint = inputHint.length <= availableHintColumns ? inputHint : "";
   const promptInputColumns = Math.max(
     1,
-    width - 2 - promptRightColumns - inputHint.length,
+    width - 2 - promptRightColumns - visibleInputHint.length,
   );
-  const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
+  const commandSuggestions = stashOpen || commandSuggestionsDismissed
+    ? []
+    : matchingCommands(commandInput).slice(0, 5);
   const visibleSettingRows = filterSettingsRows(settingsQuery);
   const visibleModels = useMemo(() => filterModels(
     modelRuntime.getAvailableSnapshot(),
@@ -640,6 +669,7 @@ export function App({
   const triggerCursorRef = useRef(0);
   const shellCursorRef = useRef(0);
   const commandCursorRef = useRef(0);
+  const commandSuggestionsDismissedRef = useRef(false);
   const pathCompletionCycle = useRef<{
     sourceValue: string;
     completions: PathCompletion[];
@@ -701,6 +731,14 @@ export function App({
     cancelTarget.current = null;
     clearTimeout(cancelTimer.current);
     setCancelArmed(false);
+  };
+  const setEditingStash = (index: number | null) => {
+    editingStashIndex.current = index;
+    setEditingStashIndexState(index);
+  };
+  const setCommandSuggestionsClosed = (closed: boolean) => {
+    commandSuggestionsDismissedRef.current = closed;
+    setCommandSuggestionsDismissed(closed);
   };
   const setWorking = (value: boolean) => {
     busyRef.current = value;
@@ -823,9 +861,9 @@ export function App({
     histCursor.current = null;
 
     const editingIndex = editingStashIndex.current;
-    if (editingIndex === index) editingStashIndex.current = null;
+    if (editingIndex === index) setEditingStash(null);
     else if (editingIndex !== null && editingIndex > index) {
-      editingStashIndex.current = editingIndex - 1;
+      setEditingStash(editingIndex - 1);
     }
     // The stash is shared across agent views, so a delete shifts the indices
     // that every other view checked out. Reindex the saved per-view values too,
@@ -887,6 +925,7 @@ export function App({
       input.cursorOffset = Math.max(0, Math.min(cursorOffset, value.length));
     }
     lastInputValue.current = value;
+    setCommandSuggestionsClosed(false);
     commandCursorRef.current = 0;
     setCommandCursor(0);
     setCommandInput(value);
@@ -968,6 +1007,7 @@ export function App({
       inputRef.current.cursorOffset = Math.min(cleanupCursor ?? value.length, value.length);
     }
     lastInputValue.current = value;
+    setCommandSuggestionsClosed(false);
     commandCursorRef.current = 0;
     setCommandCursor(0);
     setCommandInput(value);
@@ -981,7 +1021,7 @@ export function App({
     setEditorText("");
     const viewKey = activeAgentIdRef.current ?? "main";
     viewDrafts.current.set(viewKey, "");
-    editingStashIndex.current = null;
+    setEditingStash(null);
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
@@ -1003,12 +1043,36 @@ export function App({
         return;
       }
 
+      const current = input.plainText;
+      const selection = input.hasSelection() ? input.getSelection() : null;
+      let start = selection ? Math.min(selection.start, selection.end) : input.cursorOffset;
+      let end = selection ? Math.max(selection.start, selection.end) : start;
+      const intersects = (item: { start: number; end: number }) =>
+        start === end
+          ? start > item.start && start < item.end
+          : start < item.end && end > item.start;
+
+      // Attachment markers are atomic. Expand a selection or an internal caret
+      // to cover each touched marker before inserting the new image marker.
+      for (const item of [...pendingImages.current, ...pendingPastedTexts.current]) {
+        if (!intersects(item)) continue;
+        start = Math.min(start, item.start);
+        end = Math.max(end, item.end);
+      }
+      pendingImages.current = pendingImages.current.filter((image) => {
+        if (!intersects(image)) return true;
+        removePendingImage(image);
+        return false;
+      });
+      pendingPastedTexts.current = pendingPastedTexts.current.filter((pasted) => {
+        if (!intersects(pasted)) return true;
+        removePendingPastedText(pasted);
+        return false;
+      });
+
       const id = nextImageId.current++;
       const marker = `[Image #${id}]`;
-      const current = input.plainText;
-      const leadingSpace = current && !/\s$/.test(current) ? " " : "";
-      const start = current.length + leadingSpace.length;
-      const value = `${current}${leadingSpace}${marker}`;
+      const value = `${current.slice(0, start)}${marker}${current.slice(end)}`;
       const image: PendingImage = {
         ...captured,
         id,
@@ -1017,7 +1081,15 @@ export function App({
         end: start + marker.length,
       };
       pendingImages.current.push(image);
-      setEditorText(value, value.length, true);
+      pendingImages.current = pendingImages.current.map((pending) => {
+        const markerStart = value.indexOf(pending.marker);
+        return { ...pending, start: markerStart, end: markerStart + pending.marker.length };
+      });
+      pendingPastedTexts.current = pendingPastedTexts.current.map((pending) => {
+        const markerStart = value.indexOf(pending.marker);
+        return { ...pending, start: markerStart, end: markerStart + pending.marker.length };
+      });
+      setEditorText(value, start + marker.length, true);
     } catch (error) {
       append({ kind: "text", role: "error", text: `image paste failed: ${String(error)}` });
     } finally {
@@ -1408,7 +1480,7 @@ export function App({
   useEffect(() => {
     const timer = setTimeout(syncInputMetrics, 0);
     return () => clearTimeout(timer);
-  }, [width, commandInput, inputRows, quitArmed, cancelArmed]);
+  }, [width, commandInput, inputRows, quitArmed, cancelArmed, editingStashIndexState]);
 
   // The editor reports cursor moves only when they go through the edit buffer
   // (typing, left/right). Vertical arrows, Home/End, and mouse clicks move the
@@ -1832,15 +1904,52 @@ export function App({
   const cancel = () => {
     resetCancelArm();
     append({ kind: "text", role: "system", text: "cancelled" });
-    // Hand a prompt back for editing: the queued steer if there is one, since
-    // that is the newest thing written, otherwise the prompt that was running.
-    const queued = session.clearQueue().steering;
+    // Preserve every recallable queued user steer before aborting the turn.
+    // Restore the running prompt only when no queued user steer exists.
+    const cleared = session.clearQueue();
+    const queuedUserSteers = queuedUserSteersInOrder(cleared.steering, txRef.current.pending);
     setTx((value) => ({
       ...value,
       pending: value.pending.filter((item) => item.line.kind === "agent-message"),
     }));
-    const restore = queued.length ? queued[queued.length - 1]! : inFlight.current;
-    if (inputRef.current && !inputRef.current.plainText) setEditorText(restore);
+
+    let preservedCount = 0;
+    try {
+      if (messageCacheController) {
+        const requester = { kind: "main" as const, id: session.sessionId, name: "main" as const };
+        for (const text of queuedUserSteers) {
+          messageCacheController.add(requester, text);
+          preservedCount++;
+        }
+      } else {
+        for (const text of queuedUserSteers) {
+          addToStash(text);
+          preservedCount++;
+        }
+      }
+    } catch (error) {
+      const fallback = queuedUserSteers.slice(preservedCount).join("\n\n");
+      const restoredToDraft = Boolean(fallback && inputRef.current && !inputRef.current.plainText);
+      if (restoredToDraft) setEditorText(fallback);
+      append({
+        kind: "text",
+        role: "error",
+        text: restoredToDraft
+          ? `could not cache every queued steer; restored the remaining steers to the draft in original order: ${String(error)}`
+          : `could not cache every queued steer; uncached steers in original order:\n${fallback}\n${String(error)}`,
+      });
+    }
+    if (preservedCount > 0) {
+      append({
+        kind: "text",
+        role: "system",
+        text: `preserved ${preservedCount} queued steer${preservedCount === 1 ? "" : "s"} in the prompt cache`,
+      });
+    }
+
+    if (queuedUserSteers.length === 0 && inputRef.current && !inputRef.current.plainText) {
+      setEditorText(inFlight.current);
+    }
     histCursor.current = null;
     // clearQueue may have dropped a subagent completion notice queued to the
     // streaming main agent; re-arm undelivered notices so a merge is not stuck.
@@ -1875,7 +1984,7 @@ export function App({
   const recall = (direction: -1 | 1) => {
     const input = inputRef.current;
     const list = history.current;
-    editingStashIndex.current = null;
+    setEditingStash(null);
     if (!input || list.length === 0) return;
 
     if (histCursor.current === null) {
@@ -1929,7 +2038,7 @@ export function App({
     const statsCommand = trimmed === "/stats";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
     if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !statsCommand && !worktreeCommand) return false;
-    editingStashIndex.current = null;
+    setEditingStash(null);
 
     if (historyCommand) {
       setEditorText("");
@@ -2027,10 +2136,10 @@ export function App({
     const userLine: Extract<Line, { kind: "text" }> = {
       kind: "text",
       role: "user",
-      text: displayText.trim(),
+      text: displayText,
     };
 
-    turnPromptsRef.current.push({ text: displayText.trim(), steer: busyRef.current });
+    turnPromptsRef.current.push({ text: displayText, steer: busyRef.current });
     // Working already: keep the steering message pending at the transcript
     // bottom until pi emits message_start for its actual insertion.
     if (busyRef.current) {
@@ -2069,20 +2178,23 @@ export function App({
     // before React commits the new state, so the state would still name the
     // previous agent and deliver the prompt to the wrong session.
     const selectedAgentId = activeAgentIdRef.current;
-    const displayText = value ?? inputRef.current?.plainText ?? "";
+    const targetKey = selectedAgentId ?? "main";
+    const rawDisplayText = value ?? inputRef.current?.plainText ?? "";
+    const displayText = rawDisplayText.trim();
     const attachments = value === undefined ? [...pendingImages.current] : [];
     const pastedTexts = value === undefined ? [...pendingPastedTexts.current] : [];
-    let promptText = displayText;
+    const submittedEditingIndex = editingStashIndex.current;
+    let promptText = rawDisplayText;
     for (const image of attachments) promptText = promptText.replace(image.marker, "");
     for (const pasted of pastedTexts) {
       promptText = promptText.replace(pasted.marker, pastedTextReadBlock(pasted));
     }
-    promptText = promptText.replace(/[ \t]{2,}/g, " ").trim();
+    promptText = promptText.trim();
 
     // History and stash keep the draft form, never the ephemeral temp path.
-    let persistedPrompt = displayText;
+    let persistedPrompt = rawDisplayText;
     for (const pasted of pastedTexts) persistedPrompt = persistedPrompt.replace(pasted.marker, "");
-    persistedPrompt = persistedPrompt.replace(/[ \t]{2,}/g, " ").trim();
+    persistedPrompt = persistedPrompt.trim();
 
     if (!promptText && attachments.length === 0 && pastedTexts.length === 0) return;
 
@@ -2094,18 +2206,54 @@ export function App({
       return;
     }
 
-    // The temp files must survive until the turn that reads them settles, so
-    // move them out of the draft tracking before the editor is cleared below.
-    if (value === undefined && pastedTexts.length > 0) {
-      const targetKey = selectedAgentId ?? "main";
-      const existing = postTurnPastedTexts.current.get(targetKey) ?? [];
-      postTurnPastedTexts.current.set(targetKey, [...existing, ...pastedTexts]);
+    // Detach files from editor cleanup until delivery succeeds. A failed send
+    // can then restore the exact draft and each still-valid attachment marker.
+    if (value === undefined) {
+      pendingImages.current = [];
+      nextImageId.current = 1;
       pendingPastedTexts.current = [];
       nextPastedTextId.current = 1;
+      if (pastedTexts.length > 0) {
+        const existing = postTurnPastedTexts.current.get(targetKey) ?? [];
+        postTurnPastedTexts.current.set(targetKey, [...existing, ...pastedTexts]);
+      }
     }
 
     setEditorText("");
-    clearPendingImages();
+
+    const finishAttachments = () => {
+      for (const image of attachments) removePendingImage(image);
+    };
+    const restoreFailedDraft = () => {
+      const postTurn = postTurnPastedTexts.current.get(targetKey) ?? [];
+      const submittedPaths = new Set(pastedTexts.map((pasted) => pasted.path));
+      const remaining = postTurn.filter((pasted) => !submittedPaths.has(pasted.path));
+      if (remaining.length > 0) postTurnPastedTexts.current.set(targetKey, remaining);
+      else postTurnPastedTexts.current.delete(targetKey);
+
+      const canRestore =
+        activeAgentIdRef.current === selectedAgentId &&
+        !(inputRef.current?.plainText ?? "");
+      if (!canRestore) {
+        finishAttachments();
+        for (const pasted of pastedTexts) removePendingPastedText(pasted);
+        append({
+          kind: "text",
+          role: "error",
+          text: "send failed after the input changed; the submitted draft could not be restored",
+        });
+        return;
+      }
+
+      pendingImages.current = attachments;
+      pendingPastedTexts.current = pastedTexts;
+      nextImageId.current = Math.max(1, ...attachments.map((image) => image.id + 1));
+      nextPastedTextId.current = Math.max(1, ...pastedTexts.map((pasted) => pasted.id + 1));
+      setEditingStash(submittedEditingIndex);
+      viewDrafts.current.set(targetKey, rawDisplayText);
+      viewEditingStashIndices.current.set(targetKey, submittedEditingIndex);
+      setEditorText(rawDisplayText, rawDisplayText.length, true);
+    };
 
     if (attachments.length === 0 && promptText === "/login") {
       openLogin();
@@ -2114,8 +2262,12 @@ export function App({
 
     if (selectedAgentId) {
       void subagentManager
-        .sendUserMessage(selectedAgentId, promptText, images, displayText.trim())
-        .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
+        .sendUserMessage(selectedAgentId, promptText, images, displayText)
+        .then(finishAttachments)
+        .catch((error) => {
+          append({ kind: "text", role: "error", text: String(error) });
+          restoreFailedDraft();
+        });
       return;
     }
 
@@ -2127,11 +2279,13 @@ export function App({
       if (editingIndex === null) addToStash(persistedPrompt, true);
       else replaceStashedPrompt(editingIndex, persistedPrompt, true);
     }
-    editingStashIndex.current = null;
+    setEditingStash(null);
     histCursor.current = null;
     draft.current = "";
     setSelectedStash(-1);
-    void deliverMainPrompt(promptText, displayText, images).catch(() => {});
+    void deliverMainPrompt(promptText, displayText, images)
+      .then(finishAttachments)
+      .catch(restoreFailedDraft);
   };
 
   const cachedBatchDisplay = (prompts: readonly string[]): string => [
@@ -2144,7 +2298,7 @@ export function App({
     viewDrafts.current.set(targetKey, "");
     viewEditingStashIndices.current.set(targetKey, null);
     if ((activeAgentIdRef.current ?? "main") !== targetKey) return;
-    editingStashIndex.current = null;
+    setEditingStash(null);
     histCursor.current = null;
     draft.current = "";
     setStashMode(false);
@@ -2329,7 +2483,7 @@ export function App({
     viewEditingStashIndices.current.set(currentKey, editingStashIndex.current);
     activeAgentIdRef.current = target;
     setActiveAgentId(target);
-    editingStashIndex.current = viewEditingStashIndices.current.get(targetKey) ?? null;
+    setEditingStash(viewEditingStashIndices.current.get(targetKey) ?? null);
     setEditorText(viewDrafts.current.get(targetKey) ?? "");
     setStashMode(false);
     histCursor.current = null;
@@ -2408,6 +2562,61 @@ export function App({
       return;
     }
 
+    if (key.ctrl && key.name === "c" && questionnaire) {
+      key.stopPropagation();
+      if (questionnaire.customInput) {
+        questionnaireInputRef.current?.setText("");
+        questionnaireManager?.cancelCustom();
+      } else {
+        questionnaireManager?.cancel();
+      }
+      return;
+    }
+
+    if (key.ctrl && key.name === "c" && loginOpen) {
+      key.stopPropagation();
+      loginControllerRef.current?.handleKey({
+        ...key,
+        name: "escape",
+        ctrl: false,
+        sequence: "\u001b",
+        raw: "\u001b",
+      });
+      return;
+    }
+
+    if (key.ctrl && key.name === "c" && (
+      settingsOpenRef.current ||
+      triggersOpenRef.current ||
+      agentSelectorOpen ||
+      helpOpen ||
+      historyOpen ||
+      statsOpenRef.current ||
+      newsOpenRef.current
+    )) {
+      key.stopPropagation();
+      resetCancelArm();
+      resetQuitArm();
+      if (settingsOpenRef.current) {
+        if (settingsPageRef.current !== "main") {
+          settingsPageRef.current = "main";
+          setPage("main");
+        } else {
+          closeSettings();
+        }
+      } else if (triggersOpenRef.current) setTriggerPopup(false);
+      else if (agentSelectorOpen) {
+        setAgentSelectorOpen(false);
+        queueMicrotask(() => inputRef.current?.focus());
+      } else if (helpOpen) setHelpOpen(false);
+      else if (historyOpen) {
+        setHistoryOpen(false);
+        queueMicrotask(() => inputRef.current?.focus());
+      } else if (statsOpenRef.current) closeStats();
+      else if (newsOpenRef.current) closeNews();
+      return;
+    }
+
     if (key.ctrl && key.name === "c") {
       key.stopPropagation();
       resetCancelArm();
@@ -2422,7 +2631,11 @@ export function App({
         !statsOpenRef.current &&
         !settingsOpenRef.current;
       const inputValue = inputRef.current?.plainText ?? "";
-      if (promptOwnsInput && (inputValue.length > 0 || pendingImages.current.length > 0)) {
+      if (promptOwnsInput && (
+        inputValue.length > 0 ||
+        pendingImages.current.length > 0 ||
+        pendingPastedTexts.current.length > 0
+      )) {
         clearActiveDraft();
         return;
       }
@@ -2769,7 +2982,7 @@ export function App({
     const isPlainReturn =
       isReturnKey && !hasCtrlForReturn && !hasShiftForReturn && !hasAltForReturn;
     const inputValue = inputRef.current?.plainText ?? "";
-    const commandMatches = stashOpenRef.current
+    const commandMatches = stashOpenRef.current || commandSuggestionsDismissedRef.current
       ? []
       : matchingCommands(inputValue).slice(0, 5);
     const isContinuationReturn =
@@ -2819,11 +3032,13 @@ export function App({
     // Alt+Enter and Ctrl+Alt+Enter cache without executing.
     if (isCacheReturn) {
       key.stopPropagation();
-      if (pendingImages.current.length > 0) {
+      if (pendingImages.current.length > 0 || pendingPastedTexts.current.length > 0) {
         append({
           kind: "text",
           role: "error",
-          text: "image prompts cannot be stored in the cache; send or remove the image first",
+          text: pendingImages.current.length > 0
+            ? "image prompts cannot be stored in the cache; send or remove the image first"
+            : "pasted-text attachments cannot be stored in the cache; send or remove the pasted text first",
         });
         return;
       }
@@ -2831,7 +3046,7 @@ export function App({
         const editingIndex = editingStashIndex.current;
         if (editingIndex === null) addToStash(inputValue);
         else replaceStashedPrompt(editingIndex, inputValue, false);
-        editingStashIndex.current = null;
+        setEditingStash(null);
         setEditorText("");
         setSelectedStash(-1);
       }
@@ -2846,7 +3061,7 @@ export function App({
           const prompt = index >= 0 ? stashRef.current[index] : undefined;
           if (prompt && inputRef.current) {
             setEditorText(prompt.text);
-            editingStashIndex.current = index;
+            setEditingStash(index);
             histCursor.current = null;
             draft.current = "";
           }
@@ -3006,14 +3221,19 @@ export function App({
         key.stopPropagation();
         resetCancelArm();
         setStashMode(false);
-      } else if (
-        inputValue.startsWith("/") &&
-        !/\s/.test(inputValue) &&
-        matchingCommands(inputValue).length > 0
-      ) {
+      } else if (commandMatches.length > 0) {
         key.stopPropagation();
-        resetCancelArm();
-        setEditorText("");
+        setCommandSuggestionsClosed(true);
+        if ((activeAgentId && visibleBusy) || (!activeAgentId && busyRef.current)) {
+          const selected = activeAgentIdRef.current;
+          lastCancelPress.current = Date.now();
+          cancelTarget.current = selected ?? "main";
+          setCancelArmed(true);
+          clearTimeout(cancelTimer.current);
+          cancelTimer.current = setTimeout(resetCancelArm, CANCEL_WINDOW_MS);
+        } else {
+          resetCancelArm();
+        }
       } else if ((activeAgentId && visibleBusy) || (!activeAgentId && busyRef.current)) {
         key.stopPropagation();
         const now = Date.now();
@@ -3284,7 +3504,7 @@ export function App({
           {/* Reserve six columns on normal terminals. This forces wrapping
               before cursor movement can briefly overdraw the terminal edge. */}
           <box style={{ width: promptRightColumns, height: inputRows, flexShrink: 0 }} />
-          {inputHint ? <text content={inputHint} fg={theme.warn} /> : null}
+          {visibleInputHint ? <text content={visibleInputHint} fg={theme.warn} /> : null}
         </box>
         <WorkingRule
           theme={theme}

@@ -148,6 +148,35 @@ describe("large text paste placeholder", () => {
     expect(files.length).toBe(1);
   });
 
+  test("Alt+Enter does not cache a draft with a pasted-text attachment", async () => {
+    const setup = await renderApp();
+    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
+    await settle(setup);
+
+    setup.mockInput.pressEnter({ meta: true });
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("[Pasted text #1]");
+    expect(setup.captureCharFrame()).toContain("cannot be stored in the cache");
+    expect(pastedTextFiles().length).toBe(1);
+  });
+
+  test("restores a pasted-text draft and attachment after a failed main send", async () => {
+    const session = fakeSession();
+    session.prompt = async () => { throw new Error("send rejected"); };
+    const setup = await renderApp(session);
+    await setup.mockInput.typeText("before ");
+    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
+    await settle(setup);
+
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("before [Pasted text #1]");
+    expect(setup.captureCharFrame()).toContain("send rejected");
+    expect(pastedTextFiles().length).toBe(1);
+  });
+
   test("sending removes the temp file after the turn settles", async () => {
     const session = fakeSession();
     const setup = await renderApp(session);
