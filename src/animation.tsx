@@ -347,6 +347,16 @@ export type WorkingRuleLabel = {
   color: string;
 };
 
+/** One label or an ordered row of them, each keeping its own foreground. */
+export type WorkingRuleLabels = WorkingRuleLabel | readonly WorkingRuleLabel[] | null;
+
+const toLabels = (labels: WorkingRuleLabels): readonly WorkingRuleLabel[] => {
+  if (!labels) return [];
+  return Array.isArray(labels)
+    ? (labels as readonly WorkingRuleLabel[])
+    : [labels as WorkingRuleLabel];
+};
+
 const labelSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** Highlight strength at one column, 0 when the sweep head is far away. */
@@ -368,30 +378,35 @@ const wrappedStrength = (head: number, width: number): RuleStrength => (column) 
 };
 
 /**
- * One rule row. The label sits at the right end and takes the swept rule colour
- * as its background, so the whole row animates as a single wave.
+ * One rule row. The labels sit at the right end as a group and take the swept
+ * rule colour as their background, so the whole row animates as a single wave.
  */
 export function ruleText(
   width: number,
   base: RGBA,
   hi: RGBA,
   strength: RuleStrength,
-  label: WorkingRuleLabel | null = null,
+  labels: WorkingRuleLabels = null,
 ): StyledText {
   const swept = (column: number) => {
     const value = strength(column);
     return value > 0 ? mix(base, hi, value * 0.8) : base;
   };
-  const labelWidth = label ? Math.min(label.width, width) : 0;
+  const list = toLabels(labels);
+  const labelWidth = Math.min(
+    list.reduce((total, label) => total + Math.max(0, label.width), 0),
+    width,
+  );
   const ruleColumns = Math.max(0, width - labelWidth);
   const chunks: TextChunk[] = [];
   for (let column = 0; column < ruleColumns; column++) chunks.push(fg(swept(column))("─"));
 
   let column = ruleColumns;
-  if (label) {
+  paint: for (const label of list) {
     for (const { segment } of labelSegmenter.segment(label.text)) {
       const segmentWidth = Bun.stringWidth(segment);
-      if (column + segmentWidth > width) break;
+      // Never split a grapheme across the right edge, even mid-label.
+      if (column + segmentWidth > width) break paint;
       chunks.push(bg(swept(column))(fg(label.color)(segment)));
       column += segmentWidth;
     }
@@ -409,13 +424,16 @@ export function useWorkingRule(opts: {
   active: boolean;
   mode: WorkingRuleAnimationMode;
   role: WorkingRuleRole;
-  /** Optional right-aligned label painted on the rule colour. */
-  label?: WorkingRuleLabel | null;
+  /** Optional right-aligned labels painted on the rule colour, left to right. */
+  label?: WorkingRuleLabels;
 }): RefObject<TextRenderable | null> {
   const { width, color, highlight, active, mode, role, label = null } = opts;
   const ref = useRef<TextRenderable>(null);
   const { subscribe, workingElapsed, workingRuleCycleWidth, enabled } = useClock();
-  const labelKey = label ? `${label.text}|${label.width}|${label.color}` : "";
+  // The only dependency-array proxy for the labels, so it has to cover them all.
+  const labelKey = toLabels(label)
+    .map((one) => `${one.text}|${one.width}|${one.color}`)
+    .join("\u0000");
 
   const plain = useCallback(() => {
     if (ref.current) ref.current.content = ruleText(width, rgba(color), rgba(color), STATIC_STRENGTH, label);
