@@ -47,6 +47,7 @@ import {
   systemTriggerClock,
 } from "./triggers/process";
 import type { StartupOptions } from "./cli";
+import { TodoToolsController } from "./todo-tools";
 import { installSelectionClipboard } from "./clipboard";
 import { TerminalTitleController } from "./terminal-title";
 import { SandboxController } from "./sandbox";
@@ -113,6 +114,7 @@ export async function start(
   const questionnaireManager = new QuestionnaireManager();
   const spawnPreviewManager = new SpawnPreviewManager();
   const mainToolGroups = new ToolGroupsController("main");
+  const mainTodoTools = new TodoToolsController("main");
   const sessionHistoryIndex = new SessionHistoryIndex();
   const messageCacheController = new MessageCacheController(process.cwd());
   const statsManager = new SessionStatsManager();
@@ -276,6 +278,7 @@ export async function start(
             applyPatchExtension,
             questionnaireManager.extension({ id: "main", name: "main" }),
             mainToolGroups.extension(),
+            mainTodoTools.extension(),
             subagentExtension,
           ],
         },
@@ -284,6 +287,9 @@ export async function start(
       // the session file. Restore before enable_tools registers and runs, then
       // narrow the outgoing tool list to core plus enabled groups.
       mainToolGroups.load(sessionManager.getSessionFile());
+      // Bind the list to this session before any tool can run, so a resumed
+      // session reads its own plan and /clear starts an empty one.
+      mainTodoTools.load(sessionManager.getSessionFile());
       const result = await createAgentSessionFromServices({
         services,
         sessionManager,

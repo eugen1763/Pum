@@ -156,6 +156,12 @@ export function toolArg(name: string, args: any, cwd: string): string {
     if (typeof args.id === "string") return `${action} · ${args.id}`;
     return action;
   }
+  if (name.startsWith("todo_")) {
+    // The id alone is opaque, so pair it with the text when the call carries one.
+    const parts = [args?.id, args?.text, args?.status]
+      .filter((part): part is string => typeof part === "string" && part.length > 0);
+    return parts.join(" · ").split("\n")[0] ?? "";
+  }
   if (name === "enable_tools" && Array.isArray(args.groups)) {
     return args.groups.filter((group: unknown): group is string => typeof group === "string").join(", ");
   }

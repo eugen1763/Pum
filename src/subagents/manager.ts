@@ -49,6 +49,7 @@ import {
   childAllowedToolNames,
   judgeAllowedToolNames,
 } from "../tool-groups";
+import { TodoToolsController } from "../todo-tools";
 import {
   registerTriggerTools,
   type TriggerRuntimeManager,
@@ -207,6 +208,7 @@ type RuntimeRecord = {
   finishRequested?: string;
   userInstructionNotices?: Map<string, string>;
   toolGroups?: ToolGroupsController;
+  todoTools?: TodoToolsController;
   activityGeneration: number;
   idleNotifiedGeneration: number;
   /**
@@ -1128,6 +1130,9 @@ export class SubagentManager {
         if (toolGroupsRecord?.toolGroups) {
           toolGroupsRecord.toolGroups.registerTool(pi);
         }
+        if (toolGroupsRecord?.todoTools) {
+          toolGroupsRecord.todoTools.registerTool(pi);
+        }
         if (this.triggerManager) {
           registerTriggerTools(
             pi,
@@ -1789,6 +1794,10 @@ export class SubagentManager {
     if (!judge) {
       record.toolGroups = new ToolGroupsController("subagent", undefined, record.snapshot.readonly);
       record.toolGroups.load(sessionManager.getSessionFile());
+      // Each child owns its own list. Binding it to the child's session file is
+      // what keeps one agent out of another's plan.
+      record.todoTools = new TodoToolsController("subagent");
+      record.todoTools.load(sessionManager.getSessionFile());
     }
     const services = await createAgentSessionServices({
       cwd: record.snapshot.worktree.path,

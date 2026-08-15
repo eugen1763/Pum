@@ -3,6 +3,7 @@ import { basename, dirname, join } from "node:path";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { Type } from "typebox";
 import { GOAL_VERDICT_TOOL_NAME } from "./goal-judge";
+import { TODO_TOOL_NAMES } from "./todo-tools";
 
 /**
  * Always-present tool that reveals hidden tool groups in this thread.
@@ -104,7 +105,7 @@ export const SHELLS_GROUP_TOOL_NAMES = [
  * The hidden groups. There is no News group because PUM has no news model
  * tool (news.ts is a UI-only feature), so that group would contain zero tools.
  */
-export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree", "Shells"] as const;
+export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree", "Shells", "Todo"] as const;
 
 export type ToolGroupName = (typeof TOOL_GROUP_NAMES)[number];
 
@@ -121,6 +122,7 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, ToolGroupDefinition>> =
   Subagents: { label: "Subagents", toolNames: SUBAGENTS_GROUP_TOOL_NAMES },
   Worktree: { label: "Worktree", toolNames: WORKTREE_GROUP_TOOL_NAMES },
   Shells: { label: "Shells", toolNames: SHELLS_GROUP_TOOL_NAMES },
+  Todo: { label: "Todo", toolNames: TODO_TOOL_NAMES },
 };
 
 /** Union of every optional tool name across all hidden groups. */
@@ -129,6 +131,7 @@ export const ALL_GROUP_TOOL_NAMES: readonly string[] = [
   ...SUBAGENTS_GROUP_TOOL_NAMES,
   ...WORKTREE_GROUP_TOOL_NAMES,
   ...SHELLS_GROUP_TOOL_NAMES,
+  ...TODO_TOOL_NAMES,
 ];
 
 /** The tool names a session of an audience may expose (the allowlist). */

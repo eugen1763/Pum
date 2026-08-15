@@ -79,6 +79,15 @@ import {
   withSearchRoute,
 } from "./web-search";
 import { matchingCommands, moveCommandSelection } from "./commands";
+import { loadTodoTasks } from "./todo";
+import {
+  cycleTodoFilter,
+  moveTodoSelection,
+  TodoPopup,
+  todoPopupLayout,
+  visibleTodoTasks,
+  type TodoFilter,
+} from "./todo-popup";
 import { applyPathCompletion, pathCompletions, type PathCompletion } from "./path-autocomplete";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
@@ -695,6 +704,12 @@ export function App({
   const [shellTails, setShellTails] = useState<Record<string, string>>({});
 
   const [newsOpen, setNewsOpen] = useState(false);
+  const [todoOpen, setTodoOpen] = useState(false);
+  const todoOpenRef = useRef(false);
+  const [todoFilter, setTodoFilter] = useState<TodoFilter>("all");
+  const todoFilterRef = useRef<TodoFilter>("all");
+  const [todoSelectedId, setTodoSelectedId] = useState<string | null>(null);
+  const todoSelectedIdRef = useRef<string | null>(null);
   const newsOpenRef = useRef(false);
   const [newsCursor, setNewsCursor] = useState(0);
   const newsCursorRef = useRef(0);
@@ -728,6 +743,11 @@ export function App({
     : undefined;
   const questionnaire = questionnaireManager?.current();
   const spawnPreview = spawnPreviewManager?.current();
+  // Every other popup outranks this one. Deriving visibility instead of closing
+  // it from each opener means a popup added later cannot forget a line here.
+  const todoVisible = todoOpen
+    && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen
+    && !triggersOpen && !loginOpen && !newsOpen && !questionnaire && !spawnPreview;
   const visibleTx = transcriptForThinkingVisibility(
     activeAgent?.transcript ?? tx,
     settings.showThinking,
@@ -1306,6 +1326,7 @@ export function App({
       helpOpen ||
       historyOpen ||
       newsOpenRef.current ||
+      todoOpenRef.current ||
       statsOpenRef.current ||
       settingsOpenRef.current
     ) return;
@@ -1956,6 +1977,8 @@ export function App({
     setLoginOpen(false);
     setStatsOpen(false);
     statsOpenRef.current = false;
+    todoOpenRef.current = false;
+    setTodoOpen(false);
     newsCursorRef.current = 0;
     setNewsCursor(0);
     newsOpenRef.current = true;
@@ -1965,6 +1988,69 @@ export function App({
   const closeNews = () => {
     newsOpenRef.current = false;
     setNewsOpen(false);
+    queueMicrotask(() => inputRef.current?.focus());
+  };
+
+  // Re-read on every transcript change while the popup is open: a todo tool call
+  // always adds a line, so the list follows the agent without an event bus.
+  const todoSessionFile = activeAgent?.sessionFile ?? session.sessionFile;
+  const todoTasks = useMemo(
+    () => (todoVisible ? visibleTodoTasks(loadTodoTasks(todoSessionFile), todoFilter) : []),
+    [todoVisible, todoSessionFile, todoFilter, visibleLines.length, visibleBusy],
+  );
+  const todoPageSize = Math.max(1, todoPopupLayout(width, height).listHeight);
+
+  const applyTodoSelection = (next: string | null) => {
+    todoSelectedIdRef.current = next;
+    setTodoSelectedId(next);
+  };
+
+  const moveTodoCursor = (step: number) => {
+    if (todoTasks.length === 0) return;
+    const current = todoSelectedIdRef.current;
+    const index = todoTasks.findIndex((task) => task.id === current);
+    const from = index < 0 ? 0 : index;
+    const to = Math.min(todoTasks.length - 1, Math.max(0, from + step));
+    // Single steps wrap, a page jump clamps: paging past the end should land on
+    // the end, not on the row the user started from.
+    const wrapped = Math.abs(step) === 1
+      ? moveTodoSelection(todoTasks, current, step as -1 | 1)
+      : todoTasks[to]?.id ?? null;
+    applyTodoSelection(wrapped);
+  };
+
+  const moveTodoCursorTo = (edge: "first" | "last") => {
+    if (todoTasks.length === 0) return;
+    applyTodoSelection((edge === "first" ? todoTasks[0] : todoTasks.at(-1))?.id ?? null);
+  };
+
+  const cycleTodoFilterState = () => {
+    const next = cycleTodoFilter(todoFilterRef.current);
+    todoFilterRef.current = next;
+    setTodoFilter(next);
+    // The old selection may not survive the new filter; let the popup reseat it.
+    applyTodoSelection(null);
+  };
+
+  const openTodo = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setTriggerPopup(false, false);
+    setLoginOpen(false);
+    setStatsOpen(false);
+    statsOpenRef.current = false;
+    newsOpenRef.current = false;
+    setNewsOpen(false);
+    todoOpenRef.current = true;
+    setTodoOpen(true);
+  };
+
+  const closeTodo = () => {
+    todoOpenRef.current = false;
+    setTodoOpen(false);
     queueMicrotask(() => inputRef.current?.focus());
   };
 
@@ -2291,9 +2377,10 @@ export function App({
     const triggersCommand = trimmed === "/triggers";
     const processesCommand = trimmed === "/processes";
     const newsCommand = trimmed === "/news";
+    const todoCommand = trimmed === "/todo";
     const statsCommand = trimmed === "/stats";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !statsCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
     setEditingStash(null);
 
     if (historyCommand) {
@@ -2319,6 +2406,11 @@ export function App({
     if (newsCommand) {
       setEditorText("");
       openNews();
+      return true;
+    }
+    if (todoCommand) {
+      setEditorText("");
+      openTodo();
       return true;
     }
     if (statsCommand) {
@@ -3516,6 +3608,25 @@ export function App({
       return;
     }
 
+    if (key.ctrl && printableKey === "o") {
+      key.stopPropagation();
+      if (todoOpenRef.current) closeTodo();
+      else openTodo();
+      return;
+    }
+    if (todoVisible) {
+      key.stopPropagation();
+      if (key.name === "escape") closeTodo();
+      else if (key.name === "up") moveTodoCursor(-1);
+      else if (key.name === "down") moveTodoCursor(1);
+      else if (key.name === "pageup") moveTodoCursor(-todoPageSize);
+      else if (key.name === "pagedown") moveTodoCursor(todoPageSize);
+      else if (key.name === "home") moveTodoCursorTo("first");
+      else if (key.name === "end") moveTodoCursorTo("last");
+      else if (printableKey === "f") cycleTodoFilterState();
+      return;
+    }
+
     // `?` on an empty prompt opens help instead of typing a question mark.
     // With text already in the line it is just a character.
     if (key.sequence === "?" && !settingsOpen && !inputRef.current?.plainText) {
@@ -3936,7 +4047,7 @@ export function App({
   const transcriptResetKey = `${activeAgentId ?? "main"}:${visibleLines.length}`;
   const popupResetKey = [
     loginOpen, spawnPreview?.id ?? "", Boolean(questionnaire), helpOpen, triggersOpen,
-    agentSelectorOpen, historyOpen, newsOpen, statsOpen, settingsOpen, page,
+    agentSelectorOpen, historyOpen, newsOpen, todoVisible, statsOpen, settingsOpen, page,
   ].join(":");
   const streamGap = visibleTx.stream
     ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
@@ -4162,7 +4273,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="word"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !newsOpen}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !newsOpen && !todoVisible}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -4255,6 +4366,17 @@ export function App({
               cursor={newsCursor}
               terminalWidth={width}
               terminalHeight={height}
+            />
+          ) : null}
+          {todoVisible ? (
+            <TodoPopup
+              theme={theme}
+              terminalWidth={width}
+              terminalHeight={height}
+              agentName={activeAgent?.name ?? "main"}
+              tasks={todoTasks}
+              filter={todoFilter}
+              selectedId={todoSelectedId}
             />
           ) : null}
           {statsOpen ? (
