@@ -385,7 +385,9 @@ describe("goal persistence", () => {
   });
 
   test("the companion file sits beside the session JSONL", () => {
-    expect(goalFileFor("/tmp/sessions/abc.jsonl")).toBe("/tmp/sessions/abc.goal.json");
+    // join() so the expectation uses the separator of the host, like the code.
+    expect(goalFileFor(join("sessions", "abc.jsonl"))).toBe(join("sessions", "abc.goal.json"));
+    expect(goalFileFor(join("sessions", "abc.jsonl"))).toBe(goalFileFor(join("sessions", "abc.json")));
   });
 });
 
