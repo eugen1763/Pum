@@ -33,6 +33,9 @@ describe("settings search and navigation", () => {
     expect(filterSettingsRows("progress detailed").map((row) => row.id)).toEqual(["explanationStrength"]);
     expect(filterSettingsRows("parallel capacity").map((row) => row.id)).toEqual(["maxActiveSubagents"]);
     expect(filterSettingsRows("verify tools bash").map((row) => row.id)).toEqual(["checkMode"]);
+    expect(filterSettingsRows("external trigger process").map((row) => row.id)).toContain("checkMode");
+    expect(SETTINGS_ROWS.find((row) => row.id === "checkModel")?.description)
+      .toContain("complete Check mode proposals");
     expect(SETTINGS_ROWS.every((row) => row.description.length > 20)).toBe(true);
   });
 

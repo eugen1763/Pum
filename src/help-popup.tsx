@@ -20,14 +20,16 @@ export const HELP_GROUPS: HelpGroup[] = [
   {
     title: "Prompt",
     controls: [
-      ["Enter", "Send, or steer while working"],
+      ["Enter", "Send, or steer; newline in input mode"],
+      ["Ctrl+I", "Toggle multiline input mode"],
       ["Ctrl/Shift+Enter", "Insert a new line"],
       ["\\ then Enter", "Insert a new line fallback"],
       ["Alt+Enter", "Cache without sending"],
+      ["Ctrl+Alt+Enter", "Cache alias for reserved Alt+Enter"],
       ["Alt+V", "Attach a clipboard image"],
       ["Ctrl+Backspace", "Delete the previous word"],
       ["Ctrl+W", "Delete the previous word"],
-      ["Questionnaire", "↑↓/←→ move · Enter select · Esc cancel"],
+      ["Questionnaire", "Enter select · Esc cancel; custom Esc back"],
     ],
   },
   {
@@ -44,8 +46,9 @@ export const HELP_GROUPS: HelpGroup[] = [
   {
     title: "History and sessions",
     controls: [
-      ["↑ / ↓", "Recall queued on empty; otherwise history"],
-      ["Ctrl+H", "Open session history"],
+      ["Empty ↑", "Recall newest queued user input"],
+      ["Main ↑ / ↓", "Sent history; wrapped input keeps cursor"],
+      ["Ctrl+H", "Open history; use /history if unavailable"],
       ["pum -r", "Resume the last session"],
     ],
   },
@@ -60,6 +63,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/stats", "Show session statistics"],
       ["/check-path", "Manage extra Check mode paths"],
       ["/processes", "Manage triggers and shells"],
+      ["/triggers", "Open Processes on the Triggers tab"],
       ["/worktree", "Create a managed worktree"],
       ["Tab", "Complete a command or local path"],
     ],
@@ -68,7 +72,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     title: "Application",
     controls: [
       ["Ctrl+P", "Open Settings"],
-      ["Ctrl+N", "Open News; n/p jump"],
+      ["Ctrl+N", "Open News; n answer / p source"],
       ["Ctrl+T", "Open Processes"],
       ["Ctrl+End", "Scroll transcript to the end"],
       ["/ in Settings", "Focus settings search"],

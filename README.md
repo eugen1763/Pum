@@ -149,26 +149,29 @@ This MVP mounts the PUM configuration directory, including provider credentials,
 
 | Key | Action |
 |---|---|
-| `Enter` | Send a prompt, or steer the selected working agent |
+| `Enter` | Send or steer; while input mode is on, insert a new line |
+| `Ctrl+I` | Toggle multiline input mode; the prompt gutter changes to `i` while active |
 | `↑` on an empty prompt | Recall the newest queued user message for the selected agent |
 | `Ctrl+Enter` / `Shift+Enter` | Insert a new line |
-| `Alt+Enter` | Stash the prompt without sending |
-| `Tab` | Open the prompt stash on an empty input |
-| `Shift+↑` / `Shift+↓` | Select a range of stashed tasks |
+| `Alt+Enter` / `Ctrl+Alt+Enter` | Cache without sending; the Ctrl alias works around terminals that reserve Alt+Enter |
+| `Tab` | Open the prompt cache on an empty input |
+| `Shift+↑` / `Shift+↓` | Select a range of cached tasks |
 | `Alt+V` | Attach an image from the graphical clipboard |
 | `Ctrl+L` | Open the agent transcript selector |
 | `Shift+Tab` / `Ctrl+Shift+Tab` | Cycle through agent transcripts |
-| `Ctrl+H` | Open session history when the terminal reports the key distinctly |
+| `Ctrl+H` | Open session history when reported distinctly; use `/history` otherwise |
 | `Ctrl+N` | Open recent answers (News) |
-| `n` / `p` in News | Jump to the answer / user prompt |
+| `n` / `p` in News | Jump to the answer / source |
 | `Ctrl+End` | Scroll to the end of the selected transcript |
 | `Ctrl+P` | Open settings |
-| `Ctrl+T` | Open supervised external triggers |
+| `Ctrl+T` | Open Processes for supervised triggers and shells |
 | `Esc` twice | Cancel the selected working agent |
 | `Ctrl+C` | Clear the selected non-empty draft; on an empty draft, press twice to quit |
 | `?` | Show all controls when the prompt is empty |
 
-Useful commands include `/login`, `/history`, `/news`, `/triggers`, `/check-path`, `/clear`, `/compress`, and `/worktree`.
+Sent-prompt history with `↑` / `↓` is available in the main transcript. Wrapped or multiline drafts keep those keys for cursor movement. Subagent views still support empty-prompt queued-message recall.
+
+Useful commands include `/login`, `/history`, `/news`, `/processes`, `/triggers`, `/check-path`, `/clear`, `/compress`, and `/worktree`. `/triggers` opens Processes directly on the Triggers tab.
 
 For automated benchmarks, add `--statsFile <path>` to a headless `-p` run. PUM writes a versioned JSON artifact with run metadata and all `/stats` data. PUM creates missing parent directories. PUM rejects an existing file before startup unless `--override` is present. The alias `--stats-file` is also accepted.
 
@@ -200,7 +203,7 @@ Open the News popup with `Ctrl+N` or `/news`. It lists the final answers of user
 
 - `←` / `→` — move between answers
 - `n` — jump to the answer
-- `p` — jump to the user prompt
+- `p` — jump to the source prompt or completion notice
 - `Space` — toggle an answer between read and unread
 - `c` — copy the current answer to the clipboard
 - `Enter` — reply to the current answer with a quoted draft
@@ -217,7 +220,7 @@ PUM runs up to 10 active subagents by default. Configure a limit from 1 through 
 - Its own transcript, draft, usage data, and cancellation state
 - Tools for progress messages and a single final completion report
 
-Select a range of stashed prompts and press `Enter`. The main agent can group related work and run independent groups in parallel. A managed merge requires both authoritative `completed` status and a persisted completion notice. Idle settlement is not completion. Successful managed merges remove the completed worktree and branch. A parent cannot finish, merge, or be removed until every retained descendant closes deepest-first.
+Select a range of cached prompts and press `Enter`. The main agent can group related work and run independent groups in parallel. A managed merge requires both authoritative `completed` status and a persisted completion notice. Idle settlement is not completion. Successful managed merges remove the completed worktree and branch. A parent cannot finish, merge, or be removed until every retained descendant closes deepest-first.
 
 Use `Ctrl+L` to select an agent transcript. Input then goes to that agent. Finished or interrupted agents remain available until PUM merges or removes them.
 
@@ -233,7 +236,7 @@ Idle notices report settled work cycles to the direct spawner. They are not comp
 
 ### Interactive questionnaires
 
-The `questionnaire` tool asks one or more questions inside PUM's OpenTUI interface. Each question provides selectable options and a custom-answer field. Use arrow keys or `Tab` to move, `Enter` to select, and `Esc` to cancel.
+The `questionnaire` tool asks one or more questions inside PUM's OpenTUI interface. Each question provides selectable options and a custom-answer field. Use arrow keys or `Tab` to move and `Enter` to select. `Esc` cancels from the option view; while editing a custom answer, it returns to the options.
 
 PUM returns structured answers to the requesting main agent or managed child agent. Custom text stays outside React labels and session data until the user explicitly submits the answer.
 
@@ -249,7 +252,7 @@ The `message_cache_send` tool accepts stable entry IDs. Single entries use the s
 
 The trigger tools create process-local supervised commands with an executable and argument array. Trigger definitions can be listed, inspected, paused, resumed, cancelled, or run manually. Definitions disappear when PUM exits.
 
-Use `Ctrl+T` or `/triggers` to inspect active definitions. PUM limits definitions, pending deliveries, output size, run counts, repeat frequency, and lifetime. Output goes to a private temporary file and is removed after the triggered turn settles.
+Use `Ctrl+T` or `/processes` to open the combined Processes view. `/triggers` is an alias that opens its Triggers tab. PUM limits definitions, pending deliveries, output size, run counts, repeat frequency, and lifetime. Output goes to a private temporary file and is removed after the triggered turn settles.
 
 Trigger events target one exact main or retained child session. A missing session or child cancels its definitions instead of redirecting them. Check mode evaluates each process proposal without flattening its argument boundaries into shell text.
 
@@ -348,11 +351,11 @@ Set `PUM_DIR` to override the complete PUM data directory.
 | `pum.json` | Theme, animation, transcript output, search, writing, explanation, Check mode, sandbox, and subagent settings |
 | `theme.json` | Optional semantic color overrides |
 | `history.json` | Prompt history by working directory |
-| `prompt-stash.json` | Stashed prompts by working directory |
+| `prompt-stash.json` | Cached prompts by working directory (legacy filename) |
 | `sessions/` | Main conversation sessions |
 | `subagents/` | Persistent subagent sessions |
 
-PUM preserves all stashed prompt occurrences. PUM also keeps the 100 most recent additional sent-history occurrences for each working directory.
+PUM preserves all cached prompt occurrences. PUM also keeps the 100 most recent additional sent-history occurrences for each working directory.
 
 Session history shows the latest sent user-message time, on-disk JSONL size, and known outgoing, incoming, and cache-read token counts. Corrupt or partially written session lines do not prevent the history popup from opening.
 
