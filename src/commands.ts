@@ -59,7 +59,7 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "/worktree",
-    description: "Create a PUM Git worktree from the current branch",
+    description: "Create a worktree; start or return moves this session",
   },
 ];
 

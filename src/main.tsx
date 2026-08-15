@@ -394,6 +394,19 @@ export async function start(
         if (!result.cancelled) statsManager.bindMainSession(sessionRuntime.session);
         return result.cancelled ? null : sessionRuntime.session;
       }}
+      onRelocate={async (targetCwd: string) => {
+        // Switch to the session it is already on, with a new cwd. pi rebuilds
+        // the runtime around that directory while the session file, its id and
+        // its transcript stay exactly where they were - no fork, no copy.
+        const sessionFile = sessionRuntime.session.sessionManager.getSessionFile();
+        // An in-memory session has no file to reopen, so there is nothing to
+        // move; the caller reports that rather than switching to nowhere.
+        if (!sessionFile) return null;
+        const result = await sessionRuntime.switchSession(sessionFile, { cwdOverride: targetCwd });
+        if (result.cancelled) return null;
+        statsManager.bindMainSession(sessionRuntime.session);
+        return sessionRuntime.session;
+      }}
       modelRuntime={modelRuntime}
       settings={settings}
       searchProviders={searchProviders}

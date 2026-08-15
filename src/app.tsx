@@ -82,6 +82,15 @@ import {
 import { matchingCommands, moveCommandSelection } from "./commands";
 import { truncateStatusText } from "./status-metadata";
 import { modeLineLabels } from "./mode-line";
+import {
+  loadRelocation,
+  relocationPathsTrusted,
+  relocationTargetDirectory,
+  returnRelocationBlockReason,
+  saveRelocation,
+  startRelocationBlockReason,
+  type RelocationRecord,
+} from "./relocation";
 import { AGENT_NOTICE_CUSTOM_TYPE } from "./subagents/types";
 import {
   loadSessionSettings,
@@ -140,7 +149,10 @@ import { countActiveSubagents, type SubagentManager } from "./subagents/manager"
 import type { SpawnPreviewManager } from "./subagents/spawn-preview";
 import { SpawnPreviewPopup } from "./subagents/spawn-preview-popup";
 import { recallNewestQueuedUserMessage } from "./queue-recall";
-import { runWorktreeCommand } from "./worktree-command";
+import { parseWorktreeCommand, runWorktreeCommand } from "./worktree-command";
+import { startWorktree } from "./worktree-start";
+import { existsSync } from "node:fs";
+import { pathIdentity } from "./platform";
 import { CANCEL_WINDOW_MS, confirmsCancellation } from "./cancel-confirmation";
 import { buildStashBatchPrompt, selectedRange } from "./stash-batch";
 import {
@@ -549,6 +561,7 @@ export function App({
   onNewSession,
   loadSessions,
   onSwitchSession,
+  onRelocate,
   settings: initial,
   searchProviders,
   subagentManager,
@@ -572,12 +585,15 @@ export function App({
   sandboxWarningSource,
   forcedSandboxMode,
   forcedCheckPaths = [],
+  initialCwd,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
   onNewSession: () => Promise<AgentSession | null>;
   loadSessions: () => Promise<SessionHistoryItem[]>;
   onSwitchSession: (path: string) => Promise<AgentSession | null>;
+  /** Move this same session to another directory. Null when it could not move. */
+  onRelocate?: (targetCwd: string) => Promise<AgentSession | null>;
   settings: PumSettings;
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
@@ -606,8 +622,15 @@ export function App({
   /** Process-local sandbox floor that does not overwrite persisted user settings. */
   forcedSandboxMode?: NonNullable<PumSettings["sandboxMode"]>;
   forcedCheckPaths?: readonly string[];
+  /** Directory the session starts in. Defaults to the process working directory. */
+  initialCwd?: string;
 }) {
-  const cwd = process.cwd();
+  // The one authoritative active directory. Everything directory-dependent
+  // reads this rather than process.cwd(), so a live move rebinds by re-render
+  // instead of by each module happening to ask again.
+  const [cwd, setCwd] = useState(() => initialCwd ?? process.cwd());
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
   const [session, setSession] = useState(initialSession);
   // Load the news companion file exactly once on mount. The transcript
   // initializer reads these items from the ref instead of re-reading the file.
@@ -1586,6 +1609,11 @@ export function App({
     goalFormulationRef.current = null;
     // Settings belong to one session too, so /clear and /new fall back to the
     // global defaults rather than carrying the old session's overrides in.
+    // A relocation belongs to one session. /clear and /new open a session with
+    // no companion file, so the old worktree cannot follow the user into it.
+    const loadedRelocation = loadRelocation(session.sessionFile);
+    relocationRef.current = loadedRelocation;
+    setRelocation(loadedRelocation);
     const loadedOverrides = loadSessionSettings(session.sessionFile);
     sessionOverridesRef.current = loadedOverrides;
     setSessionOverrides(loadedOverrides);
@@ -1866,10 +1894,11 @@ export function App({
 
   // Git branch, live-watched.
   useEffect(() => {
-    const cwd = process.cwd();
+    // Re-subscribes on a move: the watcher holds a handle on one .git/HEAD, and
+    // the worktree has its own.
     setBranch(readBranch(cwd));
     return watchBranch(cwd, () => setBranch(readBranch(cwd)));
-  }, []);
+  }, [cwd]);
 
   // Turn timer, only while the main agent is working.
   useEffect(() => {
@@ -1892,6 +1921,176 @@ export function App({
     return () => clearInterval(id);
   }, [activeAgent?.id, activeAgent?.status, activeAgent?.runStartedAt, visibleBusy]);
 
+  const [relocation, setRelocation] = useState(
+    () => loadRelocation(initialSession.sessionFile),
+  );
+  const relocationRef = useRef(relocation);
+  relocationRef.current = relocation;
+  const relocatingRef = useRef(false);
+
+  /**
+   * Roots the session may write right now.
+   *
+   * While it runs in a generated worktree the source repository joins them, so
+   * the agent can still edit the project it came from. This is process-local
+   * and never reaches the saved /check-path settings.
+   */
+  const liveCheckPaths = (settings: PumSettings, directory: string): string[] => {
+    const record = relocationRef.current;
+    const source = record?.location === "worktree" ? [record.sourceRoot] : [];
+    return [...new Set([
+      ...checkPathsForProject(settings, directory),
+      ...forcedCheckPaths,
+      ...source,
+    ])];
+  };
+
+  /** Rebind everything the active directory decides, after a successful move. */
+  const applyRelocation = (record: RelocationRecord) => {
+    const target = relocationTargetDirectory(record);
+    relocationRef.current = record;
+    setRelocation(record);
+    saveRelocation(session.sessionFile, record.location === "source" && !record.pending
+      ? null
+      : record);
+    setCwd(target);
+    // The check-mode roots follow the move immediately: the next tool call must
+    // not be judged against the directory the session just left.
+    setCheckModeConfig({
+      profile: settingsRef.current.checkMode,
+      model: settingsRef.current.checkModel,
+      additionalPaths: liveCheckPaths(settingsRef.current, target),
+    });
+    void subagentManager.bindMainSession(session.sessionManager, target).catch(() => {});
+    // Both are keyed by project, so the old directory's recall would otherwise
+    // follow the session into the new one.
+    history.current = promptHistoryStore.load(target);
+    histCursor.current = null;
+    setStash(promptStashStore.load(target));
+  };
+
+  const runWorktreeRelocation = async (command: { kind: "start"; directory?: string } | { kind: "return" }) => {
+    const guardInput = {
+      relocation: relocationRef.current,
+      busy: busyRef.current,
+      retainedChildren: subagentManager.getAgents().length,
+      inFlight: relocatingRef.current,
+    };
+    const blocked = command.kind === "start"
+      ? startRelocationBlockReason(guardInput)
+      : returnRelocationBlockReason(guardInput);
+    if (blocked) {
+      appendMainLine({ kind: "text", role: "error", text: blocked });
+      return;
+    }
+    if (!onRelocate) {
+      appendMainLine({ kind: "text", role: "error", text: "this build cannot move a session" });
+      return;
+    }
+
+    relocatingRef.current = true;
+    try {
+      const record = command.kind === "start"
+        ? await beginWorktreeStart(command.directory)
+        : beginWorktreeReturn();
+      if (!record) return;
+
+      const target = relocationTargetDirectory(record);
+      appendMainLine({
+        kind: "text",
+        role: "system",
+        text: `moving this session to ${target} (${record.branch})`,
+      });
+      const moved = await onRelocate(target);
+      if (!moved) {
+        // Creation may already have succeeded, so name what survived rather
+        // than deleting a worktree the user can still use.
+        appendMainLine({
+          kind: "text",
+          role: "error",
+          text: `the session did not move; worktree ${record.name} is at ${record.worktreePath}`,
+        });
+        return;
+      }
+      applyRelocation(record);
+      appendMainLine({
+        kind: "text",
+        role: "system",
+        text: command.kind === "start"
+          ? `now in worktree ${record.name} on ${record.branch}; ${record.sourceRoot} stays writable`
+          : `back in ${record.sourceRoot}; worktree ${record.name} is preserved on ${record.branch}`,
+      });
+    } catch (error) {
+      appendMainLine({ kind: "text", role: "error", text: String(error) });
+    } finally {
+      relocatingRef.current = false;
+    }
+  };
+
+  const beginWorktreeStart = async (directory?: string): Promise<RelocationRecord | null> => {
+    const started = await startWorktree(directory ?? cwdRef.current);
+    const now = Date.now();
+    const existing = relocationRef.current;
+    return {
+      id: `reloc-${randomUUID().slice(0, 8)}`,
+      generation: (existing?.generation ?? 0) + 1,
+      sourceRoot: started.sourceRoot,
+      worktreePath: started.worktree.path,
+      name: started.worktree.name,
+      branch: started.worktree.branch,
+      baseBranch: started.worktree.baseBranch,
+      baseCommit: started.worktree.baseCommit,
+      location: "worktree",
+      createdAt: now,
+      updatedAt: now,
+    };
+  };
+
+  const beginWorktreeReturn = (): RelocationRecord | null => {
+    const existing = relocationRef.current;
+    if (!existing) return null;
+    // Returning changes only where the session runs. The branch, the commits
+    // and any uncommitted work in the worktree are left exactly as they are.
+    return { ...existing, generation: existing.generation + 1, location: "source", updatedAt: Date.now() };
+  };
+
+  /**
+   * Restore a relocated session to its worktree on resume.
+   *
+   * Runs once per session. A worktree deleted, pruned or reused outside PUM
+   * fails closed: the record is dropped and the session stays in its source
+   * repository rather than authorizing a path someone else may now own.
+   */
+  const restoredRelocationRef = useRef<string | null>(null);
+  useEffect(() => {
+    const record = relocationRef.current;
+    if (!record || record.location !== "worktree") return;
+    if (restoredRelocationRef.current === record.id) return;
+    restoredRelocationRef.current = record.id;
+    if (pathIdentity(cwdRef.current) === pathIdentity(record.worktreePath)) return;
+    void (async () => {
+      const trusted = relocationPathsTrusted(record, {
+        worktreeExists: existsSync(record.worktreePath),
+        worktreeBranch: readBranch(record.worktreePath) ?? undefined,
+        sourceRoot: record.sourceRoot,
+      });
+      if (!trusted) {
+        relocationRef.current = null;
+        setRelocation(null);
+        saveRelocation(session.sessionFile, null);
+        appendMainLine({
+          kind: "text",
+          role: "error",
+          text: `worktree ${record.name} no longer matches ${record.branch}; staying in ${record.sourceRoot}`,
+        });
+        return;
+      }
+      if (!onRelocate) return;
+      const moved = await onRelocate(record.worktreePath).catch(() => null);
+      if (moved) applyRelocation(record);
+    })();
+  }, [session, relocation?.id]);
+
   const update = (patch: Partial<PumSettings>) => {
     const next = { ...settingsRef.current, ...patch };
     settingsRef.current = next;
@@ -1908,10 +2107,7 @@ export function App({
       setCheckModeConfig({
         profile: next.checkMode,
         model: next.checkModel,
-        additionalPaths: [...new Set([
-          ...checkPathsForProject(next, cwd),
-          ...forcedCheckPaths,
-        ])],
+        additionalPaths: liveCheckPaths(next, cwd),
       });
     }
     if (patch.showThinking !== undefined) showThinkingRef.current = patch.showThinking;
@@ -2609,7 +2805,7 @@ export function App({
     const newsCommand = trimmed === "/news";
     const todoCommand = trimmed === "/todo";
     const statsCommand = trimmed === "/stats";
-    const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
+    const worktreeCommand = parseWorktreeCommand(trimmed);
     if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
     setEditingStash(null);
 
@@ -2649,6 +2845,17 @@ export function App({
       return true;
     }
 
+    if (worktreeCommand?.kind === "error") {
+      setEditorText(trimmed, trimmed.length, true);
+      appendMainLine({ kind: "text", role: "error", text: worktreeCommand.message });
+      return true;
+    }
+    if (worktreeCommand?.kind === "start" || worktreeCommand?.kind === "return") {
+      setEditorText("");
+      void runWorktreeRelocation(worktreeCommand);
+      return true;
+    }
+
     setEditorText("");
     histCursor.current = null;
     draft.current = "";
@@ -2674,7 +2881,7 @@ export function App({
         .finally(() => setWorking(streamingRef.current));
     } else if (worktreeCommand) {
       runWorktreeCommand({
-        name: worktreeCommand[1],
+        name: worktreeCommand.kind === "create" ? worktreeCommand.name : undefined,
         manager: subagentManager,
         append: (call) => append({ kind: "tool", call }),
         patch: patchTool,
