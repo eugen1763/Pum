@@ -19,6 +19,12 @@ export const webSearch = { enabled: false };
 const searchRoute = new AsyncLocalStorage<string>();
 let socketObserverInstalled = false;
 
+/** The provider payload hook shape (pi's `ProviderRequestOptions.onPayload`). */
+type PayloadHook = (
+  payload: unknown,
+  model: unknown,
+) => unknown | undefined | Promise<unknown | undefined>;
+
 function addSearchTool(payload: unknown): unknown | undefined {
   if (!webSearch.enabled || !payload || typeof payload !== "object") return undefined;
   const body = payload as { tools?: unknown[] };
@@ -27,15 +33,49 @@ function addSearchTool(payload: unknown): unknown | undefined {
   return { ...body, tools: [...tools, { type: "web_search" }] };
 }
 
+/**
+ * Build the `onPayload` hook for a wrapped provider request.
+ *
+ * pi's agent loop installs its own `onPayload` (the `before_provider_request`
+ * emitter) on every model turn, and forwards it into the provider call. Direct
+ * utility completions do not: most importantly PUM's Check mode verifier calls
+ * `runtime.completeSimple(...)` on this same provider with no such hook. That
+ * absence is the clean, structural signal we key on — no brittle heuristic on
+ * token counts or prompt text, and no edit to any other file.
+ *
+ * This fixes two defects together:
+ *  1. CHAINING. We call any pre-existing hook first and feed its transformed
+ *     payload into the search-tool step, instead of overwriting it. A user's
+ *     `before_provider_request` extension transform still runs on `openai-codex`.
+ *  2. VERIFIER ISOLATION. We attach the hosted `web_search` tool ONLY when the
+ *     agent hook is present. The verifier (no hook) therefore never runs a hosted
+ *     search while its prompt carries untrusted patch/command text, and search
+ *     output cannot displace its small structured JSON reply. Normal chat turns
+ *     keep search, because they always route through the agent loop's hook.
+ */
+export function chainSearchTool(base: PayloadHook | undefined): PayloadHook | undefined {
+  if (typeof base !== "function") return base;
+  return async (payload, model) => {
+    const baseResult = await base(payload, model);
+    // `undefined` from a hook means "leave the payload unchanged".
+    const effective = baseResult === undefined ? payload : baseResult;
+    const withTool = addSearchTool(effective);
+    return withTool === undefined ? baseResult : withTool;
+  };
+}
+
 /** Delegates through the prototype so the provider's other members survive. */
-function wrapProvider(base: Provider): Provider {
+export function wrapProvider(base: Provider): Provider {
   const wrapped: Provider = Object.create(base);
   wrapped.stream = ((model: any, context: any, options: any) =>
-    base.stream(model, context, { ...options, onPayload: addSearchTool })) as Provider["stream"];
+    base.stream(model, context, {
+      ...options,
+      onPayload: chainSearchTool(options?.onPayload),
+    })) as Provider["stream"];
   wrapped.streamSimple = ((model: any, context: any, options: any) =>
     base.streamSimple(model, context, {
       ...options,
-      onPayload: addSearchTool,
+      onPayload: chainSearchTool(options?.onPayload),
     })) as Provider["streamSimple"];
   return wrapped;
 }

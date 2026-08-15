@@ -164,8 +164,9 @@ export function parseApplyPatch(patch: string): PatchOperation[] {
         if (header.text !== "@@" && !header.text.startsWith("@@ ")) {
           throw patchError("an Update File hunk must start with '@@'", header.number);
         }
+        const headerContext = header.text.slice(2).trim();
         const hunk: PatchHunk = {
-          header: header.text === "@@" ? undefined : header.text.slice(3),
+          header: headerContext === "" ? undefined : header.text.slice(3),
           oldLines: [],
           newLines: [],
           endOfFile: false,
@@ -279,14 +280,34 @@ function decodeText(buffer: Buffer, path: string): { text: string; bom: string }
   return { text: bom ? decoded.slice(1) : decoded, bom };
 }
 
-function lineFormat(text: string): { lines: string[]; ending: "\n" | "\r\n"; finalNewline: boolean } {
-  const ending = text.includes("\r\n") ? "\r\n" : "\n";
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const finalNewline = normalized.endsWith("\n");
-  const lines = normalized.split("\n");
-  if (finalNewline) lines.pop();
-  if (lines.length === 1 && lines[0] === "") lines.pop();
-  return { lines, ending, finalNewline };
+/**
+ * Split text into content lines and remember each line's real ending. Only
+ * "\r\n" and "\n" end a line; a lone "\r" stays as a literal character inside
+ * the content, so untouched bytes survive verbatim.
+ */
+function splitLines(text: string): { contents: string[]; endings: string[]; finalNewline: boolean } {
+  const contents: string[] = [];
+  const endings: string[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const next = text.indexOf("\n", index);
+    if (next === -1) {
+      contents.push(text.slice(index));
+      endings.push("");
+      break;
+    }
+    let content = text.slice(index, next);
+    let ending = "\n";
+    if (content.endsWith("\r")) {
+      content = content.slice(0, -1);
+      ending = "\r\n";
+    }
+    contents.push(content);
+    endings.push(ending);
+    index = next + 1;
+  }
+  const finalNewline = endings.length > 0 && endings[endings.length - 1] !== "";
+  return { contents, endings, finalNewline };
 }
 
 function occurrences(lines: string[], pattern: string[], start: number, endOfFile: boolean): number[] {
@@ -307,36 +328,51 @@ function uniqueMatch(lines: string[], pattern: string[], start: number, path: st
 }
 
 function applyHunks(text: string, bom: string, path: string, hunks: PatchHunk[]): string {
-  const format = lineFormat(text);
+  const format = splitLines(text);
+  const dominant: "\n" | "\r\n" = text.includes("\r\n") ? "\r\n" : "\n";
   const replacements: Array<{ start: number; length: number; lines: string[] }> = [];
   let searchStart = 0;
 
   for (const hunk of hunks) {
     let anchor: number | undefined;
     if (hunk.header !== undefined) {
-      anchor = uniqueMatch(format.lines, [hunk.header], searchStart, path, `hunk context '${hunk.header}'`, false);
+      anchor = uniqueMatch(format.contents, [hunk.header], searchStart, path, `hunk context '${hunk.header}'`, false);
       searchStart = anchor + 1;
     }
 
     if (hunk.oldLines.length === 0) {
-      const start = hunk.endOfFile ? format.lines.length : anchor === undefined ? format.lines.length : anchor + 1;
+      const start = hunk.endOfFile ? format.contents.length : anchor === undefined ? format.contents.length : anchor + 1;
       replacements.push({ start, length: 0, lines: hunk.newLines });
       searchStart = start;
       continue;
     }
 
-    const start = uniqueMatch(format.lines, hunk.oldLines, searchStart, path, "expected hunk lines", hunk.endOfFile);
+    const start = uniqueMatch(format.contents, hunk.oldLines, searchStart, path, "expected hunk lines", hunk.endOfFile);
     replacements.push({ start, length: hunk.oldLines.length, lines: hunk.newLines });
     searchStart = start + hunk.oldLines.length;
   }
 
-  const result = [...format.lines];
-  for (const replacement of replacements.sort((a, b) => b.start - a.start)) {
-    result.splice(replacement.start, replacement.length, ...replacement.lines);
+  const contents = [...format.contents];
+  const endings = [...format.endings];
+  // Apply from the highest original index down so earlier splices do not shift
+  // later indices. Tie-break equal start indices by descending length so a
+  // replacement (length > 0) runs before a co-located insertion (length 0);
+  // otherwise the replacement would delete the just-inserted lines.
+  for (const replacement of replacements.sort((a, b) => b.start - a.start || b.length - a.length)) {
+    const newEndings = replacement.lines.map(() => dominant as string);
+    contents.splice(replacement.start, replacement.length, ...replacement.lines);
+    endings.splice(replacement.start, replacement.length, ...newEndings);
   }
-  let normalized = result.join("\n");
-  if (format.finalNewline) normalized += "\n";
-  return bom + normalized.replaceAll("\n", format.ending);
+
+  // Reconstruct while keeping each untouched line's original ending. New lines
+  // take the file's dominant ending. Interior lines always need a separator.
+  let result = "";
+  for (let i = 0; i < contents.length; i++) {
+    result += contents[i];
+    if (i < contents.length - 1) result += endings[i] || dominant;
+    else if (format.finalNewline) result += endings[i] || dominant;
+  }
+  return bom + result;
 }
 
 async function snapshot(path: string, fs: ApplyPatchFileSystem): Promise<FileSnapshot> {
@@ -434,7 +470,19 @@ async function commitAtomically(
       await fs.rm(path, { force: true }).catch((rollbackError) => rollbackErrors.push(String(rollbackError)));
     }
     for (const [path, backup] of [...backups].reverse()) {
-      await fs.rename(backup, path).catch((rollbackError) => rollbackErrors.push(String(rollbackError)));
+      try {
+        await fs.rename(backup, path);
+      } catch {
+        // Rename just failed, so it may keep failing. Fall back to copy then
+        // unlink so the original file returns, and name the backup on failure
+        // so the user can recover it by hand.
+        try {
+          await fs.writeFile(path, await fs.readFile(backup));
+          await fs.rm(backup, { force: true }).catch(() => {});
+        } catch (copyError) {
+          rollbackErrors.push(`could not restore ${path} from backup ${backup}: ${String(copyError)}`);
+        }
+      }
     }
     for (const stage of stages.values()) {
       await fs.rm(stage, { force: true }).catch(() => {});
@@ -487,11 +535,11 @@ async function prepareChanges(
     const { source, destination } = operationPaths(root, operation);
     const sourceSnapshot = snapshots.get(source)!;
     if (operation.type === "add") {
-      const oldText = sourceSnapshot.exists ? decodeText(sourceSnapshot.buffer!, operation.path).text : "";
+      if (sourceSnapshot.exists) throw new Error(`Cannot add file because it already exists: ${operation.path}`);
       const newText = `${operation.lines.join("\n")}\n`;
       outputs.push({ path: source, buffer: Buffer.from(newText), mode: sourceSnapshot.mode });
       touched.push(source);
-      changes.push({ operation, sourcePath: source, oldText, newText });
+      changes.push({ operation, sourcePath: source, oldText: "", newText });
       continue;
     }
     if (!sourceSnapshot.exists) throw new Error(`Patch source does not exist: ${operation.path}`);
@@ -515,14 +563,28 @@ async function prepareChanges(
 }
 
 function detailsPatch(changes: PreparedChange[]): string {
+  const normalize = (text: string): string =>
+    text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   return changes.map((change) => {
-    const displayPath = change.operation.type === "update" && change.operation.moveTo
-      ? change.operation.moveTo
-      : change.operation.path;
-    const oldText = change.oldText.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    const newText = change.newText.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    return generateUnifiedPatch(displayPath, oldText, newText);
+    const oldText = normalize(change.oldText);
+    const newText = normalize(change.newText);
+    if (change.operation.type === "update" && change.operation.moveTo) {
+      // A move must surface BOTH paths so downstream containment and
+      // credential-sensitivity checks see the source, and so a pure rename is
+      // never an empty diff. Show the source removed and the destination added.
+      return generateUnifiedPatch(change.operation.path, oldText, "")
+        + generateUnifiedPatch(change.operation.moveTo, "", newText);
+    }
+    return generateUnifiedPatch(change.operation.path, oldText, newText);
   }).join("");
+}
+
+/** The changed paths a patch reports. A move reports both source and destination. */
+function changedFiles(operations: PatchOperation[]): string[] {
+  return operations.flatMap((operation) =>
+    operation.type === "update" && operation.moveTo
+      ? [operation.path, operation.moveTo]
+      : [operation.path]);
 }
 
 function patchCounts(patch: string): { additions: number; removals: number } {
@@ -547,9 +609,7 @@ export async function previewApplyPatch(
   const root = await fs.realpath(cwd);
   const prepared = await prepareChanges(root, operations, fs);
   const unified = detailsPatch(prepared.changes);
-  const files = operations.map((operation) => operation.type === "update" && operation.moveTo
-    ? operation.moveTo
-    : operation.path);
+  const files = changedFiles(operations);
   return {
     patch: unified,
     files,
@@ -583,9 +643,7 @@ export async function applyPatch(
     if (options.signal?.aborted) throw new Error("Operation aborted");
     await commitAtomically(root, prepared.outputs, prepared.touched, fs);
 
-    const files = operations.map((operation) => operation.type === "update" && operation.moveTo
-      ? operation.moveTo
-      : operation.path);
+    const files = changedFiles(operations);
     const details: ApplyPatchDetails = {
       patch: detailsPatch(prepared.changes),
       files,

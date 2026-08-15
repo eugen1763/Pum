@@ -4,27 +4,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CHECK_MODE_PROFILES,
+  cycleOutputMode,
   DEFAULT_MAX_ACTIVE_SUBAGENTS,
-  DEFAULT_TOOL_OUTPUT_LINES,
   MAX_ACTIVE_SUBAGENTS,
-  MAX_TOOL_OUTPUT_LINES,
   MIN_ACTIVE_SUBAGENTS,
-  MIN_TOOL_OUTPUT_LINES,
   normalizeSettings,
+  normalizeOutputMode,
+  OUTPUT_MODES,
   SANDBOX_MODES,
   WORKING_RULE_ANIMATION_MODES,
 } from "./settings";
+import { DEFAULT_BASH_OUTPUT } from "./bash-output";
 
 describe("PUM settings migration", () => {
   test("preserves migration defaults for old files", () => {
     const settings = normalizeSettings({ animations: true, theme: "gruvbox" });
     expect(settings.workingRuleAnimation).toBe("input-only");
+    expect(settings.outputMode).toBe("default");
     expect(settings.explanationStrength).toBe("simple");
     expect(settings.animations).toBe(true);
     expect(settings.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
-    expect(settings.toolOutputLines).toBe(DEFAULT_TOOL_OUTPUT_LINES);
     expect(settings.checkPaths).toEqual({});
     expect(settings.sandboxMode).toBe("auto");
+    expect(settings.bashOutput).toEqual(DEFAULT_BASH_OUTPUT);
   });
 
   test("normalizes bounded additional Check mode paths", () => {
@@ -42,6 +44,19 @@ describe("PUM settings migration", () => {
     for (const mode of WORKING_RULE_ANIMATION_MODES) {
       expect(normalizeSettings({ workingRuleAnimation: mode }).workingRuleAnimation).toBe(mode);
     }
+  });
+
+  test("migrates and validates the transcript output mode", () => {
+    expect(OUTPUT_MODES).toEqual(["minimal", "default", "detailed"]);
+    for (const outputMode of OUTPUT_MODES) {
+      expect(normalizeSettings({ outputMode }).outputMode).toBe(outputMode);
+      expect(normalizeOutputMode(outputMode)).toBe(outputMode);
+    }
+    expect(normalizeSettings({ outputMode: "verbose" } as any).outputMode).toBe("default");
+    expect(normalizeOutputMode("verbose")).toBe("default");
+    expect(cycleOutputMode("default", 1)).toBe("detailed");
+    expect(cycleOutputMode("detailed", 1)).toBe("minimal");
+    expect(cycleOutputMode("minimal", -1)).toBe("detailed");
   });
 
   test("replaces unknown enum values with migration defaults", () => {
@@ -71,25 +86,16 @@ describe("PUM settings migration", () => {
     }
   });
 
-  test("validates the detailed tool-output line limit", () => {
-    expect(MIN_TOOL_OUTPUT_LINES).toBe(1);
-    expect(MAX_TOOL_OUTPUT_LINES).toBe(50);
-    expect(normalizeSettings({ toolOutputLines: 1 }).toolOutputLines).toBe(1);
-    expect(normalizeSettings({ toolOutputLines: 17 }).toolOutputLines).toBe(17);
-    expect(normalizeSettings({ toolOutputLines: 50 }).toolOutputLines).toBe(50);
-    for (const invalid of [0, 51, 4.5, "5", null]) {
-      expect(normalizeSettings({ toolOutputLines: invalid } as any).toolOutputLines)
-        .toBe(DEFAULT_TOOL_OUTPUT_LINES);
+  test("migrates every legacy Check mode value to the on/off toggle", () => {
+    expect(CHECK_MODE_PROFILES).toEqual(["off", "on"]);
+    // Legacy profiles and the legacy boolean true all become "on".
+    for (const legacy of ["strict", "balanced", "ask", true]) {
+      expect(normalizeSettings({ checkMode: legacy } as any).checkMode).toBe("on");
     }
-  });
-
-  test("migrates the legacy Check mode boolean and accepts profiles", () => {
-    expect(normalizeSettings({ checkMode: true } as any).checkMode).toBe("strict");
+    // off and false stay off; unknown values default to off.
     expect(normalizeSettings({ checkMode: false } as any).checkMode).toBe("off");
-    expect(CHECK_MODE_PROFILES).toEqual(["off", "strict", "balanced", "ask"]);
-    for (const checkMode of CHECK_MODE_PROFILES) {
-      expect(normalizeSettings({ checkMode }).checkMode).toBe(checkMode);
-    }
+    expect(normalizeSettings({ checkMode: "off" }).checkMode).toBe("off");
+    expect(normalizeSettings({ checkMode: "on" }).checkMode).toBe("on");
     expect(normalizeSettings({ checkMode: "permissive" } as any).checkMode).toBe("off");
   });
 
@@ -144,15 +150,15 @@ describe("PUM settings persistence", () => {
       `  theme: "gruvbox",`,
       `  animations: false,`,
       `  workingRuleAnimation: "coordinated",`,
+      `  outputMode: "detailed",`,
       `  webSearch: false,`,
       `  writingStyle: "none",`,
       `  explanationStrength: "detailed",`,
-      `  checkMode: "balanced",`,
+      `  checkMode: "on",`,
       `  checkModel: "anthropic/claude-3.7-sonnet",`,
       `  sandboxMode: "off",`,
       `  checkPaths: {},`,
       `  maxActiveSubagents: 7,`,
-      `  toolOutputLines: 9,`,
       `};`,
       `saveSettings(settings);`,
       `console.log(JSON.stringify(loadSettings()));`,
@@ -167,15 +173,16 @@ describe("PUM settings persistence", () => {
       theme: "gruvbox",
       animations: false,
       workingRuleAnimation: "coordinated",
+      outputMode: "detailed",
       webSearch: false,
       writingStyle: "none",
       explanationStrength: "detailed",
-      checkMode: "balanced",
+      checkMode: "on",
       checkModel: "anthropic/claude-3.7-sonnet",
       sandboxMode: "off",
       checkPaths: {},
       maxActiveSubagents: 7,
-      toolOutputLines: 9,
+      bashOutput: DEFAULT_BASH_OUTPUT,
     });
   });
 
@@ -198,9 +205,9 @@ describe("PUM settings persistence", () => {
     const loaded = JSON.parse(result.stdout);
     expect(loaded.theme).toBe("tokyonight");
     expect(loaded.animations).toBe(true);
+    expect(loaded.outputMode).toBe("default");
     expect(loaded.checkMode).toBe("off");
     expect(loaded.sandboxMode).toBe("auto");
     expect(loaded.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
-    expect(loaded.toolOutputLines).toBe(DEFAULT_TOOL_OUTPUT_LINES);
   });
 });

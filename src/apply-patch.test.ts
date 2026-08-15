@@ -117,7 +117,7 @@ describe("apply_patch mutations", () => {
     expect(existsSync(join(cwd, "move.txt"))).toBe(false);
     expect(text(join(cwd, "moved.txt"))).toBe("head\nnew\ntail\n");
     expect(existsSync(join(cwd, "delete.txt"))).toBe(false);
-    expect(result.details.files).toEqual(["nested/added.txt", "update.txt", "moved.txt", "delete.txt"]);
+    expect(result.details.files).toEqual(["nested/added.txt", "update.txt", "move.txt", "moved.txt", "delete.txt"]);
     expect(result.details.patch).toContain("+++ update.txt");
   });
 
@@ -248,6 +248,168 @@ describe("apply_patch mutations", () => {
 `);
 
     expect(readFileSync(path)).toEqual(Buffer.from("one\r\nTWO\r\n"));
+  });
+
+  test("applies a co-located insertion and replacement without corruption", async () => {
+    const cwd = project();
+    const path = join(cwd, "a.js");
+    writeFileSync(path, "function a() {\n  const x = 1;\n  return x;\n}\n");
+
+    await applyPatch(cwd, `*** Begin Patch
+*** Update File: a.js
+@@ function a() {
++  // note
+@@
+-  const x = 1;
+-  return x;
++  const y = 2;
++  return y;
+*** End Patch`);
+
+    expect(text(path)).toBe("function a() {\n  // note\n  const y = 2;\n  return y;\n}\n");
+  });
+
+  test("refuses to add a file that already exists and leaves it unchanged", async () => {
+    const cwd = project();
+    const path = join(cwd, "existing.txt");
+    writeFileSync(path, "keep me\n");
+
+    await expect(applyPatch(cwd, `*** Begin Patch
+*** Add File: existing.txt
++overwrite
+*** End Patch`)).rejects.toThrow("Cannot add file because it already exists");
+    expect(text(path)).toBe("keep me\n");
+  });
+
+  test("a move surfaces the source path and a non-empty diff", async () => {
+    const cwd = project();
+    writeFileSync(join(cwd, ".env"), "SECRET=1\n");
+
+    const result = await applyPatch(cwd, `*** Begin Patch
+*** Update File: .env
+*** Move to: .env.bak
+*** End Patch`);
+
+    expect(result.details.files).toEqual([".env", ".env.bak"]);
+    expect(result.details.files).toContain(".env");
+    expect(result.details.patch).toContain(".env");
+    expect(result.details.patch.trim()).not.toBe("");
+    expect(existsSync(join(cwd, ".env"))).toBe(false);
+    expect(text(join(cwd, ".env.bak"))).toBe("SECRET=1\n");
+  });
+
+  test("rolls back with a copy fallback when rename keeps failing", async () => {
+    const cwd = project();
+    const first = join(cwd, "first.txt");
+    writeFileSync(first, "one\n");
+
+    const base = await import("node:fs/promises");
+    let renameCalls = 0;
+    const fs: ApplyPatchFileSystem = {
+      ...base,
+      rename: async (from, to) => {
+        renameCalls++;
+        if (renameCalls >= 2) throw new Error("injected rename failure");
+        await base.rename(from, to);
+      },
+    };
+
+    await expect(applyPatch(cwd, `*** Begin Patch
+*** Update File: first.txt
+@@
+-one
++ONE
+*** End Patch`, { fs })).rejects.toThrow("Could not apply patch atomically");
+    expect(text(first)).toBe("one\n");
+    expect(readdirSync(cwd).filter((name) => name.startsWith(".pum-apply-patch-"))).toEqual([]);
+  });
+
+  test("names the backup when rollback cannot restore the original", async () => {
+    const cwd = project();
+    const first = join(cwd, "first.txt");
+    writeFileSync(first, "one\n");
+
+    const base = await import("node:fs/promises");
+    let renameCalls = 0;
+    const fs: ApplyPatchFileSystem = {
+      ...base,
+      rename: async (from, to) => {
+        renameCalls++;
+        if (renameCalls >= 2) throw new Error("injected rename failure");
+        await base.rename(from, to);
+      },
+      writeFile: async (file: any, data: any, options: any) => {
+        if (!String(file).endsWith(".tmp")) throw new Error("injected write failure");
+        await base.writeFile(file, data, options);
+      },
+    };
+
+    let message = "";
+    try {
+      await applyPatch(cwd, `*** Begin Patch
+*** Update File: first.txt
+@@
+-one
++ONE
+*** End Patch`, { fs });
+    } catch (error) {
+      message = String(error);
+    }
+    expect(message).toContain("Could not apply patch atomically");
+    expect(message).toContain("Rollback errors");
+    const backup = readdirSync(cwd).find((name) => name.endsWith(".bak"));
+    expect(backup).toBeDefined();
+    expect(message).toContain(backup!);
+    expect(readFileSync(join(cwd, backup!), "utf8")).toBe("one\n");
+  });
+
+  test("treats '@@ ' with trailing space like a bare '@@' and rejects ambiguity", async () => {
+    const cwd = project();
+    const path = join(cwd, "file.txt");
+    const original = "same\n\nsame\nend\n";
+    writeFileSync(path, original);
+
+    // A bare "@@" carries no context, so the duplicate "same" is ambiguous.
+    const bare = ["*** Begin Patch", "*** Update File: file.txt", "@@", "-same", "+changed", "*** End Patch"].join("\n");
+    // "@@ " with a trailing space must behave identically, not anchor on the
+    // blank line and silently edit the second "same".
+    const trailingSpace = ["*** Begin Patch", "*** Update File: file.txt", "@@ ", "-same", "+changed", "*** End Patch"].join("\n");
+
+    await expect(applyPatch(cwd, bare)).rejects.toThrow("Ambiguous expected hunk lines");
+    expect(text(path)).toBe(original);
+
+    await expect(applyPatch(cwd, trailingSpace)).rejects.toThrow("Ambiguous expected hunk lines");
+    expect(text(path)).toBe(original);
+  });
+
+  test("preserves untouched line endings in a mixed-ending file", async () => {
+    const cwd = project();
+    const path = join(cwd, "file.txt");
+    writeFileSync(path, Buffer.from("top\nmid\r\nbot\n"));
+
+    await applyPatch(cwd, `*** Begin Patch
+*** Update File: file.txt
+@@
+-top
++TOP
+*** End Patch`);
+
+    expect(readFileSync(path)).toEqual(Buffer.from("TOP\r\nmid\r\nbot\n"));
+  });
+
+  test("preserves a literal CR inside an untouched line", async () => {
+    const cwd = project();
+    const path = join(cwd, "file.txt");
+    writeFileSync(path, Buffer.from("a\rb\nchange\n"));
+
+    await applyPatch(cwd, `*** Begin Patch
+*** Update File: file.txt
+@@
+-change
++CHANGED
+*** End Patch`);
+
+    expect(readFileSync(path)).toEqual(Buffer.from("a\rb\nCHANGED\n"));
   });
 
   test("registers a model-callable pi tool", async () => {

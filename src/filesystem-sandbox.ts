@@ -3,7 +3,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getCheckModeConfig } from "./check-mode";
+import { getCheckModeConfig, rejectedToolDetails } from "./check-mode";
 import { isCredentialSensitivePath } from "./check-policy";
 import { parseApplyPatch } from "./apply-patch";
 import {
@@ -150,6 +150,7 @@ export function createFilesystemSandboxExtension(
   return {
     name: readonly ? "pum-readonly-filesystem-sandbox" : "pum-filesystem-sandbox",
     factory(pi) {
+      const rejected = new Map<string, string>();
       pi.on("before_agent_start", (event) => ({
         systemPrompt: `${event.systemPrompt}\n\n## Filesystem sandbox\n\n`
           + "- The read, write, and edit tools are limited to the project and configured allowed roots.\n"
@@ -177,11 +178,28 @@ export function createFilesystemSandboxExtension(
             await validateSandboxPath(ctx.cwd, path, allowedPaths);
           }
         } catch (error) {
+          const reason = `Filesystem sandbox blocked ${toolName}: ${error instanceof Error ? error.message : String(error)}`;
+          rejected.set(event.toolCallId, reason);
           return {
             block: true,
-            reason: `Filesystem sandbox blocked ${toolName}: ${error instanceof Error ? error.message : String(error)}`,
+            reason,
           };
         }
+      });
+
+      pi.on("tool_result", (event) => {
+        const reason = rejected.get(event.toolCallId);
+        if (!reason) return;
+        return { details: rejectedToolDetails(event.details, reason) };
+      });
+
+      pi.on("message_end", (event) => {
+        const message = event.message as any;
+        if (message?.role !== "toolResult" || typeof message.toolCallId !== "string") return;
+        const reason = rejected.get(message.toolCallId);
+        if (!reason) return;
+        rejected.delete(message.toolCallId);
+        return { message: { ...message, details: rejectedToolDetails(message.details, reason) } };
       });
     },
   };

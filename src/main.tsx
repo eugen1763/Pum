@@ -12,7 +12,9 @@ import { randomUUID } from "node:crypto";
 import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { checkPathsForProject, loadSettings } from "./settings";
+import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { installWebSearch, webSearch } from "./web-search";
+import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
 import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-prompt";
 import {
@@ -24,7 +26,6 @@ import {
   createExternalTriggerSafetyChecker,
   setCheckModeConfig,
 } from "./check-mode";
-import { CheckApprovalCoordinator, CheckApprovalStore } from "./check-approvals";
 import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
 import { shutdownSignals } from "./platform";
@@ -54,6 +55,17 @@ import {
   outerSandboxAdditionalRoots,
   outerSandboxContext,
 } from "./outer-sandbox-launch";
+import { SessionStatsManager } from "./session-stats";
+import { ShellManager } from "./shells/manager";
+import {
+  NodeShellFileOperations,
+  NodeShellProcessAdapter,
+  systemShellClock,
+} from "./shells/process";
+import {
+  ManagedShellLifecycleController,
+  lifecycleEventFromSnapshot,
+} from "./shells/lifecycle";
 
 export async function start(options: StartupOptions): Promise<void> {
   mkdirSync(AGENT_DIR, { recursive: true });
@@ -78,31 +90,64 @@ export async function start(options: StartupOptions): Promise<void> {
   const sandboxExtension = sandboxController.extension();
   setWritingStyle(settings.writingStyle);
   setExplanationStrength(settings.explanationStrength);
+  setBashOutputSettingsIfPresent(settings.bashOutput);
   const questionnaireManager = new QuestionnaireManager();
   const spawnPreviewManager = new SpawnPreviewManager();
   const mainToolGroups = new ToolGroupsController("main");
   const sessionHistoryIndex = new SessionHistoryIndex();
   const messageCacheController = new MessageCacheController(process.cwd());
+  const statsManager = new SessionStatsManager();
   setCheckModeConfig({
-    profile: outerSandbox ? "strict" : settings.checkMode,
+    profile: outerSandbox ? "on" : settings.checkMode,
     model: settings.checkModel,
     additionalPaths: [...new Set([
       ...checkPathsForProject(settings, process.cwd()),
       ...forcedCheckPaths,
     ])],
   });
-  const checkApprovalCoordinator = new CheckApprovalCoordinator();
-  const checkApprovalStore = new CheckApprovalStore();
-  const mainCheckModeExtension = createCheckModeExtension(modelRuntime, undefined, {
-    coordinator: checkApprovalCoordinator,
-    approvals: checkApprovalStore,
+  const mainCheckModeExtension = createCheckModeExtension(modelRuntime, {
     identity: { kind: "main" },
+    observeRequest: (observation) => statsManager.observeCheck({
+      agentId: observation.requester?.kind === "subagent" ? observation.requester.agentId : null,
+      model: observation.model,
+      usage: observation.usage,
+    }),
   });
-  const externalTriggerSafety = createExternalTriggerSafetyChecker(modelRuntime, {
-    coordinator: checkApprovalCoordinator,
-    approvals: checkApprovalStore,
+  const externalTriggerSafety = createExternalTriggerSafetyChecker(modelRuntime, (observation) => {
+    statsManager.observeCheck({
+      agentId: observation.requester?.kind === "subagent" ? observation.requester.agentId : null,
+      model: observation.model,
+      usage: observation.usage,
+    });
   });
   let subagentManager!: SubagentManager;
+  const shellLifecycle = new ManagedShellLifecycleController(
+    {
+      append: (_owner, _customType, data) =>
+        subagentManager.persistManagedShellEvent(data as any),
+    },
+    {
+      deliver: (message) => subagentManager.deliverManagedShellCompletion(message.details),
+    },
+  );
+  const startedShells = new Set<string>();
+  const shellManager = new ShellManager({
+    process: new NodeShellProcessAdapter(),
+    files: new NodeShellFileOperations(),
+    clock: systemShellClock,
+    async onCompleted(snapshot) {
+      const output = await shellManager.getOutput(snapshot.id, { lineLimit: 200 }).catch(() => undefined);
+      const event = lifecycleEventFromSnapshot(snapshot, output?.tail);
+      await shellLifecycle.recordExit(event, snapshot.state === "terminated");
+    },
+  });
+  shellManager.subscribe((event) => {
+    if (event.type !== "changed"
+      || !["starting", "running"].includes(event.snapshot.state)
+      || startedShells.has(event.snapshot.id)) return;
+    startedShells.add(event.snapshot.id);
+    void shellLifecycle.record(lifecycleEventFromSnapshot(event.snapshot));
+  });
   const triggerManager = new TriggerManager({
     process: new NodeTriggerProcessAdapter(),
     clock: systemTriggerClock,
@@ -152,17 +197,23 @@ export async function start(options: StartupOptions): Promise<void> {
     questionnaireManager,
     spawnPreviewManager,
     messageCacheController,
+    statsManager,
     triggerManager,
+    shellManager,
     childExtensionFactories: [
+      identityExtension,
       writingStyleExtension,
       explanationStrengthExtension,
       checkModePromptExtension,
     ],
     childExtensionFactoriesForAgent: [
-      (agentId) => createCheckModeExtension(modelRuntime, undefined, {
-        coordinator: checkApprovalCoordinator,
-        approvals: checkApprovalStore,
+      (agentId) => createCheckModeExtension(modelRuntime, {
         identity: { kind: "subagent", agentId },
+        observeRequest: (observation) => statsManager.observeCheck({
+          agentId,
+          model: observation.model,
+          usage: observation.usage,
+        }),
       }),
       (_agentId, isReadonly) => sandboxController.extension({ readonly: isReadonly }),
       (_agentId, isReadonly) => createFilesystemSandboxExtension({ readonly: isReadonly }),
@@ -184,6 +235,7 @@ export async function start(options: StartupOptions): Promise<void> {
         modelRuntime,
         resourceLoaderOptions: {
           extensionFactories: [
+            identityExtension,
             writingStyleExtension,
             explanationStrengthExtension,
             checkModePromptExtension,
@@ -219,6 +271,7 @@ export async function start(options: StartupOptions): Promise<void> {
     },
   );
 
+  statsManager.bindMainSession(sessionRuntime.session);
   if (sessionRuntime.modelFallbackMessage) console.error(sessionRuntime.modelFallbackMessage);
 
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
@@ -235,6 +288,7 @@ export async function start(options: StartupOptions): Promise<void> {
       selectionClipboard.dispose();
       cleanupPendingImages();
     },
+    shutdownShells: () => shellManager.shutdown(),
     shutdownTriggers: () => triggerManager.shutdown(),
     dispose: () => sessionRuntime.dispose(),
     destroy: async () => {
@@ -252,6 +306,7 @@ export async function start(options: StartupOptions): Promise<void> {
       session={sessionRuntime.session}
       onNewSession={async () => {
         const result = await sessionRuntime.newSession();
+        if (!result.cancelled) statsManager.bindMainSession(sessionRuntime.session);
         return result.cancelled ? null : sessionRuntime.session;
       }}
       loadSessions={async () => sessionHistoryIndex.load(
@@ -259,12 +314,14 @@ export async function start(options: StartupOptions): Promise<void> {
       )}
       onSwitchSession={async (path) => {
         const result = await sessionRuntime.switchSession(path);
+        if (!result.cancelled) statsManager.bindMainSession(sessionRuntime.session);
         return result.cancelled ? null : sessionRuntime.session;
       }}
       modelRuntime={modelRuntime}
       settings={settings}
       searchProviders={searchProviders}
       subagentManager={subagentManager}
+      statsManager={statsManager}
       questionnaireManager={questionnaireManager}
       spawnPreviewManager={spawnPreviewManager}
       messageCacheController={messageCacheController}
@@ -272,20 +329,18 @@ export async function start(options: StartupOptions): Promise<void> {
       startupWarnings={[
         ...(sandboxWarning ? [sandboxWarning] : []),
         ...(outerSandbox ? [
-          `Outer claudebox sandbox active (${outerSandbox.mode}). Strict Check mode is forced. The nested Bash sandbox is disabled.`,
+          `Outer claudebox sandbox active (${outerSandbox.mode}). Check mode is forced on. The nested Bash sandbox is disabled.`,
         ] : []),
       ]}
       onSandboxModeChange={(mode) => {
         sandboxController.setMode(outerSandbox ? "off" : mode);
         subagentManager.refreshSandboxMode();
       }}
-      forcedCheckMode={outerSandbox ? "strict" : undefined}
+      forcedCheckMode={outerSandbox ? "on" : undefined}
       forcedSandboxMode={outerSandbox ? "off" : undefined}
       forcedCheckPaths={forcedCheckPaths}
       sandboxWarningSource={sandboxController}
       loginRequired={loginRequired}
-      checkApprovalCoordinator={checkApprovalCoordinator}
-      checkApprovalStore={checkApprovalStore}
       triggerManager={triggerManager}
       onExit={() => shutdown(0)}
     />,

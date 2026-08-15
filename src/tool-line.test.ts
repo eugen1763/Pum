@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  displayToolPath,
-  editCounts,
-  toolArg,
-  toolOutputPreview,
-  toolResultOutput,
-} from "./tool-line";
+import { displayToolPath, editCounts, toolArg } from "./tool-line";
 
 describe("read tool metadata", () => {
   test("shows the path and only supplied range arguments", () => {
@@ -49,30 +43,6 @@ describe("read tool metadata", () => {
       .toBe("D:\\Other Files\\file name.ts");
     expect(displayToolPath("\\\\server\\other share\\file name.ts", "C:\\Users\\Jane Doe\\project"))
       .toBe("\\\\server\\other share\\file name.ts");
-  });
-});
-
-describe("tool result output", () => {
-  test("extracts all text blocks and preserves leading whitespace", () => {
-    expect(toolResultOutput({
-      content: [
-        { type: "text", text: "first\r\n  second" },
-        { type: "image", data: "ignored" },
-        { type: "text", text: "third\n" },
-      ],
-    })).toBe("first\n  second\nthird");
-    expect(toolResultOutput({ content: [{ type: "text", text: "  \n" }] })).toBeUndefined();
-  });
-
-  test("uses one source-line limit for every tool result", () => {
-    expect(toolOutputPreview("one\ntwo\nthree\nfour", 2)).toEqual({
-      text: "one\ntwo",
-      omittedLines: 2,
-    });
-    expect(toolOutputPreview("one\ntwo", 5)).toEqual({
-      text: "one\ntwo",
-      omittedLines: 0,
-    });
   });
 });
 

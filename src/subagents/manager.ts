@@ -9,7 +9,7 @@ import {
   type ModelRuntime,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -19,13 +19,21 @@ import {
   usageFromEntries,
 } from "../agent-usage";
 import { replayEntries } from "../replay";
+import {
+  loadNewsItems,
+  mergeNewsItems,
+  newsItemFromFinishSettlement,
+  saveNewsItems,
+  tagNewsLines,
+} from "../news";
 import { isRejectedToolResult, rejectedToolReason } from "../check-mode";
 import {
   observeSearchCalls,
   persistSearchCall,
   withSearchRoute,
 } from "../web-search";
-import { editCounts, toolArg, toolResultOutput, type ToolCall } from "../tool-line";
+import { bashOutput, bashResultDisplay, editCounts, toolArg, type ToolCall } from "../tool-line";
+import { toolPreviewFromResult, toolPreviewFromStart } from "../tool-preview";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
@@ -73,6 +81,7 @@ import {
   type AgentMessageData,
   type TriggerEventData,
   type AgentTranscript,
+  type ForkSource,
   type SpawnSubagentOptions,
   type SubagentManagerEvent,
   type SubagentRegistryEvent,
@@ -82,6 +91,17 @@ import {
 } from "./types";
 import type { SpawnPreviewManager, SpawnPreviewRequester } from "./spawn-preview";
 import { readonlySubagentExtension } from "./readonly";
+import type { SessionStatsManager } from "../session-stats";
+import {
+  MANAGED_SHELL_COMPLETION_TYPE,
+  MANAGED_SHELL_CUSTOM_TYPE,
+  type ManagedShellCompletionMessage,
+  type ManagedShellLifecycleEvent,
+  type PublicShellManager,
+  type ShellOwner,
+} from "../shells/types";
+import { registerShellTools, type ShellTargetSelector } from "../shells/tools";
+import { captureForkSource, createForkedSession, entriesAfterForkCutoff } from "./fork-session";
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
@@ -92,7 +112,7 @@ const CLOSED_TRIGGER_STATES = new Set(["expired", "cancelled", "unavailable"]);
 
 export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communication
 
-- Use finish_subagent as the only final completion report. Call it only after every retained descendant closes. Complete exactly one successful finish_subagent call; rejected attempts do not count as completion. It sends the sole completion notification to the direct spawner after the status changes.
+- Use finish_subagent as the only final completion report and put the final summary in it. Call it only after every retained descendant closes. Complete exactly one successful finish_subagent call; rejected attempts do not count as completion. It sends the sole completion notification to the direct spawner after the status changes.
 - Before finish_subagent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
 - Every retained descendant blocks finish_subagent regardless of status. Completion does not close a descendant.
 - Do not send a final summary, test report, done message, or completion status through message_agent.
@@ -105,15 +125,16 @@ export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communicatio
 
 export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coordination
 
+- spawn_subagent, message_agent, and list_subagents live in the hidden Subagents tool group. When they are not in the tool list, call enable_tools with Subagents first.
 - spawn_subagent returns after setup. The subagent continues in the background.
-- Count only starting and running subagents as active. Use the current capacity shown below.
+- Count only starting and running subagents as active. The capacity line below reports whether a slot is available.
 - For follow-up implementation work, prefer a new managed worktree subagent while capacity is available.
 - At capacity, use message_agent to queue follow-up work for an appropriate related running subagent.
 - message_agent uses the durable recipient-side message and steering queue. Do not create a shell queue or another hidden queue.
 - Do not send unrelated work to an arbitrary subagent. If no appropriate recipient is clear, state the capacity issue and keep the work pending for deliberate routing.
 - Never wait for subagents with bash sleep, shell polling loops, repeated list_subagents calls, or repeated worktree status calls.
-- After you spawn all currently independent subagents, finish the current turn and yield the main agent loop.
-- A directly spawned subagent completion notification will automatically start or steer a later main-agent turn.
+- After you spawn all currently independent subagents, finish the current turn and yield your agent loop.
+- A directly spawned subagent completion notification will automatically start or steer a later turn of its spawner.
 - A normal 'Message from <agent>' is not a completion notification. Do not merge until the agent status is completed.
 - Treat "wait for every subagent" as yielding until completion notifications arrive, not as active polling.
 - Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
@@ -121,15 +142,19 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Merge each successful agent after its completion notification arrives and its status is completed. An idle settlement is not completion.
 - Before merging a managed parent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
 - Every retained descendant blocks its parent regardless of status. Completion does not close a descendant.
+- Never use force removal on a managed agent; it is always rejected. Close a completed agent whose branch adds no new commits with a non-force worktree remove.
 - Wait to merge only when another unfinished task has a concrete dependency, a known conflict risk, or a required integration order. State that reason explicitly.
 - If a notification does not arrive, report the notification fault instead of creating a sleep loop.`;
 
 export function buildSubagentCapacityPrompt(activeCount: number, maxActive = DEFAULT_MAX_ACTIVE_SUBAGENTS): string {
+  // Exact active counts stay out of the system prompt: a per-turn changing
+  // number would invalidate provider prompt caches on every agent transition.
+  // Only the available/full boundary changes the text.
   const available = Math.max(0, maxActive - activeCount);
   if (available > 0) {
-    return `Current subagent capacity: ${activeCount}/${maxActive} active; ${available} slot${available === 1 ? "" : "s"} available. Prefer spawn_subagent for follow-up implementation work that can run in parallel.`;
+    return `Subagent capacity: slots are available (limit ${maxActive}). Prefer spawn_subagent for follow-up implementation work that can run in parallel.`;
   }
-  return `Current subagent capacity: ${activeCount}/${maxActive} active; no slots available. Queue follow-up work with message_agent only when an appropriate related running subagent is clear. Otherwise, state the capacity issue and keep the work pending for deliberate routing.`;
+  return `Subagent capacity: all ${maxActive} slots are active; no slots available. Queue follow-up work with message_agent only when an appropriate related running subagent is clear. Otherwise, state the capacity issue and keep the work pending for deliberate routing.`;
 }
 
 export function countActiveSubagents(agents: Iterable<Pick<SubagentSnapshot, "status">>): number {
@@ -173,6 +198,15 @@ type RuntimeRecord = {
   toolGroups?: ToolGroupsController;
   activityGeneration: number;
   idleNotifiedGeneration: number;
+  /**
+   * The terminal status (completed/failed/stopped) captured just before a turn
+   * clobbered it to "running". Lets the settle preserve a completed agent when a
+   * turn did no new work (e.g. a bare acknowledgement), instead of downgrading
+   * it to idle and blocking its managed merge.
+   */
+  statusBeforeTurn?: SubagentStatus;
+  completionMessageIds?: Set<string>;
+  completionResponse?: string;
 };
 
 type IdleOpenReminderState = {
@@ -187,6 +221,8 @@ type OpenReminderResources = {
   triggers: ReturnType<TriggerRuntimeManager["getTriggers"]>;
 };
 
+const TERMINAL_SUBAGENT_STATUSES: readonly SubagentStatus[] = ["completed", "failed", "stopped"];
+
 type ManagerOptions = {
   modelRuntime: ModelRuntime;
   agentDir: string;
@@ -198,6 +234,8 @@ type ManagerOptions = {
   spawnPreviewManager?: SpawnPreviewManager;
   triggerManager?: TriggerRuntimeManager;
   messageCacheController?: MessageCacheController;
+  statsManager?: SessionStatsManager;
+  shellManager?: PublicShellManager;
 };
 
 const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
@@ -252,6 +290,12 @@ export function spawnSubagentParameters(readonlyAvailable: boolean) {
     task: Type.String({ description: "Complete task for the subagent" }),
     name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
     preview: Type.Optional(Type.Boolean({ description: "Ask the user to approve before spawning" })),
+    context: Type.Optional(Type.Union([
+      Type.Literal("fresh"),
+      Type.Literal("fork"),
+    ], {
+      description: 'Conversation context mode. Defaults to "fresh". Use "fork" to inherit the immediate requester conversation before this assistant turn.',
+    })),
     ...(readonlyAvailable ? { readonly: readonlySpawnParameter() } : {}),
   }, { additionalProperties: false });
 }
@@ -268,6 +312,8 @@ export class SubagentManager {
   private readonly spawnPreviewManager?: SpawnPreviewManager;
   private readonly triggerManager?: TriggerRuntimeManager;
   private readonly messageCacheController?: MessageCacheController;
+  private readonly statsManager?: SessionStatsManager;
+  private readonly shellManager?: PublicShellManager;
   private readonly records = new Map<string, RuntimeRecord>();
   private readonly listeners = new Set<(event: SubagentManagerEvent) => void>();
   private mainApi?: ExtensionAPI;
@@ -275,6 +321,8 @@ export class SubagentManager {
   private mainCwd = process.cwd();
   private parentSessionId = "detached";
   private mainRunning = false;
+  private readonly mainCompletionMessageIds = new Set<string>();
+  private mainCompletionResponse = "";
   private maxActiveSubagents: number;
   private worktreeQueue: Promise<void> = Promise.resolve();
   private readonly messageTimes = new Map<string, number[]>();
@@ -295,6 +343,8 @@ export class SubagentManager {
     this.spawnPreviewManager = options.spawnPreviewManager;
     this.triggerManager = options.triggerManager;
     this.messageCacheController = options.messageCacheController;
+    this.statsManager = options.statsManager;
+    this.shellManager = options.shellManager;
   }
 
   subscribe(listener: (event: SubagentManagerEvent) => void): () => void {
@@ -339,7 +389,10 @@ export class SubagentManager {
   ): Promise<void> {
     const sessionId = sessionManager.getSessionId();
     if (this.mainApi === pi && this.parentSessionId === sessionId && this.mainSessionManager) return;
-    if (this.parentSessionId !== "detached") this.spawnPreviewManager?.cancelRequester(this.parentSessionId);
+    if (this.parentSessionId !== "detached") {
+      this.spawnPreviewManager?.cancelRequester(this.parentSessionId);
+      await this.shellManager?.invalidateSession(this.parentSessionId);
+    }
     await this.stopAll("interrupted", false);
     this.records.clear();
     this.messageTimes.clear();
@@ -352,6 +405,10 @@ export class SubagentManager {
     this.mainCwd = cwd;
     this.parentSessionId = sessionId;
     this.mainRunning = false;
+    this.mainCompletionMessageIds.clear();
+    this.mainCompletionResponse = "";
+    const mainSessionFile = (sessionManager as any).getSessionFile?.();
+    if (typeof mainSessionFile === "string") this.statsManager?.prepareMainSession(mainSessionFile);
     this.emit({
       type: "trigger-target",
       sessionId,
@@ -361,6 +418,7 @@ export class SubagentManager {
     });
 
     const restored = new Map<string, Omit<SubagentSnapshot, "transcript">>();
+    const restoredEntries = new Map<string, readonly any[]>();
     const restoredActivity = new Map<string, { activityGeneration: number; idleNotifiedGeneration: number }>();
     const restoredFinish = new Map<string, string>();
     for (const entry of sessionManager.getEntries()) {
@@ -408,8 +466,13 @@ export class SubagentManager {
           const childManager = (await import("@earendil-works/pi-coding-agent")).SessionManager.open(
             snapshot.sessionFile,
           );
+          restoredEntries.set(snapshot.id, childManager.getEntries());
           transcript = {
-            lines: replayEntries(childManager.buildContextEntries(), snapshot.worktree.path, true),
+            lines: replayEntries(
+              entriesAfterForkCutoff(childManager, snapshot.forkOrigin),
+              snapshot.worktree.path,
+              true,
+            ),
             stream: null,
             pending: [],
           };
@@ -439,6 +502,9 @@ export class SubagentManager {
         idleNotifiedGeneration,
         finishRequested: restoredFinish.get(snapshot.id),
       });
+      if (snapshot.sessionFile) {
+        this.statsManager?.registerAgentFile(snapshot.id, snapshot.sessionFile, snapshot.modelId);
+      }
       if (status === "interrupted" && snapshot.status !== "interrupted") {
         this.persist({
           event: "status",
@@ -450,6 +516,8 @@ export class SubagentManager {
         this.persistActivity(this.records.get(snapshot.id)!);
       }
     }
+    this.restoreSettlementResponses(sessionManager.getEntries(), restoredEntries);
+    this.reconcileFinishNews();
     await this.retrySettlementsForParent(null);
     this.emit();
   }
@@ -465,6 +533,7 @@ export class SubagentManager {
   async detachMain(): Promise<void> {
     const sessionId = this.parentSessionId;
     this.spawnPreviewManager?.cancelRequester(sessionId);
+    await this.shellManager?.invalidateSession(sessionId);
     await this.stopAll("interrupted", true);
     this.emit({
       type: "trigger-target",
@@ -546,7 +615,8 @@ export class SubagentManager {
   private countsAsActivity(message: any): boolean {
     if (message?.role === "user") return true;
     if (message?.role !== "custom") return false;
-    if (message.customType === TRIGGER_EVENT_CUSTOM_TYPE) return true;
+    if (message.customType === TRIGGER_EVENT_CUSTOM_TYPE
+      || message.customType === MANAGED_SHELL_COMPLETION_TYPE) return true;
     if (message.customType !== AGENT_MESSAGE_CUSTOM_TYPE) return false;
     const details = message.details as AgentMessageData | undefined;
     return !["acknowledgement", "idle", "completion", "status", "reminder"].includes(details?.kind ?? "message");
@@ -715,12 +785,23 @@ export class SubagentManager {
         this.acceptIdleOpenReminder(record.snapshot.id, message);
         if (this.countsAsActivity(message)) this.beginActivity(record);
         if (message?.role === "custom"
-          && [AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) {
+          && [
+            AGENT_MESSAGE_CUSTOM_TYPE,
+            TRIGGER_EVENT_CUSTOM_TYPE,
+            MANAGED_SHELL_COMPLETION_TYPE,
+          ].includes(message.customType)) {
           const id = message.details?.id;
           if (typeof id === "string") {
             this.resolvePending(record, id);
             this.acknowledgeSettlementMessage(id);
+            if (message.customType === AGENT_MESSAGE_CUSTOM_TYPE
+              && message.details?.kind === "completion") {
+              record.completionMessageIds ??= new Set<string>();
+              record.completionMessageIds.add(id);
+            }
           }
+        } else if (message?.role === "assistant" && record.completionMessageIds?.size) {
+          record.completionResponse = "";
         } else if (message?.role === "user") {
           const text = typeof message.content === "string"
             ? message.content
@@ -753,6 +834,9 @@ export class SubagentManager {
         const update = event.assistantMessageEvent;
         const kind = update.type === "text_delta" ? "assistant" : update.type === "thinking_delta" ? "thinking" : null;
         if (!kind) return;
+        if (kind === "assistant" && record.completionMessageIds?.size) {
+          record.completionResponse = (record.completionResponse ?? "") + update.delta;
+        }
         this.updateTranscript(record, (value) => {
           if (value.stream?.kind === kind) {
             return { ...value, stream: { kind, text: value.stream.text + update.delta } };
@@ -770,10 +854,20 @@ export class SubagentManager {
             name: event.toolName,
             arg: toolArg(event.toolName, event.args, record.snapshot.worktree.path),
             state: "running",
+            startedAt: Date.now(),
+            input: event.args,
+            preview: toolPreviewFromStart(event.toolName, event.args),
           },
         });
         break;
-      case "tool_execution_end":
+      case "tool_execution_update":
+        if (event.toolName === "bash") {
+          this.patchTool(record, event.toolCallId, { output: bashOutput(event.partialResult) });
+        }
+        break;
+      case "tool_execution_end": {
+        const bashResult = event.toolName === "bash" ? bashResultDisplay(event.result) : {};
+        const preview = toolPreviewFromResult(event.toolName, event.result);
         this.patchTool(record, event.toolCallId, {
           state: isRejectedToolResult(event.result, event.toolCallId)
             ? "rejected"
@@ -789,10 +883,19 @@ export class SubagentManager {
                 : event.toolName.startsWith("message_cache_")
                   ? messageCacheDetail(event.result)
                   : undefined,
-          output: toolResultOutput(event.result),
+          exitCode: bashResult.exitCode,
+          result: event.result,
+          isError: event.isError,
+          ...(preview ? { preview } : {}),
         });
         break;
+      }
       case "agent_start":
+        // Remember a terminal status before the turn overwrites it, so a
+        // no-work turn can restore it at settle instead of downgrading to idle.
+        if (TERMINAL_SUBAGENT_STATUSES.includes(record.snapshot.status)) {
+          record.statusBeforeTurn = record.snapshot.status;
+        }
         this.updateStatus(record, "running");
         break;
       case "turn_end": {
@@ -816,6 +919,13 @@ export class SubagentManager {
       case "agent_settled": {
         this.messageCacheController?.releaseRequester({ kind: "subagent", id: record.snapshot.id });
         this.updateTranscript(record, flushTranscript);
+        if (record.completionMessageIds?.size) {
+          for (const messageId of record.completionMessageIds) {
+            this.recordSettlementResponse(messageId, record.completionResponse ?? "");
+          }
+          record.completionMessageIds.clear();
+          record.completionResponse = "";
+        }
         if (record.session) {
           void this.triggerManager?.markTargetSettled(
             record.session.sessionId,
@@ -830,15 +940,19 @@ export class SubagentManager {
           });
         }
         const error = record.session?.agent?.state?.errorMessage;
-        const priorStatus = record.snapshot.status;
+        // A turn clobbers a terminal status to "running", so the status that
+        // matters for preservation and settlement is the one captured before
+        // the turn, falling back to the current status when nothing was captured.
+        const priorTerminal = record.statusBeforeTurn ?? record.snapshot.status;
         const status: SubagentStatus = error
           ? "failed"
           : record.finishRequested !== undefined
             ? "completed"
-            : ["completed", "failed", "stopped"].includes(priorStatus)
+            : TERMINAL_SUBAGENT_STATUSES.includes(priorTerminal)
                 && record.activityGeneration === record.idleNotifiedGeneration
-              ? priorStatus
+              ? priorTerminal
               : "idle";
+        record.statusBeforeTurn = undefined;
         const summary = record.finishRequested || error || record.snapshot.summary;
         this.updateStatus(record, status, summary);
         if (record.session && !AVAILABLE_TRIGGER_TARGET_STATUSES.has(status)) {
@@ -862,7 +976,7 @@ export class SubagentManager {
             record.idleNotifiedGeneration = record.activityGeneration;
             this.persistActivity(record);
           }
-          if (priorStatus !== status || record.finishRequested !== undefined) {
+          if (priorTerminal !== status || record.finishRequested !== undefined) {
             void this.recordSettlement(record, status, summary);
           }
         }
@@ -894,8 +1008,10 @@ export class SubagentManager {
           if (record) record.api = pi;
           void ctx;
         });
-        pi.on("session_shutdown", (_event, ctx) => {
-          this.spawnPreviewManager?.cancelRequester(ctx.sessionManager.getSessionId(), agentId);
+        pi.on("session_shutdown", async (_event, ctx) => {
+          const sessionId = ctx.sessionManager.getSessionId();
+          this.spawnPreviewManager?.cancelRequester(sessionId, agentId);
+          await this.shellManager?.invalidateAgent(sessionId, agentId);
         });
         pi.on("before_agent_start", (event) => {
           const record = this.records.get(agentId);
@@ -910,10 +1026,10 @@ export class SubagentManager {
             };
           }
           return {
+            // Identity and worktree boundary only. The finish_subagent and
+            // message_agent rules live once, in the communication block below.
             systemPrompt: identity
-              + "Use message_agent only for questions, blockers, coordination, or intermediate information that needs action. "
-              + "Never send the final summary through message_agent. "
-              + "Commit completed changes before finishing. Call finish_subagent only after every retained descendant closes. Complete exactly one successful finish_subagent call with the final summary; rejected attempts do not count as completion. It sends the sole completion notification after status changes.\n\n"
+              + "Commit completed changes before finishing.\n\n"
               + SUBAGENT_COMMUNICATION_SYSTEM_PROMPT + "\n\n"
               + SUBAGENT_COORDINATION_SYSTEM_PROMPT + "\n\n"
               + buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
@@ -952,6 +1068,19 @@ export class SubagentManager {
             { audience: "subagent" },
           );
         }
+        if (this.shellManager && !toolGroupsRecord?.snapshot.readonly) {
+          registerShellTools(
+            pi,
+            this.shellManager,
+            (ctx) => ({
+              kind: "subagent",
+              sessionId: ctx.sessionManager.getSessionId(),
+              agentId,
+              cwd: ctx.cwd,
+            }),
+            { audience: "subagent" },
+          );
+        }
 
         pi.registerTool({
           name: "spawn_subagent",
@@ -976,7 +1105,14 @@ export class SubagentManager {
               thinkingLevel: parent.snapshot.thinkingLevel,
               readonly: readonlyRequested,
               parentAgentId: agentId,
+              context: params.context ?? "fresh",
             };
+            if (options.context === "fork") {
+              options.forkSource = captureForkSource(
+                ctx.sessionManager,
+                agentId,
+              );
+            }
             if (params.preview) {
               const preview = await this.requestSpawnPreview({
                 sessionId: ctx.sessionManager.getSessionId(),
@@ -1091,6 +1227,13 @@ export class SubagentManager {
         });
         pi.on("agent_settled", () => {
           this.mainRunning = false;
+          if (this.mainCompletionMessageIds.size > 0) {
+            for (const messageId of this.mainCompletionMessageIds) {
+              this.recordSettlementResponse(messageId, this.mainCompletionResponse);
+            }
+            this.mainCompletionMessageIds.clear();
+            this.mainCompletionResponse = "";
+          }
           this.messageCacheController?.releaseRequester({ kind: "main", id: this.parentSessionId });
           void this.triggerManager?.markTargetSettled(this.parentSessionId, null);
           this.emit({
@@ -1105,12 +1248,30 @@ export class SubagentManager {
         pi.on("message_start", (event) => {
           const message = event.message;
           this.acceptIdleOpenReminder(null, message);
+          if (message.role === "assistant" && this.mainCompletionMessageIds.size > 0) {
+            this.mainCompletionResponse = "";
+            return;
+          }
           if (message.role !== "custom"
-            || ![AGENT_MESSAGE_CUSTOM_TYPE, TRIGGER_EVENT_CUSTOM_TYPE].includes(message.customType)) return;
-          const id = (message.details as AgentMessageData | undefined)?.id;
+            || ![
+              AGENT_MESSAGE_CUSTOM_TYPE,
+              TRIGGER_EVENT_CUSTOM_TYPE,
+              MANAGED_SHELL_COMPLETION_TYPE,
+            ].includes(message.customType)) return;
+          const details = message.details as AgentMessageData | undefined;
+          const id = details?.id;
           if (typeof id === "string") {
             this.acknowledgeSettlementMessage(id);
             this.emit({ type: "main-pending-resolve", id });
+            if (message.customType === AGENT_MESSAGE_CUSTOM_TYPE && details?.kind === "completion") {
+              this.mainCompletionMessageIds.add(id);
+            }
+          }
+        });
+        pi.on("message_update", (event) => {
+          const update = event.assistantMessageEvent;
+          if (this.mainCompletionMessageIds.size > 0 && update.type === "text_delta") {
+            this.mainCompletionResponse += update.delta;
           }
         });
         pi.on("session_start", async (_event, ctx) => {
@@ -1144,6 +1305,22 @@ export class SubagentManager {
             },
           );
         }
+        if (this.shellManager) {
+          registerShellTools(
+            pi,
+            this.shellManager,
+            (ctx) => ({
+              kind: "main",
+              sessionId: ctx.sessionManager.getSessionId(),
+              cwd: ctx.cwd,
+            }),
+            {
+              audience: "main",
+              resolveOwner: (requester, selector) => this.resolveShellOwner(requester.sessionId, selector),
+              authorizeOwner: (requester, owner) => this.authorizeShellOwner(requester.sessionId, owner),
+            },
+          );
+        }
 
         pi.registerTool({
           name: "spawn_subagent",
@@ -1174,7 +1351,11 @@ export class SubagentManager {
               modelId: `${ctx.model.provider}/${ctx.model.id}`,
               thinkingLevel: ctx.thinkingLevel ?? "off",
               readonly: readonlyRequested,
+              context: params.context ?? "fresh",
             };
+            if (options.context === "fork") {
+              options.forkSource = captureForkSource(ctx.sessionManager, null);
+            }
             if (params.preview) {
               const preview = await this.requestSpawnPreview({
                 sessionId: ctx.sessionManager.getSessionId(),
@@ -1326,6 +1507,11 @@ export class SubagentManager {
     if (options.readonly === true && this.sandboxModeSource() === "off") {
       throw new Error("Readonly subagents require the PUM Sandbox setting to be Auto or Require");
     }
+    const context = options.context ?? "fresh";
+    const forkSource = context === "fork"
+      ? options.forkSource ?? this.captureSpawnerForkSource(options.parentAgentId ?? null)
+      : undefined;
+    let allocatedSessionFile: string | undefined;
     const record = await this.withWorktreeLock(async () => {
       if (this.activeCount() >= this.maxActiveSubagents) throw activeLimitError(this.maxActiveSubagents);
       if (this.records.size >= MAX_RETAINED_AGENTS) throw new Error(`At most ${MAX_RETAINED_AGENTS} subagents can be retained`);
@@ -1336,33 +1522,48 @@ export class SubagentManager {
       }
 
       const worktree = await createWorktree(this.mainCwd, options.name);
-      const id = randomUUID().slice(0, 8);
-      const now = Date.now();
-      const snapshot: SubagentSnapshot = {
-        id,
-        name: worktree.name,
-        task: options.task,
-        status: "starting",
-        worktree,
-        parentAgentId: options.parentAgentId ?? null,
-        modelId: options.modelId,
-        thinkingLevel: options.thinkingLevel,
-        readonly: options.readonly === true,
-        transcript: emptyTranscript(),
-        startedAt: now,
-        updatedAt: now,
-        usage: emptyAgentUsage(),
-      };
-      const created: RuntimeRecord = {
-        snapshot,
-        userInstructionNotices: new Map(),
-        activityGeneration: 0,
-        idleNotifiedGeneration: 0,
-      };
-      this.records.set(id, created);
-      this.persist({ event: "spawned", id, at: now, snapshot: snapshotMetadata(snapshot) });
-      this.emit();
-      return created;
+      try {
+        const id = randomUUID().slice(0, 8);
+        const now = Date.now();
+        const snapshot: SubagentSnapshot = {
+          id,
+          name: worktree.name,
+          task: options.task,
+          status: "starting",
+          worktree,
+          parentAgentId: options.parentAgentId ?? null,
+          modelId: options.modelId,
+          thinkingLevel: options.thinkingLevel,
+          readonly: options.readonly === true,
+          forkOrigin: forkSource?.origin,
+          transcript: emptyTranscript(),
+          startedAt: now,
+          updatedAt: now,
+          usage: emptyAgentUsage(),
+        };
+        if (forkSource) {
+          const sessionDir = join(this.agentDir, "subagents", this.parentSessionId);
+          allocatedSessionFile = createForkedSession(
+            forkSource,
+            worktree.path,
+            sessionDir,
+          ).getSessionFile();
+          snapshot.sessionFile = allocatedSessionFile;
+        }
+        const created: RuntimeRecord = {
+          snapshot,
+          userInstructionNotices: new Map(),
+          activityGeneration: 0,
+          idleNotifiedGeneration: 0,
+        };
+        this.records.set(id, created);
+        this.emit();
+        return created;
+      } catch (error) {
+        if (allocatedSessionFile) rmSync(allocatedSessionFile, { force: true });
+        await removeWorktree(this.mainCwd, worktree).catch(() => {});
+        throw error;
+      }
     });
 
     try {
@@ -1375,9 +1576,28 @@ export class SubagentManager {
       });
       return cloneSnapshot(record);
     } catch (error) {
-      this.updateStatus(record, "failed", String(error));
+      if (context === "fork") {
+        await record.dispose?.();
+        this.records.delete(record.snapshot.id);
+        if (record.snapshot.sessionFile) rmSync(record.snapshot.sessionFile, { force: true });
+        await this.withWorktreeLock(() => removeWorktree(this.mainCwd, record.snapshot.worktree)).catch(() => {});
+        this.persist({ event: "removed", id: record.snapshot.id, at: Date.now() });
+        this.emit();
+      } else {
+        this.updateStatus(record, "failed", String(error));
+      }
       throw error;
     }
+  }
+
+  private captureSpawnerForkSource(parentAgentId: string | null): ForkSource {
+    if (parentAgentId === null) {
+      if (!this.mainSessionManager) throw new Error("Cannot fork: the main source session is unavailable");
+      return captureForkSource(this.mainSessionManager, null);
+    }
+    const parent = this.records.get(parentAgentId);
+    if (!parent?.session) throw new Error("Cannot fork: the immediate parent session is unavailable");
+    return captureForkSource(parent.session.sessionManager, parentAgentId);
   }
 
   private async ensureRuntime(record: RuntimeRecord, retrySettlements = true): Promise<void> {
@@ -1422,6 +1642,7 @@ export class SubagentManager {
     });
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
+    this.statsManager?.attach(record.snapshot.id, result.session, record.snapshot.modelId);
     // Narrow the outgoing tool list to core plus enabled groups for this child.
     result.session.setActiveToolsByName(record.toolGroups.activeTools());
     record.unsubscribe = result.session.subscribe((event) => this.processSessionEvent(record, event));
@@ -1475,6 +1696,18 @@ export class SubagentManager {
     if (!record || record.snapshot.readonly) return false;
     await this.ensureRuntime(record);
     return record.session?.sessionId === target.sessionId;
+  }
+
+  private async authorizeShellOwner(requesterSessionId: string, owner: ShellOwner): Promise<boolean> {
+    return this.authorizeTriggerTarget(requesterSessionId, owner);
+  }
+
+  private async resolveShellOwner(
+    sessionId: string,
+    selector: ShellTargetSelector,
+  ): Promise<{ owner: ShellOwner; cwd: string }> {
+    const resolved = await this.resolveTriggerSelector(sessionId, selector);
+    return { owner: resolved.target, cwd: resolved.cwd };
   }
 
   private async resolveTriggerSelector(
@@ -1556,7 +1789,15 @@ export class SubagentManager {
   }
 
   private findRecord(target: string): RuntimeRecord | undefined {
-    return this.records.get(target) ?? [...this.records.values()].find((record) => record.snapshot.name === target);
+    // Match by id, name, OR worktree branch. A managed agent is often referred
+    // to by its branch (the spawn result and list output print it), and the raw
+    // git fallback in worktreeAction also accepts a branch. Without matching the
+    // branch here, a branch-shaped target would skip every managed guard (the
+    // running-status check, descendant check, and force-removal rejection) and
+    // reach the destructive git calls directly.
+    return this.records.get(target)
+      ?? [...this.records.values()].find((record) =>
+        record.snapshot.name === target || record.snapshot.worktree.branch === target);
   }
 
   private retainedDescendants(parentId: string): RetainedDescendant[] {
@@ -1690,7 +1931,71 @@ export class SubagentManager {
       sender: data.sender,
       recipient: data.recipient,
       text: data.text,
+      messageId: data.id,
     };
+  }
+
+  async persistManagedShellEvent(data: ManagedShellLifecycleEvent): Promise<void> {
+    const { sessionId, agentId } = data.owner;
+    if (agentId === null) {
+      if (sessionId !== this.parentSessionId || !this.mainApi) {
+        throw new Error("The main shell owner is unavailable");
+      }
+      this.mainApi.appendEntry(MANAGED_SHELL_CUSTOM_TYPE, data);
+      return;
+    }
+    const record = this.records.get(agentId);
+    if (!record) throw new Error(`Unknown shell owner agent: ${agentId}`);
+    await this.ensureRuntime(record);
+    if (!record.session || record.session.sessionId !== sessionId) {
+      throw new Error("The child shell owner is unavailable");
+    }
+    record.session.sessionManager.appendCustomEntry(MANAGED_SHELL_CUSTOM_TYPE, data);
+  }
+
+  async deliverManagedShellCompletion(data: ManagedShellCompletionMessage): Promise<void> {
+    const { sessionId, agentId } = data.owner;
+    const line: Extract<Line, { kind: "agent-message" }> = {
+      kind: "agent-message",
+      sender: `shell:${data.name}`,
+      recipient: agentId ?? "main",
+      text: data.text,
+      messageId: data.id,
+    };
+    const pending: PendingLine = { id: data.id, line };
+    const message = {
+      customType: MANAGED_SHELL_COMPLETION_TYPE,
+      content: data.text,
+      display: true,
+      details: data,
+    };
+    if (agentId === null) {
+      if (sessionId !== this.parentSessionId || !this.mainApi) {
+        throw new Error("The main shell owner is unavailable");
+      }
+      this.emit({ type: "main-pending-add", pending });
+      if (!this.wakeMain(message, data.text)) {
+        this.emit({ type: "main-pending-drop", id: data.id });
+        throw new Error("The main shell owner is unavailable");
+      }
+      return;
+    }
+    const record = this.records.get(agentId);
+    if (!record) throw new Error(`Unknown shell owner agent: ${agentId}`);
+    await this.ensureRuntime(record);
+    if (!record.session || !record.api || record.session.sessionId !== sessionId) {
+      throw new Error("The child shell owner is unavailable");
+    }
+    this.addPending(record, pending);
+    try {
+      withSearchRoute(record.session.sessionId, () => {
+        record.api!.sendMessage(message, { deliverAs: "followUp", triggerTurn: true });
+      });
+      this.updateStatus(record, "running");
+    } catch (error) {
+      this.dropPending(record, data.id);
+      throw error;
+    }
   }
 
   async deliverTriggerEvent(data: TriggerEventData): Promise<void> {
@@ -1802,6 +2107,9 @@ export class SubagentManager {
         withSearchRoute(recipient.session!.sessionId, () => {
           recipient.api!.sendMessage(customMessage, { deliverAs: "steer", triggerTurn: true });
         });
+        if (TERMINAL_SUBAGENT_STATUSES.includes(recipient.snapshot.status)) {
+          recipient.statusBeforeTurn = recipient.snapshot.status;
+        }
         this.updateStatus(recipient, "running");
       } catch (error) {
         this.dropPending(recipient, pending.id);
@@ -1861,6 +2169,89 @@ export class SubagentManager {
     if (!delivered) this.emit({ type: "main-pending-drop", id: pending.id });
   }
 
+  private responseAfterSettlement(entries: readonly any[], messageId: string): string {
+    let active = false;
+    let response = "";
+    for (const entry of entries) {
+      const message = entry?.type === "message"
+        ? entry.message
+        : entry?.type === "custom_message"
+          ? { ...entry, role: "custom" }
+          : entry;
+      if (message?.role === "custom") {
+        if (message.customType === AGENT_MESSAGE_CUSTOM_TYPE && message.details?.id === messageId) {
+          active = true;
+        }
+        continue;
+      }
+      if (!active) continue;
+      if (message?.role === "user") break;
+      if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+      const text = message.content
+        .filter((block: any) => block?.type === "text" && typeof block.text === "string")
+        .map((block: any) => block.text)
+        .join("")
+        .trim();
+      if (text) response = text;
+    }
+    return response;
+  }
+
+  private restoreSettlementResponses(
+    mainEntries: readonly any[],
+    childEntries: ReadonlyMap<string, readonly any[]>,
+  ): void {
+    for (const settlement of this.settlements.values()) {
+      if (settlement.status !== "completed" || settlement.response?.trim()) continue;
+      const entries = settlement.parentAgentId === null
+        ? mainEntries
+        : childEntries.get(settlement.parentAgentId) ?? [];
+      const response = this.responseAfterSettlement(entries, settlement.messageId);
+      if (response) this.recordSettlementResponse(settlement.messageId, response, false);
+    }
+  }
+
+  private recordSettlementResponse(messageId: string, response: string, reconcile = true): void {
+    const settlement = [...this.settlements.values()].find((item) => item.messageId === messageId);
+    if (!settlement || settlement.status !== "completed" || !response.trim()) return;
+    if (settlement.response === response.trim()) return;
+    settlement.response = response.trim();
+    settlement.respondedAt = Date.now();
+    this.persist({
+      event: "settlement",
+      id: settlement.agentId,
+      at: settlement.respondedAt,
+      settlement: { ...settlement },
+    });
+    if (reconcile) this.reconcileFinishNews();
+  }
+
+  private reconcileFinishNews(): void {
+    const sessionFile = this.mainSessionManager?.getSessionFile?.();
+    if (!sessionFile) return;
+    const incoming = [...this.settlements.values()]
+      .map((settlement) => newsItemFromFinishSettlement({
+        ...settlement,
+        agentName: settlement.agentName
+          ?? this.records.get(settlement.agentId)?.snapshot.name
+          ?? settlement.agentId,
+        requesterName: settlement.requesterName
+          ?? (settlement.parentAgentId
+            ? this.records.get(settlement.parentAgentId)?.snapshot.name ?? settlement.parentAgentId
+            : "main"),
+      }))
+      .filter((item): item is NonNullable<typeof item> => item !== undefined);
+    const next = mergeNewsItems(loadNewsItems(sessionFile), incoming);
+    saveNewsItems(sessionFile, next);
+    for (const record of this.records.values()) {
+      record.snapshot.transcript = {
+        ...record.snapshot.transcript,
+        lines: tagNewsLines(record.snapshot.transcript.lines, next, record.snapshot.id),
+      };
+    }
+    this.emit({ type: "news-changed" });
+  }
+
   private settlementId(record: RuntimeRecord, status: "idle" | "completed" | "failed"): string {
     return `${record.snapshot.id}:${record.activityGeneration}:${status}`;
   }
@@ -1880,11 +2271,16 @@ export class SubagentManager {
         `worktree: ${record.snapshot.worktree.path}`,
         summary ? `summary: ${summary}` : "",
       ].filter(Boolean).join("\n");
+      const requester = record.snapshot.parentAgentId
+        ? this.records.get(record.snapshot.parentAgentId)?.snapshot.name ?? record.snapshot.parentAgentId
+        : "main";
       settlement = {
         id,
         messageId: `settlement-${id}`,
         agentId: record.snapshot.id,
+        agentName: record.snapshot.name,
         parentAgentId: record.snapshot.parentAgentId,
+        requesterName: requester,
         status,
         summary,
         activityGeneration: record.activityGeneration,
@@ -2030,18 +2426,47 @@ export class SubagentManager {
     }
   }
 
+  /**
+   * Re-deliver main-bound completion notices that a queue clear may have
+   * dropped. Cancelling the main turn or recalling a queued message calls
+   * session.clearQueue(), which silently discards a completion notice queued to
+   * a streaming main agent. That notice is marked in-flight, so a later retry
+   * would skip it and the merge would stay blocked. Clearing the in-flight mark
+   * for unacknowledged main settlements lets the retry resend them. A notice
+   * that pi already inserted is acknowledged and is left untouched.
+   */
+  async resendUndeliveredMainSettlements(): Promise<void> {
+    for (const settlement of this.settlements.values()) {
+      if (settlement.parentAgentId === null && settlement.acknowledgedAt === undefined) {
+        this.settlementDeliveriesInFlight.delete(settlement.messageId);
+      }
+    }
+    await this.retrySettlementsForParent(null);
+  }
+
   private formatAgentList(): string {
     const agents = this.getAgents();
     if (!agents.length) return "No subagents.";
-    return agents.map((agent) =>
-      `${agent.id}  ${agent.name}  ${agent.status}${agent.readonly ? "  readonly" : ""}\n  ${agent.worktree.branch}\n  ${agent.worktree.path}`,
-    ).join("\n");
+    return agents.map((agent) => {
+      const origin = agent.forkOrigin;
+      const source = origin?.sourceAgentId
+        ? this.records.get(origin.sourceAgentId)?.snapshot.name ?? origin.sourceAgentId
+        : "main";
+      return `${agent.id}  ${agent.name}  ${agent.status}${agent.readonly ? "  readonly" : ""}`
+        + `\n  ${agent.worktree.branch}\n  ${agent.worktree.path}`
+        + (origin
+          ? `\n  fork source: ${source} · session ${origin.sourceSessionId} · cutoff ${origin.cutoffEntryId ?? "root"}`
+          : "");
+    }).join("\n");
   }
 
   async stop(id: string, status: SubagentStatus = "stopped", persist = true): Promise<void> {
     const record = this.findRecord(id);
     if (!record) return;
     const sessionId = record.session?.sessionId;
+    if (sessionId) {
+      await this.shellManager?.invalidateAgent(sessionId, record.snapshot.id);
+    }
     if (record.dispose) await record.dispose();
     this.clearSettlementDeliveriesForParent(record.snapshot.id);
     if (sessionId) {
@@ -2065,6 +2490,9 @@ export class SubagentManager {
   private async stopAll(status: SubagentStatus, persist: boolean): Promise<void> {
     for (const record of this.records.values()) {
       const sessionId = record.session?.sessionId;
+      if (sessionId) {
+        await this.shellManager?.invalidateAgent(sessionId, record.snapshot.id);
+      }
       if (record.dispose) await record.dispose();
       if (sessionId) await this.triggerManager?.invalidateAgent(sessionId, record.snapshot.id);
       if (!["starting", "running"].includes(record.snapshot.status)) continue;
@@ -2077,6 +2505,7 @@ export class SubagentManager {
   }
 
   private forgetManagedAgent(record: RuntimeRecord): void {
+    this.statsManager?.closeAgent(record.snapshot.id);
     this.records.delete(record.snapshot.id);
     this.persist({ event: "removed", id: record.snapshot.id, at: Date.now() });
     this.emit();
@@ -2119,8 +2548,20 @@ export class SubagentManager {
         const output = (await mergeWorktree(cwd, record)) || `Merged ${record.branch}`;
         if (!managedAgent) return textResult(output, record);
 
+        // The branch is now merged. The session is stopped first so it releases
+        // the worktree files before removal (Windows locks them otherwise). If
+        // removal then fails, the merge is done but the agent stays retained;
+        // name the exact recovery step instead of surfacing a raw git error.
         await this.stop(managedAgent.snapshot.id, "stopped");
-        await removeWorktree(cwd, record);
+        try {
+          await removeWorktree(cwd, record);
+        } catch (error) {
+          throw new Error(
+            `${output}\nBranch ${record.branch} is merged, but removing the worktree failed. `
+              + `Run "worktree remove ${managedAgent.snapshot.name}" to finish. `
+              + (error instanceof Error ? error.message : String(error)),
+          );
+        }
         this.forgetManagedAgent(managedAgent);
         return textResult(`${output}\nClosed ${managedAgent.snapshot.name} and removed its worktree.`, record);
       });
@@ -2136,7 +2577,8 @@ export class SubagentManager {
           if (force) {
             throw new Error(
               `Cannot force-remove managed subagent ${managedAgent.snapshot.name}. ` +
-                "Failed or unmerged managed subagents must remain retained until a valid merge or removal flow closes them.",
+                "Failed or unmerged managed subagents must remain retained until a valid merge or removal flow closes them. " +
+                "When the agent is completed and its branch adds no new commits, retry the remove without force.",
             );
           }
         }

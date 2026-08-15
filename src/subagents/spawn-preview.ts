@@ -95,16 +95,22 @@ export class SpawnPreviewManager {
     });
   }
 
-  approve(note: string): boolean {
+  approve(note: string, expectedId?: string): boolean {
     const request = this.active;
     if (!request) return false;
+    // Only act on the request the UI actually rendered. The active request can
+    // be replaced synchronously when a prior request aborts and promotes the
+    // next one, and a keypress can arrive before the popup re-renders, so an
+    // approval meant for request A must not silently approve request B.
+    if (expectedId !== undefined && request.id !== expectedId) return false;
     this.finish(request, { approved: true, note: note.trim() });
     return true;
   }
 
-  cancel(reason: SpawnPreviewResult["reason"] = "cancelled"): boolean {
+  cancel(reason: SpawnPreviewResult["reason"] = "cancelled", expectedId?: string): boolean {
     const request = this.active;
     if (!request) return false;
+    if (expectedId !== undefined && request.id !== expectedId) return false;
     this.finish(request, { approved: false, note: "", reason });
     return true;
   }

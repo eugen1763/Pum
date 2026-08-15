@@ -66,6 +66,7 @@ describe("subagent transcript replay", () => {
       sender: "worker-a",
       recipient: "worker-b",
       text: "Review the parser change",
+      messageId: "message-1",
     });
     expect(lines[1]).toEqual({
       kind: "tool",
@@ -136,6 +137,7 @@ describe("subagent transcript replay", () => {
       sender: "pum",
       recipient: "main",
       text: reminder.text,
+      messageId: reminder.id,
     }]);
   });
 
@@ -168,7 +170,7 @@ describe("subagent transcript replay", () => {
       },
     ], process.cwd(), true);
 
-    expect(lines[0]).toEqual({
+    expect(lines[0]).toMatchObject({
       kind: "tool",
       call: {
         id: "patch-1",
@@ -211,7 +213,7 @@ describe("subagent transcript replay", () => {
       },
     ], "/repo", true);
 
-    expect(lines[0]).toEqual({
+    expect(lines[0]).toMatchObject({
       kind: "tool",
       call: {
         id: "read-1",
@@ -219,6 +221,44 @@ describe("subagent transcript replay", () => {
         arg: "src/file name.ts · offset=12 · limit=40",
         state: "ok",
         output: "file contents",
+      },
+    });
+  });
+
+  test("restores the Bash exit code without settled output", () => {
+    const lines = replayEntries([
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{
+            type: "toolCall",
+            id: "bash-1",
+            name: "bash",
+            arguments: { command: "printf first; printf last; exit 7" },
+          }],
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "toolResult",
+          toolCallId: "bash-1",
+          toolName: "bash",
+          content: [{ type: "text", text: "first\nlast\n\nCommand exited with code 7" }],
+          isError: true,
+        },
+      },
+    ], process.cwd(), true);
+
+    expect(lines[0]).toMatchObject({
+      kind: "tool",
+      call: {
+        id: "bash-1",
+        name: "bash",
+        arg: "printf first; printf last; exit 7",
+        state: "error",
+        exitCode: 7,
       },
     });
   });

@@ -8,6 +8,16 @@ export type NewsPrompt = {
   steer: boolean;
 };
 
+export type NewsCompletion = {
+  settlementId: string;
+  messageId: string;
+  agentId: string;
+  agentName: string;
+  requesterAgentId: string | null;
+  requesterName: string;
+  summary: string;
+};
+
 export type NewsItem = {
   /** Stable identifier used to tag the matching transcript line. */
   id: string;
@@ -21,6 +31,8 @@ export type NewsItem = {
   answered: boolean;
   /** User prompt and steers that produced this answer, oldest first. */
   prompts?: NewsPrompt[];
+  /** Managed completion identity for a finish_subagent-triggered answer. */
+  completion?: NewsCompletion;
 };
 
 /** The list never holds more than this many answers. */
@@ -48,8 +60,21 @@ function isNewsItem(value: unknown): value is NewsItem {
             Boolean(prompt) &&
             typeof (prompt as Record<string, unknown>).text === "string" &&
             typeof (prompt as Record<string, unknown>).steer === "boolean",
-        )))
+        ))) &&
+    (item.completion === undefined || isNewsCompletion(item.completion))
   );
+}
+
+function isNewsCompletion(value: unknown): value is NewsCompletion {
+  if (!value || typeof value !== "object") return false;
+  const completion = value as Record<string, unknown>;
+  return typeof completion.settlementId === "string"
+    && typeof completion.messageId === "string"
+    && typeof completion.agentId === "string"
+    && typeof completion.agentName === "string"
+    && (completion.requesterAgentId === null || typeof completion.requesterAgentId === "string")
+    && typeof completion.requesterName === "string"
+    && typeof completion.summary === "string";
 }
 
 /** Load the persisted news list for a session. Never throws. */
@@ -81,16 +106,79 @@ export function saveNewsItems(
   }
 }
 
+export type FinishNewsSettlement = {
+  id: string;
+  messageId: string;
+  agentId: string;
+  agentName: string;
+  parentAgentId: string | null;
+  requesterName: string;
+  status: "idle" | "completed" | "failed";
+  summary?: string;
+  content: string;
+  createdAt: number;
+  response?: string;
+};
+
+/** Project one completed finish settlement into the persisted News model. */
+export function newsItemFromFinishSettlement(
+  settlement: FinishNewsSettlement,
+): NewsItem | undefined {
+  if (settlement.status !== "completed" || !settlement.response?.trim()) return undefined;
+  if (/^(?:ack(?:nowledged)?|got it|noted|ok(?:ay)?|thanks|thank you|understood)[.!\s]*$/i.test(
+    settlement.response.trim(),
+  )) return undefined;
+  return {
+    id: `subagent-finish:${settlement.messageId}`,
+    text: settlement.response.trim(),
+    at: settlement.createdAt,
+    read: false,
+    answered: false,
+    prompts: [{ text: settlement.content, steer: false }],
+    completion: {
+      settlementId: settlement.id,
+      messageId: settlement.messageId,
+      agentId: settlement.agentId,
+      agentName: settlement.agentName,
+      requesterAgentId: settlement.parentAgentId,
+      requesterName: settlement.requesterName,
+      summary: settlement.summary ?? "",
+    },
+  };
+}
+
+/** Upsert stable News identities while preserving local read and reply state. */
+export function mergeNewsItems(
+  existing: readonly NewsItem[],
+  incoming: readonly NewsItem[],
+): NewsItem[] {
+  const byId = new Map(existing.map((item) => [item.id, item]));
+  for (const item of incoming) {
+    const current = byId.get(item.id);
+    byId.set(item.id, current
+      ? { ...item, read: current.read, answered: current.answered }
+      : item);
+  }
+  return [...byId.values()]
+    .sort((a, b) => b.at - a.at)
+    .slice(0, NEWS_CAPACITY);
+}
+
 /**
  * Attach news identifiers to replayed assistant lines that exactly match a
  * stored answer. Each stored answer claims the first later unmatched line with
  * the same text, so resumed transcripts keep their circle/checkmark markers.
  */
-export function tagNewsLines<T>(lines: readonly T[], items: readonly NewsItem[]): T[] {
+export function tagNewsLines<T>(
+  lines: readonly T[],
+  items: readonly NewsItem[],
+  requesterAgentId: string | null = null,
+): T[] {
   if (items.length === 0 || lines.length === 0) return lines.map((line) => line);
   const claimed = new Set<number>();
   const out = lines.map((line) => line);
   for (const item of items) {
+    if ((item.completion?.requesterAgentId ?? null) !== requesterAgentId) continue;
     const maybe = (value: T) =>
       value as unknown as { kind?: unknown; role?: unknown; text?: unknown; newsId?: unknown };
     const index = out.findIndex((line, i) =>

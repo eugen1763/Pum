@@ -96,6 +96,7 @@ type RenderOptions = {
   switchSession?: (path: string) => Promise<ReturnType<typeof fakeSession> | null>;
   newSession?: () => Promise<ReturnType<typeof fakeSession> | null>;
   sendUserMessage?: (agentId: string, text: string) => Promise<void>;
+  statsManager?: any;
 };
 
 function historyItem(path: string, title: string): SessionHistoryItem {
@@ -154,6 +155,7 @@ async function renderApp(options: RenderOptions = {}) {
       settings={settings}
       searchProviders={[]}
       subagentManager={manager}
+      statsManager={options.statsManager}
       loginRequired={options.loginRequired}
       promptHistoryStore={{
         load: () => [],
@@ -233,6 +235,50 @@ describe("session history keyboard shortcuts", () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Session history");
     expect(frame).not.toContain("❯ /history");
+  });
+
+  test("opens /stats, updates live, scrolls, and restores prompt focus", async () => {
+    let listener: (() => void) | undefined;
+    let attempts = 1;
+    const statsManager = {
+      bindMainSession() {},
+      subscribe(next: () => void) { listener = next; return () => { listener = undefined; }; },
+      snapshot: () => ({
+        models: Array.from({ length: 8 }, (_, index) => ({
+          model: index === 7 ? "mock/live-model" : `mock/model-${index}`,
+          role: "Agent" as const,
+          attempts: index === 7 ? attempts : index,
+          outgoing: index * 10,
+          incoming: index,
+          cacheRead: 0,
+          cost: 0,
+          compressions: 0,
+        })),
+        tools: [{ tool: "last-tool", successful: 1, failed: 0, blocked: 0, running: 0, interrupted: 0, total: 1 }],
+        outcomes: { successful: 1, failed: 0, blocked: 0, running: 0, interrupted: 0 },
+      }),
+    };
+    const { setup } = await renderApp({ width: 62, height: 14, statsManager });
+
+    await setup.mockInput.typeText("/stats");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("Session statistics");
+    expect(setup.captureCharFrame()).not.toContain("❯ /stats");
+
+    attempts = 9;
+    listener?.();
+    await settle(setup);
+    for (let index = 0; index < 40; index++) setup.mockInput.pressArrow("down");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("last-tool");
+
+    setup.mockInput.pressEscape();
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("Session statistics");
+    await setup.mockInput.typeText("after stats");
+    await settle(setup);
+    expectInput(setup.captureCharFrame(), "after stats");
   });
 
   test("keeps the current session visible, selected, and marked", async () => {

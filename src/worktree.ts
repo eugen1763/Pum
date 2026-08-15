@@ -211,7 +211,18 @@ export async function mergeWorktree(cwd: string, record: WorktreeRecord): Promis
   if (mainStatus) throw new Error(`The current worktree must be clean before merging:\n${mainStatus}`);
   const childStatus = await git(path, ["status", "--porcelain"]);
   if (childStatus) throw new Error(`Worktree ${record.name} has uncommitted changes`);
-  return git(root, ["merge", "--no-ff", record.branch]);
+  try {
+    return await git(root, ["merge", "--no-ff", record.branch]);
+  } catch (error) {
+    // A conflicted merge leaves the main worktree mid-merge (MERGE_HEAD, a
+    // conflicted index, and conflict markers), which blocks every later merge.
+    // Abort to restore a clean tree, then report the failure.
+    await git(root, ["merge", "--abort"]).catch(() => {});
+    throw new Error(
+      `Merge of ${record.branch} failed and was aborted; resolve the conflict manually. `
+        + (error instanceof Error ? error.message : String(error)),
+    );
+  }
 }
 
 export async function removeWorktree(
@@ -220,7 +231,21 @@ export async function removeWorktree(
   force = false,
 ): Promise<void> {
   const root = await repositoryRoot(cwd);
-  const path = await managedWorktreePath(root, record.path);
+  let path: string;
+  try {
+    path = await managedWorktreePath(root, record.path);
+  } catch (error) {
+    // The working tree directory may have been pruned or deleted out of band
+    // (e.g. `git worktree prune` or a manual delete after a crash). Clean git's
+    // stale admin records and the branch so the managed agent can still be
+    // closed instead of blocking its parent forever.
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      await git(root, ["worktree", "prune"]).catch(() => {});
+      await git(root, ["branch", "-D", record.branch]).catch(() => {});
+      return;
+    }
+    throw error;
+  }
   if (!force) {
     const merged = await git(root, ["branch", "--merged", "HEAD", "--format=%(refname:short)"]);
     if (!merged.split(/\r?\n/).includes(record.branch)) {

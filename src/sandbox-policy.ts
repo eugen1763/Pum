@@ -27,6 +27,8 @@ export type BuildSandboxPolicyOptions = {
   args: readonly string[];
   /** The resolved shell receives the exact command on stdin instead of argv. */
   stdin?: boolean;
+  /** Execute the resolved program with direct arguments instead of shell command transport. */
+  directArgv?: boolean;
   /** Private temporary directory prepared by the controller. */
   privateTemp: string;
   environment?: Readonly<Record<string, string | undefined>>;
@@ -40,6 +42,8 @@ export type BuildSandboxPolicyOptions = {
 };
 
 const SENSITIVE_ENVIRONMENT = /(?:^|_)(?:API_?KEY|AUTH|BEARER|COOKIE|CREDENTIALS?|PASS(?:WORD)?|PRIVATE_?KEY|SECRET|SESSION|TOKEN)(?:_|$)/i;
+/** A valid POSIX environment variable name. */
+const ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const INJECTION_ENVIRONMENT = new Set([
   "BASH_ENV", "BUN_OPTIONS", "ENV", "GIT_CONFIG_COUNT", "NODE_OPTIONS", "PERL5OPT",
   "PROMPT_COMMAND", "PYTHONINSPECT", "PYTHONPATH", "RUBYOPT", "SHELLOPTS", "ZDOTDIR",
@@ -65,6 +69,11 @@ export function sanitizeSandboxEnvironment(
   return Object.fromEntries(Object.entries(environment)
     .filter(([name, value]) => value !== undefined
       && !name.includes("\0")
+      // Drop names that are not valid POSIX identifiers. An exported bash
+      // function arrives as BASH_FUNC_foo%% and would let a function named
+      // git or ls shadow the analyzed command; the Linux backend also hard
+      // throws on such names.
+      && ENVIRONMENT_NAME.test(name)
       && !isSandboxEnvironmentVariableDenied(name))
     .map(([name, value]) => [name, value!] as const)
     .sort(([first], [second]) => first.localeCompare(second)));
@@ -97,8 +106,17 @@ function collapseSamePermissionRoots(paths: readonly string[], platform: Runtime
 
 function deniedCredentialPaths(roots: readonly string[], home: string, platform: RuntimePlatform): string[] {
   const directoryNames = [".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker"];
+  // The deterministic layer's isCredentialSensitivePath matches /^\.env(?:\..+)?$/
+  // at any path segment. A backend denied path is one concrete path, not a
+  // recursive glob, so PUM masks every known .env variant at each writable
+  // root's top level. LIMIT: a nested .env below a root (for example
+  // packages/api/.env) cannot be enumerated by this pure policy function and is
+  // not masked by name here; the mount masks below still cover the root itself.
   const fileNames = [
-    ".env", ".git-credentials", ".npmrc", ".pypirc", ".netrc", "auth.json", "credentials.json",
+    ".env", ".env.local", ".env.development", ".env.development.local",
+    ".env.production", ".env.production.local", ".env.test", ".env.test.local",
+    ".env.staging", ".env.staging.local",
+    ".git-credentials", ".npmrc", ".pypirc", ".netrc", "auth.json", "credentials.json",
   ];
   const denied: string[] = [];
   for (const root of [...roots, home]) {
@@ -135,7 +153,7 @@ export function buildSandboxPolicy(options: BuildSandboxPolicyOptions): SandboxP
   if (!options.executable || options.executable.includes("\0")) throw new Error("Sandbox executable is invalid");
   if (!pathApi(options.cwd, platform).isAbsolute(options.executable)) throw new Error("Sandbox executable must be resolved");
   if (options.args.some((argument) => argument.includes("\0"))) throw new Error("Sandbox arguments are invalid");
-  if (!options.stdin && !options.args.includes(executionCommand)) {
+  if (!options.stdin && !options.directArgv && !options.args.includes(executionCommand)) {
     throw new Error("Sandbox arguments must contain the exact command");
   }
   if (!options.result.analysis.complete || options.result.analysis.truncated || !options.result.analysis.syntaxBalanced) {

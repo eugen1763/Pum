@@ -62,6 +62,9 @@ const encoder = new TextEncoder();
 const STDOUT_MARKER = encoder.encode("\n--- stdout ---\n");
 const STDERR_MARKER = encoder.encode("\n--- stderr ---\n");
 
+/** Grace period between the SIGTERM and the SIGKILL escalation for a supervised process. */
+const TERMINATION_GRACE_MS = 2_000;
+
 function exactTarget(a: TriggerTarget, b: TriggerTarget): boolean {
   return a.sessionId === b.sessionId && a.agentId === b.agentId;
 }
@@ -148,6 +151,7 @@ export class TriggerManager implements PublicTriggerManager {
     if (requester.kind === "subagent" && !canAccess(requester, input.target)) {
       throw new Error("Requester cannot access the exact trigger target");
     }
+    if (this.records.size + this.creatingIds.size >= this.triggerLimit) this.pruneTerminalRecords();
     if (this.records.size + this.creatingIds.size >= this.triggerLimit) throw new Error(`Trigger limit reached (${this.triggerLimit})`);
     const id = input.id?.trim() || this.createId();
     if (this.records.has(id) || this.creatingIds.has(id)) throw new Error(`Trigger already exists: ${id}`);
@@ -302,6 +306,37 @@ export class TriggerManager implements PublicTriggerManager {
     this.emit({ type: "removed", id });
   }
 
+  /**
+   * Drop terminal (cancelled, expired, or unavailable) definitions so their
+   * slots no longer count against the trigger limit. A terminal definition
+   * keeps no live process, so freeing it cannot orphan a running child. Any
+   * lingering output files for the definition are cleaned before removal.
+   */
+  private pruneTerminalRecords(): void {
+    for (const [id, record] of [...this.records]) {
+      if (!this.isTerminal(record)) continue;
+      this.dropTerminalRecord(id, record);
+    }
+  }
+
+  private dropTerminalRecord(id: string, record: TriggerRecord): void {
+    for (const delivery of this.delivered.filter((item) => item.triggerId === id)) {
+      const index = this.delivered.indexOf(delivery);
+      if (index >= 0) this.delivered.splice(index, 1);
+      void this.cleanupDelivery(delivery);
+    }
+    for (const delivery of [...this.pending.values()].filter((item) => item.triggerId === id)) {
+      this.pending.delete(delivery.token);
+      void this.cleanupDelivery(delivery);
+    }
+    if (record.writer) {
+      void record.writer.remove().catch(() => {});
+      record.writer = undefined;
+    }
+    this.records.delete(id);
+    this.emit({ type: "removed", id });
+  }
+
   async shutdown(): Promise<void> {
     if (this.shutdownRequested) return;
     this.shutdownRequested = true;
@@ -397,7 +432,7 @@ export class TriggerManager implements PublicTriggerManager {
     if (record.timer !== undefined) this.options.clock.clearTimeout(record.timer);
     record.timer = undefined;
     if (record.handle) {
-      record.handle.kill();
+      this.beginTermination(record.handle);
       record.handle = undefined;
       this.runningCount = Math.max(0, this.runningCount - 1);
     }
@@ -656,7 +691,12 @@ export class TriggerManager implements PublicTriggerManager {
 
   private async settleDeliveryRecord(delivery: DeliveryRecord): Promise<void> {
     const index = this.delivered.indexOf(delivery);
-    if (index >= 0) this.delivered.splice(index, 1);
+    // Idempotent: a delivery already removed from the settled list must not
+    // mutate the trigger again. A second settle of the same delivery would
+    // otherwise double-decrement pendingCount, re-emit `settled`, and reset a
+    // now-running trigger back to idle.
+    if (index < 0) return;
+    this.delivered.splice(index, 1);
     await this.cleanupDelivery(delivery);
     const record = this.records.get(delivery.triggerId);
     if (!record) return;
@@ -670,7 +710,15 @@ export class TriggerManager implements PublicTriggerManager {
     if (record.rerunRequested && !record.snapshot.paused) {
       record.rerunRequested = false;
       record.snapshot.state = "idle";
-      await this.start(record, false, false, "repeat");
+      // A denied safety check or a failed output file makes `start` throw. That
+      // failure must stay local to this delivery: it must not abort the settle
+      // loop and leave the other deliveries stuck in "waiting" with leaked
+      // output files. Record the failure and let the caller settle the rest.
+      try {
+        await this.start(record, false, false, "repeat");
+      } catch (error) {
+        if (!this.isTerminal(record)) this.fail(record, error);
+      }
     } else {
       record.snapshot.state = record.snapshot.paused ? "paused" : "idle";
       this.afterRun(record);
@@ -715,6 +763,26 @@ export class TriggerManager implements PublicTriggerManager {
     this.emitExternal(record, "cancelled", reason);
   }
 
+  /**
+   * Terminate a supervised process without blocking the caller. A single
+   * SIGTERM to the direct child is not enough: a grandchild or a signal that
+   * the child ignores would let the process outlive a "cancelled" report. So
+   * this sends SIGTERM, then escalates to SIGKILL after a bounded grace period
+   * if the child has not exited. The process adapter widens each signal to the
+   * process group or tree where the platform allows. The escalation is
+   * detached from the caller because cancel and shutdown must not hang on a
+   * child that never exits.
+   */
+  private beginTermination(handle: TriggerProcessHandle): void {
+    let exited = false;
+    void handle.completed.then(() => { exited = true; }, () => { exited = true; });
+    try { handle.kill("SIGTERM"); } catch { /* the child may already be gone */ }
+    this.options.clock.setTimeout(() => {
+      if (exited) return;
+      try { handle.kill("SIGKILL"); } catch { /* best effort */ }
+    }, TERMINATION_GRACE_MS);
+  }
+
   private async cancelRuntime(record: TriggerRecord): Promise<void> {
     record.generation += 1;
     if (record.timer !== undefined) this.options.clock.clearTimeout(record.timer);
@@ -722,7 +790,7 @@ export class TriggerManager implements PublicTriggerManager {
     record.timer = undefined;
     record.expiryTimer = undefined;
     if (record.handle) {
-      record.handle.kill();
+      this.beginTermination(record.handle);
       record.handle = undefined;
       this.runningCount = Math.max(0, this.runningCount - 1);
     }

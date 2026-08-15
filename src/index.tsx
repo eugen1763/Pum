@@ -52,6 +52,15 @@ if (result.kind === "help") {
     process.stderr.write(formatCliError(errorMessage(error)));
     process.exitCode = 1;
   }
+} else if (result.options.prompt !== undefined) {
+  const { runPrompt } = await import("./headless");
+  process.exitCode = await runPrompt({
+    prompt: result.options.prompt,
+    resume: result.options.resume,
+    statsFile: result.options.statsFile,
+    overrideStatsFile: result.options.overrideStatsFile,
+    pumVersion: metadata.version,
+  });
 } else {
   const { start } = await import("./main");
   await start(result.options);

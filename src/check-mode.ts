@@ -8,9 +8,6 @@ import { projectStorageKey } from "./platform";
 import {
   canonicalJson,
   type CheckApprovalIdentity,
-  CheckApprovalCoordinator,
-  exactApprovalKey,
-  CheckApprovalStore,
   type CheckedToolName,
 } from "./check-approvals";
 import { previewMutation, type MutationPreview } from "./check-mutation";
@@ -24,9 +21,6 @@ import {
 import type { CheckModeProfile } from "./settings";
 
 export const DEFAULT_CHECK_MODEL = "deepseek/deepseek-v4-flash";
-export const CHECK_MODE_CACHE_PATH = join(AGENT_DIR, "check-mode-cache.json");
-export const CHECK_MODE_CACHE_LIMIT = 256;
-
 export type CheckModeConfig = {
   profile: CheckModeProfile;
   model: string;
@@ -84,7 +78,7 @@ let current: Required<CheckModeConfig> = { profile: "off", model: DEFAULT_CHECK_
 export function setCheckModeConfig(config: CheckModeConfig | { enabled: boolean; model: string }): void {
   current = "profile" in config
     ? { ...config, additionalPaths: [...(config.additionalPaths ?? [])] }
-    : { profile: config.enabled ? "strict" : "off", model: config.model, additionalPaths: [] };
+    : { profile: config.enabled ? "on" : "off", model: config.model, additionalPaths: [] };
 }
 
 export function getCheckModeConfig(): CheckModeConfig {
@@ -215,13 +209,14 @@ export function isProcessCheckProposal(value: unknown): value is ProcessCheckPro
   if (!value || typeof value !== "object") return false;
   const proposal = value as Partial<ProcessCheckProposal>;
   return proposal.kind === "process"
-    && proposal.source === "external-trigger"
+    && ["external-trigger", "managed-shell"].includes(proposal.source ?? "")
     && typeof proposal.executable === "string"
     && Array.isArray(proposal.args)
     && proposal.args.every((argument) => typeof argument === "string")
     && typeof proposal.cwd === "string"
     && ["create", "start", "resume", "repeat", "invoke-run"].includes(proposal.operation ?? "")
-    && (proposal.triggerName === undefined || typeof proposal.triggerName === "string");
+    && (proposal.triggerName === undefined || typeof proposal.triggerName === "string")
+    && (proposal.shellName === undefined || typeof proposal.shellName === "string");
 }
 
 /** Build the exact safety identity. Display-only triggerName is intentionally omitted. */
@@ -240,11 +235,13 @@ export async function prepareCheck(
   toolName: CheckedToolName,
   input: unknown,
   cwd: string,
-  profile: Exclude<CheckModeProfile, "off">,
   context: UntrustedContext = {},
   additionalPaths: readonly string[] = [],
   settingsFiles: readonly string[] = [],
 ): Promise<{ prepared?: PreparedCheck; block?: string; balancedAllow?: string }> {
+  // Check mode is a single on/off toggle. When on, the deterministic policy
+  // layer runs in its "balanced" mode, which is the behavior on-mode adopts.
+  const policyProfile = "balanced" as const;
   let canonicalInput: string;
   try {
     canonicalInput = isProcessCheckProposal(input) ? canonicalProcessCheckInput(input) : canonicalJson(input);
@@ -265,12 +262,12 @@ export async function prepareCheck(
         allowedPaths: additionalPaths,
         protectedPaths: [AGENT_DIR],
         allowedProtectedFiles: settingsFiles,
-        profile,
+        profile: policyProfile,
       });
     } else {
       const command = input && typeof input === "object" ? (input as { command?: unknown }).command : undefined;
       if (typeof command !== "string") return { block: "Bash safety check requires a complete command string or process proposal" };
-      policy = analyzeCheckPolicy({ command, cwd, profile, allowedPaths: additionalPaths, protectedPaths: [AGENT_DIR], allowedProtectedFiles: settingsFiles });
+      policy = analyzeCheckPolicy({ command, cwd, profile: policyProfile, allowedPaths: additionalPaths, protectedPaths: [AGENT_DIR], allowedProtectedFiles: settingsFiles });
     }
     bash = policy.analysis;
     if (!bash.complete || bash.truncated || !bash.syntaxBalanced) {
@@ -301,7 +298,7 @@ export async function prepareCheck(
   const paths = mutation?.changedPaths ?? [];
   const processProposal = isProcessCheckProposal(input) ? input : undefined;
   const summary = processProposal
-    ? `${processProposal.operation} external trigger process: ${processProposal.executable}`
+    ? `${processProposal.operation} ${processProposal.source === "managed-shell" ? "managed shell" : "external trigger"} process: ${processProposal.executable}`
     : toolName === "bash"
       ? `Run ${bash!.stages.length} shell stage${bash!.stages.length === 1 ? "" : "s"}`
       : `Change ${paths.length} project file${paths.length === 1 ? "" : "s"} (+${mutation!.additions} −${mutation!.removals})`;
@@ -329,6 +326,7 @@ export async function prepareCheck(
       args: processProposal.args,
       cwd: processProposal.cwd,
       triggerName: processProposal.triggerName,
+      shellName: processProposal.shellName,
       analysis: bash,
     } : undefined,
     proposedMutation: mutation ? {
@@ -356,9 +354,6 @@ export async function prepareCheck(
   let serialized = JSON.stringify(request, null, 2);
   let prompt = `Proposed tool call (complete untrusted structured JSON):\n${serialized}`;
   if (prompt.length > MAX_STRUCTURED_INPUT_CHARS) {
-    if (profile !== "balanced") {
-      return { block: `Safety check input is too large (${prompt.length} characters; limit ${MAX_STRUCTURED_INPUT_CHARS}); complete input was not sent` };
-    }
     const compactRequest = {
       version: 2,
       complete: true,
@@ -416,97 +411,25 @@ export async function prepareCheck(
   }
 
   const prepared = { prompt, canonicalInput, bash, policy, mutation, summary, paths, preview };
-  if (profile === "balanced") {
-    if (toolName === "bash" && policy?.decision === "allow") {
-      return { prepared, balancedAllow: policy.reason };
-    }
-    if (mutation && balancedMutationAllowed(mutation)) {
-      return { prepared, balancedAllow: "balanced profile recognized a narrow project-local ordinary edit" };
-    }
-    if (mutation?.settingsFile) {
-      return { prepared, balancedAllow: "balanced profile recognized a deliberate PUM settings-file edit" };
-    }
+  if (toolName === "bash" && policy?.decision === "allow") {
+    return { prepared, balancedAllow: policy.reason };
+  }
+  if (mutation && balancedMutationAllowed(mutation)) {
+    return { prepared, balancedAllow: "recognized a narrow project-local ordinary edit" };
+  }
+  if (mutation?.settingsFile) {
+    return { prepared, balancedAllow: "recognized a deliberate PUM settings-file edit" };
   }
   return { prepared };
 }
 
-const SIMPLE_TOKEN = /^[A-Za-z0-9_./:@%+=,-]+$/;
-const STATUS_ARGS = new Set(["--short", "--porcelain", "--porcelain=v1", "--porcelain=v2", "--branch", "-s", "-b", "--untracked-files=no", "--untracked-files=normal", "--untracked-files=all", "-uno", "-unormal", "-uall"]);
-const DIFF_ARGS = new Set(["--check", "--stat", "--cached", "--staged", "--name-only", "--name-status", "--color=never"]);
-const LOG_ARGS = new Set(["--oneline", "--decorate", "--graph", "--all", "--color=never"]);
-const SHOW_ARGS = new Set(["--stat", "--oneline", "--name-only", "--name-status", "--color=never"]);
-const REV_PARSE_ARGS = new Set(["HEAD", "--show-toplevel", "--show-prefix", "--is-inside-work-tree", "--is-bare-repository", "--abbrev-ref"]);
-const LS_FILES_ARGS = new Set(["--cached", "--deleted", "--modified", "--others", "--ignored", "--stage"]);
-
-export function isBashCacheEligible(input: unknown): boolean {
-  if (!input || typeof input !== "object") return false;
-  const command = (input as { command?: unknown }).command;
-  if (typeof command !== "string" || command.trim() !== command || command.includes("\n")) return false;
-  const tokens = command.split(/\s+/);
-  if (tokens.some((token) => !SIMPLE_TOKEN.test(token)) || tokens[0] !== "git") return false;
-  const subcommand = tokens[1];
-  const args = tokens.slice(2);
-  if (subcommand === "status") return args.every((arg) => STATUS_ARGS.has(arg));
-  if (subcommand === "diff") return args.every((arg) => DIFF_ARGS.has(arg));
-  if (subcommand === "log") return args.every((arg, index) => LOG_ARGS.has(arg)
-    || /^--max-count=[1-9]\d*$/.test(arg)
-    || (args[index - 1] === "-n" && /^[1-9]\d*$/.test(arg))
-    || (arg === "-n" && /^[1-9]\d*$/.test(args[index + 1] ?? "")));
-  if (subcommand === "show") return args.every((arg) => SHOW_ARGS.has(arg) || /^[0-9a-fA-F]{4,64}$/.test(arg) || arg === "HEAD");
-  if (subcommand === "rev-parse") return args.length > 0 && args.every((arg) => REV_PARSE_ARGS.has(arg));
-  if (subcommand === "ls-files") return args.every((arg) => LS_FILES_ARGS.has(arg));
-  return false;
-}
-
-type CacheEntry = { model: string; cwd: string; input: string };
-type CacheFile = { version: 1; entries: CacheEntry[] };
-function isCacheEntry(value: unknown): value is CacheEntry {
-  if (!value || typeof value !== "object") return false;
-  const entry = value as Partial<CacheEntry>;
-  return typeof entry.model === "string" && typeof entry.cwd === "string" && typeof entry.input === "string";
-}
-
-export class BashSafetyCache {
-  private loaded = false;
-  private entries: CacheEntry[] = [];
-  constructor(private readonly path = CHECK_MODE_CACHE_PATH, private readonly limit = CHECK_MODE_CACHE_LIMIT) {}
-  has(model: string, cwd: string, input: unknown): boolean {
-    let serialized: string;
-    try { serialized = canonicalJson(input); } catch { return false; }
-    this.load();
-    const key = projectStorageKey(cwd);
-    return this.entries.some((entry) => entry.model === model && entry.cwd === key && entry.input === serialized);
-  }
-  add(model: string, cwd: string, input: unknown): void {
-    let serialized: string;
-    try { serialized = canonicalJson(input); } catch { return; }
-    this.load();
-    const entry = { model, cwd: projectStorageKey(cwd), input: serialized };
-    if (this.entries.some((candidate) => candidate.model === entry.model && candidate.cwd === entry.cwd && candidate.input === entry.input)) return;
-    const previous = this.entries;
-    this.entries = this.limit > 0 ? [...this.entries, entry].slice(-this.limit) : [];
-    if (!this.persist()) this.entries = previous;
-  }
-  private load(): void {
-    if (this.loaded) return;
-    this.loaded = true;
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, "utf8")) as Partial<CacheFile>;
-      if (parsed.version === 1 && Array.isArray(parsed.entries)) this.entries = parsed.entries.filter(isCacheEntry).slice(-this.limit);
-    } catch { this.entries = []; }
-  }
-  private persist(): boolean {
-    try {
-      mkdirSync(dirname(this.path), { recursive: true });
-      const temporary = `${this.path}.${process.pid}.tmp`;
-      writeFileSync(temporary, `${JSON.stringify({ version: 1, entries: this.entries } satisfies CacheFile, null, 2)}\n`, { mode: 0o600 });
-      renameSync(temporary, this.path);
-      return true;
-    } catch { return false; }
-  }
-}
-
 export type CheckerRuntime = Pick<ModelRuntime, "getAvailableSnapshot" | "completeSimple">;
+export type CheckRequestObservation = {
+  requester?: CheckApprovalIdentity;
+  model: string;
+  usage?: AssistantMessage["usage"];
+};
+export type CheckRequestObserver = (observation: CheckRequestObservation) => void;
 export type ToolCheck = {
   toolName: CheckedToolName;
   input: unknown;
@@ -519,7 +442,8 @@ export type ToolCheck = {
   requester?: CheckApprovalIdentity;
   /** Exact PUM settings files enabled by the owning scope. Empty for managed subagents. */
   settingsFiles?: readonly string[];
-  isApproved?: (prepared: PreparedCheck) => boolean;
+  /** Records each explicit verifier request without persisting its prompt. */
+  observeRequest?: CheckRequestObserver;
 };
 export type ProcessCheckCall = Omit<ToolCheck, "toolName" | "input" | "cwd"> & {
   proposal: ProcessCheckProposal;
@@ -529,7 +453,7 @@ export type ProcessCheckCall = Omit<ToolCheck, "toolName" | "input" | "cwd"> & {
 
 type ToolBlock = { block: true; reason: string };
 export type ToolEvaluation = {
-  decision: "allow" | "block" | "ask";
+  decision: "allow" | "block";
   reason: string;
   category: string;
   prepared?: PreparedCheck;
@@ -569,7 +493,7 @@ async function withHardTimeout<T>(operation: (signal: AbortSignal) => Promise<T>
 function normalizeConfig(config: ToolCheck["config"]): Required<CheckModeConfig> {
   return "profile" in config
     ? { ...config, additionalPaths: [...(config.additionalPaths ?? [])] }
-    : { profile: config.enabled ? "strict" : "off", model: config.model, additionalPaths: [] };
+    : { profile: config.enabled ? "on" : "off", model: config.model, additionalPaths: [] };
 }
 
 const NPM_BOOLEAN_RELEASE_FLAGS = new Set([
@@ -656,11 +580,10 @@ export function isRecognizedNpmPublishMutation(input: unknown, prepared: Prepare
     && npmTagValue(positionals[3]!);
 }
 
-export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafetyCache, call: ToolCheck): Promise<ToolEvaluation> {
+export async function evaluateToolCall(runtime: CheckerRuntime, call: ToolCheck): Promise<ToolEvaluation> {
   const config = normalizeConfig(call.config);
   if (config.profile === "off") return { decision: "allow", reason: "Check mode is off", category: "off" };
   if (call.signal?.aborted) return { decision: "block", reason: "Safety check aborted", category: "abort" };
-  const profile = config.profile as Exclude<CheckModeProfile, "off">;
   const settingsFiles = call.requester?.kind === "main"
     ? call.settingsFiles ?? settingsFilePaths()
     : [];
@@ -668,28 +591,19 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
     call.toolName,
     call.input,
     call.cwd,
-    profile,
     call.context,
     config.additionalPaths,
     settingsFiles,
   );
   if (!preparedResult.prepared) return { decision: "block", reason: preparedResult.block ?? "Safety preparation failed", category: "hard-block" };
   const prepared = preparedResult.prepared;
-  if (profile === "ask" && call.isApproved?.(prepared)) {
-    return { decision: "allow", reason: "Exact user approval", category: "approval", prepared };
-  }
   if (preparedResult.balancedAllow) return { decision: "allow", reason: preparedResult.balancedAllow, category: "balanced", prepared };
 
-  const cacheEligible = profile === "strict" && call.toolName === "bash" && isBashCacheEligible(call.input);
-  if (cacheEligible && cache.has(config.model, call.cwd, call.input)) {
-    return { decision: "allow", reason: "Exact cached verifier approval", category: "cache", prepared };
-  }
   const model = runtime.getAvailableSnapshot().find((candidate) => modelRef(candidate) === config.model);
   if (!model) {
-    const reason = `Check model is unavailable: ${config.model}`;
     return {
-      decision: profile === "ask" ? "ask" : profile === "balanced" ? "allow" : "block",
-      reason: profile === "balanced" ? `${reason}. Balanced mode completed deterministic validation` : reason,
+      decision: "allow",
+      reason: `Check model is unavailable: ${config.model}. Check mode completed deterministic validation`,
       category: "model",
       prepared,
     };
@@ -700,20 +614,28 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
     const deadline = Date.now() + timeoutMs;
     const verdict = await withHardTimeout(async (signal) => {
       const request = async (prompt: string) => {
-        const result = await runtime.completeSimple(model, {
-          systemPrompt: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-        }, {
-          signal,
-          temperature: 0,
-          maxTokens: 180,
-          timeoutMs: Math.max(1, deadline - Date.now()),
-          maxRetries: 0,
-        });
-        if (signal.aborted) throw signal.reason;
-        if (result.stopReason === "error") throw new Error(result.errorMessage ?? "verifier request error");
-        if (result.stopReason === "aborted") throw new SafetyCheckAbortError(result.errorMessage ?? "Safety check aborted");
-        return { result, verdict: safetyDecision(responseText(result)) };
+        let observed = false;
+        try {
+          const result = await runtime.completeSimple(model, {
+            systemPrompt: SYSTEM_PROMPT,
+            messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+          }, {
+            signal,
+            temperature: 0,
+            maxTokens: 180,
+            timeoutMs: Math.max(1, deadline - Date.now()),
+            maxRetries: 0,
+          });
+          call.observeRequest?.({ requester: call.requester, model: config.model, usage: result.usage });
+          observed = true;
+          if (signal.aborted) throw signal.reason;
+          if (result.stopReason === "error") throw new Error(result.errorMessage ?? "verifier request error");
+          if (result.stopReason === "aborted") throw new SafetyCheckAbortError(result.errorMessage ?? "Safety check aborted");
+          return { result, verdict: safetyDecision(responseText(result)) };
+        } catch (error) {
+          if (!observed) call.observeRequest?.({ requester: call.requester, model: config.model });
+          throw error;
+        }
       };
       const first = await request(prepared.prompt);
       if (first.verdict.decision !== "unclear") return first.verdict;
@@ -725,28 +647,29 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
     }, call.signal, timeoutMs);
 
     if (verdict.decision === "unsafe") {
-      const mainPublishMutationException = profile === "ask"
-        && call.requester?.kind === "main"
+      // The narrow, deterministically recognized main-agent npm release
+      // mutation is allowed even on an UNSAFE verdict (user-approved policy).
+      const mainPublishMutationException = call.requester?.kind === "main"
         && call.toolName === "bash"
         && isRecognizedNpmPublishMutation(call.input, prepared);
       return {
-        decision: mainPublishMutationException ? "ask" : "block",
-        reason: `Verifier UNSAFE [${verdict.category}]: ${verdict.reason}`,
+        decision: mainPublishMutationException ? "allow" : "block",
+        reason: mainPublishMutationException
+          ? `Recognized main-agent npm release mutation allowed despite verifier UNSAFE [${verdict.category}]: ${verdict.reason}`
+          : `Verifier UNSAFE [${verdict.category}]: ${verdict.reason}`,
         category: verdict.category,
         prepared,
         explicitUnsafe: true,
       };
     }
     if (verdict.decision === "unclear") return {
-      decision: profile === "ask" ? "ask" : profile === "balanced" ? "allow" : "block",
-      reason: `Verifier remained unclear [${verdict.category}]: ${verdict.reason}${profile === "balanced" ? ". Balanced mode completed deterministic validation" : ""}`,
+      decision: "allow",
+      reason: `Verifier remained unclear [${verdict.category}]: ${verdict.reason}. Check mode completed deterministic validation`,
       category: verdict.category, prepared,
     };
-    if (cacheEligible) cache.add(config.model, call.cwd, call.input);
-    const reason = `Verifier SAFE [${verdict.category}]: ${verdict.reason}`;
     return {
-      decision: profile === "ask" ? "ask" : "allow",
-      reason: profile === "ask" ? `${reason}. Ask mode requires explicit user approval` : reason,
+      decision: "allow",
+      reason: `Verifier SAFE [${verdict.category}]: ${verdict.reason}`,
       category: verdict.category,
       prepared,
     };
@@ -758,8 +681,8 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
       ? `Safety check timeout: ${error.message}`
       : `Safety check transport failure: ${error instanceof Error ? error.message : String(error)}`;
     return {
-      decision: profile === "ask" ? "ask" : profile === "balanced" ? "allow" : "block",
-      reason: profile === "balanced" ? `${reason}. Balanced mode completed deterministic validation` : reason,
+      decision: "allow",
+      reason: `${reason}. Check mode completed deterministic validation`,
       category: "verifier-error",
       prepared,
     };
@@ -769,10 +692,9 @@ export async function evaluateToolCall(runtime: CheckerRuntime, cache: BashSafet
 /** Evaluate an external-trigger process while preserving executable and argument boundaries. */
 export function evaluateProcessCheck(
   runtime: CheckerRuntime,
-  cache: BashSafetyCache,
   call: ProcessCheckCall,
 ): Promise<ToolEvaluation> {
-  return evaluateToolCall(runtime, cache, {
+  return evaluateToolCall(runtime, {
     ...call,
     toolName: "bash",
     input: call.proposal,
@@ -784,98 +706,42 @@ export type ExternalTriggerSafetyRequester =
   | { kind: "main"; sessionId: string; cwd: string }
   | { kind: "subagent"; sessionId: string; agentId: string; cwd: string };
 
-export type ExternalTriggerSafetyOptions = {
-  coordinator?: CheckApprovalCoordinator;
-  approvals?: CheckApprovalStore;
-  cache?: BashSafetyCache;
-};
-
 export type ExternalTriggerSafetyChecker = (
   proposal: ProcessCheckProposal,
   requester: ExternalTriggerSafetyRequester,
   signal?: AbortSignal,
 ) => Promise<void>;
 
-function externalTriggerSessionApprovalKey(
-  requester: ExternalTriggerSafetyRequester,
-  model: string,
-  prepared: PreparedCheck,
-): string {
-  const identity: CheckApprovalIdentity = requester.kind === "subagent"
-    ? { kind: "subagent", agentId: requester.agentId }
-    : { kind: "main" };
-  return `${requester.sessionId}\n${exactApprovalKey(
-    identity,
-    "bash",
-    model,
-    requester.cwd,
-    prepared.canonicalInput,
-  )}`;
-}
+export type ManagedShellSafetyChecker = ExternalTriggerSafetyChecker;
 
 /** Create the process safety callback used by TriggerManager. */
 export function createExternalTriggerSafetyChecker(
   runtime: CheckerRuntime,
-  options: ExternalTriggerSafetyOptions = {},
+  observeRequest?: CheckRequestObserver,
 ): ExternalTriggerSafetyChecker {
-  const cache = options.cache ?? new BashSafetyCache();
-  const approvals = options.approvals ?? new CheckApprovalStore();
-  const sessionApprovals = new Set<string>();
-
   return async (proposal, requester, signal) => {
     const config = getCheckModeConfig();
     const identity: CheckApprovalIdentity = requester.kind === "subagent"
       ? { kind: "subagent", agentId: requester.agentId }
       : { kind: "main" };
-    const evaluation = await evaluateProcessCheck(runtime, cache, {
+    const evaluation = await evaluateProcessCheck(runtime, {
       proposal,
       projectCwd: requester.cwd,
       config,
       signal,
       requester: identity,
-      isApproved: (prepared) => sessionApprovals.has(
-        externalTriggerSessionApprovalKey(requester, config.model, prepared),
-      ) || approvals.has(identity, "bash", config.model, requester.cwd, prepared.canonicalInput),
+      observeRequest,
     });
     if (evaluation.decision === "allow") return;
-
-    if (evaluation.decision === "ask"
-      && config.profile === "ask"
-      && evaluation.prepared) {
-      const prepared = evaluation.prepared;
-      const choice = await options.coordinator?.request({
-        target: {
-          sessionId: requester.sessionId,
-          ...(requester.kind === "subagent" ? { agentId: requester.agentId } : {}),
-        },
-        toolName: "bash",
-        model: config.model,
-        cwd: requester.cwd,
-        canonicalInput: prepared.canonicalInput,
-        summary: prepared.summary,
-        reason: evaluation.reason,
-        paths: prepared.paths,
-        preview: redactApprovalPreview(prepared.preview),
-        taskContext: proposal.triggerName,
-      }, signal) ?? "deny";
-      if (choice === "allow-once") return;
-      if (choice === "allow-session") {
-        sessionApprovals.add(externalTriggerSessionApprovalKey(requester, config.model, prepared));
-        return;
-      }
-      if (choice === "allow-project"
-        && approvals.add(identity, "bash", config.model, requester.cwd, prepared.canonicalInput)) return;
-      evaluation.reason = choice === "allow-project"
-        ? "Check mode could not persist the exact project approval"
-        : "Check mode approval was denied or cancelled";
-    }
-
     throw new Error(redactApprovalPreview(evaluation.reason));
   };
 }
 
-export async function verifyToolCall(runtime: CheckerRuntime, cache: BashSafetyCache, call: ToolCheck): Promise<ToolBlock | undefined> {
-  const evaluation = await evaluateToolCall(runtime, cache, call);
+/** Create the structured process safety callback used by ShellManager. */
+export const createManagedShellSafetyChecker = createExternalTriggerSafetyChecker;
+
+export async function verifyToolCall(runtime: CheckerRuntime, call: ToolCheck): Promise<ToolBlock | undefined> {
+  const evaluation = await evaluateToolCall(runtime, call);
   return evaluation.decision === "allow" ? undefined : { block: true, reason: evaluation.reason };
 }
 
@@ -905,23 +771,19 @@ export function redactApprovalPreview(text: string): string {
 }
 
 type CheckExtensionOptions = {
-  coordinator?: CheckApprovalCoordinator;
-  approvals?: CheckApprovalStore;
   identity?: CheckApprovalIdentity;
+  observeRequest?: CheckRequestObserver;
 };
 
 export function createCheckModeExtension(
   runtime: CheckerRuntime,
-  cache = new BashSafetyCache(),
   options: CheckExtensionOptions = {},
 ): InlineExtension {
-  const approvals = options.approvals ?? new CheckApprovalStore();
   const identity = options.identity ?? { kind: "main" };
   return {
     name: "pum-check-mode",
     factory(pi) {
       const rejected = new Map<string, string>();
-      const sessionApprovals = new Set<string>();
       let currentUserRequest: string | undefined;
 
       pi.on("before_agent_start", (event) => {
@@ -938,13 +800,14 @@ export function createCheckModeExtension(
       pi.on("tool_call", async (event, ctx) => {
         if (current.profile === "off" || !["bash", "edit", "apply_patch"].includes(event.toolName)) return;
         const toolName = event.toolName as CheckedToolName;
-        const evaluation = await evaluateToolCall(runtime, cache, {
+        const evaluation = await evaluateToolCall(runtime, {
           toolName,
           input: event.input,
           cwd: ctx.cwd,
           signal: ctx.signal,
           config: current,
           requester: identity,
+          observeRequest: options.observeRequest,
           context: {
             currentUserRequest,
             agentRationale: event.input && typeof event.input === "object" && typeof (event.input as any).rationale === "string"
@@ -952,40 +815,8 @@ export function createCheckModeExtension(
               : undefined,
             inspectedPaths: inspectedPaths(ctx.sessionManager?.buildContextEntries?.() ?? []),
           },
-          isApproved: (prepared) => {
-            const exactKey = exactApprovalKey(identity, toolName, current.model, ctx.cwd, prepared.canonicalInput);
-            return sessionApprovals.has(exactKey)
-              || approvals.has(identity, toolName, current.model, ctx.cwd, prepared.canonicalInput);
-          },
         });
         if (evaluation.decision === "allow") return;
-
-        if (evaluation.decision === "ask" && current.profile === "ask" && evaluation.prepared) {
-          const exactKey = exactApprovalKey(identity, toolName, current.model, ctx.cwd, evaluation.prepared.canonicalInput);
-          const sessionId = ctx.sessionManager?.getSessionId?.();
-          const choice = await options.coordinator?.request({
-            target: typeof sessionId === "string" ? { sessionId } : undefined,
-            toolName,
-            model: current.model,
-            cwd: ctx.cwd,
-            canonicalInput: evaluation.prepared.canonicalInput,
-            summary: evaluation.prepared.summary,
-            reason: evaluation.reason,
-            paths: evaluation.prepared.paths,
-            preview: redactApprovalPreview(evaluation.prepared.preview),
-            taskContext: currentUserRequest,
-          }, ctx.signal) ?? "deny";
-          if (choice === "allow-once") return;
-          if (choice === "allow-session") {
-            sessionApprovals.add(exactKey);
-            return;
-          }
-          if (choice === "allow-project"
-            && approvals.add(identity, toolName, current.model, ctx.cwd, evaluation.prepared.canonicalInput)) return;
-          evaluation.reason = choice === "allow-project"
-            ? "Check mode could not persist the exact project approval"
-            : "Check mode approval was denied or cancelled";
-        }
 
         const visibleReason = redactApprovalPreview(evaluation.reason);
         rejected.set(event.toolCallId, visibleReason);

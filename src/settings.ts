@@ -9,18 +9,32 @@ import {
   type ExplanationStrength,
 } from "./explanation-strength";
 import type { SandboxMode } from "./sandbox/types";
+import { DEFAULT_BASH_OUTPUT, normalizeBashOutput, type BashOutputSettings } from "./bash-output";
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
-export const CHECK_MODE_PROFILES = ["off", "strict", "balanced", "ask"] as const;
+export const OUTPUT_MODES = ["minimal", "default", "detailed"] as const;
+export type OutputMode = (typeof OUTPUT_MODES)[number];
+export const CHECK_MODE_PROFILES = ["off", "on"] as const;
 export type CheckModeProfile = (typeof CHECK_MODE_PROFILES)[number];
+
+/**
+ * Map any stored checkMode value to the current on/off model.
+ *
+ * Check mode was slimmed from four profiles to a single toggle. "on" runs the
+ * former balanced behavior. Legacy strict, balanced, and ask values, and the
+ * legacy boolean true, all migrate to "on". off and false migrate to "off".
+ */
+export function migrateCheckMode(value: unknown): CheckModeProfile {
+  if (value === "off" || value === false) return "off";
+  if (value === "on" || value === true
+    || value === "strict" || value === "balanced" || value === "ask") return "on";
+  return "off";
+}
 export const SANDBOX_MODES = ["auto", "require", "off"] as const;
 export const MIN_ACTIVE_SUBAGENTS = 1;
 export const MAX_ACTIVE_SUBAGENTS = 25;
 export const DEFAULT_MAX_ACTIVE_SUBAGENTS = 10;
-export const MIN_TOOL_OUTPUT_LINES = 1;
-export const MAX_TOOL_OUTPUT_LINES = 50;
-export const DEFAULT_TOOL_OUTPUT_LINES = 5;
 export const MAX_CHECK_PATHS_PER_PROJECT = 16;
 
 export type CheckPathsByProject = Record<string, string[]>;
@@ -64,15 +78,6 @@ export function normalizeMaxActiveSubagents(value: unknown): number {
     : DEFAULT_MAX_ACTIVE_SUBAGENTS;
 }
 
-export function normalizeToolOutputLines(value: unknown): number {
-  return typeof value === "number"
-    && Number.isInteger(value)
-    && value >= MIN_TOOL_OUTPUT_LINES
-    && value <= MAX_TOOL_OUTPUT_LINES
-    ? value
-    : DEFAULT_TOOL_OUTPUT_LINES;
-}
-
 export function isCheckModeProfile(value: unknown): value is CheckModeProfile {
   return CHECK_MODE_PROFILES.includes(value as CheckModeProfile);
 }
@@ -83,6 +88,20 @@ export function isSandboxMode(value: unknown): value is SandboxMode {
 
 export function isWorkingRuleAnimationMode(value: unknown): value is WorkingRuleAnimationMode {
   return WORKING_RULE_ANIMATION_MODES.includes(value as WorkingRuleAnimationMode);
+}
+
+export function isOutputMode(value: unknown): value is OutputMode {
+  return OUTPUT_MODES.includes(value as OutputMode);
+}
+
+export function normalizeOutputMode(value: unknown): OutputMode {
+  return isOutputMode(value) ? value : "default";
+}
+
+export function cycleOutputMode(value: unknown, step: number): OutputMode {
+  const current = normalizeOutputMode(value);
+  const index = OUTPUT_MODES.indexOf(current);
+  return OUTPUT_MODES[(index + step % OUTPUT_MODES.length + OUTPUT_MODES.length) % OUTPUT_MODES.length]!;
 }
 
 /**
@@ -96,6 +115,8 @@ export type PumSettings = {
   animations: boolean;
   /** Animation used for the rules while an agent works. */
   workingRuleAnimation: WorkingRuleAnimationMode;
+  /** Transcript tool-output detail. Legacy settings omit this field and migrate to default. */
+  outputMode?: OutputMode;
   webSearch: boolean;
   writingStyle: WritingStyle;
   explanationStrength: ExplanationStrength;
@@ -106,8 +127,8 @@ export type PumSettings = {
   /** Additional canonical directory roots allowed by the filesystem sandbox and Check mode, keyed by launch project. */
   checkPaths?: CheckPathsByProject;
   maxActiveSubagents: number;
-  /** Tool-result source lines shown when detailed explanations are enabled. Legacy settings omit this field. */
-  toolOutputLines?: number;
+  /** Bash output summarization policy (context-length control). */
+  bashOutput?: BashOutputSettings;
 };
 
 const SETTINGS_PATH = join(AGENT_DIR, "pum.json");
@@ -117,6 +138,7 @@ const DEFAULTS: PumSettings = {
   animations: true,
   // Preserve the rule-only behavior used before this setting existed.
   workingRuleAnimation: "input-only",
+  outputMode: "default",
   webSearch: true,
   writingStyle: "none",
   explanationStrength: "simple",
@@ -125,7 +147,7 @@ const DEFAULTS: PumSettings = {
   sandboxMode: "auto",
   checkPaths: {},
   maxActiveSubagents: DEFAULT_MAX_ACTIVE_SUBAGENTS,
-  toolOutputLines: DEFAULT_TOOL_OUTPUT_LINES,
+  bashOutput: { ...DEFAULT_BASH_OUTPUT },
 };
 
 export function normalizeSettings(parsed: unknown): PumSettings {
@@ -137,17 +159,12 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     workingRuleAnimation: isWorkingRuleAnimationMode(merged.workingRuleAnimation)
       ? merged.workingRuleAnimation
       : DEFAULTS.workingRuleAnimation,
+    outputMode: normalizeOutputMode(merged.outputMode),
     writingStyle: isWritingStyle(merged.writingStyle) ? merged.writingStyle : DEFAULTS.writingStyle,
     explanationStrength: isExplanationStrength(merged.explanationStrength)
       ? merged.explanationStrength
       : DEFAULTS.explanationStrength,
-    checkMode: isCheckModeProfile(merged.checkMode)
-      ? merged.checkMode
-      : merged.checkMode === true
-        ? "strict"
-        : merged.checkMode === false
-          ? "off"
-          : DEFAULTS.checkMode,
+    checkMode: migrateCheckMode(merged.checkMode),
     checkModel:
       typeof merged.checkModel === "string" && merged.checkModel.includes("/")
         ? merged.checkModel
@@ -155,7 +172,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     sandboxMode: isSandboxMode(merged.sandboxMode) ? merged.sandboxMode : DEFAULTS.sandboxMode,
     checkPaths: normalizeCheckPathsByProject(merged.checkPaths),
     maxActiveSubagents: normalizeMaxActiveSubagents(merged.maxActiveSubagents),
-    toolOutputLines: normalizeToolOutputLines(merged.toolOutputLines),
+    bashOutput: normalizeBashOutput(merged.bashOutput),
   };
 }
 

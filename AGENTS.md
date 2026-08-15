@@ -18,6 +18,7 @@ bun run start    # open the TUI in the current directory
 | `src/outer-sandbox-launch.ts` | PUM child command, runtime/state mounts, and outer child context |
 | `src/outer-sandbox-process.ts` | Protocol probe and shell-free claudebox process execution |
 | `src/main.tsx` | Boot: config dir, login hand-off, credential check, session, render |
+| `src/headless.ts` | Non-interactive `-p` one-shot: core coding tools, Check mode, no UI surfaces |
 | `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
 | `src/theme.ts` | Semantic colour tokens, nine presets, `theme.json` merge |
 | `src/popup-frame.tsx` | Shared responsive popup frame and semantic drop shadow |
@@ -54,13 +55,13 @@ bun run start    # open the TUI in the current directory
 | `src/login-flow.ts` | Provider registry, custom discovery, redaction, and atomic config writes |
 | `src/browser-launch.ts` | Validated direct-argv OAuth browser launch with visible fallback |
 | `src/settings.ts` | PUM's own `pum.json` |
-| `src/check-mode.ts` | Safety profiles for commands, mutations, and trigger processes |
+| `src/check-mode.ts` | On/off Check mode for commands, mutations, and trigger processes |
 | `src/check-paths.ts` | Project-scoped additional Check mode root validation and commands |
 | `src/filesystem-sandbox.ts` | Process-local path boundary for file tools |
 | `src/check-policy.ts` | Deterministic shell and structured-process hard rules |
 | `src/check-mutation.ts` | Pre-execution edit and patch diff proposals |
-| `src/check-approvals.ts` | Exact once, session, and project approval state |
-| `src/check-approval-popup.tsx` | Responsive Ask-mode approval popup |
+| `src/check-approvals.ts` | Check mode identity model and canonical-input serializer |
+| `src/bash-output.ts` | Bash output summarization: bounded head+tail view, filters, `patterns`/`full_output` args |
 | `src/sandbox/types.ts` | Shared native sandbox capability, policy, and process contracts |
 | `src/sandbox-policy.ts` | Canonical policy derivation, environment filtering, and fallback decisions |
 | `src/sandbox/index.ts` | pi Bash override, backend selection, probing, and enforcement controller |
@@ -70,6 +71,7 @@ bun run start    # open the TUI in the current directory
 | `src/triggers/tools.ts` | Main/child trigger model tools and target authorization |
 | `src/triggers/popup.tsx` | Responsive Ctrl+T trigger management popup |
 | `src/writing-style.ts` | Configurable per-turn system-prompt writing guidance |
+| `src/identity.ts` | PUM identity in the system prompt and pi-docs section removal, with no-op guards |
 | `src/platform.ts` | Cross-platform path identities, containment, config paths, and signals |
 | `src/terminal-title.ts` | Pure title formatting and best-effort deduplicated terminal updates |
 | `src/config.ts` | Where the config dir lives |
@@ -104,7 +106,8 @@ bun run start    # open the TUI in the current directory
 These were chosen deliberately. Change them only on purpose.
 
 - **Bun** as the runtime. OpenTUI's renderer needs it.
-- **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for direct TUI startup. Unknown options and commands exit with code 2. Startup accepts `login`, `-r`, and `--resume`. `pum s` and `pum sr` launch the TUI through the outer sandbox. `pum ss` probes the runtime without starting the TUI.
+- **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for direct TUI startup (or `src/headless.ts` for `-p`). Unknown options and commands exit with code 2. Startup accepts `login`, `-r`/`--resume`, and `-p`/`--prompt <text>`. `pum s` and `pum sr` launch the TUI through the outer sandbox. `pum ss` probes the runtime without starting the TUI.
+- **`-p` is headless.** `pum -p "<text>"` runs one prompt in `src/headless.ts` with only read, write, edit, apply_patch, and bash. It keeps the configured Check mode (on/off), sandbox, writing style, and explanation strength. Interactive tools (questionnaire, enable_tools, subagents, triggers, message cache) are not registered. The session persists to the normal per-directory store, so `-r` and the TUI can continue it. Headless mode does not combine with `pum s` or `pum sr` in the current launcher protocol.
 - **`@earendil-works/pi-coding-agent`**, not `pi-ai` on its own. It brings the
   agent loop, session files, and the `read`/`write`/`edit`/`bash` tools. Using
   `pi-ai` alone would mean writing all of that here.
@@ -122,11 +125,11 @@ These were chosen deliberately. Change them only on purpose.
   TUI startup. Linux is native. Windows support means running Linux PUM inside
   WSL 2. The launcher hides home, then mounts the project, explicit roots, PUM
   runtime paths, and PUM's config directory. `pum sr` rejects a custom PUM_DIR
-  inside the read-only project. The child forces Strict Check mode,
-  disables nested Bubblewrap, and keeps launch roots as process-local Check and
-  file-tool roots without overwriting saved user settings. This MVP places PUM
-  credentials inside gVisor. Strict Check mode is a policy boundary, not a
-  second OS credential boundary. A future host broker can remove that exposure.
+  inside the read-only project. The child forces Check mode on, disables nested
+  Bubblewrap, and keeps launch roots as process-local Check and file-tool roots
+  without overwriting saved user settings. This MVP places PUM credentials
+  inside gVisor. Check mode is a policy boundary, not a second OS credential
+  boundary. A future host broker can remove that exposure.
 - **Login runs inside PUM.** Startup without an available provider opens the
   login popup. `/login` opens the same popup. The provider list comes from
   `ModelRuntime.getProviders()` and must not be replaced with a local allowlist.
@@ -148,15 +151,19 @@ These were chosen deliberately. Change them only on purpose.
   endpoint and probes only the OpenAI-compatible `/models` route. PUM does not
   infer a different API shape from a failed probe. Config writes use a temporary
   file and atomic rename.
-- **Coding tools follow the active Check mode profile.** Off mode runs without
-  approval. Strict and balanced apply their verifier policies. Ask mode presents
-  every checked call that passes hard rules for exact approval, unless an exact
-  prior approval matches. Verifier `SAFE`, unclear, error, and unavailable
-  results still require the popup. Hard blocks never open the popup. Explicit
-  `UNSAFE` decisions block without the popup, except for narrowly recognized
-  direct npm publish mutations from the authoritative main agent. The exception
-  does not depend on the verifier category. It still requires popup approval.
-  Managed subagents cannot use the exception.
+- **Check mode is a single on/off toggle.** Off runs bash, edit, and apply_patch
+  without approval. On applies the deterministic policy plus verifier review
+  (the behavior formerly called "balanced"): complete project-local calls,
+  explicit external reads, and project-local edits are allowed; hard rules block.
+  The verifier is advisory on top of complete deterministic validation, so an
+  unavailable model, an unclear verdict, a timeout, or a transport error does not
+  block a fully validated call. There is no approval popup and no exact-approval
+  store; the former `strict` and `ask` profiles and their machinery were removed.
+  An explicit verifier `UNSAFE` blocks, except a deterministically recognized
+  direct `npm publish` or `npm dist-tag add ... latest` from the authoritative
+  main agent, which is allowed outright. The exception does not depend on the
+  verifier category. Managed subagents cannot use the exception. Legacy settings
+  values `strict`, `balanced`, and `ask` migrate to `on`; `off` stays `off`.
 - **Active Check modes can enforce a native Bash sandbox.** PUM overrides pi's
   built-in `bash` with `createBashTool` and custom `BashOperations` in
   main and managed child sessions. Check mode Off and Sandbox Off use pi's local
@@ -165,7 +172,7 @@ These were chosen deliberately. Change them only on purpose.
   process-local warning outside session context. Require blocks Bash without an
   enforced backend. Policy is recomputed from the exact approved command and
   authoritative cwd/config. Project and additional roots are writable; explicit
-  Balanced external reads are read-only; PUM config, credentials, unsafe
+  on-mode external reads are read-only; PUM config, credentials, unsafe
   environment variables, and network-by-default are denied. Recognized network
   operations receive the host network, which is not domain-filtered. Linux uses
   direct `bwrap` argv, a private temp mount, `--die-with-parent`, a new session,
@@ -182,9 +189,9 @@ These were chosen deliberately. Change them only on purpose.
   boundary, and PUM's configuration boundary. Bash, edit, and external-trigger
   checks use the extra roots. Windows containment compares canonical identities,
   so short and long path spellings cannot disagree about authorization.
-  `apply_patch` remains project-local. Balanced Bash and process checks can read
-  explicit external filesystem operands without adding a root. Strict and Ask
-  keep the approved-root boundary. Every active profile still blocks external
+  `apply_patch` remains project-local. On-mode Bash and process checks can read
+  explicit external filesystem operands without adding a root. On-mode still
+  blocks external
   location changes, writes, execution operands, ambiguous access, credential
   access, escaping links or junctions, broad deletion, and other hard rules.
 - **The main agent can deliberately edit exact PUM settings files.** The
@@ -209,6 +216,16 @@ These were chosen deliberately. Change them only on purpose.
   commit. Credential-sensitive paths and symbolic-link or junction components
   are blocked. This is a process-local path guard, not operating-system
   isolation for bash, scripts, extensions, or trigger processes.
+- **Bash output is summarized to a bounded head+tail view.** `src/bash-output.ts`
+  wraps pi's bash tool in main and managed child sessions. The default keeps
+  first 30 / last 40 lines within 3KB, strips ANSI, drops progress-only lines,
+  compresses repeated and similar runs, and re-injects FAIL/error/warning lines
+  from the elided middle. PUM tees the exact stream to its own trusted private
+  temp file before execution; the marker points at it whenever output is changed
+  or elided. Never parse a file path from command output. The tool schema
+  gains `full_output` (return pi's native output), `strategy`, `max_bytes`, and
+  `patterns` (regexes whose matching lines survive elision). The `bashOutput`
+  setting in `pum.json` tunes or disables it. See `research/bash-output/`.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
 - **`apply_patch` is an atomic project-local mutation tool.** It parses and
   validates the complete Codex patch before writes. It rejects traversal,
@@ -436,34 +453,32 @@ These were chosen deliberately. Change them only on purpose.
   enabled for npm provenance. The token must be granular, limited to
   `pum-agent`, read/write, expiring, and configured with Bypass 2FA. Never
   print, persist, or expose the token.
-- **Check mode has explicit profiles and deterministic hard blocks.** `strict`
-  keeps fail-closed verifier behavior. `balanced` blocks only hard-rule,
-  explicitly suspicious, clearly dangerous, obfuscated, malformed, or
-  incompletely analyzed calls. Balanced permits ordinary complete project-local
-  calls. Balanced also permits explicit, deterministically classified external
-  reads. The policy classifies operands as read, write, execute, location, or
-  unknown. External writes, execution operands, location changes, and unknown
-  access remain hard blocks. Direct external-read uploads also remain hard
-  blocks. Balanced verifier review is non-blocking after complete deterministic
-  validation unless the verifier returns explicit `UNSAFE`. `ask` presents every
-  checked call that passes hard rules to the user, unless an exact prior approval
-  matches. A verifier `SAFE` result does not bypass the popup in Ask mode. Every
-  active profile blocks escaping links or junctions, credential access,
-  privilege escalation, persistence, remote-script execution, dangerous
-  destructive Git, and broad deletion. Hard blocks never open the popup and
-  cannot be overridden. Explicit verifier `UNSAFE` results also block without
-  the popup. The only exception is a narrow deterministic match for direct
-  `npm publish` or `npm dist-tag add` from the authoritative main agent. The
-  verifier category does not control the match. The exception still requires
-  explicit popup approval. Managed subagents remain blocked.
-- **Balanced npm pack is narrow and deterministic.** PUM accepts only one direct
+- **Check mode on has deterministic hard blocks and advisory verifier review.**
+  On blocks only hard-rule, explicitly suspicious, clearly dangerous, obfuscated,
+  malformed, or incompletely analyzed calls. On permits ordinary complete
+  project-local calls. On also permits explicit, deterministically classified
+  external reads. The policy classifies operands as read, write, execute,
+  location, or unknown. External writes, execution operands, location changes,
+  and unknown access remain hard blocks. Direct external-read uploads also remain
+  hard blocks. Verifier review is non-blocking after complete deterministic
+  validation, so an `UNSAFE` verdict blocks but an unclear verdict, an
+  unavailable model, a timeout, or a transport error does not. On blocks escaping
+  links or junctions, credential access, privilege escalation, persistence,
+  remote-script execution, dangerous destructive Git, and broad deletion. Hard
+  blocks cannot be overridden. The only `UNSAFE` exception is a narrow
+  deterministic match for direct `npm publish` or `npm dist-tag add` from the
+  authoritative main agent, which is allowed outright without any popup. The
+  verifier category does not control the match. Managed subagents remain blocked.
+  There is no fail-closed profile: on is the former balanced behavior, so the
+  deterministic layer is the real gate and the verifier only tightens it.
+- **On-mode npm pack is narrow and deterministic.** PUM accepts only one direct
   `npm pack` command with lifecycle scripts disabled and an explicit cache path.
   A package operand must be one exact registry package version. Cache and pack
   destinations must resolve inside the project or an approved additional root.
   File, Git, URL, tag, range, ambiguous, credential, external-write, composed,
   and global-install forms remain blocked. This rule does not change the
-  main-agent approval exception for `npm publish` or `npm dist-tag add`.
-- **Balanced release installation is narrow and deterministic.** PUM accepts
+  main-agent allow exception for `npm publish` or `npm dist-tag add`.
+- **On-mode release installation is narrow and deterministic.** PUM accepts
   only one direct `npm install` of one exact registry package version. The
   command must include `--ignore-scripts`, an explicit `--prefix`, and an
   explicit `--cache`. Both paths must resolve inside the project or an approved
@@ -477,21 +492,12 @@ These were chosen deliberately. Change them only on purpose.
   requests include the proposed unified diff, changed paths, line counts,
   sensitivity flags, project containment, complete-content findings, and a
   SHA-256 digest. Invalid, stale, malformed, or incompletely analyzed requests
-  block without mutation. Length alone does not block a fully validated Balanced
-  call. When a Balanced verifier prompt exceeds its bound, PUM sends complete
+  block without mutation. Length alone does not block a fully validated on-mode
+  call. When an on-mode verifier prompt exceeds its bound, PUM sends complete
   validation metadata and digests. PUM never silently substitutes a truncated
-  raw prefix or suffix. Strict and Ask remain fail-closed for oversized verifier
-  input. The verifier returns decision, category, confidence, and reason. Clear
-  legacy `SAFE` and `UNSAFE` replies remain compatible. One unclear reply can
-  receive one bounded adjudication under the shared 15-second watchdog.
-- **Ask approvals stay exact.** Ask mode can allow one exact call, one exact
-  call for the session, or one canonical exact call for the project. Project
-  approvals stay outside LLM context and bind to authoritative main or child
-  identity, tool, verifier model, cwd, and canonical complete input. Main and
-  child identity comes from session construction, not model input or chat text.
-  The store is capped. Settings can clear approvals for the current project.
-  PUM never stores hard-blocked operations as approvals. PUM stores an explicit
-  `UNSAFE` approval only for the recognized main-agent npm publish exception.
+  raw prefix or suffix. The verifier returns decision, category, confidence, and
+  reason. Clear legacy `SAFE` and `UNSAFE` replies remain compatible. One unclear
+  reply can receive one bounded adjudication under the shared 15-second watchdog.
 - **Checked tools stay out of parallel mixed batches.** pi prepares every tool
   in a parallel assistant batch before it executes any tool. A waiting `bash`,
   `edit`, `apply_patch`, or external-trigger process check would make unrelated
@@ -524,26 +530,25 @@ These were chosen deliberately. Change them only on purpose.
 - **External-trigger checks preserve argv boundaries.** Check mode evaluates
   `{executable, args, cwd}` as structured process data. It never flattens the
   proposal into shell text. Shell and interpreter entrypoints require embedded
-  command analysis or verifier review. Ask approvals bind to the exact target,
-  model, project, and canonical process input.
-- **The check cache is narrow and exact.** `check-mode-cache.json` stores at
-  most 256 explicit `SAFE` decisions for simple, read-only Git inspection
-  commands in strict mode. A hit matches the verifier model, cwd, and canonical
-  complete `bash` input. Mutation calls never enter this cache. Project scripts,
-  shell composition, output-writing options, and helper options never enter the
-  cache. Cache errors degrade to misses and never replace a decision.
-
-- **News answers persist the user prompt and steers that produced them.** The
-  news companion file stores `prompts` (`text` plus a `steer` flag) with each
-  answer; the popup renders them above the answer with the transcript's
-  user-row style. An answer is marked read only when a new user prompt follows
-  it directly in the transcript. Any interleaved line (agent message, trigger
-  event, stream, or queued message) leaves it unread. Resumed transcripts are
-  tagged with news ids at launch as well as on session switch. A resumed
-  answer whose text no longer matches a replayed line stays unread by design.
-  The popup copies the selected answer to the clipboard on `c`. Its controls stay
-  inside the popup frame. Press `n` to jump to the answer and `p` to jump to the
-  user prompt.
+  command analysis or verifier review. On-mode allows a structured process only
+  when the deterministic policy and the advisory verifier both clear it;
+  otherwise the trigger check throws and the process never starts.
+- **News persists user turns and managed completion responses.** The news
+  companion file stores `prompts` (`text` plus a `steer` flag) with each answer.
+  Completed `finish_subagent` settlements project into the same file only after
+  the direct requester produces a non-acknowledgement response. The canonical
+  News id is `subagent-finish:<settlement.messageId>`. Registry reconciliation
+  preserves read and answered state and prevents duplicates after resume,
+  delivery retries, replay, or acknowledgement. Completion items store the
+  finishing agent and direct requester names and ids. The popup renders this
+  identity above the finish notice and response. `n` jumps to the requester
+  response. `p` uses the stable agent-message id to jump to the completion
+  notice. A normal answer is marked read only when a new user prompt follows it
+  directly in the transcript. Any interleaved line leaves the answer unread.
+  Resumed transcripts are tagged with News ids at launch and session switch.
+  A resumed answer whose text no longer matches a replayed line stays unread by
+  design. The popup copies the selected answer on `c`. Its controls stay inside
+  the popup frame.
 
 ## Things that bite
 
@@ -582,6 +587,12 @@ Each of these cost real debugging. They are not obvious from the docs.
   measured one column narrower once the neighbouring text wrapped, so indents
   drifted between wrapped and unwrapped rows. Use a `<box>` with a *numeric*
   `width` — numeric sizes also set `flexShrink: 0`, string ones do not.
+- **Never pass `content={undefined}` to an OpenTUI `<text>` from React.**
+  OpenTUI 0.5.1 crashes in `setStyledText` (`text.chunks`) when a retained
+  renderable's `content` changes from text to `undefined`. The working-caret
+  rows hit this when a slash command set the busy state beneath an existing
+  last row. Keep the value defined (an empty string works) and let the caret
+  hook paint over it after React commits.
 - **Auto-sized boxes shrink.** Anything that must keep its height needs
   `flexShrink: 0`, or a taller sibling steals its rows and overdraws it.
 - **The scrollbar auto-shows and re-wraps everything.** Once the transcript

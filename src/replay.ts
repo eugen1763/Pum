@@ -1,6 +1,6 @@
 import type { Line } from "./transcript";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
-import { editCounts, toolArg, toolResultOutput, type ToolCall } from "./tool-line";
+import { bashResultDisplay, editCounts, toolArg, type ToolCall } from "./tool-line";
 import { questionnaireDetail } from "./questionnaire";
 import { messageCacheDetail } from "./message-cache";
 import {
@@ -16,6 +16,12 @@ import {
   type AgentMessageData,
   type TriggerEventData,
 } from "./subagents/types";
+import {
+  MANAGED_SHELL_COMPLETION_TYPE,
+  MANAGED_SHELL_CUSTOM_TYPE,
+  type ManagedShellCompletionMessage,
+  type ManagedShellLifecycleEvent,
+} from "./shells/types";
 
 const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
@@ -64,6 +70,56 @@ function triggerEventOf(entry: any): TriggerEventData | undefined {
   return data as TriggerEventData;
 }
 
+function managedShellEventOf(entry: any): ManagedShellLifecycleEvent | undefined {
+  if (entry?.type !== "custom" || entry.customType !== MANAGED_SHELL_CUSTOM_TYPE) return undefined;
+  const data = entry.data;
+  if (!data || typeof data !== "object") return undefined;
+  if (data.version !== 1
+    || typeof data.shellId !== "string"
+    || typeof data.name !== "string"
+    || typeof data.owner?.sessionId !== "string"
+    || (data.owner.agentId !== null && typeof data.owner.agentId !== "string")
+    || typeof data.owner.label !== "string"
+    || !["started", "exited", "failed", "terminated", "unavailable"].includes(data.state)
+    || typeof data.executable !== "string"
+    || !Array.isArray(data.args)
+    || data.args.some((arg: unknown) => typeof arg !== "string")
+    || typeof data.cwd !== "string"
+    || typeof data.at !== "number"
+    || typeof data.startedAt !== "number") return undefined;
+  return data as ManagedShellLifecycleEvent;
+}
+
+function managedShellCompletionOf(entry: any): ManagedShellCompletionMessage | undefined {
+  if (entry?.type !== "custom_message" || entry.customType !== MANAGED_SHELL_COMPLETION_TYPE) return undefined;
+  const data = entry.details;
+  if (!data || typeof data !== "object") return undefined;
+  if (typeof data.id !== "string"
+    || typeof data.shellId !== "string"
+    || typeof data.name !== "string"
+    || typeof data.owner?.sessionId !== "string"
+    || (data.owner.agentId !== null && typeof data.owner.agentId !== "string")
+    || typeof data.owner.label !== "string"
+    || typeof data.text !== "string"
+    || typeof data.at !== "number") return undefined;
+  return data as ManagedShellCompletionMessage;
+}
+
+function managedShellReplayText(event: ManagedShellLifecycleEvent): string {
+  const label = `Managed shell ${event.name} (${event.shellId})`;
+  if (event.state === "started") {
+    return `${label} started: ${[event.executable, ...event.args].join(" ")}`;
+  }
+  if (event.state === "terminated") return `${label} was terminated intentionally.`;
+  if (event.state === "unavailable") {
+    return `${label} became unavailable${event.reason ? `: ${event.reason}` : "."}`;
+  }
+  const result = event.signal ? `signal ${event.signal}` : `exit code ${event.exitCode ?? "unknown"}`;
+  return event.state === "failed"
+    ? `${label} failed with ${result}.`
+    : `${label} exited with ${result}.`;
+}
+
 function toolEventOf(entry: any): ToolCall | undefined {
   if (entry?.type !== "custom" || entry.customType !== TOOL_EVENT_CUSTOM_TYPE) return undefined;
   const data = entry.data;
@@ -75,7 +131,6 @@ function toolEventOf(entry: any): ToolCall | undefined {
     arg: typeof data.arg === "string" ? data.arg : "",
     state: data.state,
     detail: typeof data.detail === "string" ? data.detail : undefined,
-    ...(typeof data.output === "string" ? { output: data.output } : {}),
   };
 }
 
@@ -83,11 +138,7 @@ function searchRecordOf(entry: any): SearchCallRecord | undefined {
   if (entry?.type !== "custom" || entry.customType !== WEB_SEARCH_CUSTOM_TYPE) return undefined;
   const data = entry.data;
   if (!data || typeof data !== "object" || typeof data.id !== "string") return undefined;
-  if (![
-    "running",
-    "ok",
-    "error",
-  ].includes(data.state)) return undefined;
+  if (!["running", "ok", "error"].includes(data.state)) return undefined;
   return {
     id: data.id,
     query: typeof data.query === "string" ? data.query : "",
@@ -95,11 +146,7 @@ function searchRecordOf(entry: any): SearchCallRecord | undefined {
   };
 }
 
-/**
- * Rebuild transcript lines from a restored session's active entries, so
- * `pum -r` shows the conversation rather than an empty pane. Messages come
- * from pi and are typed loosely, so every access here is defensive.
- */
+/** Rebuild transcript lines from a restored session's active entries. */
 export function replayEntries(
   entries: readonly any[],
   cwd: string,
@@ -110,8 +157,31 @@ export function replayEntries(
   const searchCalls = new Map<string, ToolCall>();
   const customCalls = new Map<string, ToolCall>();
   const agentMessages = new Set<string>();
+  const managedShells = new Map<string, ManagedShellLifecycleEvent>();
 
   for (const entry of entries) {
+    const shellCompletion = managedShellCompletionOf(entry);
+    if (shellCompletion) {
+      if (!agentMessages.has(shellCompletion.id)) {
+        agentMessages.add(shellCompletion.id);
+        lines.push({
+          kind: "agent-message",
+          sender: `shell:${shellCompletion.name}`,
+          recipient: shellCompletion.owner.agentId ?? "main",
+          text: shellCompletion.text,
+          messageId: shellCompletion.id,
+        });
+      }
+      continue;
+    }
+
+    const shellEvent = managedShellEventOf(entry);
+    if (shellEvent) {
+      managedShells.set(shellEvent.shellId, shellEvent);
+      lines.push({ kind: "text", role: "system", text: managedShellReplayText(shellEvent) });
+      continue;
+    }
+
     const agentMessage = agentMessageOf(entry);
     if (agentMessage) {
       if (!agentMessages.has(agentMessage.id)) {
@@ -121,6 +191,7 @@ export function replayEntries(
           sender: agentMessage.sender,
           recipient: agentMessage.recipient,
           text: agentMessage.text,
+          messageId: agentMessage.id,
         });
       }
       continue;
@@ -170,8 +241,6 @@ export function replayEntries(
       continue;
     }
 
-    // Accept raw AgentMessages too; this keeps the replay helper useful for
-    // callers that already have `agent.state.messages`.
     const message = entry?.type === "message" ? entry.message : entry;
 
     if (message?.role === "user") {
@@ -192,9 +261,8 @@ export function replayEntries(
             id: block.id,
             name: block.name,
             arg: toolArg(block.name, block.arguments, cwd),
-            // Anything replayed has already finished; a matching result may
-            // downgrade this to an error below.
             state: "ok",
+            input: block.arguments,
           };
           calls.set(block.id, call);
           lines.push({ kind: "tool", call });
@@ -206,18 +274,32 @@ export function replayEntries(
     if (message?.role === "toolResult") {
       const call = calls.get(message.toolCallId);
       if (call) {
+        call.result = message;
+        call.isError = message.isError === true;
         call.state = isRejectedToolResult(message)
           ? "rejected"
           : message.isError
             ? "error"
             : "ok";
+        if (call.name === "bash" && call.state !== "rejected") {
+          const bashResult = bashResultDisplay(message);
+          call.exitCode = bashResult.exitCode;
+        }
         if (call.state === "rejected") call.detail = rejectedToolReason(message);
         else if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
         else if (call.name === "questionnaire") call.detail = questionnaireDetail(message);
         else if (call.name.startsWith("message_cache_")) call.detail = messageCacheDetail(message);
-        call.output = toolResultOutput(message);
       }
     }
+  }
+
+  for (const event of managedShells.values()) {
+    if (event.state !== "started") continue;
+    lines.push({
+      kind: "text",
+      role: "system",
+      text: `Managed shell ${event.name} (${event.shellId}) is no longer available after restart.`,
+    });
   }
 
   return lines;

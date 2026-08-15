@@ -56,11 +56,16 @@ export class NodeTriggerProcessAdapter implements TriggerProcessAdapter {
     for (const arg of request.args) {
       if (arg.includes("\0")) throw new Error("Trigger argument contains NUL");
     }
+    const isWindows = process.platform === "win32";
     const child = spawn(request.executable, [...request.args], {
       cwd: request.cwd,
       env: { ...request.env },
       shell: false,
       windowsHide: true,
+      // A detached POSIX child leads its own process group, so a signal to the
+      // negative pid reaches the whole tree. Windows has no process groups here
+      // and uses taskkill /T instead.
+      detached: !isWindows,
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout.on("data", (chunk: Buffer) => request.onStdout(chunk));
@@ -72,7 +77,26 @@ export class NodeTriggerProcessAdapter implements TriggerProcessAdapter {
     return {
       completed,
       kill(signal = "SIGTERM") {
-        child.kill(signal as NodeJS.Signals);
+        const pid = child.pid;
+        if (pid === undefined) return;
+        if (isWindows) {
+          // No real signals or process groups on Windows: taskkill terminates
+          // the whole tree; fall back to the direct child if it is unavailable.
+          try {
+            spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" })
+              .on("error", () => { try { child.kill(); } catch { /* already gone */ } });
+          } catch {
+            try { child.kill(); } catch { /* already gone */ }
+          }
+          return;
+        }
+        // Signal the whole process group; fall back to the direct child if the
+        // group is already gone.
+        try {
+          process.kill(-pid, signal as NodeJS.Signals);
+        } catch {
+          try { child.kill(signal as NodeJS.Signals); } catch { /* already gone */ }
+        }
       },
     };
   }

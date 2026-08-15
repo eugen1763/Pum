@@ -1,5 +1,6 @@
 import { posix, win32 } from "node:path";
 import { webSearchArgument } from "./web-search";
+import type { ToolResultPreview } from "./tool-preview";
 
 export type ToolCall = {
   id: string;
@@ -9,38 +10,68 @@ export type ToolCall = {
   state: "running" | "ok" | "error" | "rejected";
   /** "+3 −1" for edits, or an error note. */
   detail?: string;
-  /** Plain text returned by the tool. Rendering decides whether to show it. */
+  /** Cumulative live output retained until the Bash output display period ends. */
   output?: string;
+  /** Start time used to delay live Bash output without delaying the tool row. */
+  startedAt?: number;
+  /** Nonzero Bash process exit code, when the result provides one. */
+  exitCode?: number;
+  /** Canonical model-authored input retained for display-mode regeneration. */
+  input?: unknown;
+  /** Canonical tool result retained for display-mode regeneration. */
+  result?: unknown;
+  /** True when the retained result represents a failed tool execution. */
+  isError?: boolean;
+  /** Display-only structured result data used by detailed transcript mode. */
+  preview?: ToolResultPreview;
 };
 
-/** Extract plain text from a pi tool result without changing leading whitespace. */
-export function toolResultOutput(result: any): string | undefined {
-  const content = result?.content;
-  const chunks = typeof content === "string"
-    ? [content]
-    : Array.isArray(content)
-      ? content
-        .filter((block: any) => block?.type === "text" && typeof block.text === "string")
-        .map((block: any) => block.text)
-      : [];
-  const output = chunks.join("\n").replace(/\r\n?/g, "\n").trimEnd();
-  return output.trim() ? output : undefined;
+/** Extract the cumulative text payload from a Bash progress result. */
+export function bashOutput(result: any): string | undefined {
+  if (!Array.isArray(result?.content)) return undefined;
+  const text = result.content
+    .filter((block: any) => block?.type === "text" && typeof block.text === "string")
+    .map((block: any) => block.text)
+    .join("");
+  return text || undefined;
 }
 
-export type ToolOutputPreview = {
-  text: string;
-  omittedLines: number;
+export type BashOutputWindow = {
+  hidden: number;
+  lines: string[];
 };
 
-/** Limit a tool result by source lines. Wrapped terminal rows do not change this limit. */
-export function toolOutputPreview(output: string, maxLines: number): ToolOutputPreview {
-  const lines = output.replace(/\r\n?/g, "\n").split("\n");
-  const limit = Math.max(1, Math.floor(maxLines));
-  const omittedLines = Math.max(0, lines.length - limit);
+/** Keep the newest logical lines without counting a final newline as an empty line. */
+export function bashOutputWindow(output: string, limit = 4): BashOutputWindow {
+  const lines = output.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  const visible = Math.max(0, limit);
   return {
-    text: lines.slice(0, limit).join("\n"),
-    omittedLines,
+    hidden: Math.max(0, lines.length - visible),
+    lines: visible ? lines.slice(-visible) : [],
   };
+}
+
+export type BashResultDisplay = {
+  exitCode?: number;
+};
+
+/** Extract a nonzero process exit code from the Bash result. */
+export function bashResultDisplay(result: any): BashResultDisplay {
+  const text = bashOutput(result);
+  const explicitExitCode = typeof result?.details?.exitCode === "number"
+    && Number.isInteger(result.details.exitCode)
+    ? result.details.exitCode
+    : undefined;
+  if (!text) return explicitExitCode === undefined ? {} : { exitCode: explicitExitCode };
+
+  const lines = text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
+  let exitCode = explicitExitCode;
+  for (const line of lines) {
+    const match = line.match(/Command exited with code (-?\d+)/i);
+    if (match) exitCode = Number(match[1]);
+  }
+  return exitCode === undefined ? {} : { exitCode };
 }
 
 function isWindowsAbsolute(path: string): boolean {

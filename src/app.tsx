@@ -25,11 +25,9 @@ import {
 import {
   CHECK_MODE_PROFILES,
   checkPathsForProject,
-  DEFAULT_TOOL_OUTPUT_LINES,
+  cycleOutputMode,
   MAX_ACTIVE_SUBAGENTS,
-  MAX_TOOL_OUTPUT_LINES,
   MIN_ACTIVE_SUBAGENTS,
-  MIN_TOOL_OUTPUT_LINES,
   SANDBOX_MODES,
   saveSettings,
   WORKING_RULE_ANIMATION_MODES,
@@ -51,7 +49,8 @@ import {
   type PendingLine,
   type Role,
 } from "./transcript";
-import { editCounts, toolArg, toolResultOutput, type ToolCall } from "./tool-line";
+import { bashOutput, bashResultDisplay, editCounts, toolArg, type ToolCall } from "./tool-line";
+import { toolPreviewFromResult, toolPreviewFromStart } from "./tool-preview";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
 import { appendHistory, loadHistory, removeHistory } from "./history";
@@ -121,23 +120,20 @@ import { providerLoginMethods, refreshAndSelectModel } from "./login-flow";
 import { questionnaireDetail, QuestionnaireManager } from "./questionnaire";
 import { QuestionnairePopup } from "./questionnaire-popup";
 import {
-  CheckApprovalPopup,
-  invokeCheckApprovalDecision,
-  type CheckApprovalDecision,
-} from "./check-approval-popup";
-import type {
-  CheckApprovalCoordinator,
-  CheckApprovalRequest,
-  CheckApprovalStore,
-} from "./check-approvals";
-import {
   moveTriggerSelection,
   sortTriggers,
   triggerActionForKey,
-  TriggersPopup,
   type TriggerAction,
   type TriggerManagerLike,
 } from "./triggers/popup";
+import {
+  moveProcessSelection,
+  processTabForKey,
+  ProcessesPopup,
+  sortShells,
+  type ProcessTab,
+  type ShellManagerLike,
+} from "./processes-popup";
 import type { TerminalTitleController } from "./terminal-title";
 import { readClipboardText } from "./text-paste";
 import { copyTextToClipboard } from "./clipboard";
@@ -150,6 +146,12 @@ import {
   type NewsItem,
   type NewsPrompt,
 } from "./news";
+import { statsFromEntries, type SessionStatsManager } from "./session-stats";
+import { maxStatsScrollOffset, StatsPopup } from "./stats-popup";
+import {
+  projectTranscriptLines,
+  transcriptOutputMode,
+} from "./transcript-output";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -406,6 +408,7 @@ export function App({
   settings: initial,
   searchProviders,
   subagentManager,
+  statsManager,
   questionnaireManager,
   spawnPreviewManager,
   loginRequired = false,
@@ -416,9 +419,8 @@ export function App({
   stagePastedText = stagePastedTextDefault,
   copyNewsAnswerText = copyTextToClipboard,
   onExit = () => process.exit(0),
-  checkApprovalCoordinator,
-  checkApprovalStore,
   triggerManager,
+  shellManager,
   messageCacheController,
   terminalTitle,
   startupWarnings = [],
@@ -437,6 +439,7 @@ export function App({
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
   subagentManager: SubagentManager;
+  statsManager?: SessionStatsManager;
   questionnaireManager?: QuestionnaireManager;
   spawnPreviewManager?: SpawnPreviewManager;
   loginRequired?: boolean;
@@ -449,9 +452,8 @@ export function App({
   /** Copies the selected news answer for the popup. */
   copyNewsAnswerText?: typeof copyTextToClipboard;
   onExit?: () => void | Promise<void>;
-  checkApprovalCoordinator?: CheckApprovalCoordinator;
-  checkApprovalStore?: CheckApprovalStore;
   triggerManager?: TriggerManagerLike;
+  shellManager?: ShellManagerLike;
   messageCacheController?: MessageCacheController;
   terminalTitle?: TerminalTitleController;
   /** Visible process-local warnings. These lines never enter pi session context. */
@@ -502,12 +504,19 @@ export function App({
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpScrollOffset, setHelpScrollOffset] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [statsScrollOffset, setStatsScrollOffset] = useState(0);
+  const [statsRevision, setStatsRevision] = useState(0);
   const [historySessions, setHistorySessions] = useState<SessionHistoryItem[]>([]);
   const [page, setPage] = useState<"main" | "models" | "checkModels">("main");
   const [settingsQuery, setSettingsQuery] = useState("");
   const [settingsSearchFocused, setSettingsSearchFocused] = useState(true);
   const [selectedSettingId, setSelectedSettingId] = useState<SettingRowId | null>(SETTINGS_ROWS[0]!.id);
   const [settings, setSettings] = useState(initial);
+  // Mirrors settings for update(): a keypress or an async .then can fire a
+  // second update before React commits the first, so update() must build the
+  // next value from the latest pending settings, not the render closure.
+  const settingsRef = useRef(settings);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(
     session.agent.state.thinkingLevel as ThinkingLevel,
   );
@@ -541,17 +550,20 @@ export function App({
   }));
   const [modelQuery, setModelQuery] = useState("");
   const [modelSearchFocused, setModelSearchFocused] = useState(false);
-  const [checkApproval, setCheckApproval] = useState<CheckApprovalRequest | null>(null);
-  const [checkApprovalDecision, setCheckApprovalDecision] = useState<CheckApprovalDecision>("allowOnce");
   const [, setAgentRevision] = useState(0);
   const [triggersOpen, setTriggersOpen] = useState(false);
+  const [processTab, setProcessTab] = useState<ProcessTab>("triggers");
   const [triggerCursor, setTriggerCursor] = useState(0);
+  const [shellCursor, setShellCursor] = useState(0);
   const [, setTriggerRevision] = useState(0);
+  const [shellRevision, setShellRevision] = useState(0);
+  const [shellTails, setShellTails] = useState<Record<string, string>>({});
 
   const [newsOpen, setNewsOpen] = useState(false);
   const newsOpenRef = useRef(false);
   const [newsCursor, setNewsCursor] = useState(0);
   const newsCursorRef = useRef(0);
+  const statsOpenRef = useRef(false);
 
   const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
   const { width, height } = useTerminalDimensions();
@@ -572,6 +584,11 @@ export function App({
     activeAgent?.transcript ?? tx,
     settings.showThinking,
   );
+  const outputMode = transcriptOutputMode(settings);
+  const visibleLines = useMemo(
+    () => projectTranscriptLines(visibleTx.lines, outputMode),
+    [visibleTx.lines, outputMode],
+  );
   const visibleBusy = activeAgent
     ? activeAgent.status === "starting" || activeAgent.status === "running"
     : busy;
@@ -582,6 +599,14 @@ export function App({
   const visibleUsage = activeAgent?.usage ?? usage;
   const agentTreeRows = buildAgentTree(agents);
   const triggers = sortTriggers(triggerManager?.getTriggers() ?? []);
+  const shells = sortShells(shellManager?.list() ?? []);
+  const runningShellCount = shells.filter(
+    (shell) => shell.state === "starting" || shell.state === "running",
+  ).length;
+  const statsSnapshot = useMemo(() => statsManager?.snapshot() ?? statsFromEntries(
+    (session.sessionManager as any).getEntries?.() ?? session.sessionManager.buildContextEntries(),
+    `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
+  ), [statsManager, session, statsRevision]);
   const inputHint = cancelArmed
     ? " esc again to cancel "
     : quitArmed
@@ -593,7 +618,7 @@ export function App({
     width - 2 - promptRightColumns - inputHint.length,
   );
   const commandSuggestions = stashOpen ? [] : matchingCommands(commandInput).slice(0, 5);
-  const visibleSettingRows = filterSettingsRows(settingsQuery, settings.explanationStrength);
+  const visibleSettingRows = filterSettingsRows(settingsQuery);
   const visibleModels = useMemo(() => filterModels(
     modelRuntime.getAvailableSnapshot(),
     modelQuery,
@@ -606,12 +631,14 @@ export function App({
   const spawnPreviewInputRef = useRef<TextareaRenderable>(null);
   const settingsOpenRef = useRef(settingsOpen);
   const triggersOpenRef = useRef(false);
+  const processTabRef = useRef<ProcessTab>("triggers");
   const settingsPageRef = useRef(page);
   const settingsSearchFocusedRef = useRef(settingsSearchFocused);
   const focusInputAfterSwitch = useRef(false);
   const activeAgentIdRef = useRef<string | null>(null);
   const agentSelectorCursorRef = useRef(0);
   const triggerCursorRef = useRef(0);
+  const shellCursorRef = useRef(0);
   const commandCursorRef = useRef(0);
   const pathCompletionCycle = useRef<{
     sourceValue: string;
@@ -697,10 +724,33 @@ export function App({
     setAgentSelectorOpen(false);
     setNewsOpen(false);
     newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
     setStashMode(false);
+    processTabRef.current = "triggers";
+    setProcessTab("triggers");
     const nextCursor = Math.min(triggerCursorRef.current, Math.max(0, triggers.length - 1));
     triggerCursorRef.current = nextCursor;
     setTriggerCursor(nextCursor);
+    setTriggerPopup(true);
+  };
+  const openProcesses = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setNewsOpen(false);
+    newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
+    setStashMode(false);
+    const nextTriggerCursor = Math.min(triggerCursorRef.current, Math.max(0, triggers.length - 1));
+    const nextShellCursor = Math.min(shellCursorRef.current, Math.max(0, shells.length - 1));
+    triggerCursorRef.current = nextTriggerCursor;
+    shellCursorRef.current = nextShellCursor;
+    setTriggerCursor(nextTriggerCursor);
+    setShellCursor(nextShellCursor);
     setTriggerPopup(true);
   };
   // The event subscription is set up once, so it reads the toggle via a ref.
@@ -776,6 +826,13 @@ export function App({
     if (editingIndex === index) editingStashIndex.current = null;
     else if (editingIndex !== null && editingIndex > index) {
       editingStashIndex.current = editingIndex - 1;
+    }
+    // The stash is shared across agent views, so a delete shifts the indices
+    // that every other view checked out. Reindex the saved per-view values too,
+    // or a later submit in another view would overwrite the wrong cached row.
+    for (const [key, value] of viewEditingStashIndices.current) {
+      if (value === index) viewEditingStashIndices.current.set(key, null);
+      else if (value !== null && value > index) viewEditingStashIndices.current.set(key, value - 1);
     }
 
     if (next.length === 0) setStashMode(false);
@@ -993,6 +1050,8 @@ export function App({
       agentSelectorOpen ||
       helpOpen ||
       historyOpen ||
+      newsOpenRef.current ||
+      statsOpenRef.current ||
       settingsOpenRef.current
     ) return;
     const input = inputRef.current;
@@ -1048,10 +1107,11 @@ export function App({
     append({ kind: "text", role: "system", text: warning });
   }), [sandboxWarningSource]);
 
-  useEffect(() => checkApprovalCoordinator?.subscribe((request) => {
-    setCheckApproval(request);
-    setCheckApprovalDecision("allowOnce");
-  }), [checkApprovalCoordinator]);
+  useEffect(() => {
+    setStatsRevision((revision) => revision + 1);
+    return statsManager?.subscribe(() => setStatsRevision((revision) => revision + 1));
+  }, [statsManager, session]);
+
 
   useEffect(() => triggerManager?.subscribe(() => {
     setTriggerRevision((revision) => revision + 1);
@@ -1061,15 +1121,43 @@ export function App({
     setTriggerCursor(next);
   }), [triggerManager]);
 
+  useEffect(() => shellManager?.subscribe(() => {
+    setShellRevision((revision) => revision + 1);
+    const count = shellManager.list().length;
+    const next = Math.min(shellCursorRef.current, Math.max(0, count - 1));
+    shellCursorRef.current = next;
+    setShellCursor(next);
+  }), [shellManager]);
+
+  useEffect(() => {
+    if (!shellManager || !triggersOpen || processTab !== "shells") return;
+    const shell = shells[shellCursor];
+    if (!shell || !shell.output.exists) return;
+    let active = true;
+    void shellManager.getOutput(shell.id, { lineLimit: 20 }).then((result) => {
+      if (!active) return;
+      setShellTails((tails) => tails[shell.id] === result.tail
+        ? tails
+        : { ...tails, [shell.id]: result.tail });
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [shellManager, triggersOpen, processTab, shellCursor, shellRevision]);
+
   useEffect(
     () => subagentManager.subscribe((event) => {
       if (event.type === "main-line") append(event.line);
       else if (event.type === "main-pending-add") addPending(event.pending);
       else if (event.type === "main-pending-resolve") resolvePending(event.id);
       else if (event.type === "main-pending-drop") dropPending(event.id);
+      else if (event.type === "news-changed") {
+        const loaded = loadNewsItems(session.sessionFile);
+        newsRef.current = loaded;
+        setNews(loaded);
+        setTx((value) => ({ ...value, lines: tagNewsLines(value.lines, loaded) }));
+      }
       setAgentRevision((revision) => revision + 1);
     }),
-    [subagentManager],
+    [subagentManager, session],
   );
 
   useEffect(() => {
@@ -1096,6 +1184,8 @@ export function App({
         setLoginOpen(false);
         setNewsOpen(false);
         newsOpenRef.current = false;
+        setStatsOpen(false);
+        statsOpenRef.current = false;
       }
       setQuestionnaireRevision((revision) => revision + 1);
     });
@@ -1185,10 +1275,20 @@ export function App({
               name: event.toolName,
               arg: toolArg(event.toolName, event.args, cwd),
               state: "running",
+              startedAt: Date.now(),
+              input: event.args,
+              preview: toolPreviewFromStart(event.toolName, event.args),
             },
           });
           break;
-        case "tool_execution_end":
+        case "tool_execution_update":
+          if (event.toolName === "bash") {
+            patchTool(event.toolCallId, { output: bashOutput(event.partialResult) });
+          }
+          break;
+        case "tool_execution_end": {
+          const bashResult = event.toolName === "bash" ? bashResultDisplay(event.result) : {};
+          const preview = toolPreviewFromResult(event.toolName, event.result);
           patchTool(event.toolCallId, {
             state: isRejectedToolResult(event.result, event.toolCallId)
               ? "rejected"
@@ -1204,9 +1304,13 @@ export function App({
                   : event.toolName.startsWith("message_cache_")
                     ? messageCacheDetail(event.result)
                     : undefined,
-            output: toolResultOutput(event.result),
+            exitCode: bashResult.exitCode,
+            result: event.result,
+            isError: event.isError,
+            ...(preview ? { preview } : {}),
           });
           break;
+        }
         case "agent_start":
           setWorking(true);
           break;
@@ -1369,7 +1473,8 @@ export function App({
   }, [activeAgent?.id, activeAgent?.status, activeAgent?.runStartedAt, visibleBusy]);
 
   const update = (patch: Partial<PumSettings>) => {
-    const next = { ...settings, ...patch };
+    const next = { ...settingsRef.current, ...patch };
+    settingsRef.current = next;
     setSettings(next);
     if (patch.webSearch !== undefined) webSearch.enabled = patch.webSearch;
     if (patch.writingStyle !== undefined) setWritingStyle(patch.writingStyle);
@@ -1433,6 +1538,10 @@ export function App({
     update({ workingRuleAnimation: next });
   };
 
+  const stepOutputMode = (step: number) => {
+    update({ outputMode: cycleOutputMode(settings.outputMode, step) });
+  };
+
   const openLogin = () => {
     settingsOpenRef.current = false;
     setSettingsOpen(false);
@@ -1442,6 +1551,8 @@ export function App({
     setTriggerPopup(false, false);
     setNewsOpen(false);
     newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
     setLoginOpen(true);
     loginControllerRef.current?.open();
   };
@@ -1496,6 +1607,8 @@ export function App({
     setTriggerPopup(false, false);
     setNewsOpen(false);
     newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
     loadSessions()
       .then((sessions) => {
         setHistorySessions(sessions);
@@ -1518,6 +1631,8 @@ export function App({
     setAgentSelectorOpen(false);
     setTriggerPopup(false, false);
     setLoginOpen(false);
+    setStatsOpen(false);
+    statsOpenRef.current = false;
     newsCursorRef.current = 0;
     setNewsCursor(0);
     newsOpenRef.current = true;
@@ -1527,6 +1642,27 @@ export function App({
   const closeNews = () => {
     newsOpenRef.current = false;
     setNewsOpen(false);
+    queueMicrotask(() => inputRef.current?.focus());
+  };
+
+  const openStats = () => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setTriggerPopup(false, false);
+    setLoginOpen(false);
+    setNewsOpen(false);
+    newsOpenRef.current = false;
+    setStatsScrollOffset(0);
+    statsOpenRef.current = true;
+    setStatsOpen(true);
+  };
+
+  const closeStats = () => {
+    statsOpenRef.current = false;
+    setStatsOpen(false);
     queueMicrotask(() => inputRef.current?.focus());
   };
 
@@ -1541,29 +1677,47 @@ export function App({
   const jumpFromNews = (target: "answer" | "prompt") => {
     const item = newsRef.current[newsCursorRef.current];
     if (!item) return;
-    const lines = txRef.current.lines;
-    const answerIndex = lines.findIndex((line) =>
-      line.kind === "text" && line.role === "assistant" && line.newsId === item.id,
-    );
+    const requesterAgentId = item.completion?.requesterAgentId ?? null;
+    const lines = requesterAgentId === null
+      ? txRef.current.lines
+      : subagentManager.getAgent(requesterAgentId)?.transcript.lines;
+    if (!lines) return;
+    const completionPromptIndex = item.completion
+      ? lines.findIndex((line) =>
+        line.kind === "agent-message" && line.messageId === item.completion?.messageId,
+      )
+      : -1;
+    const answerIndex = item.completion
+      ? lines.findIndex((line, index) =>
+        index > completionPromptIndex
+          && line.kind === "text"
+          && line.role === "assistant"
+          && line.text === item.text,
+      )
+      : lines.findIndex((line) =>
+        line.kind === "text" && line.role === "assistant" && line.newsId === item.id,
+      );
     let targetIndex = answerIndex;
     if (target === "prompt") {
-      const promptText = item.prompts?.find((prompt) => !prompt.steer)?.text
-        ?? item.prompts?.[0]?.text;
-      targetIndex = -1;
-      if (promptText) {
-        const end = answerIndex >= 0 ? answerIndex : lines.length;
-        for (let index = end - 1; index >= 0; index--) {
-          const line = lines[index];
-          if (line?.kind === "text" && line.role === "user" && line.text === promptText) {
-            targetIndex = index;
-            break;
+      targetIndex = completionPromptIndex;
+      if (!item.completion) {
+        const promptText = item.prompts?.find((prompt) => !prompt.steer)?.text
+          ?? item.prompts?.[0]?.text;
+        if (promptText) {
+          const end = answerIndex >= 0 ? answerIndex : lines.length;
+          for (let index = end - 1; index >= 0; index--) {
+            const line = lines[index];
+            if (line?.kind === "text" && line.role === "user" && line.text === promptText) {
+              targetIndex = index;
+              break;
+            }
           }
         }
       }
     }
     if (targetIndex < 0) return;
 
-    if (activeAgentIdRef.current !== null && !selectAgentView(null)) return;
+    if (activeAgentIdRef.current !== requesterAgentId && !selectAgentView(requesterAgentId)) return;
     newsOpenRef.current = false;
     setNewsOpen(false);
     const scrollToTarget = () => {
@@ -1625,8 +1779,12 @@ export function App({
     const firstLine = item.text.split("\n")[0] ?? item.text;
     const preview = firstLine.length > 240 ? `${firstLine.slice(0, 240)} …` : firstLine;
     const quote = `> ${preview}\n\n`;
-    viewDrafts.current.set("main", quote);
-    if (activeAgentIdRef.current !== null) selectAgentView(null);
+    const requesterAgentId = item.completion?.requesterAgentId ?? null;
+    const targetAgentId = requesterAgentId && subagentManager.getAgent(requesterAgentId)
+      ? requesterAgentId
+      : null;
+    viewDrafts.current.set(targetAgentId ?? "main", quote);
+    if (activeAgentIdRef.current !== targetAgentId) selectAgentView(targetAgentId);
     else setEditorText(quote);
     queueMicrotask(() => {
       inputRef.current?.focus();
@@ -1684,7 +1842,12 @@ export function App({
     const restore = queued.length ? queued[queued.length - 1]! : inFlight.current;
     if (inputRef.current && !inputRef.current.plainText) setEditorText(restore);
     histCursor.current = null;
-    session.abort().finally(() => setWorking(false));
+    // clearQueue may have dropped a subagent completion notice queued to the
+    // streaming main agent; re-arm undelivered notices so a merge is not stuck.
+    session.abort().finally(() => {
+      setWorking(false);
+      void subagentManager.resendUndeliveredMainSettlements();
+    });
   };
 
   const recallQueuedUserMessage = async (target: string | null) => {
@@ -1692,7 +1855,12 @@ export function App({
       ? await subagentManager.recallQueuedUserMessage(target)
       : await recallNewestQueuedUserMessage(session, tx.pending);
     if (!recalled) return;
-    if (!target) dropPending(recalled.id);
+    // Recalling from the main queue clears it, which can drop a queued subagent
+    // completion notice; re-arm undelivered notices so a merge is not stuck.
+    if (!target) {
+      dropPending(recalled.id);
+      void subagentManager.resendUndeliveredMainSettlements();
+    }
     const key = target ?? "main";
     viewDrafts.current.set(key, recalled.text);
     if (activeAgentIdRef.current === target) {
@@ -1756,9 +1924,11 @@ export function App({
     const loginCommand = trimmed === "/login";
     const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
+    const processesCommand = trimmed === "/processes";
     const newsCommand = trimmed === "/news";
+    const statsCommand = trimmed === "/stats";
     const worktreeCommand = /^\/worktree(?:\s+([a-zA-Z0-9_-]+))?$/.exec(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !newsCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !statsCommand && !worktreeCommand) return false;
     editingStashIndex.current = null;
 
     if (historyCommand) {
@@ -1776,9 +1946,19 @@ export function App({
       openTriggers();
       return true;
     }
+    if (processesCommand) {
+      setEditorText("");
+      openProcesses();
+      return true;
+    }
     if (newsCommand) {
       setEditorText("");
       openNews();
+      return true;
+    }
+    if (statsCommand) {
+      setEditorText("");
+      openStats();
       return true;
     }
 
@@ -1884,6 +2064,11 @@ export function App({
   };
 
   const submitPrompt = (value?: string, stashIndex?: number) => {
+    // Read the selected agent from the ref, not the state. A view switch updates
+    // the ref synchronously, but a switch-then-send in one input chunk runs
+    // before React commits the new state, so the state would still name the
+    // previous agent and deliver the prompt to the wrong session.
+    const selectedAgentId = activeAgentIdRef.current;
     const displayText = value ?? inputRef.current?.plainText ?? "";
     const attachments = value === undefined ? [...pendingImages.current] : [];
     const pastedTexts = value === undefined ? [...pendingPastedTexts.current] : [];
@@ -1912,7 +2097,7 @@ export function App({
     // The temp files must survive until the turn that reads them settles, so
     // move them out of the draft tracking before the editor is cleared below.
     if (value === undefined && pastedTexts.length > 0) {
-      const targetKey = activeAgentId ?? "main";
+      const targetKey = selectedAgentId ?? "main";
       const existing = postTurnPastedTexts.current.get(targetKey) ?? [];
       postTurnPastedTexts.current.set(targetKey, [...existing, ...pastedTexts]);
       pendingPastedTexts.current = [];
@@ -1927,9 +2112,9 @@ export function App({
       return;
     }
 
-    if (activeAgentId) {
+    if (selectedAgentId) {
       void subagentManager
-        .sendUserMessage(activeAgentId, promptText, images, displayText.trim())
+        .sendUserMessage(selectedAgentId, promptText, images, displayText.trim())
         .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
       return;
     }
@@ -2036,16 +2221,14 @@ export function App({
     }));
   };
 
-  const resolveCheckApproval = (decision: CheckApprovalDecision) => {
-    if (!checkApproval || !checkApprovalCoordinator) return;
-    const choice = decision === "allowOnce"
-      ? "allow-once"
-      : decision === "allowSession"
-        ? "allow-session"
-        : decision === "allowProject"
-          ? "allow-project"
-          : "deny";
-    checkApprovalCoordinator.resolve(checkApproval.id, choice);
+  const killSelectedShell = () => {
+    const shell = shells[shellCursorRef.current];
+    if (!shell || !shellManager || (shell.state !== "starting" && shell.state !== "running")) return;
+    Promise.resolve(shellManager.terminate(shell.id)).catch((error) => append({
+      kind: "text",
+      role: "error",
+      text: `shell kill failed: ${String(error)}`,
+    }));
   };
 
   const stepCheckMode = (step: number) => {
@@ -2064,15 +2247,10 @@ export function App({
     providers: { enter: openLogin },
     animations: { step: () => update({ animations: !settings.animations }) },
     workingRuleAnimation: { step: stepWorkingRuleAnimation },
+    outputMode: { step: stepOutputMode },
     webSearch: { step: () => update({ webSearch: !settings.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
-    toolOutputLines: { step: (step) => update({
-      toolOutputLines: Math.max(
-        MIN_TOOL_OUTPUT_LINES,
-        Math.min(MAX_TOOL_OUTPUT_LINES, (settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES) + step),
-      ),
-    }) },
     checkMode: { step: stepCheckMode },
     sandboxMode: { step: stepSandboxMode },
     checkModel: { enter: () => {
@@ -2086,12 +2264,6 @@ export function App({
       role: "system",
       text: "use /check-path [list|add <directory>|remove <directory>|clear]",
     }) },
-    clearCheckApprovals: { enter: () => {
-      const removed = checkApprovalStore?.clearProject(cwd) ?? 0;
-      append({ kind: "text", role: "system", text: removed > 0
-        ? `cleared ${removed} Check mode project approval${removed === 1 ? "" : "s"}`
-        : "no Check mode project approvals were stored" });
-    } },
     thinkingLevel: { step: stepThinking },
     showThinking: { step: () => update({ showThinking: !settings.showThinking }) },
     maxActiveSubagents: { step: (step) => update({
@@ -2118,15 +2290,14 @@ export function App({
     providers: "login and custom setup ›",
     animations: `‹ ${settings.animations ? "on" : "off"} ›`,
     workingRuleAnimation: `‹ ${settings.workingRuleAnimation} ›${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
+    outputMode: `‹ ${settings.outputMode ?? "default"} ›`,
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
-    toolOutputLines: `‹ ${settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES} ›`,
     checkMode: `‹ ${settings.checkMode} ›`,
     sandboxMode: `‹ ${settings.sandboxMode ?? "auto"} ›`,
     checkModel: `${settings.checkModel} ›`,
     checkPaths: `${checkPathsForProject(settings, cwd).length} additional · /check-path ›`,
-    clearCheckApprovals: "clear ›",
     thinkingLevel: `‹ ${thinkingLevel} ›`,
     showThinking: `‹ ${settings.showThinking ? "on" : "off"} ›`,
     maxActiveSubagents: `‹ ${settings.maxActiveSubagents} ›`,
@@ -2134,7 +2305,7 @@ export function App({
   };
 
   const updateSettingsQuery = (query: string) => {
-    const rows = filterSettingsRows(query, settings.explanationStrength);
+    const rows = filterSettingsRows(query);
     setSettingsQuery(query);
     setSelectedSettingId((current) =>
       rows.some((row) => row.id === current) ? current : rows[0]?.id ?? null,
@@ -2220,40 +2391,19 @@ export function App({
   });
 
   useKeyboard((key) => {
-    if (checkApproval) {
-      key.stopPropagation();
-      if (key.name === "escape" || (key.ctrl && key.name === "c")) {
-        resolveCheckApproval("deny");
-        return;
-      }
-      const decisions: CheckApprovalDecision[] = ["allowOnce", "allowSession", "allowProject", "deny"];
-      const index = decisions.indexOf(checkApprovalDecision);
-      if (["left", "up"].includes(key.name)) {
-        setCheckApprovalDecision(decisions[(index - 1 + decisions.length) % decisions.length]!);
-      } else if (["right", "down", "tab"].includes(key.name)) {
-        setCheckApprovalDecision(decisions[(index + 1) % decisions.length]!);
-      } else if (["return", "enter", "kpenter", "linefeed"].includes(key.name)) {
-        invokeCheckApprovalDecision(checkApprovalDecision, {
-          onAllowOnce: () => resolveCheckApproval("allowOnce"),
-          onAllowSession: () => resolveCheckApproval("allowSession"),
-          onAllowProject: () => resolveCheckApproval("allowProject"),
-          onDeny: () => resolveCheckApproval("deny"),
-        });
-      }
-      return;
-    }
-
     if (spawnPreview) {
       const isPreviewReturn = ["return", "enter", "kpenter", "linefeed"].includes(key.name);
       if (key.name === "escape" || (key.ctrl && key.name === "c")) {
         key.stopPropagation();
         spawnPreviewInputRef.current?.setText("");
-        spawnPreviewManager?.cancel();
+        // Bind the action to the request the popup rendered; if the active
+        // request changed under it, this is a no-op instead of hitting another.
+        spawnPreviewManager?.cancel("cancelled", spawnPreview.id);
       } else if (isPreviewReturn && !key.shift && !key.ctrl && !key.meta && !key.option) {
         key.stopPropagation();
         const note = spawnPreviewInputRef.current?.plainText ?? "";
         spawnPreviewInputRef.current?.setText("");
-        spawnPreviewManager?.approve(note);
+        spawnPreviewManager?.approve(note, spawnPreview.id);
       }
       return;
     }
@@ -2269,6 +2419,7 @@ export function App({
         !agentSelectorOpen &&
         !helpOpen &&
         !historyOpen &&
+        !statsOpenRef.current &&
         !settingsOpenRef.current;
       const inputValue = inputRef.current?.plainText ?? "";
       if (promptOwnsInput && (inputValue.length > 0 || pendingImages.current.length > 0)) {
@@ -2344,10 +2495,24 @@ export function App({
       return;
     }
 
+    if (statsOpenRef.current || statsOpen) {
+      key.stopPropagation();
+      const maxOffset = maxStatsScrollOffset(statsSnapshot, width, height);
+      if (key.name === "escape") closeStats();
+      else if (key.name === "home") setStatsScrollOffset(0);
+      else if (key.name === "end") setStatsScrollOffset(maxOffset);
+      else if (key.name === "up" || key.name === "down" || key.name === "pageup" || key.name === "pagedown") {
+        const amount = key.name === "pageup" || key.name === "pagedown" ? 5 : 1;
+        const direction = key.name === "up" || key.name === "pageup" ? -1 : 1;
+        setStatsScrollOffset((offset) => Math.max(0, Math.min(maxOffset, offset + direction * amount)));
+      }
+      return;
+    }
+
     if (key.ctrl && key.name === "t") {
       key.stopPropagation();
       if (triggersOpenRef.current) setTriggerPopup(false);
-      else openTriggers();
+      else openProcesses();
       return;
     }
 
@@ -2355,15 +2520,29 @@ export function App({
       key.stopPropagation();
       if (key.name === "escape") {
         setTriggerPopup(false);
+      } else if (processTabForKey(key, processTabRef.current)) {
+        const tab = processTabForKey(key, processTabRef.current)!;
+        processTabRef.current = tab;
+        setProcessTab(tab);
       } else if (key.name === "up" || key.name === "down" || key.name === "pageup" || key.name === "pagedown") {
         const direction = key.name === "up" || key.name === "pageup" ? -1 : 1;
         const steps = key.name === "pageup" || key.name === "pagedown" ? 5 : 1;
-        let next = triggerCursorRef.current;
+        const shellTab = processTabRef.current === "shells";
+        let next = shellTab ? shellCursorRef.current : triggerCursorRef.current;
         for (let index = 0; index < steps; index++) {
-          next = moveTriggerSelection(next, triggers.length, direction);
+          next = shellTab
+            ? moveProcessSelection(next, shells.length, direction)
+            : moveTriggerSelection(next, triggers.length, direction);
         }
-        triggerCursorRef.current = next;
-        setTriggerCursor(next);
+        if (shellTab) {
+          shellCursorRef.current = next;
+          setShellCursor(next);
+        } else {
+          triggerCursorRef.current = next;
+          setTriggerCursor(next);
+        }
+      } else if (processTabRef.current === "shells") {
+        if (key.name === "k" || key.sequence === "k") killSelectedShell();
       } else {
         const action = triggerActionForKey(key, triggers[triggerCursorRef.current]);
         if (action) performTriggerAction(action);
@@ -2822,10 +3001,13 @@ export function App({
       } else if ((activeAgentId && visibleBusy) || (!activeAgentId && busyRef.current)) {
         key.stopPropagation();
         const now = Date.now();
-        const target = activeAgentId ?? "main";
+        // Cancel the agent named by the ref, not the state: a switch-then-Esc in
+        // one input chunk must abort the newly selected agent, not the previous.
+        const selected = activeAgentIdRef.current;
+        const target = selected ?? "main";
         if (confirmsCancellation(lastCancelPress.current, cancelTarget.current, target, now)) {
           resetCancelArm();
-          if (activeAgentId) void subagentManager.abortAgent(activeAgentId);
+          if (selected) void subagentManager.abortAgent(selected);
           else cancel();
         } else {
           lastCancelPress.current = now;
@@ -2852,7 +3034,10 @@ export function App({
     }
   });
 
-  const lastLine = visibleTx.lines[visibleTx.lines.length - 1];
+  const lastProjectedLine = visibleLines[visibleLines.length - 1];
+  const lastLine: Line | undefined = lastProjectedLine?.kind === "tool-summary"
+    ? { kind: "text", role: "system", text: lastProjectedLine.text }
+    : lastProjectedLine;
   const streamGap = visibleTx.stream
     ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
     : false;
@@ -2887,6 +3072,7 @@ export function App({
           agentCount={agents.length}
           runningAgentCount={activeSubagentCount}
           maxActiveAgentCount={settings.maxActiveSubagents}
+          runningShellCount={runningShellCount}
           activeAgentName={activeAgent?.name}
         />
         <WorkingRule
@@ -2905,17 +3091,23 @@ export function App({
           stickyStart="bottom"
           verticalScrollbarOptions={{ visible: true }}
         >
-          {visibleTx.lines.map((line, i) => {
-            const workingCaret = visibleBusy && !visibleTx.stream && i === visibleTx.lines.length - 1;
+          {visibleLines.map((line, i) => {
+            const workingCaret = visibleBusy && !visibleTx.stream && i === visibleLines.length - 1;
             const row =
-              line.kind === "tool" ? (
+              line.kind === "tool-summary" ? (
+                <TextLine
+                  theme={theme}
+                  syntaxStyle={syntaxStyle}
+                  role="system"
+                  text={line.text}
+                />
+              ) : line.kind === "tool" ? (
                 <ToolLine
                   theme={theme}
+                  syntaxStyle={syntaxStyle}
                   call={line.call}
                   workingCaret={workingCaret}
-                  outputLines={settings.explanationStrength === "detailed"
-                    ? settings.toolOutputLines ?? DEFAULT_TOOL_OUTPUT_LINES
-                    : undefined}
+                  outputMode={outputMode}
                 />
               ) : line.kind === "agent-message" ? (
                 <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
@@ -2933,9 +3125,18 @@ export function App({
                   }
                 />
               );
-            const gapBefore = needsTranscriptGap(visibleTx.lines[i - 1], line);
+            const currentGapLine: Line = line.kind === "tool-summary"
+              ? { kind: "text", role: "system", text: line.text }
+              : line;
+            const previousProjected = visibleLines[i - 1];
+            const previousGapLine: Line | undefined = previousProjected?.kind === "tool-summary"
+              ? { kind: "text", role: "system", text: previousProjected.text }
+              : previousProjected;
+            const gapBefore = needsTranscriptGap(previousGapLine, currentGapLine);
             const lineKey =
-              line.kind === "tool"
+              line.kind === "tool-summary"
+                ? `tool-summary:${i}:${line.text}`
+                : line.kind === "tool"
                 ? `tool:${line.call.id}`
                 : line.kind === "agent-message"
                   ? `agent:${line.sender}:${line.recipient}:${i}:${line.text}`
@@ -2966,7 +3167,7 @@ export function App({
           ) : null}
           {visibleTx.pending.some((pending) => !pending.delivered) ? (
             <>
-              {(visibleTx.lines.length > 0 || visibleTx.stream) ? <Gap /> : null}
+              {(visibleLines.length > 0 || visibleTx.stream) ? <Gap /> : null}
               {visibleTx.pending.filter((pending) => !pending.delivered).map((pending) => (
                 <PendingMessageLine
                   key={pending.id}
@@ -3058,7 +3259,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="word"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !agentSelectorOpen && !triggersOpen && !newsOpen && !loginOpen && !questionnaire && !spawnPreview && !checkApproval}
+            focused={!settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !questionnaire && !spawnPreview && !newsOpen}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}
@@ -3114,10 +3315,14 @@ export function App({
           />
         ) : null}
         {triggersOpen ? (
-          <TriggersPopup
+          <ProcessesPopup
             theme={theme}
+            tab={processTab}
             triggers={triggers}
-            cursor={triggerCursor}
+            shells={shells}
+            triggerCursor={triggerCursor}
+            shellCursor={shellCursor}
+            shellTail={shells[shellCursor] ? shellTails[shells[shellCursor]!.id] : undefined}
             terminalWidth={width}
             terminalHeight={height}
           />
@@ -3148,30 +3353,13 @@ export function App({
             terminalHeight={height}
           />
         ) : null}
-        {checkApproval ? (
-          <CheckApprovalPopup
+        {statsOpen ? (
+          <StatsPopup
             theme={theme}
-            request={{
-              tool: checkApproval.toolName,
-              summary: checkApproval.summary,
-              reason: checkApproval.reason,
-              paths: checkApproval.paths,
-              preview: { kind: checkApproval.toolName === "bash" ? "command" : "diff", text: checkApproval.preview },
-              agentLabel: checkApproval.target?.agentId
-                ? agents.find((agent) => agent.id === checkApproval.target?.agentId)?.name ?? "subagent"
-                : checkApproval.target?.sessionId
-                  ? "main"
-                  : checkApproval.cwd === cwd
-                    ? "main"
-                    : agents.find((agent) => agent.worktree.path === checkApproval.cwd)?.name ?? "subagent",
-            }}
-            selectedDecision={checkApprovalDecision}
+            snapshot={statsSnapshot}
             terminalWidth={width}
             terminalHeight={height}
-            onAllowOnce={() => resolveCheckApproval("allowOnce")}
-            onAllowSession={() => resolveCheckApproval("allowSession")}
-            onAllowProject={() => resolveCheckApproval("allowProject")}
-            onDeny={() => resolveCheckApproval("deny")}
+            scrollOffset={statsScrollOffset}
           />
         ) : null}
         {settingsOpen ? (

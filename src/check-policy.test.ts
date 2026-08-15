@@ -81,6 +81,28 @@ describe("bash structure analysis", () => {
     expect(analysis.stages.map((stage) => stage.text)).toEqual(["echo one", "echo two", "echo three", "echo four"]);
   });
 
+  test("accepts case pattern terminators without treating alternatives as pipelines", () => {
+    const command = [
+      'case ":${st#*:}:" in',
+      '  :success:|:failed:|:canceled:|:skipped:) done_count=$((done_count+1));;',
+      "esac",
+    ].join("\n");
+    const analysis = analyzeBashCommand(command);
+
+    expect(analysis.complete).toBe(true);
+    expect(analysis.syntaxBalanced).toBe(true);
+    expect(analysis.errors).toEqual([]);
+    expect(analysis.operators.some((item) => item.operator === "|")).toBe(false);
+    expect(analysis.operators.some((item) => item.operator === ";;")).toBe(true);
+  });
+
+  test("still rejects an unmatched closing parenthesis outside a case pattern", () => {
+    const analysis = analyzeBashCommand("echo nope)");
+
+    expect(analysis.complete).toBe(false);
+    expect(analysis.errors).toContain("unexpected ) at 9");
+  });
+
   test("annotates command, backtick, and process substitutions", () => {
     const command = "printf '%s' \"$(git rev-parse HEAD)\" `git status --short` <(cat src/index.ts) >(tee copy.txt)";
     const analysis = analyzeBashCommand(command);

@@ -6,7 +6,9 @@ import {
   NEWS_CAPACITY,
   formatAge,
   loadNewsItems,
+  mergeNewsItems,
   newsFileFor,
+  newsItemFromFinishSettlement,
   saveNewsItems,
   tagNewsLines,
   type NewsItem,
@@ -92,6 +94,79 @@ describe("news persistence", () => {
       "utf8",
     );
     expect(loadNewsItems(sessionFile)).toEqual([item("good")]);
+  });
+
+  test("round trips managed completion identity and rejects malformed identity", () => {
+    const sessionFile = tempSessionFile();
+    const completion = {
+      ...item("Requester final response", { id: "subagent-finish:settlement-child:1:completed" }),
+      prompts: [{ text: "summary: Child work passed.", steer: false }],
+      completion: {
+        settlementId: "child:1:completed",
+        messageId: "settlement-child:1:completed",
+        agentId: "child",
+        agentName: "worker",
+        requesterAgentId: "parent",
+        requesterName: "reviewer",
+        summary: "Child work passed.",
+      },
+    };
+    saveNewsItems(sessionFile, [completion]);
+    expect(loadNewsItems(sessionFile)).toEqual([completion]);
+    writeFileSync(newsFileFor(sessionFile), JSON.stringify([
+      { ...completion, completion: { ...completion.completion, requesterAgentId: 42 } },
+      completion,
+    ]));
+    expect(loadNewsItems(sessionFile)).toEqual([completion]);
+  });
+
+  test("projects only completed finishes and deduplicates without losing user state", () => {
+    const projected = newsItemFromFinishSettlement({
+      id: "child:1:completed",
+      messageId: "settlement-child:1:completed",
+      agentId: "child",
+      agentName: "worker",
+      parentAgentId: null,
+      requesterName: "main",
+      status: "completed",
+      summary: "Tests passed.",
+      content: "Subagent worker completed.\nsummary: Tests passed.",
+      createdAt: 200,
+      response: "Merged the worker change.",
+    });
+    expect(projected?.id).toBe("subagent-finish:settlement-child:1:completed");
+    expect(projected?.text).toBe("Merged the worker change.");
+    expect(projected?.prompts?.[0]?.text).toContain("summary: Tests passed.");
+    expect(newsItemFromFinishSettlement({
+      id: "child:1:idle",
+      messageId: "settlement-child:1:idle",
+      agentId: "child",
+      agentName: "worker",
+      parentAgentId: null,
+      requesterName: "main",
+      status: "idle",
+      content: "idle",
+      createdAt: 100,
+      response: "Useful response.",
+    })).toBeUndefined();
+    expect(newsItemFromFinishSettlement({
+      id: "child:2:completed",
+      messageId: "settlement-child:2:completed",
+      agentId: "child",
+      agentName: "worker",
+      parentAgentId: null,
+      requesterName: "main",
+      status: "completed",
+      content: "completed",
+      createdAt: 101,
+      response: "Acknowledged.",
+    })).toBeUndefined();
+
+    const existing = [{ ...projected!, read: true, answered: true }];
+    const merged = mergeNewsItems(existing, [projected!, projected!]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.read).toBe(true);
+    expect(merged[0]?.answered).toBe(true);
   });
 });
 

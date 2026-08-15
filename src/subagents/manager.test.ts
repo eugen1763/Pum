@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loadNewsItems, saveNewsItems } from "../news";
 import {
   SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
   SUBAGENT_COORDINATION_SYSTEM_PROMPT,
@@ -270,9 +274,12 @@ describe("SubagentManager extension", () => {
     const result = beforeStart?.({ systemPrompt: "base prompt" });
     expect(result.systemPrompt).toContain(SUBAGENT_COORDINATION_SYSTEM_PROMPT);
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
-    expect(result.systemPrompt).toContain("0/10 active; 10 slots available");
+    expect(result.systemPrompt).toContain("Subagent capacity: slots are available (limit 10)");
+    expect(result.systemPrompt).toContain("call enable_tools with Subagents first");
     expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
     expect(definitions.get("spawn_subagent").parameters.properties.preview).toBeDefined();
+    expect(definitions.get("spawn_subagent").parameters.properties.context.anyOf.map((item: any) => item.const))
+      .toEqual(["fresh", "fork"]);
     expect(definitions.get("spawn_subagent").parameters.properties.readonly).toBeUndefined();
     expect(definitions.get("spawn_subagent").promptGuidelines).toContain(
       "For follow-up implementation work, prefer spawn_subagent while configured capacity is available.",
@@ -287,6 +294,8 @@ describe("SubagentManager extension", () => {
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("stop the exchange immediately");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("A normal 'Message from <agent>' is not a completion notification");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("An idle settlement is not completion");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("Never use force removal on a managed agent");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("non-force worktree remove");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).not.toContain("as soon as it settles");
 
     handlers.get("message_start")?.[0]?.({
@@ -394,8 +403,14 @@ describe("SubagentManager extension", () => {
     const mainRun = mainTools.get("spawn_subagent").execute("tool", {
       task: "Main preview task",
       preview: true,
+      context: "fork",
     }, undefined, undefined, {
-      sessionManager: { getSessionId: () => "main-session" },
+      sessionManager: {
+        getSessionId: () => "main-session",
+        getSessionFile: () => "/sessions/main.jsonl",
+        getLeafId: () => "main-cutoff",
+        getBranch: () => [{ type: "message", id: "main-cutoff", parentId: null, timestamp: "now", message: { role: "user", content: "Main prompt" } }],
+      },
       cwd: "/repo",
       model: { provider: "mock", id: "model" },
       thinkingLevel: "off",
@@ -406,6 +421,12 @@ describe("SubagentManager extension", () => {
     previewManager.approve("Follow this note");
     await mainRun;
     expect(spawned[0].task).toBe("Main preview task");
+    expect(spawned[0].context).toBe("fork");
+    expect(spawned[0].forkSource.origin).toEqual({
+      sourceSessionId: "main-session",
+      cutoffEntryId: "main-cutoff",
+      sourceAgentId: null,
+    });
     expect(notes).toEqual([["spawned", "Follow this note"]]);
 
     const childTools = new Map<string, any>();
@@ -560,6 +581,57 @@ describe("SubagentManager extension", () => {
     expect(invalidated).toEqual([["stopping-session", "stopping"]]);
   });
 
+  test("invalidates exact child shells when a retained agent stops", async () => {
+    const invalidated: any[] = [];
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      shellManager: {
+        async invalidateAgent(sessionId: string, agentId: string) { invalidated.push({ sessionId, agentId }); },
+        async invalidateSession() {},
+      } as any,
+    });
+    addTestAgent(manager, "shell-owner", "idle");
+    const record = (manager as any).records.get("shell-owner");
+    record.session = { sessionId: "child-session" };
+    record.dispose = async () => { record.session = undefined; };
+
+    await manager.stop("shell-owner");
+
+    expect(invalidated).toEqual([{
+      sessionId: "child-session",
+      agentId: "shell-owner",
+    }]);
+  });
+
+  test("invalidates all session shells when the main session changes", async () => {
+    const invalidated: any[] = [];
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      shellManager: {
+        async invalidateAgent() {},
+        async invalidateSession(sessionId: string) { invalidated.push(sessionId); },
+      } as any,
+    });
+    const first = {
+      getSessionId: () => "main-one",
+      getSessionFile: () => undefined,
+      getEntries: () => [],
+    };
+    const second = {
+      getSessionId: () => "main-two",
+      getSessionFile: () => undefined,
+      getEntries: () => [],
+    };
+    const api = { appendEntry() {}, sendMessage() {} } as any;
+
+    await manager.attachMain(api, first as any, "/repo");
+    await manager.attachMain(api, second as any, "/repo");
+
+    expect(invalidated).toEqual(["main-one"]);
+  });
+
   test("recognizes completion-only messages without blocking actionable communication", () => {
     expect(isCompletionOnlyMessage("Completed and committed all requested work. Tests pass.")).toBe(true);
     expect(isCompletionOnlyMessage("Implemented the feature as abc123. Validation passed.")).toBe(true);
@@ -609,6 +681,8 @@ describe("SubagentManager extension", () => {
       },
     };
     (manager as any).parentSessionId = "main-session";
+    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-finish-news-")), "main.jsonl");
+    (manager as any).mainSessionManager = { getSessionFile: () => sessionFile };
 
     const tools = new Map<string, any>();
     (manager as any).childExtension("child").factory({
@@ -627,6 +701,29 @@ describe("SubagentManager extension", () => {
     expect(deliveries[0].message.content).toContain("summary: Child work passed.");
     expect(deliveries[0].message.details.recipient).toBe("main");
     expect(events.filter((event) => event.type === "main-line")).toHaveLength(1);
+
+    (manager as any).recordSettlementResponse(
+      deliveries[0].message.details.id,
+      "Main integrated the child change.",
+    );
+    const news = loadNewsItems(sessionFile);
+    expect(news).toHaveLength(1);
+    expect(news[0]).toMatchObject({
+      id: `subagent-finish:${deliveries[0].message.details.id}`,
+      text: "Main integrated the child change.",
+      completion: {
+        agentId: "child",
+        agentName: "child",
+        requesterAgentId: null,
+        requesterName: "main",
+        summary: "Child work passed.",
+      },
+    });
+    (manager as any).recordSettlementResponse(
+      deliveries[0].message.details.id,
+      "Main integrated the child change.",
+    );
+    expect(loadNewsItems(sessionFile)).toHaveLength(1);
   });
 
   test("finish_subagent notifies only the direct subagent spawner", async () => {
@@ -641,10 +738,13 @@ describe("SubagentManager extension", () => {
       appendEntry() {},
       sendMessage(message: any) { mainDeliveries.push(message); },
     };
+    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-nested-finish-news-")), "main.jsonl");
+    (manager as any).mainSessionManager = { getSessionFile: () => sessionFile };
     const parent = (manager as any).records.get("parent");
     parent.session = {
       sessionId: "parent-session",
       isStreaming: false,
+      agent: { state: {} },
     };
     parent.api = {
       sendMessage(message: any, options: any) {
@@ -672,6 +772,35 @@ describe("SubagentManager extension", () => {
     expect(manager.getAgent("parent")?.transcript.pending).toHaveLength(1);
     expect(mainDeliveries).toEqual([]);
     expect(events.some((event) => event.type === "main-line")).toBe(false);
+
+    processAgentEvent(manager, "parent", {
+      type: "message_start",
+      message: { role: "custom", ...parentDeliveries[0].message },
+    });
+    processAgentEvent(manager, "parent", {
+      type: "message_start",
+      message: { role: "assistant", content: [] },
+    });
+    processAgentEvent(manager, "parent", {
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "Parent accepted the nested result." },
+    });
+    settleAgent(manager, "parent");
+
+    const news = loadNewsItems(sessionFile);
+    expect(news).toHaveLength(1);
+    expect(news[0]).toMatchObject({
+      text: "Parent accepted the nested result.",
+      completion: {
+        agentId: "child",
+        requesterAgentId: "parent",
+        requesterName: "parent",
+        summary: "Nested child passed.",
+      },
+    });
+    expect(manager.getAgent("parent")?.transcript.lines.some((line) =>
+      line.kind === "text" && line.role === "assistant" && line.newsId === news[0]?.id,
+    )).toBe(true);
   });
 
   test("sends one initial idle notice and suppresses duplicate settles", async () => {
@@ -933,6 +1062,62 @@ describe("SubagentManager extension", () => {
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0].content).toContain("summary: Persisted summary.");
     expect(entries.some((entry) => entry.data?.event === "finish" && entry.data.finishSummary === null)).toBe(true);
+  });
+
+  test("reconciles one completed finish News item from the registry on resume", async () => {
+    const sessionFile = join(mkdtempSync(join(tmpdir(), "pum-resume-finish-news-")), "main.jsonl");
+    const messageId = "settlement-worker:1:completed";
+    saveNewsItems(sessionFile, [{
+      id: `subagent-finish:${messageId}`,
+      text: "Old response text.",
+      at: 1,
+      read: true,
+      answered: true,
+    }]);
+    const entries = [{
+      type: "custom",
+      customType: "pum.subagent",
+      data: {
+        event: "settlement",
+        id: "worker",
+        settlement: {
+          id: "worker:1:completed",
+          messageId,
+          agentId: "worker",
+          agentName: "worker-one",
+          parentAgentId: null,
+          requesterName: "main",
+          status: "completed",
+          summary: "All tests passed.",
+          activityGeneration: 1,
+          content: "Subagent worker-one completed.\nsummary: All tests passed.",
+          createdAt: 2,
+          response: "Main merged the restored result.",
+          acknowledgedAt: 3,
+        },
+      },
+    }];
+    const restored = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    await restored.attachMain({ appendEntry() {}, sendMessage() {} } as any, {
+      getSessionId: () => "main-session",
+      getSessionFile: () => sessionFile,
+      getEntries: () => entries,
+    } as any, "/repo");
+
+    const news = loadNewsItems(sessionFile);
+    expect(news).toHaveLength(1);
+    expect(news[0]).toMatchObject({
+      id: `subagent-finish:${messageId}`,
+      text: "Main merged the restored result.",
+      read: true,
+      answered: true,
+      completion: {
+        agentId: "worker",
+        agentName: "worker-one",
+        requesterAgentId: null,
+        requesterName: "main",
+      },
+    });
   });
 
   test("restores persisted readonly state and defaults legacy snapshots to mutable", async () => {
@@ -1249,7 +1434,7 @@ describe("SubagentManager extension", () => {
     });
 
     const result = handlers.get("before_agent_start")?.({ systemPrompt: "base" });
-    expect(result.systemPrompt).toContain("0/14 active; 14 slots available");
+    expect(result.systemPrompt).toContain("Subagent capacity: slots are available (limit 14)");
     expect(result.systemPrompt).toContain("recursively merge or resolve every retained descendant");
     expect(result.systemPrompt).toContain("Before finish_subagent");
   });
@@ -1259,15 +1444,26 @@ describe("SubagentManager extension", () => {
     addTestAgent(manager, "failed-child", "failed");
     await expect((manager as any).worktreeAction("/tmp", "remove", "failed-child", undefined, true))
       .rejects.toThrow("Cannot force-remove managed subagent failed-child");
+    // The rejection names the valid close path for a completed empty agent.
+    await expect((manager as any).worktreeAction("/tmp", "remove", "failed-child", undefined, true))
+      .rejects.toThrow("retry the remove without force");
     expect(manager.getAgent("failed-child")).toBeDefined();
   });
 
   test("changes follow-up guidance at the configured capacity", () => {
-    expect(buildSubagentCapacityPrompt(3, 4)).toContain("3/4 active; 1 slot available");
+    expect(buildSubagentCapacityPrompt(3, 4)).toContain("slots are available (limit 4)");
     expect(buildSubagentCapacityPrompt(3, 4)).toContain("Prefer spawn_subagent");
     expect(buildSubagentCapacityPrompt(4, 4)).toContain("no slots available");
     expect(buildSubagentCapacityPrompt(4, 4)).toContain("appropriate related running subagent");
     expect(buildSubagentCapacityPrompt(4, 4)).toContain("keep the work pending");
+  });
+
+  test("keeps the capacity prompt cache-stable while slots remain available", () => {
+    // Exact active counts stay out of the text so the system prompt does not
+    // change on every agent transition and invalidate provider prompt caches.
+    expect(buildSubagentCapacityPrompt(0, 10)).toBe(buildSubagentCapacityPrompt(9, 10));
+    expect(buildSubagentCapacityPrompt(3, 4)).not.toContain("3");
+    expect(buildSubagentCapacityPrompt(10, 10)).toBe(buildSubagentCapacityPrompt(12, 10));
   });
 
   test("rejects another active subagent at a custom lower limit", async () => {
@@ -1303,7 +1499,7 @@ describe("SubagentManager extension", () => {
     (manager.mainExtension() as { factory: (api: any) => void }).factory(pi);
 
     const result = handlers.get("before_agent_start")?.[0]?.({ systemPrompt: "base prompt" });
-    expect(result.systemPrompt).toContain("12/12 active; no slots available");
+    expect(result.systemPrompt).toContain("all 12 slots are active; no slots available");
     expect(result.systemPrompt).toContain("Queue follow-up work with message_agent");
     expect(result.systemPrompt).toContain("keep the work pending for deliberate routing");
   });
@@ -1498,7 +1694,16 @@ describe("SubagentManager extension", () => {
         data: {
           event: "spawned",
           id: "child",
-          snapshot: { ...base, id: "child", parentAgentId: "parent" },
+          snapshot: {
+            ...base,
+            id: "child",
+            parentAgentId: "parent",
+            forkOrigin: {
+              sourceSessionId: "parent-session",
+              cutoffEntryId: "cutoff-entry",
+              sourceAgentId: "parent",
+            },
+          },
         },
       },
       {
@@ -1527,6 +1732,11 @@ describe("SubagentManager extension", () => {
     } as any, "/repo");
 
     expect(manager.getAgent("child")?.parentAgentId).toBe("parent");
+    expect(manager.getAgent("child")?.forkOrigin).toEqual({
+      sourceSessionId: "parent-session",
+      cutoffEntryId: "cutoff-entry",
+      sourceAgentId: "parent",
+    });
     expect(manager.activeCount()).toBe(0);
     expect(manager.getMaxActiveSubagents()).toBe(1);
     expect(manager.getAgent("child")?.usage).toEqual({
@@ -1537,6 +1747,10 @@ describe("SubagentManager extension", () => {
       contextPct: 35,
     });
     expect(manager.getAgent("legacy")?.parentAgentId).toBeNull();
+    expect(manager.getAgent("legacy")?.forkOrigin).toBeUndefined();
+    expect((manager as any).formatAgentList()).toContain(
+      "fork source: worker · session parent-session · cutoff cutoff-entry",
+    );
     expect(manager.getAgent("legacy")?.usage).toEqual({
       outgoing: 0,
       incoming: 0,
@@ -1546,6 +1760,58 @@ describe("SubagentManager extension", () => {
     });
     await expect((manager as any).worktreeAction("/repo", "merge", "parent"))
       .rejects.toThrow("Cannot merge worker while retained descendants remain:\n- worker (idle)");
+  });
+
+  test("prepares main stats before registering restored child files", async () => {
+    const calls: string[] = [];
+    const statsManager = {
+      prepareMainSession(path: string) { calls.push(`prepare:${path}`); },
+      registerAgentFile(id: string, path: string) { calls.push(`child:${id}:${path}`); },
+    };
+    const childPath = join(process.cwd(), "restored-child.jsonl");
+    const entries = [{
+      type: "custom",
+      customType: "pum.subagent",
+      data: {
+        event: "spawned",
+        id: "child",
+        snapshot: {
+          id: "child",
+          name: "worker",
+          task: "task",
+          status: "idle",
+          worktree: {
+            name: "worker",
+            path: "/tmp/worker",
+            branch: "pum/worker",
+            baseBranch: "main",
+            baseCommit: "abc",
+          },
+          sessionFile: childPath,
+          parentAgentId: null,
+          modelId: "mock/model",
+          thinkingLevel: "off",
+          startedAt: 1,
+          updatedAt: 1,
+          usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
+        },
+      },
+    }];
+    const manager = new SubagentManager({
+      modelRuntime: {} as any,
+      agentDir: "/tmp/pum-test",
+      statsManager: statsManager as any,
+    });
+    await manager.attachMain({ appendEntry() {} } as any, {
+      getSessionId: () => "main-session",
+      getSessionFile: () => "/tmp/main.jsonl",
+      getEntries: () => entries,
+    } as any, "/repo");
+
+    expect(calls).toEqual([
+      "prepare:/tmp/main.jsonl",
+      `child:child:${childPath}`,
+    ]);
   });
 
   test("binds the main session even when session_start was missed", async () => {

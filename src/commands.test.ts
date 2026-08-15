@@ -16,6 +16,12 @@ describe("command suggestions", () => {
     expect(matchingCommands("/news").some((command) => command.name === "/news")).toBe(true);
   });
 
+  test("includes /stats and matches it for a prefix", () => {
+    expect(COMMANDS.find((command) => command.name === "/stats")?.description)
+      .toBe("Show session statistics");
+    expect(matchingCommands("/sta").map((command) => command.name)).toContain("/stats");
+  });
+
   test("does not replace multiline input with command navigation", () => {
     expect(matchingCommands("/clear\nkeep this text")).toEqual([]);
   });

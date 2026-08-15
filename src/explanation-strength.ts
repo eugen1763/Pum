@@ -14,6 +14,7 @@ Summarize the result when the work is complete.
 Do not put these explanations only in hidden reasoning.`,
   detailed: `## Explanation strength: detailed
 
+For explanations, this section takes precedence over the general "Be concise" guideline.
 Use regular assistant output to explain what you are doing and why.
 Explain the plan before implementation.
 Report important actions, decisions, tradeoffs, and validation as the work proceeds.

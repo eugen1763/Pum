@@ -2,6 +2,66 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.13-beta.1] - 2026-08-13
+
+### Added
+- Added configurable Bash output summarization (`src/bash-output.ts`). The default
+  keeps the first 30 / last 40 lines within 3KB, strips ANSI, drops progress-only
+  lines, compresses repeated and similar runs, and re-injects FAIL/error/warning
+  lines from the elided middle. PUM tees the exact stream to its own trusted
+  private temp file, so elided output stays recoverable below pi's 50KB limit,
+  and never reads a file path parsed from command output.
+- The Bash tool schema gains `full_output` (return pi's native output),
+  `strategy`, `max_bytes`, and `patterns` (regexes whose matching raw lines
+  survive elision). Extracted lines and the marker share one final hard byte
+  budget.
+- Added the `bashOutput` setting in `pum.json`, with defaults, extreme-value
+  clamping, and normalization.
+
+### Changed
+- Split the `/stats` tool outcome for running and interrupted calls. Running uses blue, and interrupted uses dark gray.
+- Delay live Bash output until a command runs for 500 ms. Failed Bash rows show the exit code after a `·` separator.
+
+## [0.2.12-beta.1] - 2026-08-12
+
+### Added
+- Added managed subagent completions to News. Direct and nested completion entries include the finishing agent, requester, finish summary, and final response. Stable settlement identities prevent duplicates across delivery, acknowledgement, and session resume. News navigation now targets the relevant completion transcript rows while preserving read, reply, and copy behavior.
+
+### Fixed
+- Fixed Check mode parsing for valid Bash `case` patterns. Pattern terminators such as `success|failed)` no longer produce an unmatched-parenthesis error, and pattern alternatives are no longer classified as pipelines.
+
+## [0.2.11-beta.1] - 2026-08-12
+
+### Fixed
+- Stopped the transcript from crashing when a slash command set the busy state over an existing text or tool row. Text and tool rows now keep a defined content value while the working-caret hooks own the renderable, so OpenTUI no longer receives an undefined `content` update, which crashed in `setStyledText`.
+
+## [0.2.10-beta.1] - 2026-08-12
+
+### Added
+- Added a non-interactive mode. `pum -p "<text>"` (or `--prompt`) runs one prompt without the TUI, streams the answer to stdout and tool progress to stderr, then exits. It uses the read, write, edit, apply_patch, and bash tools with the configured Check mode, sandbox, writing style, and explanation strength. The session persists to the normal per-directory store, so `-r` and the TUI can continue it.
+- Named PUM in the system prompt. The agent now identifies as PUM instead of the underlying harness, and the harness documentation routing is removed from the prompt.
+- Added readonly subagents with a fail-closed child tool guard, so an inspection subagent cannot change files, commit, delegate, or start processes.
+- Added a process-local filesystem sandbox that bounds the file tools to the project and approved roots.
+- Added `n` and `p` jumps in the News popup to move to the answer and to the user prompt, alongside `c` to copy.
+- Added idle open-resource reminders for background subagents and trigger-only idle cycles.
+
+### Changed
+- Simplified Check mode to an on/off toggle. `on` runs the former `balanced` behavior; the `strict` and `ask` profiles, the approval popup, the exact-approval store, and the `clearCheckApprovals` action are removed. Legacy settings values `strict`, `balanced`, and `ask` migrate to `on`; `off` stays `off`. A verifier `UNSAFE` result blocks; a recognized direct `npm publish` or `npm dist-tag add` from the main agent is allowed.
+- Made the subagent capacity note in the system prompt cache-stable by reporting slot availability instead of an exact count.
+- Showed the web search argument on the tool line, and showed the enabled `enable_tools` groups.
+
+### Fixed
+- Prevented a managed subagent guard bypass. A `worktree` merge or remove that names a subagent by its branch now hits the same running-status, descendant, and force-removal checks as a name or id.
+- Re-delivered a subagent completion notice that a queue clear could drop. Cancelling the main turn or recalling a queued message no longer loses the notice, so a managed merge is not stuck.
+- Kept a completed subagent from downgrading to idle after a bare acknowledgement turn, which had blocked its merge.
+- Aborted a conflicted worktree merge so the main worktree returns to a clean state, and recovered a managed agent whose worktree directory was pruned so it no longer blocks its parent.
+- Fixed apply_patch defects: co-located insertion and replacement no longer corrupt a file; `Add File` on an existing path fails instead of overwriting; a `Move to` surfaces its source path and a non-empty diff; rollback falls back to a copy and names the backup; a `@@ ` header with a trailing space behaves like a bare `@@`; and line-ending normalization no longer rewrites untouched lines.
+- Hardened the sandbox: a Require-mode startup block no longer suppresses a later Auto fallback warning; invalid environment variable names are dropped; the shell executable directory is mounted read-only on Linux; more `.env` variants are denied; a Windows non-zero exit is not misreported as a timeout; and a `bin` shell under a drive root no longer exposes the whole drive.
+- Hardened external triggers: a denied rerun no longer aborts the settle batch; a delivery cannot settle twice; cancelled or expired definitions free their slot; and termination escalates to a process-tree kill.
+- Stopped the hosted web-search tool from attaching to the Check mode verifier request, and chained the provider payload hook so a `before_provider_request` extension still runs on Codex.
+- Fixed TUI state races: a switch-then-send or switch-then-cancel in one input chunk now targets the newly selected agent; a settings change is not reverted by a following change in the same chunk; deleting a cached prompt reindexes every view; a large paste while the News popup is open no longer lands in the hidden prompt; and a spawn-preview approval binds to the request the popup rendered.
+- Fixed help popup pagination and removed duplicate trigger transcript lines.
+
 ## [0.2.9-beta.1] - 2026-08-11
 
 ### Added

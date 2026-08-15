@@ -68,11 +68,7 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.flush();
 }
 
-async function renderApp(
-  width = 80,
-  height = 24,
-  settingOverrides: Record<string, unknown> = {},
-) {
+async function renderApp(width = 80, height = 24) {
   const setup = await createTestRenderer({ width, height, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const session = fakeSession();
@@ -92,7 +88,7 @@ async function renderApp(
       onNewSession={async () => session}
       loadSessions={async () => []}
       onSwitchSession={async () => session}
-      settings={{ ...settings, ...settingOverrides }}
+      settings={settings}
       searchProviders={[]}
       subagentManager={manager}
     />,
@@ -136,24 +132,6 @@ async function openFilteredRow(
 }
 
 describe("Settings keyboard flow", () => {
-  test("shows the tool-output line setting only for detailed explanations", async () => {
-    const simple = await renderApp();
-    await openSettings(simple);
-    await simple.mockInput.typeText("tool output");
-    await settle(simple);
-    expect(simple.captureCharFrame()).toContain("No matching settings");
-    simple.renderer.destroy();
-    destroy = undefined;
-
-    const detailed = await renderApp(80, 24, { explanationStrength: "detailed" });
-    await openSettings(detailed);
-    await detailed.mockInput.typeText("tool output");
-    await settle(detailed);
-    const frame = detailed.captureCharFrame();
-    expect(frame).toContain("Tool output lines");
-    expect(frame).toContain("‹ 5 ›");
-  });
-
   test("closes focused search with one Escape and restores prompt focus", async () => {
     const setup = await renderApp();
     await openSettings(setup);

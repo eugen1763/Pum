@@ -6,6 +6,7 @@ import {
   type SyntaxStyle,
 } from "@opentui/core";
 import type { MarkdownProps } from "@opentui/react";
+import { useEffect, useRef, useState } from "react";
 import {
   useBlinkingText,
   useMarkdownCaret,
@@ -13,14 +14,16 @@ import {
   useSpinner,
 } from "./animation";
 import type { Theme } from "./theme";
-import { toolOutputPreview, type ToolCall } from "./tool-line";
+import { bashOutputWindow, type ToolCall } from "./tool-line";
+import type { TranscriptOutputMode } from "./transcript-output";
+import type { DiffPreviewLine, PreviewLanguage, ToolResultPreview } from "./tool-preview";
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
 export type Line =
   | { kind: "text"; role: Role; text: string; newsId?: string }
   | { kind: "tool"; call: ToolCall }
-  | { kind: "agent-message"; sender: string; recipient: string; text: string };
+  | { kind: "agent-message"; sender: string; recipient: string; text: string; messageId?: string };
 
 export type PendingLine = {
   id: string;
@@ -246,7 +249,7 @@ export function TextLine({
     <Row glyph={GUTTER} glyphColor={color}>
       <text
         ref={workingCaret ? textCaret : undefined}
-        content={workingCaret ? undefined : displayText}
+        content={workingCaret ? "" : displayText}
         fg={color}
         selectable
         wrapMode="word"
@@ -386,6 +389,64 @@ export function toolStateGlyph(state: ToolCall["state"]): string {
 }
 
 const CHECK_MODE_HARD_BLOCK_PREFIX = "Check mode hard block:";
+const BASH_OUTPUT_DELAY_MS = 500;
+const BASH_OUTPUT_MIN_VISIBLE_MS = 2_000;
+
+function useBashOutputVisible(call: ToolCall): boolean {
+  const initiallyVisible = call.name === "bash"
+    && call.state === "running"
+    && Boolean(call.output)
+    && (call.startedAt === undefined || Date.now() - call.startedAt >= BASH_OUTPUT_DELAY_MS);
+  const [visible, setVisible] = useState(initiallyVisible);
+  const visibleSince = useRef<number | undefined>(initiallyVisible ? Date.now() : undefined);
+
+  useEffect(() => {
+    if (call.name !== "bash" || !call.output) {
+      visibleSince.current = undefined;
+      setVisible(false);
+      return;
+    }
+
+    const show = () => {
+      visibleSince.current ??= Date.now();
+      setVisible(true);
+    };
+
+    if (call.state === "running") {
+      if (call.startedAt === undefined) {
+        show();
+        return;
+      }
+      const delay = BASH_OUTPUT_DELAY_MS - (Date.now() - call.startedAt);
+      if (delay <= 0) {
+        show();
+        return;
+      }
+      visibleSince.current = undefined;
+      setVisible(false);
+      const timer = setTimeout(show, delay);
+      return () => clearTimeout(timer);
+    }
+
+    if (visibleSince.current === undefined) {
+      if (call.startedAt === undefined || Date.now() - call.startedAt < BASH_OUTPUT_DELAY_MS) {
+        setVisible(false);
+        return;
+      }
+      show();
+    }
+
+    const remaining = BASH_OUTPUT_MIN_VISIBLE_MS - (Date.now() - visibleSince.current!);
+    if (remaining <= 0) {
+      setVisible(false);
+      return;
+    }
+    const timer = setTimeout(() => setVisible(false), remaining);
+    return () => clearTimeout(timer);
+  }, [call.id, call.name, call.output, call.startedAt, call.state]);
+
+  return visible;
+}
 
 function rejectedDetail(theme: Theme, detail: string): StyledText {
   if (!detail.startsWith(CHECK_MODE_HARD_BLOCK_PREFIX)) {
@@ -402,25 +463,25 @@ function rejectedDetail(theme: Theme, detail: string): StyledText {
 
 export function ToolLine({
   theme,
+  syntaxStyle,
   call,
   workingCaret = false,
-  outputLines,
+  outputMode = "default",
 }: {
   theme: Theme;
+  syntaxStyle?: SyntaxStyle;
   call: ToolCall;
   workingCaret?: boolean;
-  /** Omit this value to hide tool-result output. */
-  outputLines?: number;
+  /** Detailed-mode renderers use this without changing canonical call data. */
+  outputMode?: TranscriptOutputMode;
 }) {
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
   const rejected = call.state === "rejected";
+  const bashOutputVisible = useBashOutputVisible(call);
   const toolColor = failed ? theme.error : rejected ? theme.rejection : theme.tool;
   const argColor = failed ? theme.error : rejected ? theme.rejection : theme.toolArg;
   const detailColor = failed ? theme.error : rejected ? theme.rejection : theme.dim;
-  const output = call.output && outputLines !== undefined
-    ? toolOutputPreview(call.output, outputLines)
-    : undefined;
 
   const prefix = call.arg
     ? new StyledText([fg(toolColor)(call.name), fg(detailColor)(" · ")])
@@ -429,6 +490,9 @@ export function ToolLine({
     ? [fg(argColor)(call.arg)]
     : [fg(toolColor)(call.name)];
   if (call.detail && !rejected) bodyChunks.push(fg(detailColor)(`  ${call.detail}`));
+  if (failed && call.name === "bash" && call.exitCode !== undefined) {
+    bodyChunks.push(fg(detailColor)(` · exit ${call.exitCode}`));
+  }
 
   const caret = useBlinkingText({
     chunks: bodyChunks,
@@ -436,6 +500,17 @@ export function ToolLine({
     caretColor: failed ? theme.error : rejected ? theme.rejection : theme.accent,
     active: workingCaret,
   });
+  const output = call.name === "bash" && call.output && bashOutputVisible
+    && (call.state === "running" || outputMode !== "detailed")
+    ? bashOutputWindow(call.output)
+    : null;
+  const detailedPreview = outputMode === "detailed"
+    && call.state !== "running"
+    && call.state !== "rejected"
+    && call.preview
+    && (call.state === "ok" || call.preview.kind === "bash")
+    ? call.preview
+    : undefined;
 
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
@@ -444,7 +519,7 @@ export function ToolLine({
           {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
           <text
             ref={workingCaret ? caret : undefined}
-            content={workingCaret ? undefined : new StyledText(bodyChunks)}
+            content={workingCaret ? "" : new StyledText(bodyChunks)}
             selectable
             wrapMode="word"
             style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
@@ -476,28 +551,169 @@ export function ToolLine({
           />
         </Row>
       ) : null}
-      {output ? (
-        <Row glyph="│ " glyphColor={detailColor}>
+      {output && (output.hidden > 0 || output.lines.length > 0) ? (
+        <Row glyph={GUTTER} glyphColor={theme.bashOutput}>
+          <box style={{ width: call.arg ? Bun.stringWidth(`${call.name} · `) : 0, flexShrink: 0 }} />
           <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-            <text
-              content={output.text}
-              fg={detailColor}
-              selectable
-              wrapMode="word"
-              style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
-            />
-            {output.omittedLines > 0 ? (
+            {output.hidden > 0 ? (
               <text
-                content={`… ${output.omittedLines} more line${output.omittedLines === 1 ? "" : "s"}`}
-                fg={theme.dim}
+                content={`... ${output.hidden} more line${output.hidden === 1 ? "" : "s"}`}
+                fg={theme.bashOutput}
                 selectable
-                wrapMode="none"
-                style={{ flexShrink: 0 }}
+                wrapMode="word"
+                style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
               />
             ) : null}
+            {output.lines.map((line, index) => line ? (
+              <text
+                key={`${index}:${line}`}
+                content={line}
+                fg={theme.bashOutput}
+                selectable
+                wrapMode="word"
+                style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+              />
+            ) : (
+              <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
+            ))}
           </box>
         </Row>
       ) : null}
+      {detailedPreview ? (
+        <DetailedToolPreview theme={theme} syntaxStyle={syntaxStyle} preview={detailedPreview} />
+      ) : null}
     </box>
+  );
+}
+
+function previewColor(theme: Theme, kind: DiffPreviewLine["kind"]): string {
+  if (kind === "add") return theme.success;
+  if (kind === "remove") return theme.error;
+  if (kind === "context") return theme.dim;
+  return theme.tool;
+}
+
+function PreviewSource({
+  content,
+  language,
+  syntaxStyle,
+  fallbackColor,
+}: {
+  content: string;
+  language?: PreviewLanguage;
+  syntaxStyle?: SyntaxStyle;
+  fallbackColor: string;
+}) {
+  if (!content) return <box style={{ height: 1, flexShrink: 0 }} />;
+  if (language && syntaxStyle) {
+    return (
+      <code
+        content={content}
+        filetype={language}
+        syntaxStyle={syntaxStyle}
+        selectable
+        style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+      />
+    );
+  }
+  return (
+    <text
+      content={content}
+      fg={fallbackColor}
+      selectable
+      wrapMode="word"
+      style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+    />
+  );
+}
+
+function OmittedLines({ theme, count }: { theme: Theme; count: number }) {
+  if (count <= 0) return null;
+  return (
+    <text
+      content={`... ${count} more line${count === 1 ? "" : "s"}`}
+      fg={theme.dim}
+      selectable
+      wrapMode="word"
+      style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+    />
+  );
+}
+
+/** Display-only detailed preview. The model-facing tool result stays unchanged. */
+export function DetailedToolPreview({
+  theme,
+  syntaxStyle,
+  preview,
+}: {
+  theme: Theme;
+  syntaxStyle?: SyntaxStyle;
+  preview: ToolResultPreview;
+}) {
+  if (preview.kind === "diff") {
+    return (
+      <Row glyph={GUTTER} glyphColor={theme.dim}>
+        <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+          {preview.lines.map((line, index) => {
+            const color = previewColor(theme, line.kind);
+            if (line.kind === "header") {
+              return line.text ? (
+                <text
+                  key={`${index}:${line.text}`}
+                  content={line.text}
+                  fg={color}
+                  selectable
+                  wrapMode="word"
+                  style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+                />
+              ) : <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />;
+            }
+            return (
+              <box key={`${index}:${line.text}`} style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}>
+                <box style={{ width: 1, flexShrink: 0 }}>
+                  <text content={line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "} fg={color} />
+                </box>
+                <PreviewSource
+                  content={line.source}
+                  language={line.language}
+                  syntaxStyle={syntaxStyle}
+                  fallbackColor={color}
+                />
+              </box>
+            );
+          })}
+        </box>
+      </Row>
+    );
+  }
+
+  return (
+    <Row glyph={GUTTER} glyphColor={theme.dim}>
+      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+        {preview.kind === "write" && preview.language && syntaxStyle ? (
+          preview.window.lines.length > 0 ? (
+            <code
+              content={preview.window.lines.join("\n")}
+              filetype={preview.language}
+              syntaxStyle={syntaxStyle}
+              selectable
+              style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+            />
+          ) : null
+        ) : preview.window.lines.map((line, index) => line ? (
+          <text
+            key={`${index}:${line}`}
+            content={line}
+            fg={preview.kind === "bash" ? theme.bashOutput : theme.dim}
+            selectable
+            wrapMode="word"
+            style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+          />
+        ) : (
+          <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
+        ))}
+        <OmittedLines theme={theme} count={preview.window.hidden} />
+      </box>
+    </Row>
   );
 }

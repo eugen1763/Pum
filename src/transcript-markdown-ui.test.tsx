@@ -154,6 +154,7 @@ describe("transcript Markdown rows", () => {
 
     await act(async () => {
       root.render(<StreamingHarness />);
+      await setup.flush();
     });
 
     const frameCheckpoints = new Set([
@@ -181,9 +182,11 @@ describe("transcript Markdown rows", () => {
     let markdown: MarkdownRenderable | undefined;
     for (let length = 1; length <= content.length; length += 1) {
       if (length > 1) {
-        await act(async () => setText(content.slice(0, length)));
+        await act(async () => {
+          setText(content.slice(0, length));
+          await setup.flush();
+        });
       }
-      await setup.flush();
 
       const current = descendants(setup.renderer.root, MarkdownRenderable)[0];
       expect(current).toBeDefined();
@@ -408,7 +411,13 @@ describe("transcript Markdown rows", () => {
 
     expect(lines).toEqual([
       { kind: "text", role: "user", text: markdownText },
-      { kind: "agent-message", sender: "main", recipient: "worker", text: markdownText },
+      {
+        kind: "agent-message",
+        sender: "main",
+        recipient: "worker",
+        text: markdownText,
+        messageId: "message-1",
+      },
     ]);
     const markdownRows = descendants(setup.renderer.root, MarkdownRenderable);
     expect(markdownRows.map((row) => row.content)).toEqual([markdownText, markdownText]);

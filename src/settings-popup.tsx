@@ -1,5 +1,4 @@
 import type { Model } from "@earendil-works/pi-ai";
-import type { ExplanationStrength } from "./explanation-strength";
 import type { Theme } from "./theme";
 import { PopupFrame } from "./popup-frame";
 
@@ -11,6 +10,7 @@ export type SettingRowId =
   | "theme"
   | "animations"
   | "workingRuleAnimation"
+  | "outputMode"
   | "webSearch"
   | "writingStyle"
   | "explanationStrength"
@@ -18,11 +18,9 @@ export type SettingRowId =
   | "sandboxMode"
   | "checkModel"
   | "checkPaths"
-  | "clearCheckApprovals"
   | "thinkingLevel"
   | "showThinking"
   | "maxActiveSubagents"
-  | "toolOutputLines"
   | "providers"
   | "model";
 
@@ -38,6 +36,7 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "theme", label: "Theme", category: "Appearance", keywords: "color palette semantic", description: "Change the semantic color preset. theme.json overrides remain active." },
   { id: "animations", label: "Animations", category: "Appearance", keywords: "motion global truecolor", description: "Enable interface motion. PUM disables motion when true color is unavailable." },
   { id: "workingRuleAnimation", label: "Working animation", category: "Appearance", keywords: "rules input header coordinated off motion", description: "Choose how the header and input rules animate while an agent works." },
+  { id: "outputMode", label: "Output", category: "Appearance", keywords: "transcript tools minimal default detailed preview summary", description: "Choose minimal summaries, standard tool rows, or detailed result previews in the transcript." },
   { id: "providers", label: "Providers", category: "Agent", keywords: "login oauth api key custom endpoint", description: "Open provider login or add an OpenAI-compatible custom endpoint." },
   { id: "model", label: "Model", category: "Agent", keywords: "provider llm active search", description: "Select the model used by the main agent. Search matches provider and model names." },
   { id: "thinkingLevel", label: "Thinking level", category: "Agent", keywords: "reasoning effort clamp capability", description: "Set reasoning effort. Pi clamps the level to the selected model capability." },
@@ -45,25 +44,17 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "maxActiveSubagents", label: "Active subagents", category: "Agent", keywords: "parallel capacity maximum limit starting running workers", description: "Set the maximum number of starting and running managed subagents from 1 through 25." },
   { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose ste simplified technical english", description: "Add per-turn response guidance. STE requests concise Simplified Technical English." },
   { id: "explanationStrength", label: "Explanations", category: "Agent", keywords: "progress updates output none simple detailed rationale", description: "Choose how much regular output explains the agent plan, actions, decisions, and results." },
-  { id: "toolOutputLines", label: "Tool output lines", category: "Agent", keywords: "detailed result preview length limit read bash commands", description: "Set the source-line limit for every tool result shown with detailed explanations." },
   { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },
-  { id: "checkMode", label: "Check mode", category: "Safety", keywords: "profile strict balanced ask verify tools hard block approval bash edit patch", description: "Choose off, strict, balanced, or ask. Hard security rules apply to every active profile." },
+  { id: "checkMode", label: "Check mode", category: "Safety", keywords: "on off verify tools hard block bash edit patch", description: "Turn Check mode on or off. On verifies bash, edit, and apply_patch and applies hard security rules." },
   { id: "sandboxMode", label: "Sandbox", category: "Safety", keywords: "os isolation auto require off enforcement fallback bash", description: "Choose automatic fallback, required OS enforcement, or no OS sandbox for Bash commands." },
   { id: "checkModel", label: "Check model", category: "Safety", keywords: "verifier tools safety structured verdict model", description: "Select the separate verifier model used for ambiguous Check mode calls." },
   { id: "checkPaths", label: "Allowed paths", category: "Safety", keywords: "additional directories roots boundary sandbox command", description: "Use /check-path to manage extra directory roots allowed by the filesystem sandbox and Check mode for this project." },
-  { id: "clearCheckApprovals", label: "Clear approvals", category: "Safety", keywords: "remove reset exact project approvals ask", description: "Remove exact Check mode approvals stored for this project." },
 ];
 
-export function filterSettingsRows(
-  query: string,
-  explanationStrength: ExplanationStrength = "detailed",
-): SettingRow[] {
+export function filterSettingsRows(query: string): SettingRow[] {
   const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const available = explanationStrength === "detailed"
-    ? SETTINGS_ROWS
-    : SETTINGS_ROWS.filter((row) => row.id !== "toolOutputLines");
-  if (terms.length === 0) return [...available];
-  return available.filter((row) => {
+  if (terms.length === 0) return [...SETTINGS_ROWS];
+  return SETTINGS_ROWS.filter((row) => {
     const haystack = `${row.label} ${row.category} ${row.keywords} ${row.description}`.toLocaleLowerCase();
     return terms.every((term) => haystack.includes(term));
   });

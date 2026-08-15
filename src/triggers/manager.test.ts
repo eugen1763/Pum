@@ -50,6 +50,20 @@ class MemoryWriter implements TriggerOutputWriter {
   text(): string { return new TextDecoder().decode(Buffer.concat(this.chunks.map((chunk) => Buffer.from(chunk)))) }
 }
 
+function gatedWriter(path: string, gate?: Promise<void>): TriggerOutputWriter & { removed: boolean } {
+  const writer = {
+    path,
+    removed: false,
+    async write(_chunk: Uint8Array): Promise<void> {},
+    async close(): Promise<void> {},
+    async remove(): Promise<void> {
+      if (gate) await gate;
+      writer.removed = true;
+    },
+  };
+  return writer;
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -434,5 +448,145 @@ describe("TriggerManager limits, coalescing, and races", () => {
     await flushAsync();
     expect(h.deliveries).toHaveLength(0);
     expect(h.manager.inspect("race").state).toBe("cancelled");
+  });
+});
+
+describe("TriggerManager settlement robustness and termination", () => {
+  test("keeps settling the batch when a repeat rerun is denied", async () => {
+    const failedFor: string[] = [];
+    const h = harness({
+      safety: {
+        check(request) {
+          if (request.proposal.operation === "repeat") return { safe: false, reason: "rerun denied" };
+          return { safe: true };
+        },
+      },
+    });
+    h.manager.subscribe((event) => {
+      if (event.type === "external" && event.event.data.state === "failed") failedFor.push(event.event.data.triggerId);
+    });
+    await h.manager.create(input({ id: "repeat-one", mode: "repeat", restartDelayMs: 60_000, maxFires: 5 }), requester);
+    await h.manager.create(input({ id: "other-one" }), requester);
+    h.clock.runDue();
+    await flushAsync(30);
+    expect(h.manager.inspect("repeat-one").state).toBe("waiting");
+    expect(h.manager.inspect("other-one").state).toBe("waiting");
+
+    // Coalesce a run so that settling the delivery attempts a rerun that the
+    // safety check denies.
+    await h.manager.invoke("repeat-one");
+    expect(h.manager.inspect("repeat-one").coalescedCount).toBe(1);
+
+    // The denied rerun must not abort the settle loop or leave the other
+    // delivery stuck in "waiting" with a leaked output file.
+    await h.manager.markTargetSettled("session-1", null);
+
+    expect(failedFor).toContain("repeat-one");
+    expect(h.manager.inspect("repeat-one").state).toBe("idle");
+    expect(h.manager.inspect("repeat-one").pendingCount).toBe(0);
+    expect(h.manager.inspect("other-one").state).toBe("idle");
+    expect(h.manager.inspect("other-one").pendingCount).toBe(0);
+    expect(h.manager.inspect("other-one").output?.exists).toBe(false);
+  });
+
+  test("ignores a second settle of an already-removed delivery", async () => {
+    const gate = deferred<void>();
+    const settledFor: string[] = [];
+    const h = harness({
+      files: {
+        async createPrivateOutput(id) {
+          return gatedWriter(`/private/${id}.log`, id === "t-a" ? gate.promise : undefined);
+        },
+      },
+    });
+    h.manager.subscribe((event) => {
+      if (event.type === "external" && event.event.data.state === "settled") settledFor.push(event.event.data.triggerId);
+    });
+    await h.manager.create(input({ id: "t-a" }), requester);
+    await h.manager.create(input({ id: "t-b" }), requester);
+    h.clock.runDue();
+    await flushAsync(30);
+    expect(h.manager.inspect("t-a").state).toBe("waiting");
+    expect(h.manager.inspect("t-b").state).toBe("waiting");
+
+    // Settle both deliveries in one batch; t-a's cleanup blocks on the gate, so
+    // the batch suspends with t-b still captured but not yet processed.
+    const settleAll = h.manager.markTargetSettled("session-1", null);
+    await flushAsync(2);
+    // While the batch is suspended, cancel t-b so its delivery record is removed
+    // out from under the still-pending batch iteration.
+    await h.manager.cancel("t-b");
+    expect(h.manager.inspect("t-b").state).toBe("cancelled");
+    gate.resolve();
+    await settleAll;
+
+    // The stale second settle of the removed t-b delivery must be a no-op: no
+    // extra "settled" event and no double mutation of the cancelled trigger.
+    expect(settledFor.filter((id) => id === "t-b")).toHaveLength(0);
+    expect(settledFor.filter((id) => id === "t-a")).toHaveLength(1);
+    expect(h.manager.inspect("t-b").state).toBe("cancelled");
+    expect(h.manager.inspect("t-b").pendingCount).toBe(0);
+    expect(h.manager.inspect("t-a").state).toBe("idle");
+  });
+
+  test("frees cancelled definition slots so the trigger limit is not permanently exhausted", async () => {
+    const h = harness({ triggerLimit: 3 });
+    // Create and cancel far more triggers than the limit. Each terminal
+    // definition must free its slot rather than occupy it until restart.
+    for (let index = 0; index < 9; index += 1) {
+      const id = `slot-${index}`;
+      await h.manager.create(input({ id, startBehavior: "paused" }), requester);
+      expect(h.manager.inspect(id).state).toBe("paused");
+      await h.manager.cancel(id);
+      expect(h.manager.inspect(id).state).toBe("cancelled");
+    }
+
+    // The limit is still enforced for live definitions.
+    for (let index = 0; index < 3; index += 1) {
+      await h.manager.create(input({ id: `live-${index}`, startBehavior: "paused" }), requester);
+    }
+    await expect(h.manager.create(input({ id: "live-over", startBehavior: "paused" }), requester))
+      .rejects.toThrow("Trigger limit reached (3)");
+  });
+
+  test("escalates a supervised process to SIGKILL when it ignores the initial terminate", async () => {
+    const exit = deferred<ProcessExit>();
+    const signals: string[] = [];
+    const h = harness({
+      spawn: () => ({ completed: exit.promise, kill(signal = "SIGTERM") { signals.push(signal); } }),
+    });
+    await h.manager.create(input({ id: "stubborn" }), requester);
+    h.clock.runDue();
+    await flushAsync(4);
+    expect(h.manager.inspect("stubborn").state).toBe("running");
+
+    await h.manager.cancel("stubborn");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(h.manager.inspect("stubborn").state).toBe("cancelled");
+
+    // The child never exits, so the bounded grace period must escalate.
+    h.clock.advance(2_000);
+    await flushAsync();
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  test("does not escalate when the process exits within the grace period", async () => {
+    const exit = deferred<ProcessExit>();
+    const signals: string[] = [];
+    const h = harness({
+      spawn: () => ({ completed: exit.promise, kill(signal = "SIGTERM") { signals.push(signal); } }),
+    });
+    await h.manager.create(input({ id: "graceful" }), requester);
+    h.clock.runDue();
+    await flushAsync(4);
+
+    await h.manager.cancel("graceful");
+    expect(signals).toEqual(["SIGTERM"]);
+    exit.resolve({ exitCode: 0, signal: "SIGTERM" });
+    await flushAsync();
+
+    h.clock.advance(2_000);
+    await flushAsync();
+    expect(signals).toEqual(["SIGTERM"]);
   });
 });

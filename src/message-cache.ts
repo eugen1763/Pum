@@ -189,7 +189,13 @@ export class MessageCacheController {
     this.operations.set(token, keys);
     try {
       const result = await this.executor({ requester, ids: [...ids], entries: [...entries] });
-      this.execute(ids);
+      // Delivery succeeded. Committing executed-state is best effort: if a row
+      // was removed concurrently (the UI delete path does not honour the
+      // reservation), only mark the entries that still exist. Never turn a
+      // delivered send into a reported failure, which would re-run the work.
+      const present = new Set(this.list().map((entry) => entry.id));
+      const committable = ids.filter((id) => present.has(id));
+      if (committable.length > 0) this.execute(committable);
       return result;
     } catch (error) {
       this.releaseOperation(token);

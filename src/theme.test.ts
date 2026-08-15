@@ -22,6 +22,10 @@ describe("rejection theme tokens", () => {
       expect(theme.rejectionBg).not.toBe(theme.bg);
       expect(theme.statusCwd).toBeTruthy();
       expect(theme.statusCwd).not.toBe(theme.dim);
+      expect(theme.bashOutput).toBeTruthy();
+      expect(theme.statsRunning).toBeTruthy();
+      expect(theme.statsInterrupted).toBeTruthy();
+      expect(theme.statsRunning).not.toBe(theme.statsInterrupted);
       expect(theme.popupShadow).toBeTruthy();
       expect(theme.popupShadow).not.toBe(theme.popupBg);
     }
@@ -33,10 +37,14 @@ describe("rejection theme tokens", () => {
     const rejection = PRESETS["github-light"]!.accent;
     const rejectionBg = PRESETS["github-light"]!.userBg;
     const statusCwd = PRESETS["github-light"]!.codeType;
+    const statsRunning = PRESETS["github-light"]!.statsRunning;
+    const statsInterrupted = PRESETS["github-light"]!.statsInterrupted;
     writeFileSync(join(directory, "theme.json"), JSON.stringify({
       rejection,
       rejectionBg,
       statusCwd,
+      statsRunning,
+      statsInterrupted,
       popupShadow: PRESETS["github-light"]!.border,
       unknownRejectionToken: "ignored",
     }));
@@ -63,6 +71,8 @@ describe("rejection theme tokens", () => {
     expect(theme.rejection).toBe(rejection);
     expect(theme.rejectionBg).toBe(rejectionBg);
     expect(theme.statusCwd).toBe(statusCwd);
+    expect(theme.statsRunning).toBe(statsRunning);
+    expect(theme.statsInterrupted).toBe(statsInterrupted);
     expect(theme.popupShadow).toBe(PRESETS["github-light"]!.border);
     expect(theme.unknownRejectionToken).toBeUndefined();
   });

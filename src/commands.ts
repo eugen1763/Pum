@@ -30,12 +30,20 @@ export const COMMANDS: Command[] = [
     description: "Open recent answers (News)",
   },
   {
+    name: "/stats",
+    description: "Show session statistics",
+  },
+  {
     name: "/check-path",
     description: "Manage additional Check mode directory roots",
   },
   {
     name: "/triggers",
-    description: "Manage external triggers",
+    description: "Open Processes on the Triggers tab",
+  },
+  {
+    name: "/processes",
+    description: "Manage external triggers and shells",
   },
   {
     name: "/worktree",
