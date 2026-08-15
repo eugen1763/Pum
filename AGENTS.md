@@ -207,6 +207,21 @@ These were chosen deliberately. Change them only on purpose.
   blocked for the main agent and for every subagent. `auth.json`, `models.json`
   key material and session content keep their existing hard blocks, and the
   native sandbox still denies the whole config root.
+- **A session can move between directories without forking.** `/worktree start`
+  creates an auto-named worktree and switches the session to its own file with
+  a new `cwd`, so the session id, transcript and companion state stay put and
+  nothing is copied. `/worktree return` moves it back and leaves the worktree,
+  its branch and any uncommitted work alone. One layer only, main agent only,
+  idle only, and refused while any managed child is retained. `start` and
+  `return` are reserved words, never worktree names.
+- **The active directory is state, not `process.cwd()`.** Everything
+  directory-dependent reads it, so a move rebinds by re-render. A relocated
+  session keeps its source repository writable for that process only; this
+  never reaches the saved `/check-path` settings.
+- **Relocation fails closed on resume.** A worktree that is gone, pruned or now
+  on a different branch drops the record and stays in the source repository,
+  because authorizing a stale path could hand writes to a directory the user
+  never chose.
 - **Session settings live beside the session.** `<session>.settings.json` holds
   only the fields that differ from global, following the same atomic-write and
   defensive-load rules as the goal and todo companions. An empty overlay deletes

@@ -67,6 +67,8 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/processes", "Open Processes on last tab"],
       ["/triggers", "Open Processes on Triggers"],
       ["/worktree", "Create a managed worktree"],
+      ["/worktree start", "Move this session into a fresh worktree"],
+      ["/worktree return", "Move this session back to its source"],
       ["Tab", "Complete a command or local path"],
     ],
   },
