@@ -237,6 +237,66 @@ export class QuestionnaireManager {
     if (request) this.finish(request, { cancelled: true, answers: [] });
   }
 
+  /** Answers or cancels the shown questionnaire from a controller instead of the popup. */
+  completeCurrent(requestId: string, result: QuestionnaireResult): boolean {
+    const request = this.currentRequest;
+    // The shown request can be replaced between the controller reading it and
+    // answering it — cancelled, aborted, or advanced by the queue — so a result
+    // meant for request A must never resolve request B.
+    if (!request || request.id !== requestId) return false;
+    const answers = this.validatedAnswers(request, result);
+    if (!answers) return false;
+    // The caller supplies the whole set; partial popup selections are dropped.
+    this.finish(request, { cancelled: result.cancelled, answers });
+    return true;
+  }
+
+  /** Cancels every request, shown or queued, that belongs to one requester. */
+  cancelRequester(requesterId: string): void {
+    // Snapshot first: finishing the head promotes the next request, and the
+    // promoted one still has to be checked.
+    for (const request of [this.currentRequest, ...this.queue]) {
+      if (request?.requester.id === requesterId) this.finish(request, { cancelled: true, answers: [] });
+    }
+  }
+
+  // Controller answers get no more trust than tool input: they must cover every
+  // question exactly once, and anything not marked custom must be an option the
+  // request actually offered.
+  private validatedAnswers(
+    request: PendingRequest,
+    result: QuestionnaireResult,
+  ): QuestionnaireAnswer[] | undefined {
+    if (!result || typeof result.cancelled !== "boolean" || !Array.isArray(result.answers)) return undefined;
+    // A cancellation answers nothing, so it has nothing to check against the questions.
+    if (result.cancelled) return result.answers.length === 0 ? [] : undefined;
+    if (result.answers.length !== request.questions.length) return undefined;
+
+    const questions = new Map(request.questions.map((question) => [question.id, question]));
+    const answers = new Map<string, QuestionnaireAnswer>();
+    for (const answer of result.answers) {
+      const question = questions.get(answer?.questionId as string);
+      if (!question || answers.has(question.id)) return undefined;
+      if (typeof answer.value !== "string" || typeof answer.label !== "string") return undefined;
+      if (typeof answer.custom !== "boolean") return undefined;
+      if (answer.custom) {
+        if (!answer.value.trim() || !answer.label.trim()) return undefined;
+      } else if (!question.options.some((option) => option.value === answer.value && option.label === answer.label)) {
+        return undefined;
+      }
+      answers.set(question.id, {
+        questionId: question.id,
+        value: answer.value,
+        label: answer.label,
+        custom: answer.custom,
+      });
+    }
+    return request.questions.flatMap((question) => {
+      const answer = answers.get(question.id);
+      return answer ? [answer] : [];
+    });
+  }
+
   private advance(request: PendingRequest): void {
     request.page = request.page < request.questions.length - 1
       ? request.page + 1

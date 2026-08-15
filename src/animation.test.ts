@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { StyledText } from "@opentui/core";
 import {
   coordinatedRuleState,
   markdownCaretContent,
@@ -147,5 +148,67 @@ describe("goal label on the working rule", () => {
     const wide = goalLabel(createGoal("模型模型模型模型", 10, 1, "g"), 60)!;
     const painted = ruleText(60, base, highlight, () => 0, { ...wide, color: "#7aa2f7" });
     expect(plainWidth(painted)).toBe(60);
+  });
+});
+
+describe("several labels on one working rule", () => {
+  const base = rgba("#292e42");
+  const highlight = rgba("#ffffff");
+  const afk = { text: "AFK · on  ", width: 10, color: "#bb9af7" };
+  const goal = { text: "GOAL · active · ship it  ", width: 25, color: "#7aa2f7" };
+  const plainWidth = (text: StyledText) =>
+    text.chunks.reduce((width, chunk) => width + Bun.stringWidth(chunk.text ?? ""), 0);
+  const painted = (text: StyledText) => text.chunks.map((chunk) => chunk.text ?? "").join("");
+
+  test("the row is exactly the rule width at every terminal size", () => {
+    for (const width of [30, 40, 80, 120]) {
+      expect(plainWidth(ruleText(width, base, highlight, () => 0, [afk, goal]))).toBe(width);
+    }
+  });
+
+  test("both labels share one row, in order, after the rule glyphs", () => {
+    const row = painted(ruleText(80, base, highlight, () => 0, [afk, goal]));
+    expect(row).toBe(`${"─".repeat(80 - afk.width - goal.width)}${afk.text}${goal.text}`);
+  });
+
+  test("each label keeps its own foreground on the shared rule background", () => {
+    const row = ruleText(80, base, highlight, () => 0, [afk, goal]);
+    const labelChunks = row.chunks.filter((chunk) => (chunk.text ?? "") !== "─");
+    expect(labelChunks.length).toBeGreaterThan(0);
+    for (const chunk of labelChunks) expect(chunk.bg).toEqual(base);
+    const foregrounds = labelChunks.map((chunk) => chunk.fg);
+    expect(foregrounds.at(0)).toEqual(rgba(afk.color));
+    expect(foregrounds.at(-1)).toEqual(rgba(goal.color));
+    expect(new Set(foregrounds.map((color) => String(color))).size).toBe(2);
+  });
+
+  test("a lone label still works, so the single-label call shape is unchanged", () => {
+    const one = ruleText(80, base, highlight, () => 0, goal);
+    expect(painted(one)).toBe(painted(ruleText(80, base, highlight, () => 0, [goal])));
+  });
+
+  test("the sweep reaches every label, so the whole row animates as one", () => {
+    const width = 80;
+    const overAfk = width - goal.width - afk.width;
+    const swept = ruleText(width, base, highlight, (c) => (c === overAfk ? 1 : 0), [afk, goal]);
+    const first = swept.chunks.find((chunk) => (chunk.text ?? "") !== "─")!;
+    expect(first.bg).not.toEqual(base);
+  });
+
+  test("a grapheme that would overflow a later label is dropped, never split", () => {
+    const narrow = [
+      { text: "AB", width: 2, color: "#bb9af7" },
+      { text: "模型", width: 4, color: "#7aa2f7" },
+    ];
+    const row = ruleText(5, base, highlight, () => 0, narrow);
+    expect(plainWidth(row)).toBe(5);
+    expect(painted(row)).toBe("AB模─");
+  });
+
+  test("animations off paints the same labels with no highlight anywhere", () => {
+    const still = ruleText(60, base, base, () => 0, [afk, goal]);
+    expect(plainWidth(still)).toBe(60);
+    expect(painted(still)).toContain(`${afk.text}${goal.text}`);
+    for (const chunk of still.chunks) expect(chunk.bg ?? base).toEqual(base);
   });
 });

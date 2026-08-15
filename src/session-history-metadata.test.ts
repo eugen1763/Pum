@@ -9,6 +9,7 @@ import {
   knownTokensFromUsage,
   SessionHistoryIndex,
   sortSessionHistory,
+  COMPANION_SUFFIXES,
   sweepOrphanedCompanions,
   type SessionHistoryItem,
 } from "./session-history-metadata";
@@ -176,7 +177,9 @@ describe("orphaned session companions", () => {
   test("removes companions of deleted sessions and keeps live ones", async () => {
     const root = await tempRoot();
     await writeFile(join(root, "live.jsonl"), "");
-    for (const suffix of [".news.json", ".stats.json", ".tool-groups.json"]) {
+    // Drive this from the constant, so a companion added later cannot quietly
+    // escape the sweep the way .goal.json did.
+    for (const suffix of COMPANION_SUFFIXES) {
       await writeFile(join(root, `live${suffix}`), "{}");
       await writeFile(join(root, `gone${suffix}`), "{}");
     }
@@ -184,14 +187,12 @@ describe("orphaned session companions", () => {
 
     const removed = await sweepOrphanedCompanions(root);
 
-    expect(removed.sort()).toEqual(["gone.news.json", "gone.stats.json", "gone.tool-groups.json"]);
+    expect(removed.sort()).toEqual(COMPANION_SUFFIXES.map((s) => `gone${s}`).sort());
     expect((await readdir(root)).sort()).toEqual([
       "live.jsonl",
-      "live.news.json",
-      "live.stats.json",
-      "live.tool-groups.json",
+      ...COMPANION_SUFFIXES.map((s) => `live${s}`),
       "notes.json",
-    ]);
+    ].sort());
   });
 
   test("stays silent when the directory cannot be read", async () => {

@@ -6,15 +6,20 @@ import type { Theme } from "./theme";
  * The goal label that sits on the full-width rule above the prompt input.
  *
  * The rule is exactly one rendered row, so the label has to be measured in
- * terminal columns and cut on grapheme boundaries before it is painted.
+ * terminal columns and cut on grapheme boundaries before it is painted. The
+ * rule can carry more than one label, so the column budget below is shared:
+ * see `mode-line.ts`.
  */
 
-/** Columns of padding inside the label, on its right edge. */
+/** Columns of padding inside a label, on its right edge. */
 export const GOAL_LABEL_RIGHT_PADDING = 2;
+/** Separates a label's prefix, its state, and its text. */
+export const LABEL_SEPARATOR = " · ";
+/** Below this a label cannot say anything useful, so the rule stays plain. */
+export const MIN_LABEL_COLUMNS = 12;
+/** Columns of rule the labels never take, so the sweep always has somewhere to run. */
+export const MIN_RULE_COLUMNS = 4;
 const PREFIX = "GOAL";
-const SEPARATOR = " · ";
-/** Below this the label cannot say anything useful, so the rule stays plain. */
-const MIN_LABEL_COLUMNS = 12;
 
 export type GoalLabel = {
   /** Exactly what is painted, right padding included. */
@@ -36,24 +41,50 @@ export function goalLabelColor(theme: Theme, state: GoalState): string {
 }
 
 /**
- * Build the label for a rule of `ruleWidth` columns, or null when the terminal
- * is too narrow to hold one. The label never exceeds half the rule, so the
- * animated sweep always has room left.
+ * Columns every label on one rule shares, so the animated sweep always has room
+ * left. `minColumns` is the narrowest label the caller can still make useful;
+ * below it the rule stays plain.
  */
-export function goalLabel(goal: GoalRecord | null, ruleWidth: number): GoalLabel | null {
-  if (!goal || ruleWidth <= 0) return null;
-  const available = Math.min(ruleWidth, Math.max(MIN_LABEL_COLUMNS, Math.floor(ruleWidth / 2)));
-  if (available < MIN_LABEL_COLUMNS || available > ruleWidth) return null;
+export function ruleLabelBudget(ruleWidth: number, minColumns = MIN_LABEL_COLUMNS): number {
+  if (ruleWidth <= 0) return 0;
+  const room = ruleWidth - MIN_RULE_COLUMNS;
+  const budget = Math.min(room, Math.max(minColumns, Math.floor(ruleWidth / 2)));
+  return budget < minColumns ? 0 : budget;
+}
 
-  const head = `${PREFIX}${SEPARATOR}${goal.state}`;
+/** Narrowest goal label worth painting: the prefix, this state, the padding. */
+export function goalMinColumns(goal: GoalRecord): number {
+  return statusTextWidth(`${PREFIX}${LABEL_SEPARATOR}${goal.state}`) + GOAL_LABEL_RIGHT_PADDING;
+}
+
+/**
+ * Build the goal label inside `available` columns, or null when it does not
+ * fit. `includeText` off keeps only the prefix and the state.
+ */
+export function goalLabelWithin(
+  goal: GoalRecord | null,
+  available: number,
+  includeText = true,
+): GoalLabel | null {
+  if (!goal || available <= 0) return null;
+
+  const head = `${PREFIX}${LABEL_SEPARATOR}${goal.state}`;
   const padding = " ".repeat(GOAL_LABEL_RIGHT_PADDING);
   const headWidth = statusTextWidth(head) + GOAL_LABEL_RIGHT_PADDING;
   if (headWidth > available) return null;
 
-  const textColumns = available - headWidth - statusTextWidth(SEPARATOR);
+  const textColumns = available - headWidth - statusTextWidth(LABEL_SEPARATOR);
   // The rule is one row, so a multi-line goal collapses to a single line first.
   const oneLine = goal.text.replace(/\s+/g, " ").trim();
-  const text = textColumns > 0 ? truncateStatusText(oneLine, textColumns) : null;
-  const label = text ? `${head}${SEPARATOR}${text}${padding}` : `${head}${padding}`;
+  const text = includeText && textColumns > 0 ? truncateStatusText(oneLine, textColumns) : null;
+  const label = text ? `${head}${LABEL_SEPARATOR}${text}${padding}` : `${head}${padding}`;
   return { text: label, width: statusTextWidth(label), state: goal.state };
+}
+
+/**
+ * Build the label for a rule of `ruleWidth` columns, or null when the terminal
+ * is too narrow to hold one.
+ */
+export function goalLabel(goal: GoalRecord | null, ruleWidth: number): GoalLabel | null {
+  return goalLabelWithin(goal, ruleLabelBudget(ruleWidth));
 }

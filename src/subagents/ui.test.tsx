@@ -275,7 +275,7 @@ describe("subagent transcript UI", () => {
   });
 
   test("restores main usage and resets it for a new session", async () => {
-    const setup = await createTestRenderer({ width: 120, height: 24, kittyKeyboard: true });
+    const setup = await createTestRenderer({ width: 200, height: 24, kittyKeyboard: true });
     destroy = () => setup.renderer.destroy();
     const resumed = fakeSession([{
       type: "message",
