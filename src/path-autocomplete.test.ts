@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { applyPathCompletion, pathCompletions } from "./path-autocomplete";
 
 let cwd: string | undefined;
+let home: string | undefined;
 
 afterEach(() => {
   if (cwd) rmSync(cwd, { recursive: true, force: true });
+  if (home) rmSync(home, { recursive: true, force: true });
   cwd = undefined;
+  home = undefined;
 });
 
 function project() {
@@ -23,6 +26,20 @@ function project() {
   mkdirSync(join(cwd, ".ssh"));
   writeFileSync(join(cwd, ".ssh", "config"), "secret");
   return cwd;
+}
+
+/**
+ * os.homedir() answers from the account, not from $HOME, so a home test needs a
+ * throwaway directory in the real home. Returns its name for `~/<name>/` fragments.
+ */
+function homeSandbox() {
+  home = mkdtempSync(join(homedir(), ".pum-path-"));
+  mkdirSync(join(home, "notes"));
+  mkdirSync(join(home, "my papers"));
+  writeFileSync(join(home, "todo.md"), "");
+  mkdirSync(join(home, ".ssh"));
+  writeFileSync(join(home, ".ssh", "id_rsa"), "secret");
+  return { directory: home, name: basename(home) };
 }
 
 describe("path autocomplete", () => {
@@ -71,5 +88,97 @@ describe("path autocomplete", () => {
       symlinkSync(join(root, "src"), join(root, "linked-src"));
       expect(pathCompletions("linked-src/", 11, root)).toEqual([]);
     }
+  });
+
+  test("completes an absolute fragment outside the project", () => {
+    const root = project();
+    const outside = mkdtempSync(join(tmpdir(), "pum-path-outside-"));
+    try {
+      mkdirSync(join(outside, "reports"));
+      writeFileSync(join(outside, "readme.md"), "");
+      const typed = `read ${outside}/re`;
+      expect(pathCompletions(typed, typed.length, root).map((item) => item.replacement)).toEqual([
+        `${outside}/readme.md`,
+        `${outside}/reports/`,
+      ]);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("expands a home fragment and keeps the ~ in the replacement", () => {
+    const root = project();
+    const { name } = homeSandbox();
+    const typed = `open ~/${name}/no`;
+    expect(pathCompletions(typed, typed.length, root).map((item) => item.replacement)).toEqual([
+      `~/${name}/notes/`,
+    ]);
+    const reference = `open @~/${name}/todo`;
+    expect(pathCompletions(reference, reference.length, root)[0]?.replacement)
+      .toBe(`@~/${name}/todo.md`);
+    const quoted = `open "~/${name}/my p`;
+    expect(pathCompletions(quoted, quoted.length, root)[0]?.replacement)
+      .toBe(`~/${name}/my papers/`);
+  });
+
+  test("lists the home directory for a bare ~", () => {
+    const root = project();
+    const { name } = homeSandbox();
+    const replacements = pathCompletions("~", 1, root).map((item) => item.replacement);
+
+    expect(replacements).toContain(`~/${name}/`);
+    expect(replacements.every((item) => item.startsWith("~/"))).toBe(true);
+    expect(replacements).not.toContain("~/.ssh/");
+  });
+
+  test("treats ~user as a relative fragment", () => {
+    const root = project();
+    mkdirSync(join(root, "~alice"));
+    expect(pathCompletions("~a", 2, root).map((item) => item.replacement)).toEqual(["~alice/"]);
+  });
+
+  test("hides credentials and symbolic links outside the project", () => {
+    const root = project();
+    const { directory, name } = homeSandbox();
+    const partial = `~/${name}/.ss`;
+    expect(pathCompletions(partial, partial.length, root)).toEqual([]);
+    const inside = `~/${name}/.ssh/`;
+    expect(pathCompletions(inside, inside.length, root)).toEqual([]);
+    const absolute = `${directory}/.ssh/id`;
+    expect(pathCompletions(absolute, absolute.length, root)).toEqual([]);
+
+    if (process.platform !== "win32") {
+      symlinkSync(join(directory, "notes"), join(directory, "linked-notes"));
+      const linked = `~/${name}/linked`;
+      expect(pathCompletions(linked, linked.length, root)).toEqual([]);
+    }
+  });
+
+  test("returns nothing for a directory it cannot read", () => {
+    const root = project();
+    const outside = mkdtempSync(join(tmpdir(), "pum-path-locked-"));
+    // Root ignores the permission bits, so only test the denial as a normal user.
+    const canDeny = process.platform !== "win32" && process.getuid?.() !== 0;
+    try {
+      const missing = `${outside}/gone/x`;
+      expect(pathCompletions(missing, missing.length, root)).toEqual([]);
+
+      if (canDeny) {
+        mkdirSync(join(outside, "locked"));
+        writeFileSync(join(outside, "locked", "note.txt"), "");
+        chmodSync(join(outside, "locked"), 0o000);
+        const locked = `${outside}/locked/n`;
+        expect(pathCompletions(locked, locked.length, root)).toEqual([]);
+      }
+    } finally {
+      if (canDeny) chmodSync(join(outside, "locked"), 0o700);
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  test("ignores URL-looking fragments", () => {
+    const root = project();
+    expect(pathCompletions("see https://example.com/sr", 26, root)).toEqual([]);
+    expect(pathCompletions("see file:///etc/ho", 18, root)).toEqual([]);
   });
 });

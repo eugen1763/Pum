@@ -1,4 +1,5 @@
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isCredentialSensitivePath } from "./credential-path";
 
@@ -86,6 +87,32 @@ function hasSymlinkComponent(root: string, candidate: string): boolean {
   return false;
 }
 
+/** Leading `~` or `~/`, the only home forms we expand. A `~user` names somebody else. */
+const HOME_PREFIX = /^~(?:[/\\]|$)/u;
+
+function isHomeFragment(fragment: string): boolean {
+  const next = fragment[1];
+  return fragment[0] === "~"
+    && (next === undefined || next === "/" || (process.platform === "win32" && next === "\\"));
+}
+
+/**
+ * Locate the directory a fragment lists, plus the root it may not leave.
+ * Absolute and home fragments name their own place, so they answer to no root.
+ */
+function resolveTarget(
+  fragment: string,
+  directory: string,
+  cwd: string,
+): { target: string; root: string | null } {
+  if (isHomeFragment(fragment)) {
+    return { target: resolve(homedir(), directory.replace(HOME_PREFIX, "")), root: null };
+  }
+  if (isAbsolute(fragment)) return { target: resolve(directory), root: null };
+  const root = realpathSync(cwd);
+  return { target: resolve(root, directory || "."), root };
+}
+
 function pathParts(fragment: string): { directory: string; basename: string; separator: string } {
   const slash = fragment.lastIndexOf("/");
   const backslash = process.platform === "win32" ? fragment.lastIndexOf("\\") : -1;
@@ -98,7 +125,8 @@ function pathParts(fragment: string): { directory: string; basename: string; sep
 }
 
 /**
- * List safe project-local path completions for the token under the cursor.
+ * List safe path completions for the token under the cursor. A relative token
+ * stays inside the project; an absolute or `~` token completes where it points.
  * The function excludes credential paths, special files, and symbolic links.
  */
 export function pathCompletions(
@@ -111,19 +139,21 @@ export function pathCompletions(
   const parts = pathParts(token.fragment);
 
   try {
-    const root = realpathSync(cwd);
-    const requestedDirectory = parts.directory || ".";
-    const absoluteDirectory = resolve(root, requestedDirectory);
-    if (!insideOrSame(root, absoluteDirectory) || isCredentialSensitivePath(absoluteDirectory)) return [];
-    const directory = realpathSync(absoluteDirectory);
-    if (
-      !insideOrSame(root, directory)
-      || isCredentialSensitivePath(directory)
-      || hasSymlinkComponent(root, absoluteDirectory)
-    ) return [];
+    const { target, root } = resolveTarget(token.fragment, parts.directory, cwd);
+    if (isCredentialSensitivePath(target)) return [];
+    if (root && !insideOrSame(root, target)) return [];
+    const directory = realpathSync(target);
+    if (isCredentialSensitivePath(directory)) return [];
+    // Outside the project there is nothing to escape from, so the symlink walk
+    // only guards the relative case; the credential checks above cover the rest.
+    if (root && (!insideOrSame(root, directory) || hasSymlinkComponent(root, target))) return [];
 
+    // A bare `~` is the home directory itself, not a name to match inside it.
+    const bareHome = !parts.directory && isHomeFragment(token.fragment);
+    const prefixDirectory = bareHome ? `~${parts.separator}` : parts.directory;
+    const basename = bareHome ? "" : parts.basename;
     const caseSensitive = process.platform !== "win32";
-    const expected = caseSensitive ? parts.basename : parts.basename.toLowerCase();
+    const expected = caseSensitive ? basename : basename.toLowerCase();
     return readdirSync(directory, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() || entry.isFile())
       .filter((entry) => !entry.isSymbolicLink())
@@ -137,7 +167,7 @@ export function pathCompletions(
         start: token.start,
         end: token.end,
         replacement: token.prefix
-          + parts.directory
+          + prefixDirectory
           + entry.name
           + (entry.isDirectory() ? parts.separator : ""),
       }));
