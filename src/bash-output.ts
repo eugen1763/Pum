@@ -123,9 +123,11 @@ let captureDirectoryPath: string | null = null;
 function ensureCaptureDirectory(): Promise<string> {
   captureDirectory ??= mkdtemp(join(tmpdir(), "pum-bash-output-"))
     .then((created) => {
-      registerSandboxTempReadRoot(created);
-      captureDirectoryPath = created;
-      return created;
+      // The canonical spelling, not mkdtemp's: on a Windows account with an
+      // 8.3 alias the agent would otherwise get a path the sandbox refuses.
+      const canonical = registerSandboxTempReadRoot(created);
+      captureDirectoryPath = canonical;
+      return canonical;
     })
     .catch((error) => {
       captureDirectory = null;

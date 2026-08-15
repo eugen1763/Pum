@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { canonicalRealpathSync } from "./platform";
 import {
   cleanupPendingPastedTexts,
   MAX_PASTED_TEXT_BYTES,
@@ -36,8 +37,8 @@ describe("stagePastedText", () => {
 
 describe("staged pasted text and the filesystem sandbox", () => {
   test("the agent can read a staged path, but not an unrelated temp path", async () => {
-    const project = mkdtempSync(join(tmpdir(), "pum-paste-sandbox-project-"));
-    const unrelated = mkdtempSync(join(tmpdir(), "pum-paste-sandbox-unrelated-"));
+    const project = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-paste-sandbox-project-")));
+    const unrelated = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-paste-sandbox-unrelated-")));
     try {
       const staged = stagePastedText("e".repeat(20_000));
 
@@ -53,7 +54,7 @@ describe("staged pasted text and the filesystem sandbox", () => {
   });
 
   test("cleanup withdraws the read root", async () => {
-    const project = mkdtempSync(join(tmpdir(), "pum-paste-sandbox-project-"));
+    const project = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-paste-sandbox-project-")));
     try {
       const staged = stagePastedText("f".repeat(20_000));
       cleanupPendingPastedTexts();

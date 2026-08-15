@@ -11,12 +11,12 @@ import {
   validateSandboxPatch,
   validateSandboxPath,
 } from "./filesystem-sandbox";
-import { pathsHaveSameIdentity } from "./platform";
+import { canonicalRealpathSync, pathsHaveSameIdentity } from "./platform";
 
 const directories: string[] = [];
 
 function directory(prefix: string): string {
-  const path = mkdtempSync(join(tmpdir(), prefix));
+  const path = canonicalRealpathSync(mkdtempSync(join(tmpdir(), prefix)));
   directories.push(path);
   return path;
 }

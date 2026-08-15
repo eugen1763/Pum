@@ -9,6 +9,7 @@ import { isCredentialSensitivePath } from "./check-policy";
 import { parseApplyPatch } from "./apply-patch";
 import {
   canonicalPathIdentityAllowMissing,
+  canonicalRealpathSync,
   isPathInsideOrSame,
   pathsHaveSameIdentity,
 } from "./platform";
@@ -34,7 +35,7 @@ export type SandboxOperation = "read" | "write";
 const temporaryReadRoots = new Set<string>();
 
 export function registerSandboxTempReadRoot(path: string): string {
-  const canonical = realpathSync(path);
+  const canonical = canonicalRealpathSync(path);
   temporaryReadRoots.add(canonical);
   return canonical;
 }
@@ -42,7 +43,7 @@ export function registerSandboxTempReadRoot(path: string): string {
 export function unregisterSandboxTempReadRoot(path: string): void {
   temporaryReadRoots.delete(path);
   try {
-    temporaryReadRoots.delete(realpathSync(path));
+    temporaryReadRoots.delete(canonicalRealpathSync(path));
   } catch {
     // An already removed directory keeps only the raw-path deletion above.
   }

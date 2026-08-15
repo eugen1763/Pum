@@ -59,7 +59,9 @@ const MAX_STASH_ENTRIES = 500;
 const MAX_STASH_TEXT_CHARS = 1_000_000;
 
 const LOCK_STALE_MS = 10_000;
-const LOCK_TIMEOUT_MS = 2_000;
+// Two processes writing 60 entries each contend 120 times; on a slow shared
+// runner 2s ran out and the loser proceeded unlocked, losing an entry.
+const LOCK_TIMEOUT_MS = 5_000;
 const LOCK_RETRY_MS = 5;
 
 function sleepSync(ms: number): void {
@@ -110,7 +112,12 @@ function acquireLock(path: string, ops: PromptCacheFileOps): () => void {
       });
       return () => releaseLock(path, token, ops);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") return () => {};
+      // Windows reports a contended exclusive create as EPERM or EACCES, not
+      // EEXIST, and EPERM is also how a filesystem says it cannot lock at all.
+      // The lock file itself settles which happened: if it is there, someone
+      // holds it and we wait; if it is not, locking is unavailable here.
+      const contended = (error as NodeJS.ErrnoException)?.code === "EEXIST" || ops.exists(path);
+      if (!contended) return () => {};
       if (Date.now() >= deadline) return () => {};
       const age = lockAgeMs(path, ops);
       if (age !== undefined && age > LOCK_STALE_MS) {
