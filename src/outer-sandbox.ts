@@ -53,6 +53,35 @@ export function parseOuterSandboxMountArgument(argument: string): ParsedMountArg
   return { path: match[1], mode: match[2] as OuterSandboxMountMode };
 }
 
+/**
+ * Reject a symbolic link or junction in any component, so a mount boundary
+ * cannot be silently redirected.
+ *
+ * Comparing the input against its realpath cannot do this job. A path may
+ * legitimately arrive in a different spelling that resolves to the very same
+ * directory: on Windows an 8.3 short name such as `C:\Users\RUNNER~1\...`
+ * expands to its long form, and a differing drive letter case resolves the same
+ * way. Testing each component for a link asks the question directly.
+ */
+async function rejectLinkedComponents(absolute: string, input: string, label: string): Promise<void> {
+  let candidate = absolute;
+  while (true) {
+    let metadata;
+    try {
+      metadata = await lstat(candidate);
+    } catch {
+      // A missing component is already reported by the realpath check above.
+      return;
+    }
+    if (metadata.isSymbolicLink()) {
+      throw new Error(`${label} contains a symbolic link or junction: ${input}`);
+    }
+    const parent = parse(candidate).dir;
+    if (!parent || parent === candidate) return;
+    candidate = parent;
+  }
+}
+
 async function canonicalDirectory(input: string, base: string, label: string): Promise<string> {
   assertText(input, label);
   const absolute = isAbsolute(input) ? resolve(input) : resolve(base, input);
@@ -63,12 +92,7 @@ async function canonicalDirectory(input: string, base: string, label: string): P
     throw new Error(`${label} does not exist: ${input}`);
   }
 
-  // A different resolved identity means that at least one path component is a
-  // symbolic link or junction. Reject the complete input instead of silently
-  // changing the requested mount boundary.
-  if (pathIdentity(absolute) !== pathIdentity(canonical)) {
-    throw new Error(`${label} contains a symbolic link or junction: ${input}`);
-  }
+  await rejectLinkedComponents(absolute, input, label);
 
   const metadata = await lstat(canonical);
   if (!metadata.isDirectory()) throw new Error(`${label} is not a directory: ${input}`);
