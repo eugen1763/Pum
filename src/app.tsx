@@ -531,6 +531,7 @@ export function App({
   const [commandCursor, setCommandCursor] = useState(0);
   const [inputRows, setInputRows] = useState(1);
   const [inputCursorRow, setInputCursorRow] = useState(0);
+  const [inputMode, setInputMode] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
   const [agentSelectorCursor, setAgentSelectorCursor] = useState(0);
@@ -624,6 +625,7 @@ export function App({
   ), [modelRuntime, modelId, modelQuery, loginPage]);
 
   const inputRef = useRef<TextareaRenderable>(null);
+  const inputModeRef = useRef(false);
   const transcriptScrollRef = useRef<ScrollBoxRenderable>(null);
   const questionnaireInputRef = useRef<TextareaRenderable>(null);
   const spawnPreviewInputRef = useRef<TextareaRenderable>(null);
@@ -2720,6 +2722,14 @@ export function App({
       return;
     }
 
+    if (key.ctrl && printableKey === "i") {
+      key.stopPropagation();
+      const next = !inputModeRef.current;
+      inputModeRef.current = next;
+      setInputMode(next);
+      return;
+    }
+
     if (key.ctrl && key.name === "end") {
       key.stopPropagation();
       const transcriptScroll = transcriptScrollRef.current;
@@ -2880,6 +2890,14 @@ export function App({
         histCursor.current = null;
         return;
       }
+    }
+
+    if (inputModeRef.current && isPlainReturn && !stashOpenRef.current) {
+      key.stopPropagation();
+      inputRef.current?.newLine();
+      handleTextareaChange();
+      histCursor.current = null;
+      return;
     }
 
     if (isContinuationReturn) {
@@ -3239,7 +3257,7 @@ export function App({
             {Array.from({ length: inputRows }, (_, row) => (
               <box key={row} style={{ width: 2, height: 1, flexShrink: 0 }}>
                 {commandSuggestions.length === 0 && row === inputCursorRow
-                  ? <text content="❯ " fg={theme.accent} />
+                  ? <text content={inputMode ? "i " : "❯ "} fg={theme.accent} />
                   : null}
               </box>
             ))}
