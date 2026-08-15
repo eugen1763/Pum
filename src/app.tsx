@@ -43,6 +43,7 @@ import {
   StreamLine,
   TextLine,
   ToolLine,
+  transcriptForThinkingVisibility,
   type Line,
   type PendingLine,
   type Role,
@@ -556,7 +557,10 @@ export function App({
     : undefined;
   const questionnaire = questionnaireManager?.current();
   const spawnPreview = spawnPreviewManager?.current();
-  const visibleTx = activeAgent?.transcript ?? tx;
+  const visibleTx = transcriptForThinkingVisibility(
+    activeAgent?.transcript ?? tx,
+    settings.showThinking,
+  );
   const visibleBusy = activeAgent
     ? activeAgent.status === "starting" || activeAgent.status === "running"
     : busy;

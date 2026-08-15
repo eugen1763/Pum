@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   resolvePendingDelivery,
   settleTranscriptMessage,
+  transcriptForThinkingVisibility,
   type PendingTranscriptState,
 } from "./transcript";
 
@@ -61,5 +62,26 @@ describe("inter-agent transcript ordering", () => {
       { kind: "agent-message", sender: "alpha", recipient: "beta", text: "ready" },
     ]);
     expect(completed.pending).toEqual([]);
+  });
+
+  test("hides retained thinking lines and streams without mutating transcript state", () => {
+    const state: PendingTranscriptState = {
+      lines: [
+        { kind: "text", role: "thinking", text: "private reasoning" },
+        { kind: "text", role: "assistant", text: "visible answer" },
+      ],
+      stream: { kind: "thinking", text: "live reasoning" },
+      pending: [],
+    };
+
+    const hidden = transcriptForThinkingVisibility(state, false);
+
+    expect(hidden.lines).toEqual([
+      { kind: "text", role: "assistant", text: "visible answer" },
+    ]);
+    expect(hidden.stream).toBeNull();
+    expect(state.lines).toHaveLength(2);
+    expect(state.stream?.text).toBe("live reasoning");
+    expect(transcriptForThinkingVisibility(state, true)).toBe(state);
   });
 });
