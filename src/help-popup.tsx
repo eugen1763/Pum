@@ -21,7 +21,7 @@ export const HELP_GROUPS: HelpGroup[] = [
     title: "Prompt",
     controls: [
       ["Enter", "Send, or steer; newline in input mode"],
-      ["Ctrl+I", "Toggle multiline input mode"],
+      ["Alt+I", "Toggle multiline input mode"],
       ["Ctrl/Shift+Enter", "Insert a new line"],
       ["\\ then Enter", "Insert a new line fallback"],
       ["Alt+Enter", "Cache without sending"],

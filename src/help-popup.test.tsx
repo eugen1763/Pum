@@ -38,7 +38,8 @@ async function renderHelp(width: number, height: number, scrollOffset: number) {
 describe("Help popup layout", () => {
   test("documents input mode, cache aliases, scoped history, and Processes", () => {
     const controls = HELP_GROUPS.flatMap((group) => group.controls);
-    expect(controls).toContainEqual(["Ctrl+I", "Toggle multiline input mode"]);
+    expect(controls).toContainEqual(["Alt+I", "Toggle multiline input mode"]);
+    expect(controls.some(([key]) => key === "Ctrl+I")).toBe(false);
     expect(controls.some(([key]) => key === "Ctrl+Alt+Enter")).toBe(true);
     expect(controls.some(([key, text]) => key === "Main ↑ / ↓" && text.includes("Sent history"))).toBe(true);
     expect(controls.some(([key, text]) => key === "Ctrl+H" && text.includes("/history"))).toBe(true);
