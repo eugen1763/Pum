@@ -26,6 +26,8 @@ const settings = {
   maxActiveSubagents: 10,
 };
 
+const customEntries: { type: string; data: any }[] = [];
+
 function fakeSession() {
   const path = join(mkdtempSync(join(tmpdir(), "pum-afk-ui-")), "current-session.jsonl");
   return {
@@ -35,7 +37,11 @@ function fakeSession() {
         thinkingLevel: "off",
       },
     },
-    sessionManager: { buildContextEntries: () => [], getEntries: () => [] },
+    sessionManager: {
+      buildContextEntries: () => [],
+      getEntries: () => [],
+      appendCustomEntry: (type: string, data: any) => { customEntries.push({ type, data }); },
+    },
     sessionFile: path,
     sessionId: "current-session",
     subscribe: () => () => {},
@@ -172,6 +178,29 @@ describe("/afk in the app", () => {
       answers: [{ questionId: "q1", value: "redis", label: "Redis", custom: false }],
     });
     expect(setup.captureCharFrame()).toContain("AFK answered for main");
+  });
+
+  test("the audit row is persisted, so resume can replay it", async () => {
+    customEntries.length = 0;
+    const questionnaireManager = new QuestionnaireManager();
+    const { setup, spawned } = await renderApp(questionnaireManager);
+    await type(setup, "/afk");
+    void questionnaireManager.request({ id: "main", name: "main" }, QUESTIONS);
+    await settle(setup);
+
+    spawned[0]!.onAnswer({
+      requestId: questionnaireManager.current()!.id,
+      generation: "1",
+      answers: [{ questionId: "q1", value: "redis", label: "Redis", custom: false }],
+    });
+    await settle(setup);
+
+    // Drawing the row is not enough: appendMainLine is UI-only, so without a
+    // custom entry the row is gone the moment the session is resumed.
+    const notices = customEntries.filter((entry) => entry.type === "pum.agent_notice");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]!.data.line.text).toContain("AFK answered for main");
+    expect(notices[0]!.data.line.text).toContain("Redis");
   });
 
   test("the prompt stays usable while a delegate answers", async () => {
