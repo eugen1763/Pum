@@ -125,11 +125,11 @@ These were chosen deliberately. Change them only on purpose.
   TUI startup. Linux is native. Windows support means running Linux PUM inside
   WSL 2. The launcher hides home, then mounts the project, explicit roots, PUM
   runtime paths, and PUM's config directory. `pum sr` rejects a custom PUM_DIR
-  inside the read-only project. The child forces Check mode on, disables nested
-  Bubblewrap, and keeps launch roots as process-local Check and file-tool roots
-  without overwriting saved user settings. This MVP places PUM credentials
-  inside gVisor. Check mode is a policy boundary, not a second OS credential
-  boundary. A future host broker can remove that exposure.
+  inside the read-only project. The child uses the saved Check mode setting,
+  disables nested Bubblewrap, and keeps launch roots as process-local Check and
+  file-tool roots without overwriting saved user settings. This MVP places PUM
+  credentials inside gVisor. When Check mode is on, it is a policy boundary, not
+  a second OS credential boundary. A future host broker can remove that exposure.
 - **Login runs inside PUM.** Startup without an available provider opens the
   login popup. `/login` opens the same popup. The provider list comes from
   `ModelRuntime.getProviders()` and must not be replaced with a local allowlist.

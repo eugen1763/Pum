@@ -98,7 +98,7 @@ export async function start(options: StartupOptions): Promise<void> {
   const messageCacheController = new MessageCacheController(process.cwd());
   const statsManager = new SessionStatsManager();
   setCheckModeConfig({
-    profile: outerSandbox ? "on" : settings.checkMode,
+    profile: settings.checkMode,
     model: settings.checkModel,
     additionalPaths: [...new Set([
       ...checkPathsForProject(settings, process.cwd()),
@@ -329,14 +329,13 @@ export async function start(options: StartupOptions): Promise<void> {
       startupWarnings={[
         ...(sandboxWarning ? [sandboxWarning] : []),
         ...(outerSandbox ? [
-          `Outer claudebox sandbox active (${outerSandbox.mode}). Check mode is forced on. The nested Bash sandbox is disabled.`,
+          `Outer claudebox sandbox active (project ${outerSandbox.mode === "write" ? "read-write" : "read-only"}). Check mode follows the saved setting. The nested Bash sandbox is disabled.`,
         ] : []),
       ]}
       onSandboxModeChange={(mode) => {
         sandboxController.setMode(outerSandbox ? "off" : mode);
         subagentManager.refreshSandboxMode();
       }}
-      forcedCheckMode={outerSandbox ? "on" : undefined}
       forcedSandboxMode={outerSandbox ? "off" : undefined}
       forcedCheckPaths={forcedCheckPaths}
       sandboxWarningSource={sandboxController}

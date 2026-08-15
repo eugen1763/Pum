@@ -426,7 +426,6 @@ export function App({
   startupWarnings = [],
   onSandboxModeChange,
   sandboxWarningSource,
-  forcedCheckMode,
   forcedSandboxMode,
   forcedCheckPaths = [],
 }: {
@@ -460,8 +459,7 @@ export function App({
   startupWarnings?: readonly string[];
   onSandboxModeChange?: (mode: NonNullable<PumSettings["sandboxMode"]>) => void;
   sandboxWarningSource?: { subscribeWarnings(listener: (warning: string) => void): () => void };
-  /** Process-local safety floors that do not overwrite persisted user settings. */
-  forcedCheckMode?: PumSettings["checkMode"];
+  /** Process-local sandbox floor that does not overwrite persisted user settings. */
   forcedSandboxMode?: NonNullable<PumSettings["sandboxMode"]>;
   forcedCheckPaths?: readonly string[];
 }) {
@@ -1486,7 +1484,7 @@ export function App({
     }
     if (patch.checkMode !== undefined || patch.checkModel !== undefined || patch.checkPaths !== undefined) {
       setCheckModeConfig({
-        profile: forcedCheckMode ?? next.checkMode,
+        profile: next.checkMode,
         model: next.checkModel,
         additionalPaths: [...new Set([
           ...checkPathsForProject(next, cwd),

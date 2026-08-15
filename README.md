@@ -141,9 +141,9 @@ Set `PUM_DIR` to override PUM's complete configuration and data directory. Set `
 
 PUM requires `claudebox` launcher protocol 1. Run `pum ss` to verify the executable and protocol. The runtime also needs `runsc`, `pasta`, `iptables`, `ip6tables`, `ip`, `nsenter`, and `unshare`.
 
-The launcher hides the normal home mount. It mounts the project, explicit extra directories, the required PUM runtime files, and the PUM configuration directory. The sandboxed child forces Check mode on and disables nested Bubblewrap.
+The launcher hides the normal home mount. It mounts the project, explicit extra directories, the required PUM runtime files, and the PUM configuration directory. The sandboxed child uses the saved Check mode setting and disables nested Bubblewrap.
 
-This MVP mounts the PUM configuration directory, including provider credentials, inside gVisor. Check mode blocks credential access through supported tools, but it is not a second OS boundary. A host-side credential broker is planned for stronger separation.
+This MVP mounts the PUM configuration directory, including provider credentials, inside gVisor. When Check mode is on, it blocks credential access through supported tools, but it is not a second OS boundary. A host-side credential broker is planned for stronger separation.
 
 ## Essential controls
 
