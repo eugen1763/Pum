@@ -1,6 +1,6 @@
 import type { Line } from "./transcript";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
-import { editCounts, toolArg, type ToolCall } from "./tool-line";
+import { editCounts, toolArg, toolResultOutput, type ToolCall } from "./tool-line";
 import { questionnaireDetail } from "./questionnaire";
 import { messageCacheDetail } from "./message-cache";
 import {
@@ -75,6 +75,7 @@ function toolEventOf(entry: any): ToolCall | undefined {
     arg: typeof data.arg === "string" ? data.arg : "",
     state: data.state,
     detail: typeof data.detail === "string" ? data.detail : undefined,
+    ...(typeof data.output === "string" ? { output: data.output } : {}),
   };
 }
 
@@ -214,6 +215,7 @@ export function replayEntries(
         else if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
         else if (call.name === "questionnaire") call.detail = questionnaireDetail(message);
         else if (call.name.startsWith("message_cache_")) call.detail = messageCacheDetail(message);
+        call.output = toolResultOutput(message);
       }
     }
   }

@@ -30,10 +30,17 @@ describe("settings search and navigation", () => {
     ]);
     expect(filterSettingsRows("reasoning visible").map((row) => row.id)).toEqual(["showThinking"]);
     expect(filterSettingsRows("progress detailed").map((row) => row.id)).toEqual(["explanationStrength"]);
+    expect(filterSettingsRows("tool result limit").map((row) => row.id)).toEqual(["toolOutputLines"]);
     expect(filterSettingsRows("parallel capacity").map((row) => row.id)).toEqual(["maxActiveSubagents"]);
     expect(filterSettingsRows("strict balanced ask").map((row) => row.id)).toEqual(["checkMode"]);
     expect(filterSettingsRows("exact project approvals").map((row) => row.id)).toEqual(["clearCheckApprovals"]);
     expect(SETTINGS_ROWS.every((row) => row.description.length > 20)).toBe(true);
+  });
+
+  test("shows the tool-output limit only for detailed explanations", () => {
+    expect(filterSettingsRows("", "detailed").some((row) => row.id === "toolOutputLines")).toBe(true);
+    expect(filterSettingsRows("", "simple").some((row) => row.id === "toolOutputLines")).toBe(false);
+    expect(filterSettingsRows("tool output", "none")).toEqual([]);
   });
 
   test("filters model and check-model rows across provider and model metadata", () => {
