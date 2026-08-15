@@ -170,3 +170,18 @@ export type RoutedPrompt = {
   text: string;
   images?: ImageContent[];
 };
+
+/** A move the main agent asked for through the worktree tool. */
+export type RelocationRequest =
+  | { action: "start"; directory?: string }
+  | { action: "return" };
+
+/**
+ * What the App decided. `accepted` false means nothing was scheduled, and the
+ * message says why, so the model learns the rule instead of retrying blind.
+ */
+export type RelocationRequestResult = {
+  accepted: boolean;
+  message: string;
+};
+

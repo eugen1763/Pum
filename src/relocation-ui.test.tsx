@@ -46,6 +46,7 @@ function repository(): string {
 }
 
 function fakeSession() {
+  const listeners: ((event: unknown) => void)[] = [];
   const directory = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-reloc-session-")));
   directories.push(directory);
   return {
@@ -58,7 +59,13 @@ function fakeSession() {
     sessionManager: { buildContextEntries: () => [], getEntries: () => [] },
     sessionFile: join(directory, "session.jsonl"),
     sessionId: "current-session",
-    subscribe: () => () => {},
+    subscribe(listener: (event: unknown) => void) {
+      listeners.push(listener);
+      return () => {};
+    },
+    emit(event: unknown) {
+      for (const listener of [...listeners]) listener(event);
+    },
     setThinkingLevel() {},
     setModel: async () => {},
     clearQueue: () => ({ steering: [], followUp: [] }),
@@ -85,6 +92,7 @@ async function renderApp(options: {
 } ) {
   const session = options.session ?? fakeSession();
   const relocated: string[] = [];
+  const relocationHandler: { current?: (request: unknown) => { accepted: boolean; message: string } } = {};
   const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const manager = {
@@ -94,6 +102,7 @@ async function renderApp(options: {
     abortAgent: async () => {},
     sendUserMessage: async () => {},
     persistToolEvent() {},
+    setRelocationRequestHandler(handler: any) { relocationHandler.current = handler; },
   } as any;
   createRoot(setup.renderer).render(
     <App
@@ -122,7 +131,7 @@ async function renderApp(options: {
     />,
   );
   await settle(setup);
-  return { setup, session, relocated };
+  return { setup, session, relocated, relocationHandler };
 }
 
 async function type(setup: Awaited<ReturnType<typeof createTestRenderer>>, text: string) {
@@ -238,3 +247,53 @@ describe("/worktree start and return", () => {
     expect(existsSync(relocationFileFor(session.sessionFile))).toBe(false);
   }, 30_000);
 });
+
+describe("the worktree tool actions", () => {
+  test("schedule the move instead of doing it mid-turn", async () => {
+    const repo = repository();
+    const { setup, session, relocated, relocationHandler } = await renderApp({ cwd: repo });
+
+    const answer = relocationHandler.current!({ action: "start" });
+    expect(answer.accepted).toBe(true);
+    expect(answer.message).toContain("once this turn ends");
+    await settle(setup);
+    // Nothing has moved: the calling turn must finish against the directory it
+    // started in, or the rest of it runs against roots that changed underneath.
+    expect(relocated).toEqual([]);
+    expect(loadRelocation(session.sessionFile)).toBeNull();
+
+    session.emit({ type: "agent_settled" });
+    await settle(setup);
+    await settle(setup);
+
+    const record = loadRelocation(session.sessionFile);
+    expect(record?.location).toBe("worktree");
+    expect(relocated).toEqual([record!.worktreePath]);
+  }, 30_000);
+
+  test("refuse rather than schedule when a rule blocks the move", async () => {
+    const repo = repository();
+    const { setup, session, relocated, relocationHandler } = await renderApp({ cwd: repo });
+
+    // Returning from a session that never moved.
+    const refused = relocationHandler.current!({ action: "return" });
+    expect(refused.accepted).toBe(false);
+    expect(refused.message).toContain("not running in a generated worktree");
+
+    session.emit({ type: "agent_settled" });
+    await settle(setup);
+    expect(relocated).toEqual([]);
+    expect(loadRelocation(session.sessionFile)).toBeNull();
+    expect(setup).toBeDefined();
+  }, 30_000);
+
+  test("only one move is ever in flight", async () => {
+    const repo = repository();
+    const { relocationHandler } = await renderApp({ cwd: repo });
+    expect(relocationHandler.current!({ action: "start" }).accepted).toBe(true);
+    const second = relocationHandler.current!({ action: "start" });
+    expect(second.accepted).toBe(false);
+    expect(second.message).toContain("already in progress");
+  }, 30_000);
+});
+

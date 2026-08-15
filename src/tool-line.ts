@@ -147,7 +147,8 @@ export function toolArg(name: string, args: any, cwd: string): string {
   if (name === "stop_subagent" && typeof args.target === "string") return args.target;
   if (name === "finish_subagent" && typeof args.summary === "string") return args.summary;
   if (name === "worktree" && typeof args.action === "string") {
-    const target = args.target ?? args.name;
+    // start carries a directory rather than a target or a name.
+    const target = args.target ?? args.name ?? (args.action === "start" ? args.directory : undefined);
     return target ? `${args.action} ${target}` : args.action;
   }
   if (name.startsWith("message_cache_")) {

@@ -1780,6 +1780,13 @@ export function App({
             const current = goalRef.current;
             if (current?.state === "active") persistGoal(noteSettledWork(current));
           }
+          // The turn is over, so a move the model asked for can happen now.
+          // Run it before scheduling a judge: the judge should read the
+          // repository the session actually ends up in.
+          if (pendingRelocationRef.current) {
+            runPendingRelocation();
+            break;
+          }
           maybeScheduleGoalJudge();
           break;
         }
@@ -2090,6 +2097,48 @@ export function App({
       if (moved) applyRelocation(record);
     })();
   }, [session, relocation?.id]);
+
+  /**
+   * A move the model asked for, held until its turn settles.
+   *
+   * The tool call must finish against the directory it started in, so the
+   * request is only recorded here and acted on from the settle handler.
+   */
+  const pendingRelocationRef = useRef<{ action: "start" | "return"; directory?: string } | null>(null);
+
+  useEffect(() => {
+    subagentManager.setRelocationRequestHandler?.((request) => {
+      const guardInput = {
+        relocation: relocationRef.current,
+        // The tool runs mid-turn by definition, so the idle rule is checked
+        // against everything except that turn.
+        busy: false,
+        retainedChildren: subagentManager.getAgents().length,
+        inFlight: relocatingRef.current || pendingRelocationRef.current !== null,
+      };
+      const blocked = request.action === "start"
+        ? startRelocationBlockReason(guardInput)
+        : returnRelocationBlockReason(guardInput);
+      if (blocked) return { accepted: false, message: blocked };
+      pendingRelocationRef.current = request;
+      return {
+        accepted: true,
+        message: request.action === "start"
+          ? "A fresh worktree will be created and this session moved into it once this turn ends."
+          : "This session will move back to its source repository once this turn ends.",
+      };
+    });
+    return () => subagentManager.setRelocationRequestHandler?.(undefined);
+  }, [subagentManager]);
+
+  const runPendingRelocation = () => {
+    const request = pendingRelocationRef.current;
+    if (!request) return;
+    pendingRelocationRef.current = null;
+    void runWorktreeRelocation(request.action === "start"
+      ? { kind: "start", ...(request.directory ? { directory: request.directory } : {}) }
+      : { kind: "return" });
+  };
 
   const update = (patch: Partial<PumSettings>) => {
     const next = { ...settingsRef.current, ...patch };
