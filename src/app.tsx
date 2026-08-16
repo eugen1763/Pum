@@ -123,7 +123,12 @@ import {
   visibleTodoTasks,
   type TodoFilter,
 } from "./todo-popup";
-import { applyPathCompletion, pathCompletions, type PathCompletion } from "./path-autocomplete";
+import {
+  applyPathCompletion,
+  pathCompletions,
+  shouldAutoShowPathCompletions,
+  type PathCompletion,
+} from "./path-autocomplete";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
 import type { SessionHistoryItem } from "./session-history-metadata";
@@ -922,6 +927,7 @@ export function App({
     : matchingCommands(commandInput).slice(0, 5);
   const pathSuggestions = activeAgentId || stashOpen || commandSuggestionsDismissed
     || isCommandInput(commandInput)
+    || !shouldAutoShowPathCompletions(commandInput, inputCursorOffset)
     ? []
     : pathCompletions(commandInput, inputCursorOffset, cwd).slice(0, 5);
   const suggestionCount = commandSuggestions.length || pathSuggestions.length;
@@ -4358,7 +4364,10 @@ export function App({
       || isCommandInput(inputValue)
         ? []
         : pathCompletions(inputValue, inputCursor, cwd).slice(0, 5);
-    const inputSuggestionCount = commandMatches.length || pathMatches.length;
+    const visiblePathMatches = shouldAutoShowPathCompletions(inputValue, inputCursor)
+      ? pathMatches
+      : [];
+    const inputSuggestionCount = commandMatches.length || visiblePathMatches.length;
     const isContinuationReturn =
       isPlainReturn &&
       inputValue.endsWith("\\") &&
@@ -4505,14 +4514,14 @@ export function App({
       return;
     }
 
-    if (isPlainReturn && pathMatches.length > 0) {
+    if (isPlainReturn && visiblePathMatches.length > 0) {
       key.stopPropagation();
-      const index = Math.min(commandCursorRef.current, pathMatches.length - 1);
-      const completed = applyPathCompletion(inputValue, pathMatches[index]!);
+      const index = Math.min(commandCursorRef.current, visiblePathMatches.length - 1);
+      const completed = applyPathCompletion(inputValue, visiblePathMatches[index]!);
       setEditorText(completed.value, completed.cursorOffset, true);
       pathCompletionCycle.current = {
         sourceValue: inputValue,
-        completions: pathMatches,
+        completions: visiblePathMatches,
         index,
         currentValue: completed.value,
         currentCursor: completed.cursorOffset,

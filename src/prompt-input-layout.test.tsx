@@ -214,6 +214,30 @@ describe("prompt input layout", () => {
     expect(textarea(setup.renderer.root)?.plainText).toBe("review src/app.tsx");
   });
 
+  test("hides automatic path suggestions until the token has three characters", async () => {
+    const setup = await renderApp(70, 20);
+    await setup.mockInput.typeText("s");
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("src/");
+
+    await setup.mockInput.typeText("r");
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("src/");
+
+    await setup.mockInput.typeText("c");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("src/");
+  });
+
+  test("completes a short path prefix with Tab", async () => {
+    const setup = await renderApp(70, 20);
+    await setup.mockInput.typeText("s");
+    setup.mockInput.pressTab();
+    await settle(setup);
+
+    expect(textarea(setup.renderer.root)?.plainText).toBe("scripts/");
+  });
+
   test("shows path suggestions with the command-suggestion selection style", async () => {
     const setup = await renderApp(70, 20);
     await setup.mockInput.typeText("review src/app");
