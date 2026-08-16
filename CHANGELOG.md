@@ -2,7 +2,7 @@
 
 All notable changes to PUM are documented in this file.
 
-## [Unreleased]
+## [0.2.17-beta.1] - 2026-08-16
 
 ### Added
 - Added `worktree` tool actions `start` and `return`, so the main agent can move its own session. The move is scheduled and happens once the calling turn ends, never in the middle of it. Managed children cannot use them.
@@ -12,6 +12,10 @@ All notable changes to PUM are documented in this file.
 - Added `pum worktree [directory]` and `pum w [directory]`, which create an auto-named worktree under `<repo>/.pum/worktrees` and start a fresh session in it. The source repository stays writable for that process only, without touching your saved `/check-path` settings. Uncommitted source changes are not copied, because creation uses the current commit.
 - Added session-scoped settings. Changes in the Ctrl+P panel now apply to the current session and persist beside it, leaving the global `pum.json` alone; `s` in the panel saves them as the global defaults.
 - Added absolute and home path completion. `/` and `~/` now complete, alongside project-relative paths, with credential paths and symbolic links still excluded.
+- Added an autonomous goal mode. `/goal <text>` stores a goal with the session and starts work at once; `/goalf <draft>` interviews you first and stores nothing until you confirm the one goal it proposes. `/goal stop`, `/goal continue`, `/goal status`, and `/goal clear` control it, and replacing or clearing a goal asks first.
+- Added judge-driven continuation. After a settled main turn, once no managed worker is running and no queued message is waiting, a fresh readonly judge reviews the repository and returns one verdict: complete the goal, ask you a single question, or write the next instruction and start another turn. It holds no worktree, counts as no worker, and is removed after each review.
+- Added a `goalRetryLimit` setting, on the Ctrl+P panel and in `pum.json`. It bounds consecutive incomplete reviews, defaults to 10, accepts 0 through 100, and 0 means no limit.
+- Added a goal label to the full-width rule above the prompt. It shows the state and the goal, keeps the rule one row, truncates on grapheme boundaries, and animates with the rule.
 
 ### Changed
 - No agent can write the PUM config directory any more. The main agent's exact-file allowance for `settings.json`, `pum.json` and `theme.json` is revoked, since settings are session-scoped and only the Settings panel promotes them.
@@ -22,11 +26,8 @@ All notable changes to PUM are documented in this file.
 - The prompt cache no longer loses an entry when two PUM processes write at once. The cross-process lock gave up after two seconds of contention and carried on unlocked, and read a contended exclusive create on Windows as "this filesystem cannot lock".
 - A repository whose directory name ends in a space resolves. The trailing space was trimmed off the path git reported, leaving a path that does not exist.
 - Orphaned `.goal.json` files are swept when a session is deleted. The sweep never knew about them, so one was left behind for every session removed since goals shipped.
-
-- Added an autonomous goal mode. `/goal <text>` stores a goal with the session and starts work at once; `/goalf <draft>` interviews you first and stores nothing until you confirm the one goal it proposes. `/goal stop`, `/goal continue`, `/goal status`, and `/goal clear` control it, and replacing or clearing a goal asks first.
-- Added judge-driven continuation. After a settled main turn, once no managed worker is running and no queued message is waiting, a fresh readonly judge reviews the repository and returns one verdict: complete the goal, ask you a single question, or write the next instruction and start another turn. It holds no worktree, counts as no worker, and is removed after each review.
-- Added a `goalRetryLimit` setting, on the Ctrl+P panel and in `pum.json`. It bounds consecutive incomplete reviews, defaults to 10, accepts 0 through 100, and 0 means no limit.
-- Added a goal label to the full-width rule above the prompt. It shows the state and the goal, keeps the rule one row, truncates on grapheme boundaries, and animates with the rule.
+- `/afk` is listed with the other commands, so it has a suggestion row and completes on Tab. It was routed ahead of the model already, but it was the one command missing from the list.
+- An attached image keeps its offsets when a pasted-text marker is edited in the same keystroke. The image positions were recalculated before the pasted-text cut rather than after it, so the next keystroke read offsets pointing past that cut.
 
 ## [0.2.16-beta.2] - 2026-08-15
 
