@@ -1828,7 +1828,7 @@ export function App({
     const judgeId = judgeAgentIdRef.current;
     if (judge && judgeId && !judge.verdictSeen) {
       const record = agents.find((agent) => agent.id === judgeId);
-      if (record && record.status !== "starting" && record.status !== "running") {
+      if (!record || (record.status !== "starting" && record.status !== "running")) {
         clearGoalJudge();
         append({
           kind: "text",

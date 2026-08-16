@@ -310,6 +310,8 @@ These were chosen deliberately. Change them only on purpose.
   its verdict is processed. A judge that settles without a verdict is dropped and
   reported. Restored judge records are discarded on resume.
 - **Goal verdicts fail closed.** One structured verdict decides everything.
+  Goal judges are internal agents. They never appear in `list_subagents`, and
+  the manager discards them after startup failure, prompt failure, or settlement.
   `completed` ends the goal with evidence. `blocked` asks the user one question
   and waits. `incomplete` queues exactly one generated continuation, which is
   delivered as a non-recallable main-agent turn. Invalid, missing, duplicated,

@@ -1026,6 +1026,12 @@ export class SubagentManager {
           ? record.snapshot.summary
           : record.finishRequested || error || record.snapshot.summary;
         this.updateStatus(record, status, summary);
+        // A judge owns no reusable state. Remove it after every settled turn,
+        // whether it returned a verdict, failed, or ended without one.
+        if (record.snapshot.role === "judge") {
+          void this.removeGoalJudge(record.snapshot.id);
+          break;
+        }
         if (record.session && !AVAILABLE_TRIGGER_TARGET_STATUSES.has(status)) {
           void this.triggerManager?.invalidateAgent(record.session.sessionId, record.snapshot.id);
           this.emit({
@@ -1860,7 +1866,11 @@ export class SubagentManager {
       this.updateStatus(record, "running");
       void withSearchRoute(record.session!.sessionId, () => record.session!.prompt(options.task)).catch((error) => {
         this.updateStatus(record, "failed", String(error));
-        void this.recordSettlement(record, "failed", String(error));
+        if (record.snapshot.role === "judge") {
+          void this.removeGoalJudge(record.snapshot.id);
+        } else {
+          void this.recordSettlement(record, "failed", String(error));
+        }
       });
       return cloneSnapshot(record);
     } catch (error) {
@@ -1871,6 +1881,8 @@ export class SubagentManager {
         await this.withWorktreeLock(() => removeWorktree(this.mainCwd, record.snapshot.worktree)).catch(() => {});
         this.persist({ event: "removed", id: record.snapshot.id, at: Date.now() });
         this.emit();
+      } else if (record.snapshot.role === "judge") {
+        await this.removeGoalJudge(record.snapshot.id);
       } else {
         this.updateStatus(record, "failed", String(error));
       }
@@ -2832,7 +2844,7 @@ export class SubagentManager {
   }
 
   private formatAgentList(): string {
-    const agents = this.getAgents();
+    const agents = this.getAgents().filter((agent) => !isInternalRole(agent.role));
     if (!agents.length) return "No subagents.";
     return agents.map((agent) => {
       const origin = agent.forkOrigin;

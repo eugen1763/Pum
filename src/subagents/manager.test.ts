@@ -1331,6 +1331,30 @@ describe("SubagentManager extension", () => {
     expect(countActiveSubagents(agents.filter((agent) => agent.role === "judge"))).toBe(0);
   });
 
+  test("internal judges never appear in the model-visible subagent list", () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "judge", "failed");
+    (manager as any).records.get("judge").snapshot.role = "judge";
+
+    expect((manager as any).formatAgentList()).toBe("No subagents.");
+
+    addTestAgent(manager, "worker", "idle");
+    expect((manager as any).formatAgentList()).toContain("worker  worker  idle");
+    expect((manager as any).formatAgentList()).not.toContain("judge");
+  });
+
+  test("a settled judge is discarded instead of becoming idle", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "judge", "running");
+    (manager as any).records.get("judge").snapshot.role = "judge";
+
+    settleAgent(manager, "judge");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(manager.getAgent("judge")).toBeUndefined();
+  });
+
   test("the capacity prompt reports spare slots while only a judge runs", () => {
     const judgeOnly = [{ status: "running" as SubagentStatus, role: "judge" as const }];
     expect(buildSubagentCapacityPrompt(countActiveSubagents(judgeOnly), 1))

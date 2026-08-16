@@ -973,6 +973,33 @@ describe("background subagents", () => {
     await restored.detachMain();
   });
 
+  test("discards a goal judge when runtime setup fails", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const parent = SessionManager.inMemory(repo);
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain({
+      appendEntry(customType: string, data: unknown) { parent.appendCustomEntry(customType, data); },
+      sendMessage() {},
+    } as any, parent, repo);
+
+    await expect(manager.spawnGoalJudge({
+      task: "Review the goal.",
+      modelId: "mock/missing-model",
+      thinkingLevel: "off",
+      onVerdict() {},
+    })).rejects.toThrow("Model is unavailable");
+
+    expect(manager.getAgents()).toEqual([]);
+    const events = parent.getEntries()
+      .filter((entry: any) => entry.type === "custom" && entry.customType === "pum.subagent")
+      .map((entry: any) => entry.data.event);
+    expect(events).toContain("removed");
+    await manager.detachMain();
+  });
+
   test("builds one child runtime for concurrent callers", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
