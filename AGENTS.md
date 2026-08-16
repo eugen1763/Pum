@@ -214,6 +214,12 @@ These were chosen deliberately. Change them only on purpose.
   its branch and any uncommitted work alone. One layer only, main agent only,
   idle only, and refused while any managed child is retained. `start` and
   `return` are reserved words, never worktree names.
+- **A tool-driven move waits for the turn that asked for it.** `worktree` with
+  `start` or `return` records the intent and returns; the App moves the session
+  from the settle handler. The calling turn has to finish against the directory
+  it began in, or the rest of it runs against roots that changed underneath.
+  Managed children, mutable or not, are refused: a delegate does not get to
+  move the session it is not running in.
 - **The active directory is state, not `process.cwd()`.** Everything
   directory-dependent reads it, so a move rebinds by re-render. A relocated
   session keeps its source repository writable for that process only; this

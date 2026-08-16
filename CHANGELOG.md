@@ -5,6 +5,7 @@ All notable changes to PUM are documented in this file.
 ## [Unreleased]
 
 ### Added
+- Added `worktree` tool actions `start` and `return`, so the main agent can move its own session. The move is scheduled and happens once the calling turn ends, never in the middle of it. Managed children cannot use them.
 - Added `/worktree start [directory]` and `/worktree return`, which move the running session into a generated worktree and back. The session keeps its id, transcript, goal, todo list and settings; nothing is copied or forked. Returning leaves the worktree, its branch and any uncommitted work untouched, so it can still be inspected, merged or removed later. The source repository stays writable while the session runs in the worktree.
 - Added per-agent todo lists. A hidden `Todo` tool group gives the main agent and each managed child `todo_list`, `todo_add`, `todo_update`, `todo_complete` and `todo_delete`, each bound to its own session so no agent can read or change another's plan. Readonly children keep the tools. `Ctrl+O` and `/todo` open a view-only popup for the selected transcript, with `f` to filter.
 - Added `/afk`, which answers model questionnaires while you are away. Each questionnaire goes to one fresh delegate holding a single tool - no files, no shell, no network, no delegation. `/afk` alone toggles it, `/afk <instructions>` starts or re-steers it, and any failure hands the questionnaire straight back to you. AFK is process-local: it is never written to disk and never survives a restart.

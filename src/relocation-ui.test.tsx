@@ -15,7 +15,11 @@ afterEach(() => {
   destroy?.();
   destroy = undefined;
   for (const directory of directories.splice(0)) {
-    rmSync(directory, { recursive: true, force: true, maxRetries: process.platform === "win32" ? 10 : 0 });
+    try {
+      rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {
+      // A leftover temp directory is harmless; failing teardown is not.
+    }
   }
 });
 
@@ -46,6 +50,7 @@ function repository(): string {
 }
 
 function fakeSession() {
+  const listeners: ((event: unknown) => void)[] = [];
   const directory = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-reloc-session-")));
   directories.push(directory);
   return {
@@ -58,7 +63,13 @@ function fakeSession() {
     sessionManager: { buildContextEntries: () => [], getEntries: () => [] },
     sessionFile: join(directory, "session.jsonl"),
     sessionId: "current-session",
-    subscribe: () => () => {},
+    subscribe(listener: (event: unknown) => void) {
+      listeners.push(listener);
+      return () => {};
+    },
+    emit(event: unknown) {
+      for (const listener of [...listeners]) listener(event);
+    },
     setThinkingLevel() {},
     setModel: async () => {},
     clearQueue: () => ({ steering: [], followUp: [] }),
@@ -85,7 +96,11 @@ async function renderApp(options: {
 } ) {
   const session = options.session ?? fakeSession();
   const relocated: string[] = [];
-  const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
+  const relocationHandler: { current?: (request: unknown) => { accepted: boolean; message: string } } = {};
+  // Wide enough that the status bar never shreds the directory and branch to
+  // fit. A Windows temp path is long, and this assertion is about rebinding,
+  // not about how the bar sheds segments under pressure.
+  const setup = await createTestRenderer({ width: 200, height: 28, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const manager = {
     getAgents: () => options.agents ?? [],
@@ -94,6 +109,7 @@ async function renderApp(options: {
     abortAgent: async () => {},
     sendUserMessage: async () => {},
     persistToolEvent() {},
+    setRelocationRequestHandler(handler: any) { relocationHandler.current = handler; },
   } as any;
   createRoot(setup.renderer).render(
     <App
@@ -122,14 +138,36 @@ async function renderApp(options: {
     />,
   );
   await settle(setup);
-  return { setup, session, relocated };
+  return { setup, session, relocated, relocationHandler };
+}
+
+async function settleUntil(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  done: () => boolean,
+  timeoutMs = 20_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await settle(setup);
+    if (done()) return;
+  }
+  throw new Error(`relocation did not settle: ${setup.captureCharFrame()}`);
 }
 
 async function type(setup: Awaited<ReturnType<typeof createTestRenderer>>, text: string) {
   await setup.mockInput.typeText(text);
   setup.mockInput.pressEnter();
   await settle(setup);
-  await settle(setup);
+}
+
+/** Send a command and wait for the move it starts to actually land. */
+async function typeAndSettleMove(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  text: string,
+  done: () => boolean,
+) {
+  await type(setup, text);
+  await settleUntil(setup, done);
 }
 
 describe("/worktree start and return", () => {
@@ -137,7 +175,7 @@ describe("/worktree start and return", () => {
     const repo = repository();
     const { setup, session, relocated } = await renderApp({ cwd: repo });
 
-    await type(setup, "/worktree start");
+    await typeAndSettleMove(setup, "/worktree start", () => loadRelocation(session.sessionFile) !== null);
     const record = loadRelocation(session.sessionFile);
     expect(record?.location).toBe("worktree");
     expect(record?.branch).toMatch(/^pum\//);
@@ -148,7 +186,7 @@ describe("/worktree start and return", () => {
     // that a worktree was created somewhere.
     expect(setup.captureCharFrame()).toContain(`${record!.name} · ${record!.branch}`);
 
-    await type(setup, "/worktree return");
+    await typeAndSettleMove(setup, "/worktree return", () => relocated.length > 1);
     expect(relocated[1]).toBe(repo);
     // Returning preserves the worktree; only the session moved.
     expect(existsSync(record!.worktreePath)).toBe(true);
@@ -158,9 +196,10 @@ describe("/worktree start and return", () => {
 
   test("refuses a second layer", async () => {
     const repo = repository();
-    const { setup } = await renderApp({ cwd: repo });
-    await type(setup, "/worktree start");
-    await type(setup, "/worktree start");
+    const { setup, session } = await renderApp({ cwd: repo });
+    await typeAndSettleMove(setup, "/worktree start", () => loadRelocation(session.sessionFile) !== null);
+    await typeAndSettleMove(setup, "/worktree start",
+      () => setup.captureCharFrame().includes("return first"));
     expect(setup.captureCharFrame()).toContain("return first");
   }, 30_000);
 
@@ -195,7 +234,8 @@ describe("/worktree start and return", () => {
   test("keeps the worktree when the move itself fails", async () => {
     const repo = repository();
     const { setup, session } = await renderApp({ cwd: repo, onRelocate: async () => null });
-    await type(setup, "/worktree start");
+    await typeAndSettleMove(setup, "/worktree start",
+      () => setup.captureCharFrame().includes("did not move"));
 
     const frame = setup.captureCharFrame();
     expect(frame).toContain("did not move");
@@ -238,3 +278,52 @@ describe("/worktree start and return", () => {
     expect(existsSync(relocationFileFor(session.sessionFile))).toBe(false);
   }, 30_000);
 });
+
+describe("the worktree tool actions", () => {
+  test("schedule the move instead of doing it mid-turn", async () => {
+    const repo = repository();
+    const { setup, session, relocated, relocationHandler } = await renderApp({ cwd: repo });
+
+    const answer = relocationHandler.current!({ action: "start" });
+    expect(answer.accepted).toBe(true);
+    expect(answer.message).toContain("once this turn ends");
+    await settle(setup);
+    // Nothing has moved: the calling turn must finish against the directory it
+    // started in, or the rest of it runs against roots that changed underneath.
+    expect(relocated).toEqual([]);
+    expect(loadRelocation(session.sessionFile)).toBeNull();
+
+    session.emit({ type: "agent_settled" });
+    await settleUntil(setup, () => loadRelocation(session.sessionFile) !== null);
+
+    const record = loadRelocation(session.sessionFile);
+    expect(record?.location).toBe("worktree");
+    expect(relocated).toEqual([record!.worktreePath]);
+  }, 30_000);
+
+  test("refuse rather than schedule when a rule blocks the move", async () => {
+    const repo = repository();
+    const { setup, session, relocated, relocationHandler } = await renderApp({ cwd: repo });
+
+    // Returning from a session that never moved.
+    const refused = relocationHandler.current!({ action: "return" });
+    expect(refused.accepted).toBe(false);
+    expect(refused.message).toContain("not running in a generated worktree");
+
+    session.emit({ type: "agent_settled" });
+    await settle(setup);
+    expect(relocated).toEqual([]);
+    expect(loadRelocation(session.sessionFile)).toBeNull();
+    expect(setup).toBeDefined();
+  }, 30_000);
+
+  test("only one move is ever in flight", async () => {
+    const repo = repository();
+    const { relocationHandler } = await renderApp({ cwd: repo });
+    expect(relocationHandler.current!({ action: "start" }).accepted).toBe(true);
+    const second = relocationHandler.current!({ action: "start" });
+    expect(second.accepted).toBe(false);
+    expect(second.message).toContain("already in progress");
+  }, 30_000);
+});
+

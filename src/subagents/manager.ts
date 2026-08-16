@@ -50,7 +50,7 @@ import {
   afkAllowedToolNames,
   judgeAllowedToolNames,
 } from "../tool-groups";
-import { isInternalRole } from "./types";
+import { isInternalRole, type RelocationRequest, type RelocationRequestResult } from "./types";
 import { AFK_ANSWER_TOOL_NAME, afkAnswerParameters } from "../afk-delegate";
 import { TodoToolsController } from "../todo-tools";
 import {
@@ -350,6 +350,12 @@ export class SubagentManager {
   private mainApi?: ExtensionAPI;
   private mainSessionManager?: ExtensionContext["sessionManager"];
   private mainCwd = process.cwd();
+  /**
+   * Set by App. The tool records an intent and returns; the move happens after
+   * the calling turn settles, because changing roots inside a live model call
+   * would leave the rest of that turn running against the old directory.
+   */
+  private relocationRequest?: (request: RelocationRequest) => RelocationRequestResult;
   private parentSessionId = "detached";
   private mainRunning = false;
   private readonly mainCompletionMessageIds = new Set<string>();
@@ -1556,16 +1562,24 @@ export class SubagentManager {
         pi.registerTool({
           name: "worktree",
           label: "Worktree",
-          description: "Create, list, inspect, merge, or remove PUM Git worktrees.",
+          description: "Create, list, inspect, merge, or remove PUM Git worktrees. "
+            + "start moves this session into a fresh worktree and return moves it back; "
+            + "both take effect once the current turn ends.",
           promptSnippet: "Manage isolated Git worktrees under .pum/worktrees",
           parameters: Type.Object({
-            action: Type.String({ description: "create, list, status, merge, or remove" }),
+            action: Type.String({ description: "create, list, status, merge, remove, start, or return" }),
             target: Type.Optional(Type.String({ description: "Worktree id or name" })),
             name: Type.Optional(Type.String({ description: "Name for a new worktree" })),
+            directory: Type.Optional(Type.String({ description: "Repository to branch from, for start" })),
             force: Type.Optional(Type.Boolean({ description: "Force removal of an unmerged worktree" })),
           }),
           execute: async (_id, params, _signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
+            if (params.action === "start" || params.action === "return") {
+              return this.requestRelocation(params.action === "start"
+                ? { action: "start", ...(params.directory ? { directory: params.directory } : {}) }
+                : { action: "return" });
+            }
             return this.worktreeAction(ctx.cwd, params.action, params.target, params.name, params.force);
           },
         });
@@ -1584,6 +1598,25 @@ export class SubagentManager {
     } finally {
       release();
     }
+  }
+
+  /**
+   * Record a move the main agent asked for. Never performs it: the App moves
+   * the session once this turn settles.
+   */
+  private requestRelocation(request: RelocationRequest) {
+    if (!this.relocationRequest) {
+      throw new Error("This session cannot be moved.");
+    }
+    const result = this.relocationRequest(request);
+    if (!result.accepted) throw new Error(result.message);
+    return textResult(result.message);
+  }
+
+  setRelocationRequestHandler(
+    handler: ((request: RelocationRequest) => RelocationRequestResult) | undefined,
+  ): void {
+    this.relocationRequest = handler;
   }
 
   async createStandaloneWorktree(name?: string): Promise<WorktreeRecord> {
@@ -2964,6 +2997,12 @@ export class SubagentManager {
         if (managedAgent) this.forgetManagedAgent(managedAgent);
         return textResult(`Removed ${record.name}`, record);
       });
+    }
+    if (action === "start" || action === "return") {
+      // Only the authoritative main agent moves the session it is running in.
+      // A child shares no such session, and moving the parent out from under
+      // itself is not something a delegate gets to decide.
+      throw new Error(`Only the main agent can run worktree ${action}`);
     }
     throw new Error(`Unknown worktree action: ${action}`);
   }
