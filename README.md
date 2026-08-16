@@ -38,7 +38,14 @@ empty prompt to see every control.
 
 </details>
 
-Both are real OpenTUI renders, not mockups — `bun run scripts/capture-screenshots.tsx`
+<details>
+<summary><strong>Controls panel</strong></summary>
+
+![PUM's controls panel, showing prompt, agent, session, command, and application shortcuts](docs/images/pum-controls.svg)
+
+</details>
+
+These are real OpenTUI renders, not mockups. `bun run scripts/capture-screenshots.tsx`
 drives the actual TUI and converts the captured cells to SVG.
 
 ## What it does
