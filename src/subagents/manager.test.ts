@@ -96,7 +96,7 @@ function settleAgent(manager: SubagentManager, id: string): void {
 }
 
 describe("SubagentManager extension", () => {
-  test("reminds main after three settled turns and suppresses recursive duplicates", () => {
+  test("reminds main after six settled turns and suppresses recursive duplicates", () => {
     const handlers = new Map<string, Function[]>();
     const deliveries: any[] = [];
     const events: any[] = [];
@@ -149,13 +149,15 @@ describe("SubagentManager extension", () => {
       sendMessage(message: any) { deliveries.push(message); },
     });
 
-    handlers.get("agent_settled")?.[0]?.({});
-    handlers.get("agent_settled")?.[0]?.({});
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD - 1; turn += 1) {
+      handlers.get("agent_settled")?.[0]?.({});
+    }
     (manager as any).records.delete("first");
     handlers.get("agent_settled")?.[0]?.({});
     addTestAgent(manager, "second", "idle");
-    handlers.get("agent_settled")?.[0]?.({});
-    handlers.get("agent_settled")?.[0]?.({});
+    for (let turn = 0; turn < IDLE_OPEN_REMINDER_THRESHOLD - 1; turn += 1) {
+      handlers.get("agent_settled")?.[0]?.({});
+    }
     expect(deliveries).toEqual([]);
     handlers.get("agent_settled")?.[0]?.({});
     expect(deliveries).toHaveLength(1);

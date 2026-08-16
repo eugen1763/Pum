@@ -471,7 +471,7 @@ These were chosen deliberately. Change them only on purpose.
   after resume. An idle notice never means that an agent is ready to merge.
 - **Open-resource reminders break silent idle loops.** PUM counts settled turns
   separately for the main agent and each managed child while relevant retained
-  descendants or nonterminal external triggers remain open. The third settled
+  descendants or nonterminal external triggers remain open. The sixth settled
   turn queues one durable `pum.agent_message` reminder with the exact open state.
   A successful reminder resets the count. The reminder-triggered turn does not
   count. No-open-resource settlement and session attachment also reset the count.

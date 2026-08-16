@@ -114,7 +114,7 @@ import { captureForkSource, createForkedSession, entriesAfterForkCutoff } from "
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
-export const IDLE_OPEN_REMINDER_THRESHOLD = 3;
+export const IDLE_OPEN_REMINDER_THRESHOLD = 6;
 const ACTIVE_SUBAGENT_STATUSES = new Set<SubagentStatus>(["starting", "running"]);
 const AVAILABLE_TRIGGER_TARGET_STATUSES = new Set<SubagentStatus>(["starting", "running", "idle"]);
 const CLOSED_TRIGGER_STATES = new Set(["expired", "cancelled", "unavailable"]);
