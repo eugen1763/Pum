@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1103" height="784" viewBox="0 0 1103 784" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1095" height="784" viewBox="0 0 1095 784" role="img" aria-labelledby="title desc">
 <title id="title">PUM controls panel</title>
 <desc id="desc">A real OpenTUI render of PUM's controls panel, showing prompt, agent, session, command, and application shortcuts.</desc>
 <rect width="100%" height="100%" rx="12" fill="#1a1b26"/>
@@ -11,313 +11,249 @@
 <rect x="22.4" y="91.0" width="75.6" height="19" fill="#283457"/>
 <rect x="98.0" y="91.0" width="907.2" height="19" fill="#1f2335"/>
 <rect x="1005.2" y="91.0" width="67.2" height="19" fill="#283457"/>
-<rect x="1080.8" y="91.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="110.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="110.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="129.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="129.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="148.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="148.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="167.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="167.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="186.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="186.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="205.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="205.0" width="8.4" height="19" fill="#252527"/>
 <rect x="56.0" y="224.0" width="42.0" height="19" fill="#3b2630"/>
 <rect x="98.0" y="224.0" width="907.2" height="19" fill="#1f2335"/>
 <rect x="1005.2" y="224.0" width="67.2" height="19" fill="#3b2630"/>
-<rect x="1080.8" y="224.0" width="8.4" height="19" fill="#252527"/>
 <rect x="56.0" y="243.0" width="42.0" height="19" fill="#233b32"/>
 <rect x="98.0" y="243.0" width="907.2" height="19" fill="#1f2335"/>
 <rect x="1005.2" y="243.0" width="67.2" height="19" fill="#233b32"/>
-<rect x="1080.8" y="243.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="262.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="262.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="281.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="281.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="300.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="300.0" width="8.4" height="19" fill="#252527"/>
 <rect x="22.4" y="319.0" width="75.6" height="19" fill="#2b234a"/>
 <rect x="98.0" y="319.0" width="907.2" height="19" fill="#1f2335"/>
 <rect x="1005.2" y="319.0" width="67.2" height="19" fill="#2b234a"/>
-<rect x="1080.8" y="319.0" width="8.4" height="19" fill="#252527"/>
 <rect x="22.4" y="338.0" width="75.6" height="19" fill="#2b234a"/>
 <rect x="98.0" y="338.0" width="907.2" height="19" fill="#1f2335"/>
 <rect x="1005.2" y="338.0" width="67.2" height="19" fill="#2b234a"/>
-<rect x="1080.8" y="338.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="357.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="357.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="376.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="376.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="395.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="395.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="414.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="414.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="433.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="433.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="452.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="452.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="471.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="471.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="490.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="490.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="509.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="509.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="528.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="528.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="547.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="547.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="566.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="566.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="585.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="585.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="604.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="604.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="623.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="623.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="642.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="642.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="661.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="661.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="680.0" width="907.2" height="19" fill="#1f2335"/>
-<rect x="1080.8" y="680.0" width="8.4" height="19" fill="#252527"/>
 <rect x="98.0" y="699.0" width="907.2" height="19" fill="#1f2335"/>
 <rect x="98.0" y="718.0" width="907.2" height="19" fill="#1f2335"/>
 <rect x="98.0" y="737.0" width="907.2" height="19" fill="#1f2335"/>
 <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
-<text x="14.0" y="48.0" fill="#292e42" textLength="1075.2" lengthAdjust="spacingAndGlyphs">──────────┌─ Controls ───────────────────────────────────────────────────────────────────────────────────────────────┐──────────</text>
-<text x="14.0" y="67.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs"> pum  </text>
-<text x="64.4" y="67.0" fill="#c0caf5" textLength="33.6" lengthAdjust="spacingAndGlyphs">clau</text>
-<text x="98.0" y="67.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="996.8" y="67.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1005.2" y="67.0" fill="#2ac3de" textLength="16.8" lengthAdjust="spacingAndGlyphs">um</text>
-<text x="1022.0" y="67.0" fill="#565f89" textLength="25.2" lengthAdjust="spacingAndGlyphs"> · </text>
-<text x="1047.2" y="67.0" fill="#7aa2f7" textLength="33.6" lengthAdjust="spacingAndGlyphs">main</text>
-<text x="14.0" y="86.0" fill="#292e42" textLength="92.4" lengthAdjust="spacingAndGlyphs">──────────│</text>
-<text x="114.8" y="86.0" fill="#7aa2f7" textLength="873.6" lengthAdjust="spacingAndGlyphs">PUM workflow — prompt or steer · cache prompts · attach images · run managed worktree agents in parallel</text>
-<text x="996.8" y="86.0" fill="#292e42" textLength="92.4" lengthAdjust="spacingAndGlyphs">│──────────</text>
-<text x="22.4" y="105.0" fill="#c0caf5" textLength="75.6" lengthAdjust="spacingAndGlyphs">❯ Make th</text>
-<text x="98.0" y="105.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="105.0" fill="#7aa2f7" textLength="806.4" lengthAdjust="spacingAndGlyphs">switch transcripts · merge successful agents · persist sessions · use Settings and safety checks</text>
-<text x="996.8" y="105.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="105.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="124.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="996.8" y="124.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="124.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="39.2" y="143.0" fill="#c0caf5" textLength="58.8" lengthAdjust="spacingAndGlyphs">Reading</text>
-<text x="98.0" y="143.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="143.0" fill="#565f89" textLength="50.4" lengthAdjust="spacingAndGlyphs">Prompt</text>
-<text x="534.8" y="143.0" fill="#565f89" textLength="67.2" lengthAdjust="spacingAndGlyphs">Commands</text>
-<text x="996.8" y="143.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="143.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="162.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="162.0" fill="#7aa2f7" textLength="42.0" lengthAdjust="spacingAndGlyphs">Enter</text>
-<text x="257.6" y="162.0" fill="#c0caf5" textLength="260.4" lengthAdjust="spacingAndGlyphs">Send, or steer; newline in inpu</text>
-<text x="534.8" y="162.0" fill="#7aa2f7" textLength="75.6" lengthAdjust="spacingAndGlyphs">/compress</text>
-<text x="677.6" y="162.0" fill="#c0caf5" textLength="193.2" lengthAdjust="spacingAndGlyphs">Summarize older context</text>
-<text x="996.8" y="162.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="162.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="22.4" y="181.0" fill="#565f89" textLength="75.6" lengthAdjust="spacingAndGlyphs">  Read 2 </text>
-<text x="98.0" y="181.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="181.0" fill="#7aa2f7" textLength="84.0" lengthAdjust="spacingAndGlyphs">! on empty</text>
-<text x="257.6" y="181.0" fill="#c0caf5" textLength="201.6" lengthAdjust="spacingAndGlyphs">Enter shell command mode</text>
-<text x="534.8" y="181.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">/clear</text>
-<text x="677.6" y="181.0" fill="#c0caf5" textLength="176.4" lengthAdjust="spacingAndGlyphs">Start a fresh session</text>
-<text x="996.8" y="181.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="181.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="200.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="200.0" fill="#7aa2f7" textLength="42.0" lengthAdjust="spacingAndGlyphs">Alt+I</text>
-<text x="257.6" y="200.0" fill="#c0caf5" textLength="226.8" lengthAdjust="spacingAndGlyphs">Toggle multiline input mode</text>
-<text x="534.8" y="200.0" fill="#7aa2f7" textLength="42.0" lengthAdjust="spacingAndGlyphs">/goal</text>
-<text x="677.6" y="200.0" fill="#c0caf5" textLength="176.4" lengthAdjust="spacingAndGlyphs">Set or control a goal</text>
-<text x="996.8" y="200.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="200.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="22.4" y="219.0" fill="#565f89" textLength="75.6" lengthAdjust="spacingAndGlyphs">  apply_p</text>
-<text x="98.0" y="219.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="219.0" fill="#7aa2f7" textLength="134.4" lengthAdjust="spacingAndGlyphs">Ctrl/Shift+Enter</text>
-<text x="257.6" y="219.0" fill="#c0caf5" textLength="142.8" lengthAdjust="spacingAndGlyphs">Insert a new line</text>
-<text x="534.8" y="219.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">/goalf</text>
-<text x="677.6" y="219.0" fill="#c0caf5" textLength="252.0" lengthAdjust="spacingAndGlyphs">Work out a goal, then start it</text>
-<text x="996.8" y="219.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1064.0" y="219.0" fill="#9ece6a" textLength="8.4" lengthAdjust="spacingAndGlyphs">✓</text>
-<text x="1080.8" y="219.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="56.0" y="238.0" fill="#f7768e" textLength="8.4" lengthAdjust="spacingAndGlyphs">-</text>
-<text x="81.2" y="238.0" fill="#ff9e64" textLength="16.8" lengthAdjust="spacingAndGlyphs">ac</text>
-<text x="98.0" y="238.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="238.0" fill="#7aa2f7" textLength="100.8" lengthAdjust="spacingAndGlyphs">\ then Enter</text>
-<text x="257.6" y="238.0" fill="#c0caf5" textLength="218.4" lengthAdjust="spacingAndGlyphs">Insert a new line fallback</text>
-<text x="534.8" y="238.0" fill="#7aa2f7" textLength="67.2" lengthAdjust="spacingAndGlyphs">/history</text>
-<text x="677.6" y="238.0" fill="#c0caf5" textLength="176.4" lengthAdjust="spacingAndGlyphs">Browse saved sessions</text>
-<text x="996.8" y="238.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="238.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="56.0" y="257.0" fill="#9ece6a" textLength="8.4" lengthAdjust="spacingAndGlyphs">+</text>
-<text x="81.2" y="257.0" fill="#ff9e64" textLength="16.8" lengthAdjust="spacingAndGlyphs">ac</text>
-<text x="98.0" y="257.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="257.0" fill="#7aa2f7" textLength="75.6" lengthAdjust="spacingAndGlyphs">Alt+Enter</text>
-<text x="257.6" y="257.0" fill="#c0caf5" textLength="176.4" lengthAdjust="spacingAndGlyphs">Cache without sending</text>
-<text x="534.8" y="257.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">/login</text>
-<text x="677.6" y="257.0" fill="#c0caf5" textLength="201.6" lengthAdjust="spacingAndGlyphs">Add or update a provider</text>
-<text x="996.8" y="257.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="257.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="276.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="276.0" fill="#7aa2f7" textLength="117.6" lengthAdjust="spacingAndGlyphs">Ctrl+Alt+Enter</text>
-<text x="257.6" y="276.0" fill="#c0caf5" textLength="260.4" lengthAdjust="spacingAndGlyphs">Cache alias for reserved Alt+En</text>
-<text x="534.8" y="276.0" fill="#7aa2f7" textLength="42.0" lengthAdjust="spacingAndGlyphs">/news</text>
-<text x="677.6" y="276.0" fill="#c0caf5" textLength="218.4" lengthAdjust="spacingAndGlyphs">Open recent answers (News)</text>
-<text x="996.8" y="276.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="276.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="22.4" y="295.0" fill="#565f89" textLength="58.8" lengthAdjust="spacingAndGlyphs">  bash(</text>
-<text x="81.2" y="295.0" fill="#7aa2f7" textLength="16.8" lengthAdjust="spacingAndGlyphs">bu</text>
-<text x="98.0" y="295.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="295.0" fill="#7aa2f7" textLength="42.0" lengthAdjust="spacingAndGlyphs">Alt+V</text>
-<text x="257.6" y="295.0" fill="#c0caf5" textLength="201.6" lengthAdjust="spacingAndGlyphs">Attach a clipboard image</text>
-<text x="534.8" y="295.0" fill="#7aa2f7" textLength="42.0" lengthAdjust="spacingAndGlyphs">/todo</text>
-<text x="677.6" y="295.0" fill="#c0caf5" textLength="218.4" lengthAdjust="spacingAndGlyphs">Show the agent's todo list</text>
-<text x="996.8" y="295.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1064.0" y="295.0" fill="#9ece6a" textLength="8.4" lengthAdjust="spacingAndGlyphs">✓</text>
-<text x="1080.8" y="295.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="314.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="314.0" fill="#7aa2f7" textLength="134.4" lengthAdjust="spacingAndGlyphs">Ctrl+Backspace/W</text>
-<text x="257.6" y="314.0" fill="#c0caf5" textLength="201.6" lengthAdjust="spacingAndGlyphs">Delete the previous word</text>
-<text x="534.8" y="314.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">/stats</text>
-<text x="677.6" y="314.0" fill="#c0caf5" textLength="193.2" lengthAdjust="spacingAndGlyphs">Show session statistics</text>
-<text x="996.8" y="314.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="314.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="22.4" y="333.0" fill="#bb9af7" textLength="75.6" lengthAdjust="spacingAndGlyphs">◇ palette</text>
-<text x="98.0" y="333.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="333.0" fill="#7aa2f7" textLength="109.2" lengthAdjust="spacingAndGlyphs">Questionnaire</text>
-<text x="257.6" y="333.0" fill="#c0caf5" textLength="260.4" lengthAdjust="spacingAndGlyphs">Enter select · Esc cancel; cust</text>
-<text x="534.8" y="333.0" fill="#7aa2f7" textLength="92.4" lengthAdjust="spacingAndGlyphs">/check-path</text>
-<text x="677.6" y="333.0" fill="#c0caf5" textLength="243.6" lengthAdjust="spacingAndGlyphs">Manage extra Check mode paths</text>
-<text x="996.8" y="333.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="333.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="39.2" y="352.0" fill="#c0caf5" textLength="58.8" lengthAdjust="spacingAndGlyphs">Checked</text>
-<text x="98.0" y="352.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="534.8" y="352.0" fill="#7aa2f7" textLength="84.0" lengthAdjust="spacingAndGlyphs">/processes</text>
-<text x="677.6" y="352.0" fill="#c0caf5" textLength="218.4" lengthAdjust="spacingAndGlyphs">Open Processes on last tab</text>
-<text x="996.8" y="352.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="352.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="371.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="371.0" fill="#565f89" textLength="134.4" lengthAdjust="spacingAndGlyphs">Cache and agents</text>
-<text x="534.8" y="371.0" fill="#7aa2f7" textLength="75.6" lengthAdjust="spacingAndGlyphs">/triggers</text>
-<text x="677.6" y="371.0" fill="#c0caf5" textLength="218.4" lengthAdjust="spacingAndGlyphs">Open Processes on Triggers</text>
-<text x="996.8" y="371.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="371.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="39.2" y="390.0" fill="#7aa2f7" textLength="33.6" lengthAdjust="spacingAndGlyphs">Done</text>
-<text x="98.0" y="390.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="390.0" fill="#7aa2f7" textLength="25.2" lengthAdjust="spacingAndGlyphs">Tab</text>
-<text x="257.6" y="390.0" fill="#c0caf5" textLength="243.6" lengthAdjust="spacingAndGlyphs">Open cache, or load selection</text>
-<text x="534.8" y="390.0" fill="#7aa2f7" textLength="75.6" lengthAdjust="spacingAndGlyphs">/worktree</text>
-<text x="677.6" y="390.0" fill="#c0caf5" textLength="210.0" lengthAdjust="spacingAndGlyphs">Create a managed worktree</text>
-<text x="996.8" y="390.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="390.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="409.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="409.0" fill="#7aa2f7" textLength="92.4" lengthAdjust="spacingAndGlyphs">Shift+↑ / ↓</text>
-<text x="257.6" y="409.0" fill="#c0caf5" textLength="201.6" lengthAdjust="spacingAndGlyphs">Select cached task range</text>
-<text x="534.8" y="409.0" fill="#7aa2f7" textLength="126.0" lengthAdjust="spacingAndGlyphs">/worktree start</text>
-<text x="677.6" y="409.0" fill="#c0caf5" textLength="310.8" lengthAdjust="spacingAndGlyphs">Move this session into a fresh worktr</text>
-<text x="996.8" y="409.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="409.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="39.2" y="428.0" fill="#c0caf5" textLength="58.8" lengthAdjust="spacingAndGlyphs">The acc</text>
-<text x="98.0" y="428.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="428.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">Delete</text>
-<text x="257.6" y="428.0" fill="#c0caf5" textLength="226.8" lengthAdjust="spacingAndGlyphs">Remove selected cached task</text>
-<text x="534.8" y="428.0" fill="#7aa2f7" textLength="134.4" lengthAdjust="spacingAndGlyphs">/worktree return</text>
-<text x="677.6" y="428.0" fill="#c0caf5" textLength="302.4" lengthAdjust="spacingAndGlyphs">Move this session back to its source</text>
-<text x="996.8" y="428.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="428.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="447.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="447.0" fill="#7aa2f7" textLength="75.6" lengthAdjust="spacingAndGlyphs">Shift+Tab</text>
-<text x="257.6" y="447.0" fill="#c0caf5" textLength="176.4" lengthAdjust="spacingAndGlyphs">Next agent transcript</text>
-<text x="534.8" y="447.0" fill="#7aa2f7" textLength="25.2" lengthAdjust="spacingAndGlyphs">Tab</text>
-<text x="677.6" y="447.0" fill="#c0caf5" textLength="268.8" lengthAdjust="spacingAndGlyphs">Complete a command or local path</text>
-<text x="996.8" y="447.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="447.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="39.2" y="466.0" fill="#565f89" textLength="16.8" lengthAdjust="spacingAndGlyphs">- </text>
-<text x="56.0" y="466.0" fill="#7aa2f7" textLength="42.0" lengthAdjust="spacingAndGlyphs">src/t</text>
-<text x="98.0" y="466.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="466.0" fill="#7aa2f7" textLength="117.6" lengthAdjust="spacingAndGlyphs">Ctrl+Shift+Tab</text>
-<text x="257.6" y="466.0" fill="#c0caf5" textLength="210.0" lengthAdjust="spacingAndGlyphs">Previous agent transcript</text>
-<text x="996.8" y="466.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="466.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="39.2" y="485.0" fill="#565f89" textLength="16.8" lengthAdjust="spacingAndGlyphs">- </text>
-<text x="56.0" y="485.0" fill="#7aa2f7" textLength="42.0" lengthAdjust="spacingAndGlyphs">src/t</text>
-<text x="98.0" y="485.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="485.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">Ctrl+L</text>
-<text x="257.6" y="485.0" fill="#c0caf5" textLength="252.0" lengthAdjust="spacingAndGlyphs">Open agent transcript selector</text>
-<text x="534.8" y="485.0" fill="#565f89" textLength="92.4" lengthAdjust="spacingAndGlyphs">Application</text>
-<text x="996.8" y="485.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="485.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="504.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="534.8" y="504.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">Ctrl+P</text>
-<text x="677.6" y="504.0" fill="#c0caf5" textLength="109.2" lengthAdjust="spacingAndGlyphs">Open Settings</text>
-<text x="996.8" y="504.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="504.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="523.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="523.0" fill="#565f89" textLength="168.0" lengthAdjust="spacingAndGlyphs">History and sessions</text>
-<text x="534.8" y="523.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">Ctrl+N</text>
-<text x="677.6" y="523.0" fill="#c0caf5" textLength="252.0" lengthAdjust="spacingAndGlyphs">Open News; n answer / p source</text>
-<text x="996.8" y="523.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="523.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="542.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="542.0" fill="#7aa2f7" textLength="58.8" lengthAdjust="spacingAndGlyphs">Empty ↑</text>
-<text x="257.6" y="542.0" fill="#c0caf5" textLength="260.4" lengthAdjust="spacingAndGlyphs">Recall newest queued user input</text>
-<text x="534.8" y="542.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">Ctrl+O</text>
-<text x="677.6" y="542.0" fill="#c0caf5" textLength="218.4" lengthAdjust="spacingAndGlyphs">Open the agent's todo list</text>
-<text x="996.8" y="542.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="542.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="561.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="561.0" fill="#7aa2f7" textLength="84.0" lengthAdjust="spacingAndGlyphs">Main ↑ / ↓</text>
-<text x="257.6" y="561.0" fill="#c0caf5" textLength="260.4" lengthAdjust="spacingAndGlyphs">Sent history; wrapped input kee</text>
-<text x="534.8" y="561.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">Ctrl+T</text>
-<text x="677.6" y="561.0" fill="#c0caf5" textLength="117.6" lengthAdjust="spacingAndGlyphs">Open Processes</text>
-<text x="996.8" y="561.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="561.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="580.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="580.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">Ctrl+H</text>
-<text x="257.6" y="580.0" fill="#c0caf5" textLength="260.4" lengthAdjust="spacingAndGlyphs">Open history; use /history if u</text>
-<text x="534.8" y="580.0" fill="#7aa2f7" textLength="67.2" lengthAdjust="spacingAndGlyphs">Ctrl+End</text>
-<text x="677.6" y="580.0" fill="#c0caf5" textLength="235.2" lengthAdjust="spacingAndGlyphs">Scroll transcript to the end</text>
-<text x="996.8" y="580.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="580.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="599.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="114.8" y="599.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">pum -r</text>
-<text x="257.6" y="599.0" fill="#c0caf5" textLength="193.2" lengthAdjust="spacingAndGlyphs">Resume the last session</text>
-<text x="534.8" y="599.0" fill="#7aa2f7" textLength="117.6" lengthAdjust="spacingAndGlyphs">Ctrl+Y / click</text>
-<text x="677.6" y="599.0" fill="#c0caf5" textLength="310.8" lengthAdjust="spacingAndGlyphs">Select transcript; j/k move, Enter de</text>
-<text x="996.8" y="599.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="599.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="618.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="534.8" y="618.0" fill="#7aa2f7" textLength="109.2" lengthAdjust="spacingAndGlyphs">/ in Settings</text>
-<text x="677.6" y="618.0" fill="#c0caf5" textLength="210.0" lengthAdjust="spacingAndGlyphs">Focus the settings search</text>
-<text x="996.8" y="618.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="618.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="637.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="534.8" y="637.0" fill="#7aa2f7" textLength="25.2" lengthAdjust="spacingAndGlyphs">Esc</text>
-<text x="677.6" y="637.0" fill="#c0caf5" textLength="226.8" lengthAdjust="spacingAndGlyphs">Close; twice to cancel work</text>
-<text x="996.8" y="637.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="637.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="656.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="534.8" y="656.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs">Ctrl+C</text>
-<text x="677.6" y="656.0" fill="#c0caf5" textLength="260.4" lengthAdjust="spacingAndGlyphs">Close popup; clear; twice quits</text>
-<text x="996.8" y="656.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="656.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="675.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="534.8" y="675.0" fill="#7aa2f7" textLength="8.4" lengthAdjust="spacingAndGlyphs">?</text>
-<text x="677.6" y="675.0" fill="#c0caf5" textLength="193.2" lengthAdjust="spacingAndGlyphs">Open or close this help</text>
-<text x="996.8" y="675.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="675.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="98.0" y="694.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="996.8" y="694.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="1080.8" y="694.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
-<text x="14.0" y="713.0" fill="#292e42" textLength="92.4" lengthAdjust="spacingAndGlyphs">──────────│</text>
-<text x="114.8" y="713.0" fill="#565f89" textLength="117.6" lengthAdjust="spacingAndGlyphs">esc or ? close</text>
-<text x="996.8" y="713.0" fill="#292e42" textLength="92.4" lengthAdjust="spacingAndGlyphs">│──────────</text>
-<text x="14.0" y="732.0" fill="#7aa2f7" textLength="16.8" lengthAdjust="spacingAndGlyphs">❯ </text>
-<text x="30.8" y="732.0" fill="#565f89" textLength="67.2" lengthAdjust="spacingAndGlyphs">Ask some</text>
-<text x="98.0" y="732.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="996.8" y="732.0" fill="#292e42" textLength="8.4" lengthAdjust="spacingAndGlyphs">│</text>
-<text x="14.0" y="751.0" fill="#292e42" textLength="1075.2" lengthAdjust="spacingAndGlyphs">──────────└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘──────────</text>
+<text x="14.0 22.4 30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6 98.0 106.4 114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0 232.4 240.8 249.2 257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6 518.0 526.4 534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8 627.2 635.6 644.0 652.4 660.8 669.2 677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2 929.6 938.0 946.4 954.8 963.2 971.6 980.0 988.4 996.8 1005.2 1013.6 1022.0 1030.4 1038.8 1047.2 1055.6 1064.0 1072.4" y="48.0" fill="#292e42">──────────┌─ Controls ───────────────────────────────────────────────────────────────────────────────────────────────┐─────────</text>
+<text x="14.0 22.4 30.8 39.2 47.6 56.0" y="67.0" fill="#7aa2f7"> pum  </text>
+<text x="64.4 72.8 81.2 89.6" y="67.0" fill="#c0caf5">gpt-</text>
+<text x="98.0" y="67.0" fill="#292e42">│</text>
+<text x="996.8" y="67.0" fill="#292e42">│</text>
+<text x="1005.2 1013.6" y="67.0" fill="#2ac3de">um</text>
+<text x="1022.0 1030.4 1038.8" y="67.0" fill="#565f89"> · </text>
+<text x="1047.2 1055.6 1064.0 1072.4" y="67.0" fill="#7aa2f7">main</text>
+<text x="14.0 22.4 30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6 98.0" y="86.0" fill="#292e42">──────────│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0 232.4 240.8 249.2 257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6 518.0 526.4 534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8 627.2 635.6 644.0 652.4 660.8 669.2 677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2 929.6 938.0 946.4 954.8 963.2 971.6 980.0" y="86.0" fill="#7aa2f7">PUM workflow — prompt or steer · cache prompts · attach images · run managed worktree agents in parallel</text>
+<text x="996.8 1005.2 1013.6 1022.0 1030.4 1038.8 1047.2 1055.6 1064.0 1072.4" y="86.0" fill="#292e42">│─────────</text>
+<text x="22.4 30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6" y="105.0" fill="#c0caf5">❯ Make th</text>
+<text x="98.0" y="105.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0 232.4 240.8 249.2 257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6 518.0 526.4 534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8 627.2 635.6 644.0 652.4 660.8 669.2 677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8" y="105.0" fill="#7aa2f7">switch transcripts · merge successful agents · persist sessions · use Settings and safety checks</text>
+<text x="996.8" y="105.0" fill="#292e42">│</text>
+<text x="98.0" y="124.0" fill="#292e42">│</text>
+<text x="996.8" y="124.0" fill="#292e42">│</text>
+<text x="39.2 47.6 56.0 64.4 72.8 81.2 89.6" y="143.0" fill="#c0caf5">Reading</text>
+<text x="98.0" y="143.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8" y="143.0" fill="#565f89">Prompt</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6" y="143.0" fill="#565f89">Commands</text>
+<text x="996.8" y="143.0" fill="#292e42">│</text>
+<text x="98.0" y="162.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4" y="162.0" fill="#7aa2f7">Enter</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6" y="162.0" fill="#c0caf5">Send, or steer; newline in inpu</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0" y="162.0" fill="#7aa2f7">/compress</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4" y="162.0" fill="#c0caf5">Summarize older context</text>
+<text x="996.8" y="162.0" fill="#292e42">│</text>
+<text x="22.4 30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6" y="181.0" fill="#565f89">  Read 2 </text>
+<text x="98.0" y="181.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4" y="181.0" fill="#7aa2f7">! on empty</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8" y="181.0" fill="#c0caf5">Enter shell command mode</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="181.0" fill="#7aa2f7">/clear</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6" y="181.0" fill="#c0caf5">Start a fresh session</text>
+<text x="996.8" y="181.0" fill="#292e42">│</text>
+<text x="98.0" y="200.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4" y="200.0" fill="#7aa2f7">Alt+I</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0" y="200.0" fill="#c0caf5">Toggle multiline input mode</text>
+<text x="534.8 543.2 551.6 560.0 568.4" y="200.0" fill="#7aa2f7">/goal</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6" y="200.0" fill="#c0caf5">Set or control a goal</text>
+<text x="996.8" y="200.0" fill="#292e42">│</text>
+<text x="22.4 30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6" y="219.0" fill="#565f89">  apply_p</text>
+<text x="98.0" y="219.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0 232.4 240.8" y="219.0" fill="#7aa2f7">Ctrl/Shift+Enter</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0" y="219.0" fill="#c0caf5">Insert a new line</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="219.0" fill="#7aa2f7">/goalf</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2" y="219.0" fill="#c0caf5">Work out a goal, then start it</text>
+<text x="996.8" y="219.0" fill="#292e42">│</text>
+<text x="1064.0" y="219.0" fill="#9ece6a">✓</text>
+<text x="56.0" y="238.0" fill="#f7768e">-</text>
+<text x="81.2 89.6" y="238.0" fill="#ff9e64">ac</text>
+<text x="98.0" y="238.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2" y="238.0" fill="#7aa2f7">\ then Enter</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6" y="238.0" fill="#c0caf5">Insert a new line fallback</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6" y="238.0" fill="#7aa2f7">/history</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6" y="238.0" fill="#c0caf5">Browse saved sessions</text>
+<text x="996.8" y="238.0" fill="#292e42">│</text>
+<text x="56.0" y="257.0" fill="#9ece6a">+</text>
+<text x="81.2 89.6" y="257.0" fill="#ff9e64">ac</text>
+<text x="98.0" y="257.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0" y="257.0" fill="#7aa2f7">Alt+Enter</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6" y="257.0" fill="#c0caf5">Cache without sending</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="257.0" fill="#7aa2f7">/login</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8" y="257.0" fill="#c0caf5">Add or update a provider</text>
+<text x="996.8" y="257.0" fill="#292e42">│</text>
+<text x="98.0" y="276.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0" y="276.0" fill="#7aa2f7">Ctrl+Alt+Enter</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6" y="276.0" fill="#c0caf5">Cache alias for reserved Alt+En</text>
+<text x="534.8 543.2 551.6 560.0 568.4" y="276.0" fill="#7aa2f7">/news</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6" y="276.0" fill="#c0caf5">Open recent answers (News)</text>
+<text x="996.8" y="276.0" fill="#292e42">│</text>
+<text x="22.4 30.8 39.2 47.6 56.0 64.4 72.8" y="295.0" fill="#565f89">  bash(</text>
+<text x="81.2 89.6" y="295.0" fill="#7aa2f7">bu</text>
+<text x="98.0" y="295.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4" y="295.0" fill="#7aa2f7">Alt+V</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8" y="295.0" fill="#c0caf5">Attach a clipboard image</text>
+<text x="534.8 543.2 551.6 560.0 568.4" y="295.0" fill="#7aa2f7">/todo</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6" y="295.0" fill="#c0caf5">Show the agent's todo list</text>
+<text x="996.8" y="295.0" fill="#292e42">│</text>
+<text x="1064.0" y="295.0" fill="#9ece6a">✓</text>
+<text x="98.0" y="314.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0 232.4 240.8" y="314.0" fill="#7aa2f7">Ctrl+Backspace/W</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8" y="314.0" fill="#c0caf5">Delete the previous word</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="314.0" fill="#7aa2f7">/stats</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4" y="314.0" fill="#c0caf5">Show session statistics</text>
+<text x="996.8" y="314.0" fill="#292e42">│</text>
+<text x="22.4 30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6" y="333.0" fill="#bb9af7">◇ palette</text>
+<text x="98.0" y="333.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6" y="333.0" fill="#7aa2f7">Questionnaire</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6" y="333.0" fill="#c0caf5">Enter select · Esc cancel; cust</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8" y="333.0" fill="#7aa2f7">/check-path</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8" y="333.0" fill="#c0caf5">Manage extra Check mode paths</text>
+<text x="996.8" y="333.0" fill="#292e42">│</text>
+<text x="39.2 47.6 56.0 64.4 72.8 81.2 89.6" y="352.0" fill="#c0caf5">Checked</text>
+<text x="98.0" y="352.0" fill="#292e42">│</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4" y="352.0" fill="#7aa2f7">/processes</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6" y="352.0" fill="#c0caf5">Open Processes on last tab</text>
+<text x="996.8" y="352.0" fill="#292e42">│</text>
+<text x="98.0" y="371.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0 232.4 240.8" y="371.0" fill="#565f89">Cache and agents</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0" y="371.0" fill="#7aa2f7">/triggers</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6" y="371.0" fill="#c0caf5">Open Processes on Triggers</text>
+<text x="996.8" y="371.0" fill="#292e42">│</text>
+<text x="39.2 47.6 56.0 64.4" y="390.0" fill="#7aa2f7">Done</text>
+<text x="98.0" y="390.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6" y="390.0" fill="#7aa2f7">Tab</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8" y="390.0" fill="#c0caf5">Open cache, or load selection</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0" y="390.0" fill="#7aa2f7">/worktree</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2" y="390.0" fill="#c0caf5">Create a managed worktree</text>
+<text x="996.8" y="390.0" fill="#292e42">│</text>
+<text x="98.0" y="409.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8" y="409.0" fill="#7aa2f7">Shift+↑ / ↓</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8" y="409.0" fill="#c0caf5">Select cached task range</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8 627.2 635.6 644.0 652.4" y="409.0" fill="#7aa2f7">/worktree start</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2 929.6 938.0 946.4 954.8 963.2 971.6 980.0" y="409.0" fill="#c0caf5">Move this session into a fresh worktr</text>
+<text x="996.8" y="409.0" fill="#292e42">│</text>
+<text x="39.2 47.6 56.0 64.4 72.8 81.2 89.6" y="428.0" fill="#c0caf5">The acc</text>
+<text x="98.0" y="428.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8" y="428.0" fill="#7aa2f7">Delete</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0" y="428.0" fill="#c0caf5">Remove selected cached task</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8 627.2 635.6 644.0 652.4 660.8" y="428.0" fill="#7aa2f7">/worktree return</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2 929.6 938.0 946.4 954.8 963.2 971.6" y="428.0" fill="#c0caf5">Move this session back to its source</text>
+<text x="996.8" y="428.0" fill="#292e42">│</text>
+<text x="98.0" y="447.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0" y="447.0" fill="#7aa2f7">Shift+Tab</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6" y="447.0" fill="#c0caf5">Next agent transcript</text>
+<text x="534.8 543.2 551.6" y="447.0" fill="#7aa2f7">Tab</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2 929.6 938.0" y="447.0" fill="#c0caf5">Complete a command or local path</text>
+<text x="996.8" y="447.0" fill="#292e42">│</text>
+<text x="39.2 47.6" y="466.0" fill="#565f89">- </text>
+<text x="56.0 64.4 72.8 81.2 89.6" y="466.0" fill="#7aa2f7">src/t</text>
+<text x="98.0" y="466.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0" y="466.0" fill="#7aa2f7">Ctrl+Shift+Tab</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2" y="466.0" fill="#c0caf5">Previous agent transcript</text>
+<text x="996.8" y="466.0" fill="#292e42">│</text>
+<text x="39.2 47.6" y="485.0" fill="#565f89">- </text>
+<text x="56.0 64.4 72.8 81.2 89.6" y="485.0" fill="#7aa2f7">src/t</text>
+<text x="98.0" y="485.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8" y="485.0" fill="#7aa2f7">Ctrl+L</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2" y="485.0" fill="#c0caf5">Open agent transcript selector</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8" y="485.0" fill="#565f89">Application</text>
+<text x="996.8" y="485.0" fill="#292e42">│</text>
+<text x="98.0" y="504.0" fill="#292e42">│</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="504.0" fill="#7aa2f7">Ctrl+P</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4" y="504.0" fill="#c0caf5">Open Settings</text>
+<text x="996.8" y="504.0" fill="#292e42">│</text>
+<text x="98.0" y="523.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0 232.4 240.8 249.2 257.6 266.0 274.4" y="523.0" fill="#565f89">History and sessions</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="523.0" fill="#7aa2f7">Ctrl+N</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2" y="523.0" fill="#c0caf5">Open News; n answer / p source</text>
+<text x="996.8" y="523.0" fill="#292e42">│</text>
+<text x="98.0" y="542.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2" y="542.0" fill="#7aa2f7">Empty ↑</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6" y="542.0" fill="#c0caf5">Recall newest queued user input</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="542.0" fill="#7aa2f7">Ctrl+O</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6" y="542.0" fill="#c0caf5">Open the agent's todo list</text>
+<text x="996.8" y="542.0" fill="#292e42">│</text>
+<text x="98.0" y="561.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4" y="561.0" fill="#7aa2f7">Main ↑ / ↓</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6" y="561.0" fill="#c0caf5">Sent history; wrapped input kee</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="561.0" fill="#7aa2f7">Ctrl+T</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8" y="561.0" fill="#c0caf5">Open Processes</text>
+<text x="996.8" y="561.0" fill="#292e42">│</text>
+<text x="98.0" y="580.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8" y="580.0" fill="#7aa2f7">Ctrl+H</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6" y="580.0" fill="#c0caf5">Open history; use /history if u</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6" y="580.0" fill="#7aa2f7">Ctrl+End</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4" y="580.0" fill="#c0caf5">Scroll transcript to the end</text>
+<text x="996.8" y="580.0" fill="#292e42">│</text>
+<text x="98.0" y="599.0" fill="#292e42">│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8" y="599.0" fill="#7aa2f7">pum -r</text>
+<text x="257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4" y="599.0" fill="#c0caf5">Resume the last session</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8 627.2 635.6 644.0" y="599.0" fill="#7aa2f7">Ctrl+Y / click</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2 929.6 938.0 946.4 954.8 963.2 971.6 980.0" y="599.0" fill="#c0caf5">Select transcript; j/k move, Enter de</text>
+<text x="996.8" y="599.0" fill="#292e42">│</text>
+<text x="98.0" y="618.0" fill="#292e42">│</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8 627.2 635.6" y="618.0" fill="#7aa2f7">/ in Settings</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2" y="618.0" fill="#c0caf5">Focus the settings search</text>
+<text x="996.8" y="618.0" fill="#292e42">│</text>
+<text x="98.0" y="637.0" fill="#292e42">│</text>
+<text x="534.8 543.2 551.6" y="637.0" fill="#7aa2f7">Esc</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0" y="637.0" fill="#c0caf5">Close; twice to cancel work</text>
+<text x="996.8" y="637.0" fill="#292e42">│</text>
+<text x="98.0" y="656.0" fill="#292e42">│</text>
+<text x="534.8 543.2 551.6 560.0 568.4 576.8" y="656.0" fill="#7aa2f7">Ctrl+C</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2 929.6" y="656.0" fill="#c0caf5">Close popup; clear; twice quits</text>
+<text x="996.8" y="656.0" fill="#292e42">│</text>
+<text x="98.0" y="675.0" fill="#292e42">│</text>
+<text x="534.8" y="675.0" fill="#7aa2f7">?</text>
+<text x="677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4" y="675.0" fill="#c0caf5">Open or close this help</text>
+<text x="996.8" y="675.0" fill="#292e42">│</text>
+<text x="98.0" y="694.0" fill="#292e42">│</text>
+<text x="996.8" y="694.0" fill="#292e42">│</text>
+<text x="14.0 22.4 30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6 98.0" y="713.0" fill="#292e42">──────────│</text>
+<text x="114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0" y="713.0" fill="#565f89">esc or ? close</text>
+<text x="996.8 1005.2 1013.6 1022.0 1030.4 1038.8 1047.2 1055.6 1064.0 1072.4" y="713.0" fill="#292e42">│─────────</text>
+<text x="14.0 22.4" y="732.0" fill="#7aa2f7">❯ </text>
+<text x="30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6" y="732.0" fill="#565f89">Ask some</text>
+<text x="98.0" y="732.0" fill="#292e42">│</text>
+<text x="996.8" y="732.0" fill="#292e42">│</text>
+<text x="14.0 22.4 30.8 39.2 47.6 56.0 64.4 72.8 81.2 89.6 98.0 106.4 114.8 123.2 131.6 140.0 148.4 156.8 165.2 173.6 182.0 190.4 198.8 207.2 215.6 224.0 232.4 240.8 249.2 257.6 266.0 274.4 282.8 291.2 299.6 308.0 316.4 324.8 333.2 341.6 350.0 358.4 366.8 375.2 383.6 392.0 400.4 408.8 417.2 425.6 434.0 442.4 450.8 459.2 467.6 476.0 484.4 492.8 501.2 509.6 518.0 526.4 534.8 543.2 551.6 560.0 568.4 576.8 585.2 593.6 602.0 610.4 618.8 627.2 635.6 644.0 652.4 660.8 669.2 677.6 686.0 694.4 702.8 711.2 719.6 728.0 736.4 744.8 753.2 761.6 770.0 778.4 786.8 795.2 803.6 812.0 820.4 828.8 837.2 845.6 854.0 862.4 870.8 879.2 887.6 896.0 904.4 912.8 921.2 929.6 938.0 946.4 954.8 963.2 971.6 980.0 988.4 996.8 1005.2 1013.6 1022.0 1030.4 1038.8 1047.2 1055.6 1064.0 1072.4" y="751.0" fill="#292e42">──────────└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘─────────</text>
 </g>
 </svg>

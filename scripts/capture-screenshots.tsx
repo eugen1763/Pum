@@ -24,6 +24,7 @@ const CELL_WIDTH = 8.4;
 const CELL_HEIGHT = 19;
 const PADDING = 14;
 const CHROME_HEIGHT = 34;
+const CROPPED_SCROLLBAR_COLUMNS = 1;
 
 type Capture = ReturnType<Awaited<ReturnType<typeof createTestRenderer>>["captureSpans"]>;
 
@@ -91,9 +92,13 @@ function runs(cells: readonly Cell[], key: "fg" | "bg"): Array<{ start: number; 
 }
 
 function toSvg(capture: Capture, title: string, description: string): string {
-  const width = Math.round(capture.cols * CELL_WIDTH + PADDING * 2);
+  // The live TUI keeps its scrollbar visible to prevent layout reflow. The
+  // README captures omit that final terminal column because the static image
+  // has no scrolling interaction.
+  const columns = Math.max(0, capture.cols - CROPPED_SCROLLBAR_COLUMNS);
+  const width = Math.round(columns * CELL_WIDTH + PADDING * 2);
   const height = Math.round(capture.rows * CELL_HEIGHT + PADDING * 2 + CHROME_HEIGHT);
-  const grid = capture.lines.map((line) => cellsOf(line as any));
+  const grid = capture.lines.map((line) => cellsOf(line as any).slice(0, columns));
   const background = grid[0]?.[0]?.bg ?? "#11131d";
 
   const chrome: string[] = [
@@ -125,11 +130,14 @@ function toSvg(capture: Capture, title: string, description: string): string {
     for (const run of runs(cells, "fg")) {
       const text = run.cells.map((cell) => cell.char).join("");
       if (!text.trim()) continue;
+      // Give every glyph its terminal-cell x coordinate. Browser font metrics
+      // can then differ slightly without stretching the glyph shapes or moving
+      // later cells out of alignment.
+      const positions = run.cells.map((_, index) =>
+        (PADDING + (run.start + index) * CELL_WIDTH).toFixed(1)).join(" ");
       glyphs.push(
-        `<text x="${(PADDING + run.start * CELL_WIDTH).toFixed(1)}" y="${y.toFixed(1)}" `
-          + `fill="${run.cells[0]!.fg}" `
-          + `textLength="${(run.cells.length * CELL_WIDTH).toFixed(1)}" `
-          + `lengthAdjust="spacingAndGlyphs">${escapeXml(text)}</text>`,
+        `<text x="${positions}" y="${y.toFixed(1)}" `
+          + `fill="${run.cells[0]!.fg}">${escapeXml(text)}</text>`,
       );
     }
   });
@@ -264,7 +272,7 @@ function fakeSession(sessionFile: string) {
   return {
     agent: {
       state: {
-        model: { id: "claude-opus-5", provider: "anthropic", input: ["text"], contextWindow: 200_000 },
+        model: { id: "gpt-5-codex", provider: "openai-codex", input: ["text"], contextWindow: 200_000 },
         thinkingLevel: "medium",
       },
     },
