@@ -20,6 +20,7 @@ export const WORKING_RULE_ANIMATION_MODES = [
   "comet-pair",
   "electric-spark",
   "constellation",
+  "random-constellation",
   "energy-transfer",
 ] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
@@ -31,6 +32,7 @@ export const WORKING_RULE_ANIMATION_LABELS: Record<WorkingRuleAnimationMode, str
   "comet-pair": "Comet pair",
   "electric-spark": "Electric spark",
   constellation: "Constellation",
+  "random-constellation": "Random constellation",
   "energy-transfer": "Energy transfer",
 };
 export const OUTPUT_MODES = ["quiet", "normal", "verbose"] as const;

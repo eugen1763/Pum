@@ -144,6 +144,7 @@ describe("Settings keyboard flow", () => {
       "Comet pair",
       "Electric spark",
       "Constellation",
+      "Random constellation",
       "Energy transfer",
       "Off",
     ]) {

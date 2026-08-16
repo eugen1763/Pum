@@ -36,7 +36,7 @@ export type SettingRow = {
 export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "theme", label: "Theme", category: "Appearance", keywords: "color palette semantic", description: "Change the semantic color preset. theme.json overrides remain active." },
   { id: "animations", label: "Animations", category: "Appearance", keywords: "motion global truecolor", description: "Enable interface motion. PUM disables motion when true color is unavailable." },
-  { id: "workingRuleAnimation", label: "Working animation", category: "Appearance", keywords: "rules input header coordinated sweep sparkle trail comet pair electric spark constellation energy transfer off motion", description: "Choose how the header and input rules animate while an agent works." },
+  { id: "workingRuleAnimation", label: "Working animation", category: "Appearance", keywords: "rules input header coordinated sweep sparkle trail comet pair electric spark constellation random energy transfer off motion", description: "Choose how the header and input rules animate while an agent works." },
   { id: "outputMode", label: "Transcript detail", category: "Appearance", keywords: "transcript tools quiet normal verbose raw summary", description: "Choose grouped Quiet output, live Normal output, or raw Verbose tool results." },
   { id: "providers", label: "Providers", category: "Agent", keywords: "login oauth api key custom endpoint", description: "Open provider login or add an OpenAI-compatible custom endpoint." },
   { id: "model", label: "Model", category: "Agent", keywords: "provider llm active search", description: "Select the model used by the main agent. Search matches provider and model names." },

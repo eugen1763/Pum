@@ -69,6 +69,7 @@ describe("PUM settings migration", () => {
       "comet-pair",
       "electric-spark",
       "constellation",
+      "random-constellation",
       "energy-transfer",
     ]);
     for (const mode of WORKING_RULE_ANIMATION_MODES) {
@@ -83,6 +84,7 @@ describe("PUM settings migration", () => {
       "comet-pair": "Comet pair",
       "electric-spark": "Electric spark",
       constellation: "Constellation",
+      "random-constellation": "Random constellation",
       "energy-transfer": "Energy transfer",
     });
   });
