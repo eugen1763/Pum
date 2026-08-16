@@ -4,20 +4,41 @@ PUM uses the npm package name `pum-agent`. The installed executable remains `pum
 
 ## npm authentication
 
-The Release workflow uses the GitHub `npm` environment secret `NPM_TOKEN` for
-both package publication and exact dist-tag updates. GitHub OIDC remains enabled
-so `npm publish --provenance` can attach provenance to the release.
+The Release workflow publishes through **trusted publishing**: GitHub Actions
+presents this job's OIDC identity, npm checks it against the trusted publisher
+registered on the package, and grants a credential for that one publish. No
+token is stored, so there is nothing to rotate and nothing that works from a
+laptop.
 
-Configure the token as follows:
+The identity npm verifies is the repository, the workflow file, and the
+environment, so all three have to match the registration:
+
+| Field | Value |
+|---|---|
+| Repository | `eugen1763/Pum` |
+| Workflow | `release.yml` |
+| Environment | `npm` |
+
+Provenance is attached automatically under OIDC. The workflow still passes
+`--provenance` so a build that somehow loses it fails rather than publishing
+quietly without one.
+
+### The dist-tag exception
+
+A prerelease publishes under `beta` and is then promoted with
+`npm dist-tag add`, which is a second registry call. Trusted publishing scopes
+its credential to the publish itself, so this step may still need a token. Keep
+a package-scoped `NPM_TOKEN` in the `npm` environment while that is true:
 
 1. Limit it to the `pum-agent` package.
 2. Grant read and write access.
-3. Enable **Bypass 2FA** for the token.
-4. Use the shortest practical expiration and rotate the token before expiry.
-5. Add the token as `NPM_TOKEN` in the GitHub `npm` environment.
-6. Never print the value, place it in repository files, or paste it into issue or chat text.
+3. Use the shortest practical expiration and rotate it before expiry.
+4. Never print the value, place it in repository files, or paste it into issue or chat text.
 
-For prereleases, the workflow publishes with `beta`, then assigns the exact version to `latest`. Stable releases publish directly with `latest`.
+If the promotion step fails, the package **is** published; only the `latest`
+dist-tag is stale. The job says so and prints the one command to run from a
+logged-in shell. Once a real release proves the credential carries over, drop
+the secret and this section with it.
 
 ## Release checklist
 
@@ -38,6 +59,10 @@ For prereleases, the workflow publishes with `beta`, then assigns the exact vers
 15. Run `node_modules/.pum-install/node_modules/.bin/pum --help` to verify the installed executable.
 
 The workflow rejects a tag that differs from `package.json`. The workflow never changes the package version.
+
+A publish that fails before the registry accepts the tarball leaves nothing
+behind: the tag can be re-run with `gh run rerun <run-id> --failed` rather than
+retired, because nothing was published under it.
 
 Do not move or reuse a published tag. If a tagged candidate needs changes, prepare a newer version.
 

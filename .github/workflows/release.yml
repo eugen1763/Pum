@@ -40,33 +40,37 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package version $version." >&2
             exit 1
           }
+      # Trusted publishing: npm exchanges this job's OIDC identity for a
+      # short-lived credential, so no token is stored anywhere. The identity
+      # npm checks is the repository, this workflow file, and the `npm`
+      # environment above, all of which have to match the trusted publisher
+      # registered on the package. Provenance is automatic under OIDC; the flag
+      # stays as an explicit assertion that a build without it must fail.
       - name: Publish to npm
-        env:
-          # Package-scoped granular token with read/write access and Bypass 2FA.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version="$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
-          test -n "$NODE_AUTH_TOKEN" || {
-            echo "The npm environment is missing NPM_TOKEN." >&2
-            exit 1
-          }
           if [[ "$version" == *-* ]]; then
             npm publish --provenance --tag beta
           else
             npm publish --provenance --tag latest
           fi
+      # A dist-tag update is a second registry call, and trusted publishing
+      # scopes its credential to the publish itself. If that credential does not
+      # carry over, this step needs NPM_TOKEN; the package is already published
+      # either way, so the failure below says so rather than implying a lost
+      # release.
       - name: Promote prerelease to npm latest
         if: ${{ contains(github.ref_name, '-') }}
         env:
-          # Reuse the same package-scoped release token for the exact dist-tag update.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version="$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
-          test -n "$NODE_AUTH_TOKEN" || {
-            echo "The npm environment is missing NPM_TOKEN." >&2
+          if ! npm dist-tag add "pum-agent@$version" latest; then
+            echo "::error::pum-agent@$version is published, but the latest dist-tag was not moved." >&2
+            echo "Trusted publishing covers the publish; this call needs its own credential." >&2
+            echo "Run it once from a logged-in shell: npm dist-tag add pum-agent@$version latest" >&2
             exit 1
-          }
-          npm dist-tag add "pum-agent@$version" latest
+          fi
           for attempt in 1 2 3 4 5; do
             if tags="$(npm dist-tag ls pum-agent)"; then
               beta="$(printf '%s\n' "$tags" | awk '$1 == "beta:" { print $2 }')"
