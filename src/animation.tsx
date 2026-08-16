@@ -47,6 +47,10 @@ const CARET_PERIOD_MS = 900;
 
 const RULE_CHARS_PER_MS = 0.08;
 const RULE_HIGHLIGHT_WIDTH = 10;
+const COMET_CHARS_PER_MS = 0.035;
+const ELECTRIC_FRAME_MS = 140;
+const CONSTELLATION_SPACING = 13;
+const ENERGY_CYCLE_MS = 3600;
 
 export type WorkingRuleRole = "headerTop" | "headerBottom" | "inputTop" | "inputBottom";
 export type CoordinatedRuleState = {
@@ -361,8 +365,33 @@ const labelSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" }
 
 /** Highlight strength at one column, 0 when the sweep head is far away. */
 type RuleStrength = (column: number) => number;
+type RuleGlyph = (column: number) => string;
+
+export type WorkingRuleCell = {
+  strength: number;
+  glyph: string;
+};
 
 const STATIC_STRENGTH: RuleStrength = () => 0;
+const STATIC_GLYPH: RuleGlyph = () => "─";
+
+const clampStrength = (value: number) => Math.max(0, Math.min(1, value));
+
+const roleSeed = (role: WorkingRuleRole) => {
+  switch (role) {
+    case "headerTop": return 1;
+    case "headerBottom": return 2;
+    case "inputTop": return 3;
+    case "inputBottom": return 4;
+  }
+};
+
+const hashPosition = (frame: number, seed: number, width: number) => {
+  if (width <= 1) return 0;
+  let value = Math.imul(frame + 1, 1103515245) ^ Math.imul(seed + 17, 12345);
+  value ^= value >>> 16;
+  return Math.abs(value) % width;
+};
 
 const linearStrength = (head: number): RuleStrength => (column) => {
   const distance = Math.abs(column - head);
@@ -377,6 +406,129 @@ const wrappedStrength = (head: number, width: number): RuleStrength => (column) 
   return distance < RULE_HIGHLIGHT_WIDTH ? 1 - distance / RULE_HIGHLIGHT_WIDTH : 0;
 };
 
+/** Return one animated rule cell for all selectable working-rule modes. */
+export function workingRuleCell(
+  mode: WorkingRuleAnimationMode,
+  role: WorkingRuleRole,
+  width: number,
+  elapsedMs: number,
+  column: number,
+  cycleWidth = width,
+): WorkingRuleCell {
+  if (mode === "off" || width <= 0 || column < 0 || column >= width) {
+    return { strength: 0, glyph: "─" };
+  }
+
+  if (mode === "input-only" || mode === "coordinated") {
+    const state = workingRuleFrameState(mode, role, width, elapsedMs, cycleWidth);
+    if (!state) return { strength: 0, glyph: "─" };
+    const strength = mode === "input-only"
+      ? wrappedStrength(state.head, width)(column)
+      : linearStrength(state.head)(column);
+    return { strength, glyph: "─" };
+  }
+
+  if (mode === "sparkle-trail") {
+    const state = coordinatedRuleState(width, elapsedMs, cycleWidth);
+    if ((state.pair === "input") !== isInputRule(role)) return { strength: 0, glyph: "─" };
+    const head = Math.round(state.head);
+    const sparkleColumns = [head, head - state.direction * 5, head - state.direction * 11];
+    const sparkleGlyphs = ["✦", "✧", "·"];
+    const sparkleIndex = sparkleColumns.indexOf(column);
+    const sweep = linearStrength(state.head)(column);
+    const sparkleStrength = sparkleIndex < 0 ? 0 : [1, 0.68, 0.35][sparkleIndex]!;
+    return {
+      strength: Math.max(sweep, sparkleStrength),
+      glyph: sparkleIndex < 0 ? "─" : sparkleGlyphs[sparkleIndex]!,
+    };
+  }
+
+  if (mode === "comet-pair") {
+    const travel = (elapsedMs * COMET_CHARS_PER_MS) % Math.max(1, width);
+    const heads = [travel, width - 1 - travel];
+    const distance = Math.min(...heads.map((head) => Math.abs(column - head)));
+    return {
+      strength: distance < RULE_HIGHLIGHT_WIDTH
+        ? clampStrength(1 - distance / RULE_HIGHLIGHT_WIDTH)
+        : 0,
+      glyph: "─",
+    };
+  }
+
+  if (mode === "electric-spark") {
+    const frame = Math.floor(elapsedMs / ELECTRIC_FRAME_MS);
+    const frameProgress = (elapsedMs % ELECTRIC_FRAME_MS) / ELECTRIC_FRAME_MS;
+    if (frameProgress > 0.68) return { strength: 0, glyph: "─" };
+    const seed = roleSeed(role);
+    const primary = hashPosition(frame, seed, Math.max(1, width - 1));
+    const secondary = hashPosition(frame, seed + 29, width);
+    const fade = 1 - frameProgress / 0.68;
+    const primaryDistance = Math.min(Math.abs(column - primary), Math.abs(column - (primary + 1)));
+    const secondaryDistance = Math.abs(column - secondary);
+    const strength = Math.max(
+      primaryDistance <= 2 ? fade * (1 - primaryDistance / 3) : 0,
+      secondaryDistance <= 1 ? fade * 0.45 * (1 - secondaryDistance / 2) : 0,
+    );
+    const glyph = column === primary ? "╴" : column === primary + 1 ? "╶" :
+      column === secondary ? "·" : "─";
+    return { strength: clampStrength(strength), glyph };
+  }
+
+  if (mode === "constellation") {
+    const seed = roleSeed(role);
+    const isStar = (column + seed * 3) % CONSTELLATION_SPACING === 0;
+    if (!isStar) return { strength: 0, glyph: "─" };
+    const phase = elapsedMs / 850 + column * 0.47 + seed * 1.3;
+    const strength = 0.12 + ((Math.sin(phase) + 1) / 2) * 0.88;
+    const glyph = strength > 0.82 ? "✦" : strength > 0.48 ? "✧" : "·";
+    return { strength, glyph };
+  }
+
+  if (mode === "energy-transfer") {
+    const phase = (elapsedMs % ENERGY_CYCLE_MS) / ENERGY_CYCLE_MS;
+    const center = (width - 1) / 2;
+    const input = isInputRule(role);
+
+    if (phase < 0.45 && input) {
+      const progress = phase / 0.45;
+      const leftHead = center * progress;
+      const rightHead = width - 1 - center * progress;
+      const charged = column <= leftHead || column >= rightHead;
+      const distance = Math.min(Math.abs(column - leftHead), Math.abs(column - rightHead));
+      return {
+        strength: charged ? Math.max(0.22, 1 - distance / 7) : 0,
+        glyph: "─",
+      };
+    }
+
+    if (phase < 0.55 && input) {
+      const distance = Math.abs(column - center);
+      const flash = 1 - Math.abs(phase - 0.5) / 0.05;
+      return {
+        strength: distance < 8 ? clampStrength(flash * (1 - distance / 8)) : 0,
+        glyph: distance < 0.6 ? "✦" : "─",
+      };
+    }
+
+    if (phase >= 0.55 && phase < 0.9 && !input) {
+      const progress = (phase - 0.55) / 0.35;
+      const distanceFromCenter = progress * center;
+      const heads = [center - distanceFromCenter, center + distanceFromCenter];
+      const distance = Math.min(...heads.map((head) => Math.abs(column - head)));
+      return {
+        strength: distance < RULE_HIGHLIGHT_WIDTH
+          ? clampStrength(1 - distance / RULE_HIGHLIGHT_WIDTH)
+          : 0,
+        glyph: distance < 0.55 ? "✧" : "─",
+      };
+    }
+
+    return { strength: 0, glyph: "─" };
+  }
+
+  return { strength: 0, glyph: "─" };
+}
+
 /**
  * One rule row. The labels sit near the right end as a group and take the swept
  * rule colour as their background. Optional trailing rule columns stay visible.
@@ -388,6 +540,7 @@ export function ruleText(
   strength: RuleStrength,
   labels: WorkingRuleLabels = null,
   trailingRuleColumns = 0,
+  glyph: RuleGlyph = STATIC_GLYPH,
 ): StyledText {
   const swept = (column: number) => {
     const value = strength(column);
@@ -402,7 +555,7 @@ export function ruleText(
   );
   const ruleColumns = Math.max(0, labelEdge - labelWidth);
   const chunks: TextChunk[] = [];
-  for (let column = 0; column < ruleColumns; column++) chunks.push(fg(swept(column))("─"));
+  for (let column = 0; column < ruleColumns; column++) chunks.push(fg(swept(column))(glyph(column)));
 
   let column = ruleColumns;
   paint: for (const label of list) {
@@ -415,7 +568,7 @@ export function ruleText(
     }
   }
   // A clipped grapheme can leave the row short. Finish it with plain rule.
-  for (; column < width; column++) chunks.push(fg(swept(column))("─"));
+  for (; column < width; column++) chunks.push(fg(swept(column))(glyph(column)));
   return new StyledText(chunks);
 }
 
@@ -455,7 +608,7 @@ export function useWorkingRule(opts: {
   }, [color, width, labelKey, trailingRuleColumns]);
 
   useEffect(() => {
-    const canAnimate = mode === "coordinated" || (mode === "input-only" && isInputRule(role));
+    const canAnimate = mode !== "off" && (mode !== "input-only" || isInputRule(role));
     if (!active || !enabled || width <= 0 || !canAnimate) {
       plain();
       return;
@@ -465,31 +618,18 @@ export function useWorkingRule(opts: {
     const hi = rgba(highlight);
     return subscribe(() => {
       if (!ref.current) return;
-      const state = workingRuleFrameState(
-        mode,
-        role,
-        width,
-        workingElapsed(),
-        workingRuleCycleWidth(),
-      );
-      if (!state) {
-        ref.current.content = ruleText(
-          width,
-          base,
-          base,
-          STATIC_STRENGTH,
-          label,
-          trailingRuleColumns,
-        );
-        return;
-      }
+      const elapsedMs = workingElapsed();
+      const cycleWidth = workingRuleCycleWidth();
+      const cells = Array.from({ length: width }, (_, column) =>
+        workingRuleCell(mode, role, width, elapsedMs, column, cycleWidth));
       ref.current.content = ruleText(
         width,
         base,
         hi,
-        mode === "input-only" ? wrappedStrength(state.head, width) : linearStrength(state.head),
+        (column) => cells[column]?.strength ?? 0,
         label,
         trailingRuleColumns,
+        (column) => cells[column]?.glyph ?? "─",
       );
     });
   }, [

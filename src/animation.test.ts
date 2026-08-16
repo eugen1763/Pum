@@ -4,6 +4,7 @@ import {
   coordinatedRuleState,
   markdownCaretContent,
   ruleText,
+  workingRuleCell,
   workingRuleFrameState,
 } from "./animation";
 import { rgba } from "./theme";
@@ -88,6 +89,80 @@ describe("coordinated working rules", () => {
     for (const role of ["headerTop", "headerBottom", "inputTop", "inputBottom"] as const) {
       expect(workingRuleFrameState("off", role, 10, 50)).toBeNull();
     }
+  });
+});
+
+describe("additional working-rule animations", () => {
+  test("sparkle trail adds three width-stable sparkles to the active pair", () => {
+    const cells = Array.from({ length: 30 }, (_, column) =>
+      workingRuleCell("sparkle-trail", "inputTop", 30, 200, column));
+    expect(cells.map((cell) => cell.glyph).filter((glyph) => glyph !== "─")).toEqual([
+      "·", "✧", "✦",
+    ]);
+    expect(workingRuleCell("sparkle-trail", "headerTop", 30, 200, 16)).toEqual({
+      strength: 0,
+      glyph: "─",
+    });
+  });
+
+  test("comet pair mirrors two equally bright heads", () => {
+    const left = workingRuleCell("comet-pair", "inputTop", 40, 200, 7);
+    const right = workingRuleCell("comet-pair", "inputTop", 40, 200, 32);
+    expect(left.strength).toBeCloseTo(1);
+    expect(right.strength).toBeCloseTo(1);
+    expect(left.glyph).toBe("─");
+  });
+
+  test("electric spark is deterministic and becomes quiet between flashes", () => {
+    const first = Array.from({ length: 50 }, (_, column) =>
+      workingRuleCell("electric-spark", "headerBottom", 50, 10, column));
+    const again = Array.from({ length: 50 }, (_, column) =>
+      workingRuleCell("electric-spark", "headerBottom", 50, 10, column));
+    expect(first).toEqual(again);
+    expect(first.some((cell) => cell.glyph === "╴")).toBe(true);
+    expect(Array.from({ length: 50 }, (_, column) =>
+      workingRuleCell("electric-spark", "headerBottom", 50, 120, column))
+      .every((cell) => cell.strength === 0)).toBe(true);
+  });
+
+  test("constellation keeps fixed star positions while brightness changes", () => {
+    const early = Array.from({ length: 60 }, (_, column) =>
+      workingRuleCell("constellation", "inputBottom", 60, 0, column));
+    const later = Array.from({ length: 60 }, (_, column) =>
+      workingRuleCell("constellation", "inputBottom", 60, 700, column));
+    const starPositions = (cells: typeof early) => cells
+      .map((cell, column) => cell.glyph === "─" ? -1 : column)
+      .filter((column) => column >= 0);
+    expect(starPositions(early)).toEqual(starPositions(later));
+    expect(early.map((cell) => cell.strength)).not.toEqual(later.map((cell) => cell.strength));
+  });
+
+  test("energy transfers from the input pair to the header pair", () => {
+    const inputCharge = workingRuleCell("energy-transfer", "inputTop", 41, 700, 3);
+    const quietHeader = workingRuleCell("energy-transfer", "headerTop", 41, 700, 3);
+    const quietInput = workingRuleCell("energy-transfer", "inputTop", 41, 2500, 10);
+    const headerWave = workingRuleCell("energy-transfer", "headerTop", 41, 2500, 10);
+    expect(inputCharge.strength).toBeGreaterThan(0);
+    expect(quietHeader.strength).toBe(0);
+    expect(quietInput.strength).toBe(0);
+    expect(headerWave.strength).toBeGreaterThan(0);
+  });
+
+  test("sparkle glyphs keep the rendered rule exactly one row wide", () => {
+    const width = 50;
+    const cells = Array.from({ length: width }, (_, column) =>
+      workingRuleCell("constellation", "inputTop", width, 300, column));
+    const painted = ruleText(
+      width,
+      rgba("#292e42"),
+      rgba("#ffffff"),
+      (column) => cells[column]!.strength,
+      null,
+      0,
+      (column) => cells[column]!.glyph,
+    );
+    expect(painted.chunks.reduce((total, chunk) => total + Bun.stringWidth(chunk.text ?? ""), 0))
+      .toBe(width);
   });
 });
 
