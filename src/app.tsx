@@ -626,6 +626,7 @@ export function App({
   sandboxWarningSource,
   forcedSandboxMode,
   forcedCheckPaths = [],
+  initialRelocation,
   initialCwd,
   userBashOperations,
 }: {
@@ -666,6 +667,8 @@ export function App({
   /** Process-local sandbox floor that does not overwrite persisted user settings. */
   forcedSandboxMode?: NonNullable<PumSettings["sandboxMode"]>;
   forcedCheckPaths?: readonly string[];
+  /** Relocation created before the TUI mounted, such as a `pum worktree` launch. */
+  initialRelocation?: RelocationRecord;
   /** Directory the session starts in. Defaults to the process working directory. */
   initialCwd?: string;
   /** User commands bypass Check mode but use this native sandbox execution path. */
@@ -1990,7 +1993,7 @@ export function App({
   }, [activeAgent?.id, activeAgent?.status, activeAgent?.runStartedAt, visibleBusy]);
 
   const [relocation, setRelocation] = useState(
-    () => loadRelocation(initialSession.sessionFile),
+    () => loadRelocation(initialSession.sessionFile) ?? initialRelocation ?? null,
   );
   const relocationRef = useRef(relocation);
   relocationRef.current = relocation;
@@ -2135,7 +2138,6 @@ export function App({
     if (!record || record.location !== "worktree") return;
     if (restoredRelocationRef.current === record.id) return;
     restoredRelocationRef.current = record.id;
-    if (pathIdentity(cwdRef.current) === pathIdentity(record.worktreePath)) return;
     void (async () => {
       const trusted = relocationPathsTrusted(record, {
         worktreeExists: existsSync(record.worktreePath),
@@ -2143,14 +2145,40 @@ export function App({
         sourceRoot: record.sourceRoot,
       });
       if (!trusted) {
+        const alreadyInWorktree = pathIdentity(cwdRef.current) === pathIdentity(record.worktreePath);
+        if (alreadyInWorktree && onRelocate) {
+          const moved = await onRelocate(record.sourceRoot).catch(() => null);
+          if (moved) {
+            applyRelocation({
+              ...record,
+              generation: record.generation + 1,
+              location: "source",
+              updatedAt: Date.now(),
+            });
+            appendMainLine({
+              kind: "text",
+              role: "error",
+              text: `worktree ${record.name} no longer matches ${record.branch}; returned to ${record.sourceRoot}`,
+            });
+            return;
+          }
+        }
         relocationRef.current = null;
         setRelocation(null);
         saveRelocation(session.sessionFile, null);
         appendMainLine({
           kind: "text",
           role: "error",
-          text: `worktree ${record.name} no longer matches ${record.branch}; staying in ${record.sourceRoot}`,
+          text: alreadyInWorktree
+            ? `worktree ${record.name} no longer matches ${record.branch}; its relocation record was removed`
+            : `worktree ${record.name} no longer matches ${record.branch}; staying in ${record.sourceRoot}`,
         });
+        return;
+      }
+      // A CLI worktree launch resumes in the recorded checkout already. It
+      // still needs trust validation and the source root in the live roots.
+      if (pathIdentity(cwdRef.current) === pathIdentity(record.worktreePath)) {
+        applyRelocation(record);
         return;
       }
       if (!onRelocate) return;

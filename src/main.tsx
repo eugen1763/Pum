@@ -69,14 +69,16 @@ import {
   ManagedShellLifecycleController,
   lifecycleEventFromSnapshot,
 } from "./shells/lifecycle";
+import { initializeWorktreeLaunchRelocation, type RelocationRecord } from "./relocation";
+import type { WorktreeStart } from "./worktree-start";
 
 /**
  * Process-local launch context. These are facts about how this process was
  * started, never user settings, so nothing here reaches pum.json.
  */
 export type LaunchContext = {
-  /** Source repository of a `pum worktree` launch, authorized as a writable root. */
-  worktreeSourceRoot?: string;
+  /** Generated checkout and source repository from a `pum worktree` launch. */
+  worktreeStart?: WorktreeStart;
 };
 
 export async function start(
@@ -98,7 +100,7 @@ export async function start(
   // learn about it.
   const forcedCheckPaths = [
     ...(outerSandbox ? outerSandboxAdditionalRoots(outerSandbox, process.cwd()) : []),
-    ...(context.worktreeSourceRoot ? [context.worktreeSourceRoot] : []),
+    ...(context.worktreeStart ? [context.worktreeStart.sourceRoot] : []),
   ];
   const sandboxController = new SandboxController({
     mode: outerSandbox ? "off" : settings.sandboxMode ?? "auto",
@@ -314,6 +316,15 @@ export async function start(
   statsManager.bindMainSession(sessionRuntime.session);
   if (sessionRuntime.modelFallbackMessage) console.error(sessionRuntime.modelFallbackMessage);
 
+  // `pum worktree` creates the checkout before the session exists. Persist it
+  // now so return and resume use the ordinary relocation path.
+  const initialRelocation: RelocationRecord | undefined = context.worktreeStart
+    ? initializeWorktreeLaunchRelocation(
+      sessionRuntime.session.sessionManager.getSessionFile(),
+      context.worktreeStart,
+    )
+    : undefined;
+
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
   const terminalTitle = new TerminalTitleController((title) => renderer.setTerminalTitle(title));
   const selectionClipboard = installSelectionClipboard(renderer);
@@ -431,6 +442,7 @@ export async function start(
       }}
       forcedSandboxMode={outerSandbox ? "off" : undefined}
       forcedCheckPaths={forcedCheckPaths}
+      initialRelocation={initialRelocation}
       sandboxWarningSource={sandboxController}
       loginRequired={loginRequired}
       triggerManager={triggerManager}

@@ -70,7 +70,7 @@ if (result.kind === "help") {
     process.stdout.write(`${worktreeStartMessage(started)}\n`);
     process.chdir(started.worktree.path);
     const { start } = await import("./main");
-    await start(result.options, { worktreeSourceRoot: started.sourceRoot });
+    await start(result.options, { worktreeStart: started });
   } catch (error) {
     process.stderr.write(formatCliError(errorMessage(error)));
     process.exitCode = 1;
