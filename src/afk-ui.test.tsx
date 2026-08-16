@@ -165,6 +165,7 @@ describe("/afk in the app", () => {
     expect(setup.captureCharFrame()).not.toContain("Which database should the cache use?");
     expect(spawned).toHaveLength(1);
     expect(spawned[0]!.task).toContain("Which database should the cache use?");
+    expect((spawned[0] as any).modelId).toBe("mock/mock-model");
 
     spawned[0]!.onAnswer({
       requestId: questionnaireManager.current()!.id,

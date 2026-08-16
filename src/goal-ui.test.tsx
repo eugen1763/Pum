@@ -86,11 +86,16 @@ async function render(options: {
   nextSessionFile?: string;
   width?: number;
 }) {
+  const goalJudges: any[] = [];
   const manager = {
     getAgents: () => [],
     subscribe: () => () => {},
     bindMainSession: async () => {}, abortAgent: async () => {}, persistToolEvent() {},
-    removeGoalJudge: async () => {}, spawnGoalJudge: async () => ({ id: "judge" }),
+    removeGoalJudge: async () => {},
+    spawnGoalJudge: async (options: any) => {
+      goalJudges.push(options);
+      return { id: "judge" };
+    },
   } as any;
   const session = fakeSession(options.sessionFile, options.prompts);
   const setup = await createTestRenderer({
@@ -115,7 +120,7 @@ async function render(options: {
       {...(options.questionnaireManager ? { questionnaireManager: options.questionnaireManager } : {})} />,
   );
   await settle(setup);
-  return Object.assign(setup, { session });
+  return Object.assign(setup, { session, goalJudges });
 }
 
 /** Finish the turn the way pi does: settle, never agent_end. */
@@ -169,6 +174,17 @@ describe("goal commands", () => {
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toContain("fix the flaky tests");
     expect(setup.captureCharFrame()).toContain("GOAL");
+  });
+
+  test("starts the goal judge with the provider-qualified active model", async () => {
+    const sessionFile = tempSessionFile();
+    const setup = await render({ sessionFile, prompts: [] });
+
+    await type(setup, "/goal fix the flaky tests");
+    await settleTurn(setup);
+
+    expect(setup.goalJudges).toHaveLength(1);
+    expect(setup.goalJudges[0]!.modelId).toBe("mock/model");
   });
 
   test("the goal rides the rule above the input, not the status bar", async () => {

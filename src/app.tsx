@@ -2459,7 +2459,7 @@ export function App({
       });
       const agent = await subagentManager.spawnAfkDelegate({
         task,
-        modelId: session.agent.state.model.id,
+        modelId: `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
         thinkingLevel: String(session.agent.state.thinkingLevel),
         onAnswer: (raw) => void processAfkAnswer(ticket, raw),
       });
@@ -3068,7 +3068,7 @@ export function App({
       });
       const agent = subagentManager.spawnGoalJudge({
         task,
-        modelId: session.agent.state.model.id,
+        modelId: `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
         thinkingLevel: String(session.agent.state.thinkingLevel),
         onVerdict: (raw) => {
           // Mark it here, synchronously inside the tool call, so the judge's
