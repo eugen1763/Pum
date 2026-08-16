@@ -114,7 +114,10 @@ function isGoalRecord(value: unknown): value is GoalRecord {
   return (
     typeof record.id === "string" && record.id.length > 0 &&
     Number.isInteger(record.generation) && (record.generation as number) > 0 &&
-    typeof record.text === "string" && record.text.trim().length > 0 &&
+    // The same bound `createGoal` enforces, so a hand-edited file cannot store
+    // a goal PUM would have refused.
+    typeof record.text === "string" &&
+    record.text.trim().length > 0 && record.text.length <= MAX_GOAL_TEXT &&
     isGoalState(record.state) &&
     typeof record.createdAt === "number" &&
     typeof record.updatedAt === "number" &&
@@ -204,11 +207,9 @@ export function stopGoal(goal: GoalRecord, now = Date.now()): GoalRecord {
   if (isTerminalGoalState(goal.state)) {
     throw new Error(`a ${goal.state} goal cannot be stopped; replace or clear it`);
   }
-  return advanced(goal, {
-    state: "stopped",
-    pendingContinuation: undefined,
-    pendingQuestion: undefined,
-  }, now);
+  // The pending question survives the stop. It is the only record of what the
+  // judge asked, and continuing a stopped goal must not lose it.
+  return advanced(goal, { state: "stopped", pendingContinuation: undefined }, now);
 }
 
 /** Resume a stopped goal. Every other state refuses. */
@@ -220,7 +221,8 @@ export function continueGoal(goal: GoalRecord, now = Date.now()): GoalRecord {
         : `only a stopped goal can continue; this goal is ${goal.state}`,
     );
   }
-  return advanced(goal, { state: "active" }, now);
+  // Resuming answers the question by moving on, so it stops being pending.
+  return advanced(goal, { state: "active", pendingQuestion: undefined }, now);
 }
 
 /**
@@ -412,7 +414,7 @@ function formatTimestamp(at: number): string {
 }
 
 /** The complete `/goal status` report, including untruncated goal text. */
-export function formatGoalStatus(goal: GoalRecord | null, now = Date.now()): string {
+export function formatGoalStatus(goal: GoalRecord | null): string {
   if (!goal) return "no goal is set. Use /goal <text> or /goalf <draft>.";
   const limit = goal.retryLimit === 0 ? "unlimited" : String(goal.retryLimit);
   const lines = [
@@ -429,7 +431,6 @@ export function formatGoalStatus(goal: GoalRecord | null, now = Date.now()): str
   }
   if (goal.pendingQuestion) lines.push(`waiting on: ${goal.pendingQuestion}`);
   if (goal.pendingContinuation) lines.push("a generated continuation is queued");
-  void now;
   return lines.join("\n");
 }
 
@@ -458,7 +459,10 @@ export function goalFormulationPrompt(draft: string): string {
 
 /** Lift the proposed goal out of a formulation answer. */
 export function parseProposedGoal(answer: string): string | undefined {
-  const matches = [...answer.matchAll(/^\s*GOAL:\s*(.+)$/gm)];
+  // Built from the marker the prompt asks for, so the two cannot drift apart.
+  const literal = PROPOSED_GOAL_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const marker = new RegExp(`^\\s*${literal}\\s*(.+)$`, "gm");
+  const matches = [...answer.matchAll(marker)];
   const proposed = matches.at(-1)?.[1]?.trim();
   if (!proposed || proposed.length > MAX_GOAL_TEXT) return undefined;
   return proposed;

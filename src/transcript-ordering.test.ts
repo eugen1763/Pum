@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  resolveGoalReview,
   resolvePendingDelivery,
   settleTranscriptMessage,
   transcriptForThinkingVisibility,
@@ -83,5 +84,45 @@ describe("inter-agent transcript ordering", () => {
     expect(state.lines).toHaveLength(2);
     expect(state.stream?.text).toBe("live reasoning");
     expect(transcriptForThinkingVisibility(state, true)).toBe(state);
+  });
+});
+
+describe("goal review rows", () => {
+  const reviewing = (id: string): PendingTranscriptState => ({
+    lines: [
+      { kind: "text", role: "assistant", text: "done for now" },
+      { kind: "goal-review", id, status: "reviewing" },
+    ],
+    stream: null,
+    pending: [],
+  });
+
+  test("the verdict rewrites the row in place", () => {
+    const settled = resolveGoalReview(reviewing("judge-1"), "judge-1", {
+      status: "continuing",
+      detail: "(2/10)",
+      body: "the retry path is still untested",
+    });
+    expect(settled.lines).toEqual([
+      { kind: "text", role: "assistant", text: "done for now" },
+      {
+        kind: "goal-review",
+        id: "judge-1",
+        status: "continuing",
+        detail: "(2/10)",
+        body: "the retry path is still untested",
+      },
+    ]);
+  });
+
+  test("the first outcome wins, so a later cancel cannot overwrite a verdict", () => {
+    const settled = resolveGoalReview(reviewing("judge-1"), "judge-1", { status: "completed" });
+    const cancelled = resolveGoalReview(settled, "judge-1", { status: "cancelled" });
+    expect(cancelled).toBe(settled);
+  });
+
+  test("another judge's result leaves the row alone", () => {
+    const state = reviewing("judge-1");
+    expect(resolveGoalReview(state, "judge-2", { status: "completed" })).toBe(state);
   });
 });

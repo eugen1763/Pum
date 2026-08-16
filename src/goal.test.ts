@@ -5,12 +5,14 @@ import { join } from "node:path";
 import {
   DEFAULT_GOAL_RETRY_LIMIT,
   MAX_GOAL_TEXT,
+  PROPOSED_GOAL_MARKER,
   applyJudgeResult,
   continuationDelivered,
   continueGoal,
   createGoal,
   formatGoalStatus,
   goalFileFor,
+  goalFormulationPrompt,
   isJudgeResultCurrent,
   judgeTicketFor,
   loadGoal,
@@ -84,15 +86,22 @@ describe("goal transitions", () => {
     expect(stopped.updatedAt).toBe(5);
   });
 
-  test("stop drops a queued continuation and a blocked question", () => {
+  test("stop drops a queued continuation but keeps the blocked question", () => {
     const goal = active({
       state: "blocked",
       pendingQuestion: "which parser?",
       pendingContinuation: { id: "c1", text: "keep going" },
     });
     const stopped = stopGoal(goal);
-    expect(stopped.pendingQuestion).toBeUndefined();
+    // The question is the only record of what the judge asked, so /goal status
+    // can still show it while the goal is stopped.
+    expect(stopped.pendingQuestion).toBe("which parser?");
     expect(stopped.pendingContinuation).toBeUndefined();
+  });
+
+  test("continue clears the question the stop preserved", () => {
+    const stopped = stopGoal(active({ state: "blocked", pendingQuestion: "which parser?" }));
+    expect(continueGoal(stopped).pendingQuestion).toBeUndefined();
   });
 
   test("stop refuses a stopped or terminal goal", () => {
@@ -374,6 +383,13 @@ describe("goal persistence", () => {
     expect(loadGoal(sessionFile)).toBeNull();
   });
 
+  test("a stored goal longer than the limit loads as no goal", () => {
+    const sessionFile = tempSessionFile();
+    const oversized = { ...active(), text: "x".repeat(MAX_GOAL_TEXT + 1) };
+    writeFileSync(goalFileFor(sessionFile), JSON.stringify(oversized));
+    expect(loadGoal(sessionFile)).toBeNull();
+  });
+
   test("a corrupt file is not destroyed by a later save of a new goal", () => {
     const sessionFile = tempSessionFile();
     writeFileSync(goalFileFor(sessionFile), "{ not json");
@@ -436,5 +452,11 @@ describe("proposed goals", () => {
   test("refuses a missing or oversized proposal", () => {
     expect(parseProposedGoal("no marker here")).toBeUndefined();
     expect(parseProposedGoal(`GOAL: ${"x".repeat(MAX_GOAL_TEXT + 1)}`)).toBeUndefined();
+  });
+
+  test("reads whatever marker the formulation prompt asks for", () => {
+    // The prompt and the parser share one constant, so they cannot drift apart.
+    expect(goalFormulationPrompt("draft")).toContain(PROPOSED_GOAL_MARKER);
+    expect(parseProposedGoal(`${PROPOSED_GOAL_MARKER} ship it`)).toBe("ship it");
   });
 });

@@ -92,7 +92,7 @@ async function render(options: {
     getAgents: () => [],
     subscribe: () => () => {},
     bindMainSession: async () => {}, abortAgent: async () => {}, persistToolEvent() {},
-    removeGoalJudge: async () => {},
+    removeGoalJudge: async () => {}, resendUndeliveredMainSettlements: async () => {},
     spawnGoalJudge: async (options: any) => {
       goalJudges.push(options);
       return { id: "judge" };
@@ -465,5 +465,114 @@ describe("new sessions", () => {
     // The old session keeps its own goal; the new one simply has none.
     expect(loadGoal(sessionFile)?.text).toBe("fix the flaky tests");
     expect(loadGoal(nextFile)).toBeNull();
+  });
+});
+
+describe("the inline goal review", () => {
+  test("the row shows the review running, then the verdict replaces it", async () => {
+    const sessionFile = tempSessionFile();
+    const prompts: string[] = [];
+    const setup = await render({ sessionFile, prompts });
+
+    await type(setup, "/goal fix the flaky tests");
+    await settleTurn(setup);
+    await waitForGoalJudge(setup);
+    expect(setup.captureCharFrame()).toContain("Goal review · reviewing");
+
+    setup.goalJudges[0]!.onVerdict({
+      verdict: "incomplete",
+      summary: "the retry path is still untested",
+      continuation: "add a test for the retry path",
+    });
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).not.toContain("Goal review · reviewing");
+    expect(frame).toContain("Goal review · continuing (1/10)");
+    expect(frame).toContain("the retry path is still untested");
+    // One row, not one per phase: the review says its outcome where it waited.
+    expect(frame.split("\n").filter((row) => row.includes("Goal review"))).toHaveLength(1);
+    expect(prompts.at(-1)).toBe("add a test for the retry path");
+  });
+
+  test("a completed verdict settles the row and the goal", async () => {
+    const sessionFile = tempSessionFile();
+    const setup = await render({ sessionFile, prompts: [] });
+
+    await type(setup, "/goal fix the flaky tests");
+    await settleTurn(setup);
+    await waitForGoalJudge(setup);
+
+    setup.goalJudges[0]!.onVerdict({ verdict: "completed", summary: "the suite passes ten times" });
+    await settle(setup);
+
+    expect(loadGoal(sessionFile)?.state).toBe("completed");
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("Goal review · completed");
+    expect(frame).toContain("the suite passes ten times");
+  });
+
+  test("an invalid verdict says so in the row it already occupies", async () => {
+    const sessionFile = tempSessionFile();
+    const setup = await render({ sessionFile, prompts: [] });
+
+    await type(setup, "/goal fix the flaky tests");
+    await settleTurn(setup);
+    await waitForGoalJudge(setup);
+
+    setup.goalJudges[0]!.onVerdict({ verdict: "maybe" });
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("Goal review · error");
+    expect(frame).toContain("invalid verdict");
+    expect(loadGoal(sessionFile)?.state).toBe("active");
+  });
+
+  test("stopping the goal cancels the row and the verdict changes nothing", async () => {
+    const sessionFile = tempSessionFile();
+    const prompts: string[] = [];
+    const setup = await render({ sessionFile, prompts });
+
+    await type(setup, "/goal fix the flaky tests");
+    await settleTurn(setup);
+    await waitForGoalJudge(setup);
+    await type(setup, "/goal stop");
+    expect(setup.captureCharFrame()).toContain("Goal review · cancelled");
+
+    setup.goalJudges[0]!.onVerdict({
+      verdict: "incomplete",
+      summary: "still not done",
+      continuation: "keep going",
+    });
+    await settle(setup);
+
+    expect(loadGoal(sessionFile)?.state).toBe("stopped");
+    expect(prompts).toHaveLength(1);
+    expect(setup.captureCharFrame()).not.toContain("keep going");
+  });
+});
+
+describe("cancelling a goal turn", () => {
+  test("Esc Esc stops the goal instead of reviewing the work it cancelled", async () => {
+    const sessionFile = tempSessionFile();
+    const prompts: string[] = [];
+    const setup = await render({ sessionFile, prompts });
+
+    await type(setup, "/goal fix the flaky tests");
+    setup.mockInput.pressEscape();
+    await settle(setup);
+    setup.mockInput.pressEscape();
+    await settle(setup);
+
+    expect(loadGoal(sessionFile)?.state).toBe("stopped");
+    expect(setup.captureCharFrame()).toContain("goal stopped");
+
+    // An abort still settles the turn. A stopped goal is not reviewed, so the
+    // judge never runs and the cancelled work is not continued.
+    await settleTurn(setup);
+    await waitForGoalJudge(setup);
+    expect(setup.goalJudges).toHaveLength(0);
+    expect(prompts).toHaveLength(1);
   });
 });

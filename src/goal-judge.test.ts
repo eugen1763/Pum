@@ -4,7 +4,6 @@ import {
   MUTABLE_JUDGE_WARNING,
   buildJudgeTask,
   collectRepositoryState,
-  goalOutcomeMessage,
   goalVerdictParameters,
   judgeTranscript,
 } from "./goal-judge";
@@ -162,19 +161,6 @@ describe("repository state", () => {
       args[0] === "diff" && args.length === 2 ? "y".repeat(60_000) : "");
     expect(state.diff.length).toBeLessThan(21_000);
     expect(state.diff).toContain("earlier output omitted");
-  });
-});
-
-describe("goal outcome messages", () => {
-  test("completion shows the goal and the evidence", () => {
-    expect(goalOutcomeMessage("completed", goal, "tests pass"))
-      .toBe("goal completed: ship the parser\n\ntests pass");
-  });
-
-  test("failure names the attempts and the latest reason", () => {
-    const message = goalOutcomeMessage("failed", { ...goal, incompleteCount: 10 }, "still no tests");
-    expect(message).toContain("failed after 10 consecutive incomplete reviews");
-    expect(message).toContain("latest judge reason: still no tests");
   });
 });
 

@@ -74,6 +74,10 @@ export function judgeTranscript(lines: readonly Line[]): string {
     } else if (line.kind === "tool") {
       const detail = line.call.args.length > 0 ? ` ${line.call.args.join(", ")}` : "";
       rendered.push(`tool ${line.call.name}${detail} [${line.call.state}]`);
+    } else if (line.kind === "goal-review") {
+      // An earlier review is context: it says what the last judge found missing.
+      if (line.status === "reviewing") continue;
+      rendered.push(`earlier goal review [${line.status}]: ${line.body ?? "(no summary)"}`);
     } else {
       rendered.push(`${line.sender} → ${line.recipient}: ${line.text}`);
     }
@@ -145,17 +149,4 @@ export function buildJudgeTask(input: JudgeTaskInput): string {
     `\nReview the work against the goal, then call ${GOAL_VERDICT_TOOL_NAME} exactly once.`,
   );
   return parts.filter(Boolean).join("\n");
-}
-
-/** Summary shown to the user when a goal ends. */
-export function goalOutcomeMessage(
-  kind: "completed" | "failed",
-  goal: GoalRecord,
-  summary: string,
-): string {
-  if (kind === "completed") {
-    return `goal completed: ${goal.text}\n\n${summary}`;
-  }
-  return `goal failed after ${goal.incompleteCount} consecutive incomplete reviews: ${goal.text}\n\n`
-    + `latest judge reason: ${summary}`;
 }

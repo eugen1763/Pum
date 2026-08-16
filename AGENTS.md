@@ -61,6 +61,7 @@ bun run start    # open the TUI in the current directory
 | `src/goal-command.ts` | `/goal` and `/goalf` parsing |
 | `src/goal-judge.ts` | Judge task, verdict schema, and bounded repository context |
 | `src/goal-line.ts` | The goal label on the input-top rule |
+| `src/goal-review.ts` | The inline review row: its statuses, glyphs, and colours |
 | `src/settings.ts` | PUM's own `pum.json` |
 | `src/check-mode.ts` | On/off Check mode for commands, mutations, and trigger processes |
 | `src/check-paths.ts` | Project-scoped additional Check mode root validation and commands |
@@ -295,9 +296,10 @@ These were chosen deliberately. Change them only on purpose.
   confirms it. Replacing, clearing, and confirming a proposal all ask first, and
   cancelling changes nothing. States are `active`, `stopped`, `blocked`,
   `completed`, and `failed`; the last two are terminal and must be replaced or
-  cleared. `/goal stop` ends automation without touching running work, `/goal
-  continue` resumes only a stopped goal, and `/goal status` prints the complete
-  state with untruncated text. A normal message steers the goal and answers a
+  cleared. `/goal stop` ends automation without touching running work and keeps
+  any blocked question, so `/goal status` still shows what was asked; `/goal
+  continue` resumes only a stopped goal and clears that question, and `/goal
+  status` prints the complete state with untruncated text. A normal message steers the goal and answers a
   blocked question. `/clear` and `/new` open a session with no companion file,
   so no goal follows the user into it.
 - **The goal judge reviews; it never works.** After a settled main turn PUM
@@ -312,6 +314,17 @@ These were chosen deliberately. Change them only on purpose.
   count, sends no completion notice, creates no News item, and is removed once
   its verdict is processed. A judge that settles without a verdict is dropped and
   reported. Restored judge records are discarded on resume.
+- **One review is one transcript row.** The row goes up before the repository is
+  read, so the wait is visible from the moment the turn settles, and it is
+  rewritten in place with the outcome: completed, continuing, blocked, failed,
+  discarded, cancelled, or error. Only a row still reviewing is rewritten, so the
+  first outcome wins and a cancel cannot overwrite a verdict the user has read.
+  Every path that drops a judge settles the row, and a start whose goal changed
+  while it collected the repository state abandons its spawn rather than leaving
+  a judge nobody can act on.
+- **Cancelling a turn stops the goal.** An abort still settles the turn, so an
+  active goal would otherwise review the work the user just stopped and continue
+  it. Esc stops the goal before the abort, and `/goal continue` resumes it.
 - **Goal verdicts fail closed.** One structured verdict decides everything.
   Goal judges are internal agents. They never appear in `list_subagents`, and
   the manager discards them after startup failure, prompt failure, or settlement.

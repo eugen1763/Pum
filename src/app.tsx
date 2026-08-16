@@ -47,10 +47,12 @@ import { StatusBar } from "./status-bar";
 import {
   ActivitySummaryLine,
   AgentMessageLine,
+  GoalReviewLine,
   needsTranscriptGap,
   topAnchorScrollTop,
   PendingMessageLine,
   rawToolText,
+  resolveGoalReview,
   resolvePendingDelivery,
   settleTranscriptMessage,
   StreamLine,
@@ -240,12 +242,8 @@ import {
 } from "./goal";
 import { parseGoalCommand, type GoalControl } from "./goal-command";
 import { goalLabel, goalLabelColor } from "./goal-line";
-import {
-  buildJudgeTask,
-  collectRepositoryState,
-  goalOutcomeMessage,
-  judgeTranscript,
-} from "./goal-judge";
+import { goalReviewHeadline, retryDetail, type GoalReviewStatus } from "./goal-review";
+import { buildJudgeTask, collectRepositoryState, judgeTranscript } from "./goal-judge";
 
 /** Placeholder while the stats popup is closed, so no snapshot is built per event. */
 const EMPTY_STATS_SNAPSHOT: SessionStatsSnapshot = {
@@ -268,6 +266,9 @@ function projectedLineKey(line: MinimalTranscriptLine, index: number): string {
   if (line.kind === "tool-summary") return `summary:${line.calls.map((call) => call.id).join(":")}`;
   if (line.kind === "tool") return `tool:${line.call.id}`;
   if (line.kind === "agent-message") return `agent:${line.messageId ?? `${index}:${line.text}`}`;
+  // The judge id, not the status: the row is rewritten in place, and a key that
+  // changed with it would remount the row and drop the animation mid-review.
+  if (line.kind === "goal-review") return `review:${line.id}`;
   return `text:${line.newsId ?? `${line.role}:${index}:${line.text}`}`;
 }
 
@@ -275,6 +276,9 @@ function projectedLineRawText(line: MinimalTranscriptLine): string {
   if (line.kind === "tool-summary") return line.calls.map(rawToolText).join("\n\n");
   if (line.kind === "tool") return rawToolText(line.call);
   if (line.kind === "agent-message") return `${line.sender} → ${line.recipient}\n${line.text}`;
+  if (line.kind === "goal-review") {
+    return [goalReviewHeadline(line.status, line.detail), line.body].filter(Boolean).join("\n");
+  }
   return line.text;
 }
 
@@ -713,6 +717,10 @@ export function App({
   } | null>(null);
   const judgeAgentIdRef = useRef<string | null>(null);
   const judgeStartingRef = useRef(false);
+  // Bumped by every drop. A start that was still collecting the repository
+  // state when the goal was stopped, cleared, or replaced sees the change and
+  // abandons its spawn, rather than leaving a judge nobody can act on.
+  const judgeEpochRef = useRef(0);
   /** Set while a `/goalf` interview turn is running, so no judge reviews it. */
   const goalFormulationRef = useRef<{ draft: string } | null>(null);
   /** Managed workers in flight, judges excluded. Mirrored for event handlers. */
@@ -1849,12 +1857,12 @@ export function App({
     if (judge && judgeId && !judge.verdictSeen) {
       const record = agents.find((agent) => agent.id === judgeId);
       if (!record || (record.status !== "starting" && record.status !== "running")) {
+        settleGoalReview(
+          judge.ticket.judgeId,
+          "error",
+          "the review ended without a verdict; no turn was started",
+        );
         clearGoalJudge();
-        append({
-          kind: "text",
-          role: "error",
-          text: "the goal review ended without a verdict; no turn was started",
-        });
       }
     }
   }, [agents.map((agent) => `${agent.id}:${agent.status}`).join("|")]);
@@ -2734,6 +2742,19 @@ export function App({
   const cancel = () => {
     resetCancelArm();
     append({ kind: "text", role: "system", text: "cancelled" });
+    // An abort still settles the turn, so an active goal would review the work
+    // the user just stopped and continue it. Cancelling means stop. This runs
+    // before the abort, so the settle that follows finds a stopped goal.
+    const goalAtCancel = goalRef.current;
+    if (goalAtCancel && (goalAtCancel.state === "active" || goalAtCancel.state === "blocked")) {
+      clearGoalJudge();
+      persistGoal(stopGoal(goalAtCancel));
+      append({
+        kind: "text",
+        role: "system",
+        text: "goal stopped, so the cancelled turn is not reviewed. /goal continue resumes it.",
+      });
+    }
     // Preserve every recallable queued user steer before aborting the turn.
     // Restore the running prompt only when no queued user steer exists.
     const cleared = session.clearQueue();
@@ -3046,13 +3067,29 @@ export function App({
     saveGoal(session.sessionFile, next);
   };
 
+  /** Rewrite the row of one review in place. The first outcome to land wins. */
+  const settleGoalReview = (
+    judgeId: string,
+    status: GoalReviewStatus,
+    body?: string,
+    detail?: string,
+  ) => setTx((t) => resolveGoalReview(t, judgeId, {
+    status,
+    ...(detail ? { detail } : {}),
+    ...(body ? { body } : {}),
+  }));
+
   /** Drop the live review. A judge holds no worktree, so nothing is merged. */
   const clearGoalJudge = () => {
     const judge = judgeRef.current;
+    judgeEpochRef.current += 1;
     judgeRef.current = null;
     judgeAgentIdRef.current = null;
     judgeStartingRef.current = false;
     if (!judge) return;
+    // A row still reviewing at this point had no verdict, so it says so. A row
+    // the verdict already settled is left exactly as the user read it.
+    settleGoalReview(judge.ticket.judgeId, "cancelled", "the goal changed while the review ran");
     void judge.agent
       .then((agent) => subagentManager.removeGoalJudge(agent.id))
       .catch(() => {});
@@ -3078,8 +3115,16 @@ export function App({
   const startGoalJudge = async (target: GoalRecord) => {
     judgeStartingRef.current = true;
     const ticket = judgeTicketFor(target, randomUUID().slice(0, 12));
+    const epoch = judgeEpochRef.current;
+    // The row goes up before the repository is read, so the wait is visible
+    // from the moment the turn settles rather than once the judge is spawned.
+    append({ kind: "goal-review", id: ticket.judgeId, status: "reviewing" });
     try {
       const repository = await collectRepositoryState(runGoalGit);
+      if (judgeEpochRef.current !== epoch) {
+        settleGoalReview(ticket.judgeId, "cancelled", "the goal changed while the review ran");
+        return;
+      }
       const task = buildJudgeTask({
         goal: target,
         transcript: judgeTranscript(txRef.current.lines),
@@ -3098,10 +3143,13 @@ export function App({
         },
       });
       judgeRef.current = { ticket, agent, verdictSeen: false };
-      judgeAgentIdRef.current = (await agent).id;
+      const id = (await agent).id;
+      // A drop during the spawn already settled the row and asked for the
+      // removal, so all that is left is to not name a judge nobody owns.
+      if (judgeEpochRef.current === epoch) judgeAgentIdRef.current = id;
     } catch (error) {
       judgeRef.current = null;
-      append({ kind: "text", role: "error", text: `goal review could not start: ${String(error)}` });
+      settleGoalReview(ticket.judgeId, "error", `the review could not start: ${String(error)}`);
     } finally {
       judgeStartingRef.current = false;
     }
@@ -3149,46 +3197,39 @@ export function App({
   };
 
   const processGoalVerdict = async (ticket: GoalJudgeTicket, raw: unknown) => {
+    const settleRow = (status: GoalReviewStatus, body?: string, detail?: string) =>
+      settleGoalReview(ticket.judgeId, status, body, detail);
     const result = parseGoalVerdict(raw);
     if (!result) {
+      settleRow("error", "the judge returned an invalid verdict; no turn was started");
       clearGoalJudge();
-      append({
-        kind: "text",
-        role: "error",
-        text: "the goal judge returned an invalid verdict; no turn was started",
-      });
       return;
     }
     const outcome = applyJudgeResult(goalRef.current, ticket, result);
+    // The row settles before the judge is dropped, so the outcome the user
+    // reads is the verdict rather than the cancellation that follows it.
+    if (outcome.action.kind === "ignored") {
+      settleRow("discarded", `${outcome.action.reason}, so nothing was started`);
+      clearGoalJudge();
+      return;
+    }
+    const action = outcome.action;
+    if (action.kind === "completed") settleRow("completed", action.summary);
+    else if (action.kind === "failed") {
+      settleRow("failed", action.summary, `after ${action.attempts} incomplete reviews`);
+    } else if (action.kind === "blocked") {
+      settleRow("blocked", `${action.summary}\n\n${action.question}`);
+    } else {
+      settleRow(
+        "continuing",
+        result.summary,
+        retryDetail(outcome.goal.incompleteCount, outcome.goal.retryLimit),
+      );
+    }
     clearGoalJudge();
-    if (outcome.action.kind === "ignored") return;
     // Durable before the action, so a crash between the two cannot repeat it.
     persistGoal(outcome.goal);
-    const action = outcome.action;
-    if (action.kind === "completed") {
-      append({
-        kind: "text",
-        role: "system",
-        text: goalOutcomeMessage("completed", outcome.goal, action.summary),
-      });
-      return;
-    }
-    if (action.kind === "failed") {
-      append({
-        kind: "text",
-        role: "error",
-        text: goalOutcomeMessage("failed", outcome.goal, action.summary),
-      });
-      return;
-    }
-    if (action.kind === "blocked") {
-      append({
-        kind: "text",
-        role: "system",
-        text: `goal blocked: ${action.summary}\n\n${action.question}`,
-      });
-      return;
-    }
+    if (action.kind !== "continue") return;
     await deliverGoalContinuation(action.continuation);
   };
 
@@ -4802,6 +4843,8 @@ export function App({
                   />
                 ) : line.kind === "agent-message" ? (
                   <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
+                ) : line.kind === "goal-review" ? (
+                  <GoalReviewLine theme={theme} line={line} />
                 ) : (
                   <TextLine
                     theme={theme}

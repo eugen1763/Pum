@@ -6,15 +6,22 @@ import {
   type MouseEvent as OpenTuiMouseEvent,
   type SyntaxStyle,
   type TextChunk,
+  type TextRenderable,
 } from "@opentui/core";
 import type { MarkdownProps } from "@opentui/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   useBlinkingText,
   useMarkdownCaret,
   useShimmerText,
   useSpinner,
 } from "./animation";
+import {
+  goalReviewColor,
+  goalReviewGlyph,
+  goalReviewHeadline,
+  type GoalReviewStatus,
+} from "./goal-review";
 import type { Theme } from "./theme";
 import { bashOutputWindow, type ToolCall } from "./tool-line";
 import type { TranscriptOutputMode } from "./transcript-output";
@@ -33,7 +40,20 @@ export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 export type Line =
   | { kind: "text"; role: Role; text: string; newsId?: string }
   | { kind: "tool"; call: ToolCall }
-  | { kind: "agent-message"; sender: string; recipient: string; text: string; messageId?: string };
+  | { kind: "agent-message"; sender: string; recipient: string; text: string; messageId?: string }
+  | GoalReviewRow;
+
+/** One goal review: appended while the judge runs, rewritten with its outcome. */
+export type GoalReviewRow = {
+  kind: "goal-review";
+  /** The judge that owns the row, so only its own result can settle it. */
+  id: string;
+  status: GoalReviewStatus;
+  /** Short qualifier on the headline, such as the attempt count. */
+  detail?: string;
+  /** The judge's summary, or why the review produced nothing. */
+  body?: string;
+};
 
 export type PendingLine = {
   id: string;
@@ -116,6 +136,27 @@ export function resolvePendingDelivery<T extends PendingTranscriptState>(value: 
   };
 }
 
+/**
+ * Settle one goal-review row in place.
+ *
+ * Only a row that is still reviewing is rewritten, so the call is idempotent
+ * and the first outcome to arrive wins. A cancel racing a verdict then cannot
+ * overwrite the verdict the user already read.
+ */
+export function resolveGoalReview<T extends PendingTranscriptState>(
+  value: T,
+  id: string,
+  patch: { status: GoalReviewStatus; detail?: string; body?: string },
+): T {
+  const index = value.lines.findIndex(
+    (line) => line.kind === "goal-review" && line.id === id && line.status === "reviewing",
+  );
+  if (index < 0) return value;
+  const lines = [...value.lines];
+  lines[index] = { kind: "goal-review", id, ...patch };
+  return { ...value, lines };
+}
+
 /** Finish the stream, then insert messages that arrived while it was active. */
 export function settleTranscriptMessage<T extends PendingTranscriptState>(value: T): T {
   const lines = [...value.lines];
@@ -131,7 +172,7 @@ export function settleTranscriptMessage<T extends PendingTranscriptState>(value:
   };
 }
 
-type LineGroup = "tool" | "thinking" | "summary" | "other";
+type LineGroup = "tool" | "thinking" | "summary" | "review" | "other";
 
 /** Gaps are computed over displayed rows, so grouped activity counts as one. */
 export type GapLine = Line | MinimalToolSummaryLine;
@@ -139,6 +180,8 @@ export type GapLine = Line | MinimalToolSummaryLine;
 const lineGroup = (line: GapLine): LineGroup => {
   if (line.kind === "tool-summary") return "summary";
   if (line.kind === "tool") return "tool";
+  // A review stands between two turns, so it always gets air on both sides.
+  if (line.kind === "goal-review") return "review";
   return line.kind === "text" && line.role === "thinking" ? "thinking" : "other";
 };
 
@@ -212,12 +255,15 @@ export function roleColor(theme: Theme, role: Role): string {
 function Row({
   glyph,
   glyphColor,
+  glyphRef,
   background,
   onGlyphClick,
   children,
 }: {
   glyph: string;
   glyphColor: string;
+  /** An animated gutter glyph writes its own content through this ref. */
+  glyphRef?: RefObject<TextRenderable | null>;
   background?: string;
   onGlyphClick?: (event: OpenTuiMouseEvent) => void;
   children: React.ReactNode;
@@ -235,7 +281,7 @@ function Row({
       <box style={{ width: 2, flexShrink: 0 }}>
         {/* A blank gutter still renders when it can be clicked, so a row with
             no disclosure glyph keeps its mouse target. */}
-        {glyph.trim() || onGlyphClick ? <text
+        {glyphRef ? <text ref={glyphRef} fg={glyphColor} /> : glyph.trim() || onGlyphClick ? <text
           content={glyph}
           fg={glyphColor}
           onMouseDown={onGlyphClick ? (event) => {
@@ -418,6 +464,61 @@ export function PendingMessageLine({
         style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
       />
     </Row>
+  );
+}
+
+/**
+ * One goal review. While the judge runs the row shimmers under a pulsing
+ * gutter glyph; when the verdict lands the same row states the outcome, so the
+ * wait and its result never occupy two places in the transcript.
+ */
+export function GoalReviewLine({
+  theme,
+  line,
+}: {
+  theme: Theme;
+  line: GoalReviewRow;
+}) {
+  const reviewing = line.status === "reviewing";
+  const color = goalReviewColor(theme, line.status);
+  const headline = goalReviewHeadline(line.status, line.detail);
+  const spinner = useSpinner(reviewing);
+  // The shimmer ref owns the headline in both phases: inactive, the hook still
+  // paints the plain text, so the settled row needs no second code path.
+  const shimmer = useShimmerText({
+    text: headline,
+    color,
+    highlight: theme.highlight,
+    background: theme.bg,
+    active: reviewing,
+  });
+
+  return (
+    <box style={{ flexDirection: "column", width: "100%" }}>
+      <Row
+        glyph={goalReviewGlyph(line.status)}
+        glyphColor={color}
+        {...(reviewing ? { glyphRef: spinner } : {})}
+      >
+        <text
+          ref={shimmer}
+          selectable
+          wrapMode="word"
+          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+        />
+      </Row>
+      {line.body ? (
+        <Row glyph={GUTTER} glyphColor={theme.dim}>
+          <text
+            content={line.body}
+            fg={theme.dim}
+            selectable
+            wrapMode="word"
+            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+          />
+        </Row>
+      ) : null}
+    </box>
   );
 }
 
