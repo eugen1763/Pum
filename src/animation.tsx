@@ -144,6 +144,8 @@ const COMET_CHARS_PER_MS = 0.035;
 const ELECTRIC_FRAME_MS = 140;
 const CONSTELLATION_SPACING = 13;
 const RANDOM_CONSTELLATION_CYCLE_MS = 2000;
+/** How much of one cycle a single sparkle burns for, start to finish. */
+const RANDOM_CONSTELLATION_LIFETIME = 0.5;
 const CONSTELLATION_HALO = 0.34;
 const ENERGY_CYCLE_MS = 3600;
 
@@ -486,11 +488,6 @@ export type WorkingRuleCell = {
 const STATIC_STRENGTH: RuleStrength = () => 0;
 const STATIC_GLYPH: RuleGlyph = () => "─";
 
-/** How far each sparkle trails the sweep head, and how bright it burns. */
-const SPARKLE_OFFSETS = [0, 5, 11];
-const SPARKLE_WEIGHTS = [1, 0.68, 0.35];
-const SPARKLE_GLYPHS = ["✦", "✧", "·"];
-
 const clampStrength = (value: number) => Math.max(0, Math.min(1, value));
 
 /** A trapezoid envelope with eased shoulders, for cross-fading two beats. */
@@ -541,6 +538,23 @@ export function randomConstellationCenters(
   return centers.sort((a, b) => a - b);
 }
 
+/**
+ * Where in the cycle one sparkle wakes up, as a share of the cycle.
+ *
+ * Every sparkle used to ride the cycle's own fade, so a whole constellation
+ * lit and died on the same beat. Each one now gets its own start, and each
+ * burns for `RANDOM_CONSTELLATION_LIFETIME` and is gone before the cycle ends,
+ * so nothing is cut off when the next cycle picks fresh positions.
+ */
+export function randomConstellationStart(
+  center: number,
+  cycle: number,
+  role: WorkingRuleRole,
+): number {
+  const spread = 1 - RANDOM_CONSTELLATION_LIFETIME;
+  return (hashPosition(cycle * 53 + center, roleSeed(role) * 19 + center, 1000) / 1000) * spread;
+}
+
 const linearStrength = (head: number): RuleStrength => (column) =>
   glowFalloff(column - head, RULE_HIGHLIGHT_WIDTH);
 
@@ -571,30 +585,6 @@ export function workingRuleCell(
       ? wrappedStrength(state.head, width)(column)
       : linearStrength(state.head)(column);
     return { strength, glyph: "─" };
-  }
-
-  if (mode === "sparkle-trail") {
-    const state = coordinatedRuleState(width, elapsedMs, cycleWidth);
-    if ((state.pair === "input") !== isInputRule(role)) return { strength: 0, glyph: "─" };
-    let strength = linearStrength(state.head)(column);
-    let glyph = "─";
-    let best = 0;
-    // A sparkle sits between two cells for most of its travel. Splitting it
-    // across both, brightest cell first, lets it glide with the sweep instead
-    // of jumping a whole column at a time.
-    for (let sparkle = 0; sparkle < SPARKLE_OFFSETS.length; sparkle++) {
-      const center = state.head - state.direction * SPARKLE_OFFSETS[sparkle]!;
-      const share = 1 - Math.abs(column - center);
-      if (share <= 0) continue;
-      const lit = SPARKLE_WEIGHTS[sparkle]! * share;
-      strength = Math.max(strength, lit);
-      if (lit <= best) continue;
-      best = lit;
-      // The dimmer half of a straddling sparkle drops one tier, so the pair
-      // reads as one spark crossing a cell boundary rather than as two.
-      glyph = SPARKLE_GLYPHS[share >= 0.5 ? sparkle : Math.min(sparkle + 1, 2)]!;
-    }
-    return { strength: clampStrength(strength), glyph };
   }
 
   if (mode === "comet-pair") {
@@ -646,16 +636,22 @@ export function workingRuleCell(
     const cycle = Math.floor(elapsedMs / RANDOM_CONSTELLATION_CYCLE_MS);
     const progress = (elapsedMs % RANDOM_CONSTELLATION_CYCLE_MS) /
       RANDOM_CONSTELLATION_CYCLE_MS;
-    const fade = Math.sin(progress * Math.PI);
-    if (fade <= 0.01) return { strength: 0, glyph: "─" };
-    const centers = randomConstellationCenters(width, cycle, role);
-    const distance = Math.min(...centers.map((center) => Math.abs(column - center)));
-    if (distance > 2) return { strength: 0, glyph: "─" };
-    // The outer ring is what gives each sparkle somewhere to bloom into.
-    const strength = fade * (distance === 0 ? 1 : distance === 1 ? 0.62 : 0.24);
-    const glyph = distance === 2 || strength < 0.2 ? "·" :
-      strength < 0.58 ? "✧" :
-        distance === 0 ? "✦" : "✧";
+    let strength = 0;
+    let glyph = "─";
+    for (const center of randomConstellationCenters(width, cycle, role)) {
+      const distance = Math.abs(column - center);
+      if (distance > 2) continue;
+      const life = (progress - randomConstellationStart(center, cycle, role))
+        / RANDOM_CONSTELLATION_LIFETIME;
+      if (life <= 0 || life >= 1) continue;
+      // The outer ring is what gives each sparkle somewhere to bloom into.
+      const lit = Math.sin(life * Math.PI) * (distance === 0 ? 1 : distance === 1 ? 0.62 : 0.24);
+      if (lit <= strength) continue;
+      strength = lit;
+      glyph = distance === 2 || lit < 0.2 ? "·" :
+        lit < 0.58 ? "✧" :
+          distance === 0 ? "✦" : "✧";
+    }
     return { strength, glyph };
   }
 

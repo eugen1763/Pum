@@ -14,6 +14,7 @@ import {
   markdownCaretContent,
   pulseGlyph,
   randomConstellationCenters,
+  randomConstellationStart,
   ruleText,
   shimmer,
   weightedGlyph,
@@ -107,19 +108,6 @@ describe("coordinated working rules", () => {
 });
 
 describe("additional working-rule animations", () => {
-  test("sparkle trail adds three width-stable sparkles to the active pair", () => {
-    const cells = Array.from({ length: 30 }, (_, column) =>
-      workingRuleCell("sparkle-trail", "inputTop", 30, 200, column));
-    const sparkles = cells.map((cell) => cell.glyph).filter((glyph) => glyph !== "─");
-    // Each sparkle sits on one cell or straddles two, brightest one first.
-    expect(sparkles.join("")).toBe("·✧✦");
-    for (const glyph of sparkles) expect(Bun.stringWidth(glyph)).toBe(1);
-    expect(workingRuleCell("sparkle-trail", "headerTop", 30, 200, 16)).toEqual({
-      strength: 0,
-      glyph: "─",
-    });
-  });
-
   test("comet pair mirrors two equally bright heads", () => {
     const left = workingRuleCell("comet-pair", "inputTop", 40, 200, 7);
     const right = workingRuleCell("comet-pair", "inputTop", 40, 200, 32);
@@ -163,22 +151,47 @@ describe("additional working-rule animations", () => {
     expect(headerWave.strength).toBeGreaterThan(0);
   });
 
-  test("random constellation fades three-cell sparkles over two seconds", () => {
+  test("random constellation fades each sparkle up and down within one cycle", () => {
     const width = 80;
     const centers = randomConstellationCenters(width, 0, "inputTop");
     expect(centers).toEqual(randomConstellationCenters(width, 0, "inputTop"));
     expect(centers).not.toEqual(randomConstellationCenters(width, 1, "inputTop"));
+
     const center = centers[0]!;
-    expect(workingRuleCell("random-constellation", "inputTop", width, 0, center))
-      .toEqual({ strength: 0, glyph: "─" });
-    expect(workingRuleCell("random-constellation", "inputTop", width, 1000, center))
-      .toEqual({ strength: 1, glyph: "✦" });
-    expect(workingRuleCell("random-constellation", "inputTop", width, 1000, center - 1))
-      .toEqual({ strength: 0.62, glyph: "✧" });
-    expect(workingRuleCell("random-constellation", "inputTop", width, 1000, center + 1))
-      .toEqual({ strength: 0.62, glyph: "✧" });
-    expect(workingRuleCell("random-constellation", "inputTop", width, 2000, center))
-      .toEqual({ strength: 0, glyph: "─" });
+    const peakMs = (randomConstellationStart(center, 0, "inputTop") + 0.25) * 2000;
+    const at = (elapsedMs: number, column: number) =>
+      workingRuleCell("random-constellation", "inputTop", width, elapsedMs, column);
+
+    expect(at(peakMs, center).strength).toBeCloseTo(1, 10);
+    expect(at(peakMs, center).glyph).toBe("✦");
+    expect(at(peakMs, center - 1).strength).toBeCloseTo(0.62, 10);
+    expect(at(peakMs, center + 1).glyph).toBe("✧");
+    // Every sparkle is born and dies inside its own cycle, so both edges are dark.
+    expect(at(0, center)).toEqual({ strength: 0, glyph: "─" });
+    expect(at(1999, center)).toEqual({ strength: 0, glyph: "─" });
+  });
+
+  test("random constellation staggers its sparkles instead of flashing them together", () => {
+    const width = 120;
+    const centers = randomConstellationCenters(width, 3, "inputBottom");
+    expect(centers.length).toBeGreaterThan(2);
+
+    const starts = centers.map((center) => randomConstellationStart(center, 3, "inputBottom"));
+    expect(new Set(starts).size).toBe(starts.length);
+    expect(Math.max(...starts) - Math.min(...starts)).toBeGreaterThan(0.1);
+    for (const start of starts) {
+      expect(start).toBeGreaterThanOrEqual(0);
+      // A sparkle that started later than this would be cut off by the cycle.
+      expect(start).toBeLessThanOrEqual(0.5);
+    }
+
+    // Somewhere in the cycle the constellation is part lit and part dark, which
+    // is the whole point: they no longer share a beat.
+    const strengths = (elapsedMs: number) => centers.map((center) =>
+      workingRuleCell("random-constellation", "inputBottom", width, elapsedMs, center).strength);
+    const mixed = Array.from({ length: 40 }, (_, step) => strengths(6000 + step * 50))
+      .some((lit) => lit.some((one) => one > 0.5) && lit.some((one) => one === 0));
+    expect(mixed).toBe(true);
   });
 
   test("sparkle glyphs keep the rendered rule exactly one row wide", () => {
@@ -454,26 +467,6 @@ describe("glow rendering", () => {
 });
 
 describe("smoother working-rule modes", () => {
-  test("sparkle trail crossfades a sparkle between the two cells it straddles", () => {
-    const width = 60;
-    // The head advances one column every 12.5ms, so these two samples put the
-    // hindmost sparkle first on a cell and then squarely between two.
-    const around = (elapsedMs: number) => [8, 9, 10, 11].map((column) =>
-      workingRuleCell("sparkle-trail", "inputTop", width, elapsedMs, column));
-
-    const centred = around(250);
-    expect(centred.map((cell) => cell.glyph)).toEqual(["─", "·", "─", "─"]);
-    expect(centred[1]!.strength).toBeCloseTo(0.35, 10);
-
-    const straddling = around(256.25);
-    expect(straddling.map((cell) => cell.glyph)).toEqual(["─", "·", "·", "─"]);
-    expect(straddling[1]!.strength).toBeCloseTo(0.175, 10);
-    expect(straddling[2]!.strength).toBeCloseTo(0.175, 10);
-
-    expect(workingRuleCell("sparkle-trail", "headerTop", width, 200, 16))
-      .toEqual({ strength: 0, glyph: "─" });
-  });
-
   test("energy transfer crosses between its phases without a step", () => {
     const width = 61;
     const brightest = (elapsedMs: number) => Math.max(
@@ -507,10 +500,12 @@ describe("smoother working-rule modes", () => {
   test("random constellation keeps its centres bright and adds a faint outer ring", () => {
     const width = 80;
     const center = randomConstellationCenters(width, 0, "inputTop")[0]!;
+    const peakMs = (randomConstellationStart(center, 0, "inputTop") + 0.25) * 2000;
     const at = (column: number) =>
-      workingRuleCell("random-constellation", "inputTop", width, 1000, column);
+      workingRuleCell("random-constellation", "inputTop", width, peakMs, column);
 
-    expect(at(center)).toEqual({ strength: 1, glyph: "✦" });
+    expect(at(center).strength).toBeCloseTo(1, 10);
+    expect(at(center).glyph).toBe("✦");
     expect(at(center - 1).strength).toBeCloseTo(0.62, 10);
     expect(at(center + 2).strength).toBeGreaterThan(0);
     expect(at(center + 2).strength).toBeLessThan(at(center + 1).strength);

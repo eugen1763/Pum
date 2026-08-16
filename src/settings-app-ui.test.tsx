@@ -140,7 +140,6 @@ describe("Settings keyboard flow", () => {
     expect(setup.captureCharFrame()).toContain("Input sweep");
     for (const label of [
       "Coordinated sweep",
-      "Sparkle trail",
       "Comet pair",
       "Electric spark",
       "Constellation",

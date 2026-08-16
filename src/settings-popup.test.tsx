@@ -25,7 +25,6 @@ const values = Object.fromEntries(
 describe("settings search and navigation", () => {
   test("filters labels, categories, and useful keywords", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
-    expect(filterSettingsRows("sparkle trail").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("comet pair").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("electric spark").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("constellation").map((row) => row.id)).toEqual(["workingRuleAnimation"]);

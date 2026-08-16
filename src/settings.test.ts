@@ -65,7 +65,6 @@ describe("PUM settings migration", () => {
       "off",
       "input-only",
       "coordinated",
-      "sparkle-trail",
       "comet-pair",
       "electric-spark",
       "constellation",
@@ -80,13 +79,17 @@ describe("PUM settings migration", () => {
       off: "Off",
       "input-only": "Input sweep",
       coordinated: "Coordinated sweep",
-      "sparkle-trail": "Sparkle trail",
       "comet-pair": "Comet pair",
       "electric-spark": "Electric spark",
       constellation: "Constellation",
       "random-constellation": "Random constellation",
       "energy-transfer": "Energy transfer",
     });
+  });
+
+  test("falls back to the default when a retired working-rule mode is stored", () => {
+    expect(normalizeSettings({ workingRuleAnimation: "sparkle-trail" }).workingRuleAnimation)
+      .toBe("input-only");
   });
 
   test("migrates and validates the transcript output mode", () => {
