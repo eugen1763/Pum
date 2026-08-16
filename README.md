@@ -29,14 +29,17 @@ empty prompt to see every control.
 > file-tool sandbox is a process-local path guard, not operating-system
 > isolation. Read [Safety](docs/security.md) before using untrusted workspaces.
 
-![PUM transcript showing Markdown and a read tool call](docs/images/pum-transcript.svg)
+![PUM working on a theme change: grouped file reads, a syntax-highlighted patch diff, a subagent message, and the goal label on the rule above the prompt](docs/images/pum-transcript.svg)
 
 <details>
 <summary><strong>Settings panel</strong></summary>
 
-![PUM settings panel](docs/images/pum-settings.svg)
+![PUM's settings panel, showing appearance, agent, and safety settings](docs/images/pum-settings.svg)
 
 </details>
+
+Both are real OpenTUI renders, not mockups — `bun run scripts/capture-screenshots.tsx`
+drives the actual TUI and converts the captured cells to SVG.
 
 ## What it does
 
@@ -107,7 +110,8 @@ bun run typecheck
 git diff --check
 ```
 
-Run the TUI from the repository root with `bun run start`. Use a throwaway
+Run the TUI from the repository root with `bun run start`, and refresh the
+README images with `bun run scripts/capture-screenshots.tsx`. Use a throwaway
 `PUM_DIR` for local integration tests, and capture TUI output through `tmux`
 rather than piping standard output. [AGENTS.md](AGENTS.md) holds the
 architecture, the locked decisions, and the TUI test guidance.

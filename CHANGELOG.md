@@ -2,13 +2,13 @@
 
 All notable changes to PUM are documented in this file.
 
-## [0.2.19-beta.1] - 2026-08-16
+## [0.2.20-beta.1] - 2026-08-16
 
 ### Added
 - Added a shell command mode. `!` on an empty prompt turns the prompt into a shell command: the `!` never enters the command, the gutter shows it instead, and both input rules take the accent. Backspace or Esc on an empty command returns to the normal prompt. The command runs with PUM's own Bash operations — Check mode does not inspect a command you typed yourself, but the configured native sandbox still applies — and its result joins the session, so a running agent takes it as a steer and an idle one starts a turn with it in context.
-- Added an inline goal review row. One review is one row: it appears the moment the turn settles, before the repository is read, and is rewritten in place with its outcome — completed, continuing, blocked, failed, discarded, cancelled or error. Only a row still reviewing is rewritten, so the first outcome wins and a cancel cannot overwrite a verdict you have read.
 - Added an `showAgentMessages` setting, on the Ctrl+P panel as **Agent messages**. What one agent said to another is a different question from how much tool detail to show, so it is independent of the output mode: Verbose can hide them and Quiet can keep them.
 - Added `stop_subagent` for managed children, scoped to their own line of descent. Without it a child with a wedged grandchild could never finish, because `finish_subagent` refuses while a retained descendant is open.
+- Added `scripts/capture-screenshots.tsx`, which drives the real TUI and converts the captured cells to SVG. The README images are regenerated from it rather than made by hand, so a rendering change is one command away from a refreshed screenshot and a screenshot can never show a layout the renderer would not produce.
 - Added a `docs/` directory. The README is a hundred and twenty lines now — what PUM does, how to install it, and an index — and the rest is one file per thing you might be trying to do: command line, controls, goals, subagents, tools, safety, appearance, configuration.
 
 ### Changed
@@ -16,19 +16,20 @@ All notable changes to PUM are documented in this file.
 - Managed shells are confined by the native sandbox, exactly as the Bash tool is. The adapter that does it had been written and tested but never wired, so with Check mode on a `start_shell` could run work `bash` would have blocked.
 - Opening a tool row outside Verbose is compact: the result's last twenty lines with a count of the rest, no JSON envelope, and no echo of arguments the row above already spells out. An opened group of reads is the files with their offsets. Verbose is unchanged, and copying a row still copies everything retained.
 - Every tool-related row shares one indent, whatever the tool is called, and every tool row gets a blank line above it. The activity row lost its disclosure arrow; the gutter stays clickable.
-- Cancelling a turn stops an active goal. An abort still settles the turn, so the goal used to review the work you had just stopped and continue it.
-- `/goal stop` keeps the blocked question, so `/goal status` still shows what the judge asked; `/goal continue` clears it.
 - `message_agent` refuses only a bare completion report. A message that names where the work landed, asks for something, or runs long now arrives, whatever word it opens on.
 - Trigger tool results are bounded at 8,000 characters. A template can be 64,000, so the model's own input could crowd out the context it needed to act on it.
 
 ### Fixed
+- The Release workflow publishes through npm trusted publishing. GitHub Actions presents the job's OIDC identity and npm issues a credential for that one publish, so no token is stored, nothing expires, and nothing works from a laptop. The dist-tag promotion keeps a token for now, because it is a second registry call the publish credential may not cover.
 - Switching to an agent no longer replays command output that already ended. The live output period was component state, so remounting a row restarted it, showing output again for two seconds every time you came back. The period now belongs to the call and never reopens.
 - A resumed session keeps its diffs. Replay never derived a tool preview, so an edit showed its diff while the session ran and nothing at all after it was loaded from history, and a restored subagent lost every diff it had. A tool row is now built the same way from live events and from replay, and a test compares the two.
 - A call whose turn ended without a result reads as interrupted rather than running. It was already shown that way after a reload, but a cancelled turn left a row spinning for the rest of the session.
 - Turning thinking traces on reveals the reasoning of a resumed session. The main transcript dropped it at capture and at load when the setting was off, while a subagent always kept it and filtered at render, so the setting worked in one view and not the other.
 - Two PUM processes on one session cannot lose each other's tool-group state. Every other companion file wrote through a temp name carrying the pid and the clock; `saveToolGroups` used a plain `.tmp`, which is the race the others guard against. Companion files now share one implementation, which also removes a half-written temp file instead of leaving it beside the session.
-- A stored goal longer than the 4,000-character limit loads as no goal, the limit `/goal` itself enforces, and the `/goalf` proposal parser builds its pattern from the marker the prompt asks for.
-- Heading markers no longer flicker through streamed Markdown, and a recorded answer is selectable in the News popup.
+
+`0.2.19-beta.1` was tagged but never published: the publish failed on
+authentication before the registry accepted the tarball, and the fix changed the
+workflow, so the candidate was replaced rather than retagged.
 
 ## [0.2.18-beta.1] - 2026-08-16
 

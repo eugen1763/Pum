@@ -1,135 +1,107 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="570" viewBox="0 0 960 570" role="img" aria-labelledby="title desc">
-<title id="title">PUM transcript with Markdown and a read tool call</title>
-<desc id="desc">Color terminal capture rendered by PUM in tmux with a local mock model.</desc>
-<rect width="100%" height="100%" rx="12" fill="#11131d"/>
-<circle cx="18" cy="20" r="5" fill="#f7768e"/><circle cx="36" cy="20" r="5" fill="#e0af68"/><circle cx="54" cy="20" r="5" fill="#9ece6a"/>
-<text x="480.0" y="24" text-anchor="middle" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12">PUM</text>
-<rect x="10" y="34" width="940" height="526" rx="6" fill="#1a1b26"/>
-<rect x="26.4" y="82" width="352.8" height="17" fill="#283457"/>
-<rect x="379.2" y="82" width="546.0" height="17" fill="#283457"/>
-<rect x="933.6" y="82" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="99" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="116" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="133" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="150" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="167" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="184" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="201" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="218" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="235" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="252" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="269" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="286" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="303" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="320" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="337" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="354" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="371" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="388" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="405" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="422" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="439" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="456" width="8.4" height="17" fill="#252527"/>
-<rect x="933.6" y="473" width="8.4" height="17" fill="#252527"/>
-<text x="18.0" y="44" fill="#292e42" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-<text x="18.0" y="61" fill="#7aa2f7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> pum </text>
-<text x="60.0" y="61" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">  </text>
-<text x="76.8" y="61" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">pum-demo</text>
-<text x="144.0" y="61" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> · off</text>
-<text x="194.4" y="61" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                     </text>
-<text x="505.2" y="61" fill="#9ece6a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">pum/release-readme-screenshots</text>
-<text x="757.2" y="61" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> · ↑ 824 · ↓ 112 · 3%</text>
-<text x="18.0" y="78" fill="#292e42" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-<text x="18.0" y="95" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> </text>
-<text x="26.4" y="95" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">❯ Review this project for a first release.</text>
-<text x="379.2" y="95" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                 </text>
-<text x="925.2" y="95" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> </text>
-<text x="933.6" y="95" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="112" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="112" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="129" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="129" fill="#e0af68" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">read</text>
-<text x="76.8" y="129" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> · </text>
-<text x="102.0" y="129" fill="#9ece6a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">README.md</text>
-<text x="177.6" y="129" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                        </text>
-<text x="916.8" y="129" fill="#9ece6a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">✓</text>
-<text x="925.2" y="129" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> </text>
-<text x="933.6" y="129" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="146" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="146" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="163" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="163" fill="#7aa2f7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve" font-weight="700">Release review complete</text>
-<text x="236.4" y="163" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                   </text>
-<text x="933.6" y="163" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="180" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="180" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="197" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="197" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">PUM is ready for a focused first release.</text>
-<text x="387.6" y="197" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                 </text>
-<text x="933.6" y="197" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="214" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="214" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="231" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="231" fill="#e0af68" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">- </text>
-<text x="60.0" y="231" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve" font-weight="700">Terminal-native</text>
-<text x="186.0" y="231" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> workflow with streaming Markdown</text>
-<text x="463.2" y="231" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                        </text>
-<text x="933.6" y="231" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="248" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="248" fill="#e0af68" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">- </text>
-<text x="60.0" y="248" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">Atomic </text>
-<text x="118.8" y="248" fill="#9ece6a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">apply_patch</text>
-<text x="211.2" y="248" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> edits and fail-closed Check mode</text>
-<text x="488.4" y="248" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                     </text>
-<text x="933.6" y="248" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="265" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="265" fill="#e0af68" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">- </text>
-<text x="60.0" y="265" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">Persistent parallel agents in isolated Git worktrees</text>
-<text x="496.8" y="265" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                    </text>
-<text x="933.6" y="265" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="282" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="282" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="299" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="299" fill="#bb9af7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">const</text>
-<text x="85.2" y="299" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> </text>
-<text x="93.6" y="299" fill="#ff9e64" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">command</text>
-<text x="152.4" y="299" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> </text>
-<text x="160.8" y="299" fill="#bb9af7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">=</text>
-<text x="169.2" y="299" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> </text>
-<text x="177.6" y="299" fill="#9ece6a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">&quot;bun run start&quot;</text>
-<text x="303.6" y="299" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">;</text>
-<text x="312.0" y="299" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                          </text>
-<text x="933.6" y="299" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="316" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="316" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="333" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="333" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">│</text>
-<text x="51.6" y="333" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve"> </text>
-<text x="60.0" y="333" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">The workspace stays in your terminal.</text>
-<text x="370.8" y="333" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                   </text>
-<text x="933.6" y="333" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="350" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="350" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="367" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">   </text>
-<text x="43.2" y="367" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">Next: run the test suite, review the diff, and ship with confidence.</text>
-<text x="614.4" y="367" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                      </text>
-<text x="933.6" y="367" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="384" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="384" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="401" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="401" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="418" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="418" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="435" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="435" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="452" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="452" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="469" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="469" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="486" fill="#ffffff" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">                                                                                                             </text>
-<text x="933.6" y="486" fill="#9a9ea3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">█</text>
-<text x="18.0" y="503" fill="#292e42" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
-<text x="18.0" y="520" fill="#7aa2f7" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">❯ </text>
-<text x="34.8" y="520" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">Ask something…</text>
-<text x="18.0" y="537" fill="#292e42" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13.5" xml:space="preserve">──────────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="902" height="613" viewBox="0 0 902 613" role="img" aria-labelledby="title desc">
+<title id="title">PUM transcript with a patch diff, grouped reads, and an active goal</title>
+<desc id="desc">A real OpenTUI render of PUM: a user prompt, grouped file reads, a syntax-highlighted patch diff, a Bash run, and the goal label on the rule above the prompt.</desc>
+<rect width="100%" height="100%" rx="12" fill="#1a1b26"/>
+<circle cx="20" cy="18" r="5" fill="#f7768e"/>
+<circle cx="38" cy="18" r="5" fill="#e0af68"/>
+<circle cx="56" cy="18" r="5" fill="#9ece6a"/>
+<rect x="22.4" y="91.0" width="848.4" height="19" fill="#283457"/>
+<rect x="879.2" y="91.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="110.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="129.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="148.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="167.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="186.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="205.0" width="8.4" height="19" fill="#252527"/>
+<rect x="56.0" y="224.0" width="814.8" height="19" fill="#3b2630"/>
+<rect x="879.2" y="224.0" width="8.4" height="19" fill="#252527"/>
+<rect x="56.0" y="243.0" width="814.8" height="19" fill="#233b32"/>
+<rect x="879.2" y="243.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="262.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="281.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="300.0" width="8.4" height="19" fill="#252527"/>
+<rect x="22.4" y="319.0" width="848.4" height="19" fill="#2b234a"/>
+<rect x="879.2" y="319.0" width="8.4" height="19" fill="#252527"/>
+<rect x="22.4" y="338.0" width="848.4" height="19" fill="#2b234a"/>
+<rect x="879.2" y="338.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="357.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="376.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="395.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="414.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="433.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="452.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="471.0" width="8.4" height="19" fill="#252527"/>
+<rect x="879.2" y="490.0" width="8.4" height="19" fill="#252527"/>
+<rect x="434.0" y="528.0" width="436.8" height="19" fill="#292e42"/>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" xml:space="preserve">
+<text x="14.0" y="48.0" fill="#292e42" textLength="873.6" lengthAdjust="spacingAndGlyphs">────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="14.0" y="67.0" fill="#7aa2f7" textLength="50.4" lengthAdjust="spacingAndGlyphs"> pum  </text>
+<text x="64.4" y="67.0" fill="#c0caf5" textLength="109.2" lengthAdjust="spacingAndGlyphs">claude-opus-5</text>
+<text x="173.6" y="67.0" fill="#565f89" textLength="75.6" lengthAdjust="spacingAndGlyphs"> · medium</text>
+<text x="795.2" y="67.0" fill="#2ac3de" textLength="25.2" lengthAdjust="spacingAndGlyphs">pum</text>
+<text x="820.4" y="67.0" fill="#565f89" textLength="25.2" lengthAdjust="spacingAndGlyphs"> · </text>
+<text x="845.6" y="67.0" fill="#7aa2f7" textLength="33.6" lengthAdjust="spacingAndGlyphs">main</text>
+<text x="14.0" y="86.0" fill="#292e42" textLength="873.6" lengthAdjust="spacingAndGlyphs">────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+<text x="22.4" y="105.0" fill="#c0caf5" textLength="562.8" lengthAdjust="spacingAndGlyphs">❯ Make the accent colour match the new palette and check the tests.</text>
+<text x="879.2" y="105.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="124.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="39.2" y="143.0" fill="#c0caf5" textLength="319.2" lengthAdjust="spacingAndGlyphs">Reading the theme and its tests first.</text>
+<text x="879.2" y="143.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="162.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="22.4" y="181.0" fill="#565f89" textLength="126.0" lengthAdjust="spacingAndGlyphs">  Read 2 files.</text>
+<text x="879.2" y="181.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="200.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="22.4" y="219.0" fill="#565f89" textLength="117.6" lengthAdjust="spacingAndGlyphs">  apply_patch(</text>
+<text x="140.0" y="219.0" fill="#7aa2f7" textLength="100.8" lengthAdjust="spacingAndGlyphs">src/theme.ts</text>
+<text x="240.8" y="219.0" fill="#565f89" textLength="67.2" lengthAdjust="spacingAndGlyphs">)  +1 −1</text>
+<text x="862.4" y="219.0" fill="#9ece6a" textLength="8.4" lengthAdjust="spacingAndGlyphs">✓</text>
+<text x="879.2" y="219.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="56.0" y="238.0" fill="#f7768e" textLength="8.4" lengthAdjust="spacingAndGlyphs">-</text>
+<text x="81.2" y="238.0" fill="#ff9e64" textLength="50.4" lengthAdjust="spacingAndGlyphs">accent</text>
+<text x="131.6" y="238.0" fill="#565f89" textLength="8.4" lengthAdjust="spacingAndGlyphs">:</text>
+<text x="148.4" y="238.0" fill="#9ece6a" textLength="75.6" lengthAdjust="spacingAndGlyphs">"#7aa2f7"</text>
+<text x="224.0" y="238.0" fill="#565f89" textLength="8.4" lengthAdjust="spacingAndGlyphs">,</text>
+<text x="879.2" y="238.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="56.0" y="257.0" fill="#9ece6a" textLength="8.4" lengthAdjust="spacingAndGlyphs">+</text>
+<text x="81.2" y="257.0" fill="#ff9e64" textLength="50.4" lengthAdjust="spacingAndGlyphs">accent</text>
+<text x="131.6" y="257.0" fill="#565f89" textLength="8.4" lengthAdjust="spacingAndGlyphs">:</text>
+<text x="148.4" y="257.0" fill="#9ece6a" textLength="75.6" lengthAdjust="spacingAndGlyphs">"#89b4fa"</text>
+<text x="224.0" y="257.0" fill="#565f89" textLength="8.4" lengthAdjust="spacingAndGlyphs">,</text>
+<text x="879.2" y="257.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="276.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="22.4" y="295.0" fill="#565f89" textLength="58.8" lengthAdjust="spacingAndGlyphs">  bash(</text>
+<text x="81.2" y="295.0" fill="#7aa2f7" textLength="218.4" lengthAdjust="spacingAndGlyphs">bun test src/theme.test.ts</text>
+<text x="299.6" y="295.0" fill="#565f89" textLength="8.4" lengthAdjust="spacingAndGlyphs">)</text>
+<text x="862.4" y="295.0" fill="#9ece6a" textLength="8.4" lengthAdjust="spacingAndGlyphs">✓</text>
+<text x="879.2" y="295.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="314.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="22.4" y="333.0" fill="#bb9af7" textLength="184.8" lengthAdjust="spacingAndGlyphs">◇ palette-check → main</text>
+<text x="879.2" y="333.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="39.2" y="352.0" fill="#c0caf5" textLength="579.6" lengthAdjust="spacingAndGlyphs">Checked the other eight presets: only tokyonight used the old accent.</text>
+<text x="879.2" y="352.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="371.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="39.2" y="390.0" fill="#7aa2f7" textLength="33.6" lengthAdjust="spacingAndGlyphs">Done</text>
+<text x="879.2" y="390.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="409.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="39.2" y="428.0" fill="#c0caf5" textLength="151.2" lengthAdjust="spacingAndGlyphs">The accent is now </text>
+<text x="190.4" y="428.0" fill="#7aa2f7" textLength="58.8" lengthAdjust="spacingAndGlyphs">#89b4fa</text>
+<text x="249.2" y="428.0" fill="#c0caf5" textLength="235.2" lengthAdjust="spacingAndGlyphs">, and the preset tests pass.</text>
+<text x="879.2" y="428.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="447.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="39.2" y="466.0" fill="#565f89" textLength="16.8" lengthAdjust="spacingAndGlyphs">- </text>
+<text x="56.0" y="466.0" fill="#7aa2f7" textLength="100.8" lengthAdjust="spacingAndGlyphs">src/theme.ts</text>
+<text x="156.8" y="466.0" fill="#c0caf5" textLength="168.0" lengthAdjust="spacingAndGlyphs"> — one token changed</text>
+<text x="879.2" y="466.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="39.2" y="485.0" fill="#565f89" textLength="16.8" lengthAdjust="spacingAndGlyphs">- </text>
+<text x="56.0" y="485.0" fill="#7aa2f7" textLength="142.8" lengthAdjust="spacingAndGlyphs">src/theme.test.ts</text>
+<text x="198.8" y="485.0" fill="#c0caf5" textLength="176.4" lengthAdjust="spacingAndGlyphs"> — unchanged, 14 pass</text>
+<text x="879.2" y="485.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="879.2" y="504.0" fill="#9a9ea3" textLength="8.4" lengthAdjust="spacingAndGlyphs">█</text>
+<text x="14.0" y="542.0" fill="#292e42" textLength="420.0" lengthAdjust="spacingAndGlyphs">──────────────────────────────────────────────────</text>
+<text x="434.0" y="542.0" fill="#7aa2f7" textLength="436.8" lengthAdjust="spacingAndGlyphs"> GOAL · active · Bring the theme presets in line w… </text>
+<text x="870.8" y="542.0" fill="#292e42" textLength="16.8" lengthAdjust="spacingAndGlyphs">──</text>
+<text x="14.0" y="561.0" fill="#7aa2f7" textLength="16.8" lengthAdjust="spacingAndGlyphs">❯ </text>
+<text x="30.8" y="561.0" fill="#565f89" textLength="117.6" lengthAdjust="spacingAndGlyphs">Ask something…</text>
+<text x="14.0" y="580.0" fill="#292e42" textLength="873.6" lengthAdjust="spacingAndGlyphs">────────────────────────────────────────────────────────────────────────────────────────────────────────</text>
+</g>
 </svg>
