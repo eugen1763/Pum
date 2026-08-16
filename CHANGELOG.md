@@ -2,6 +2,33 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.18-beta.1] - 2026-08-16
+
+### Added
+- Added transcript output levels, on the Ctrl+P panel as **Transcript detail** and in `pum.json` as `outputMode`. Quiet folds every successful tool call into one activity row, commands and mutations included. Normal keeps those as their own rows and shows an editing tool's diff inline, syntax highlighted and capped at twenty changed lines. Verbose shows the complete retained input and result of every row.
+- Added expanding a single transcript row, by keyboard or by clicking its gutter. An expanded row shows everything the tool retained, whatever the output level. Five tree-sitter grammars are vendored under `assets/` — Python, JSON, Bash, Rust and Go — so a diff highlights offline and on the first run.
+- Added working-rule animations. The `workingRuleAnimation` setting takes `off`, `input-only`, `coordinated`, `comet-pair`, `electric-spark`, `constellation`, `random-constellation` and `energy-transfer`.
+- Added an inline goal review row. One review is one row: it appears the moment the turn settles, before the repository state is collected, and is rewritten in place with its outcome — completed, continuing, blocked, failed, discarded, cancelled or error. Only a row still reviewing is rewritten, so the first outcome wins and a cancel cannot overwrite a verdict you have already read.
+
+### Changed
+- Signal colours mean one thing each. Red is errors and removed lines, green success and added lines, orange blocked, and nothing else. A tool row reads `tool(first, second)` with the name, brackets and commas dim and the arguments in the accent, so the only signal on a settled row is the marker at its right edge. The disclosure arrow is gone from tool rows; the gutter stays clickable.
+- Revealing a row anchors its first line to the top of the viewport rather than dragging it just into view at the bottom.
+- Every working animation runs through one glow core: shaped strength, blended in linear light, bloomed towards white past the knee, with raised-cosine falloffs and a per-column wake decayed on elapsed milliseconds. Equal-colour columns merge into one chunk, so a wide rule costs tens of chunks a frame rather than one a column. The sparkle trail is gone from the mode list, and each sparkle of the random constellation starts at its own hashed point in the cycle instead of lighting and dying on one beat.
+- Cancelling a turn stops an active goal. An abort still settles the turn, so the goal used to review the work you had just stopped and continue it. Esc now stops the goal first and says so; `/goal continue` resumes it.
+- `/goal stop` keeps the blocked question, so `/goal status` can still show what the judge asked. `/goal continue` clears it.
+- Path suggestions wait for a three-character fragment instead of opening on the first slash.
+- The prompt cache is shared across a repository's Git worktrees, so history and the stash follow you between them.
+- Open-resource reminders queue on the sixth settled turn rather than the third.
+- The managed worktree tools explain themselves better to the model.
+
+### Fixed
+- Heading markers no longer flicker through streamed Markdown. Coalesced blocks handed the renderer one synthetic token whose synchronous placeholder came from the inline lexer, which does not know block syntax, so every streamed chunk repainted the `##` until the asynchronous highlight concealed it.
+- A goal judge that settles is discarded, so a review that ends without a verdict cannot leave the goal waiting on it for good.
+- A goal review waits for an external trigger that is running or holding an undelivered result, and starts when the trigger releases.
+- The goal judge and the AFK delegate are spawned with the provider-qualified model id, so they run on the session's model rather than failing to resolve it.
+- A stored goal longer than the 4,000-character limit loads as no goal, the limit `/goal` itself enforces.
+- The `/goalf` proposal parser builds its pattern from the marker the prompt asks for, so the two cannot drift apart.
+
 ## [0.2.17-beta.1] - 2026-08-16
 
 ### Added
