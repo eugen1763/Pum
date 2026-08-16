@@ -211,6 +211,7 @@ describe("prompt input layout", () => {
   test("completes a project path with Tab", async () => {
     const setup = await renderApp(70, 20);
     await setup.mockInput.typeText("review src/app.t");
+    await settle(setup);
     setup.mockInput.pressTab();
     await settle(setup);
 
@@ -235,6 +236,10 @@ describe("prompt input layout", () => {
   test("completes a short path prefix with Tab", async () => {
     const setup = await renderApp(70, 20);
     await setup.mockInput.typeText("s");
+    // The candidates come from an asynchronous directory scan. Tab pressed
+    // before they exist completes against nothing and leaves the "s" alone,
+    // which is a slow machine finding a race rather than a broken completer.
+    await settle(setup);
     setup.mockInput.pressTab();
     await settle(setup);
 
@@ -262,6 +267,7 @@ describe("prompt input layout", () => {
   test("recalls an executed slash command with the arrow keys", async () => {
     const setup = await renderApp(70, 20);
     await setup.mockInput.typeText("/afk");
+    await settle(setup);
     setup.mockInput.pressEnter();
     await settle(setup);
 

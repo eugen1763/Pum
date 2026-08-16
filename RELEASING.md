@@ -26,19 +26,23 @@ quietly without one.
 ### The dist-tag exception
 
 A prerelease publishes under `beta` and is then promoted with
-`npm dist-tag add`, which is a second registry call. Trusted publishing scopes
-its credential to the publish itself, so this step may still need a token. Keep
-a package-scoped `NPM_TOKEN` in the `npm` environment while that is true:
+`npm dist-tag add`, which is a second registry call. **Trusted publishing does
+not cover it** — `v0.2.20-beta.1` published cleanly through OIDC and the
+promotion in the same job failed with `E401`. The step needs its own credential,
+so keep a package-scoped `NPM_TOKEN` in the `npm` environment:
 
 1. Limit it to the `pum-agent` package.
 2. Grant read and write access.
 3. Use the shortest practical expiration and rotate it before expiry.
 4. Never print the value, place it in repository files, or paste it into issue or chat text.
 
-If the promotion step fails, the package **is** published; only the `latest`
-dist-tag is stale. The job says so and prints the one command to run from a
-logged-in shell. Once a real release proves the credential carries over, drop
-the secret and this section with it.
+If the promotion fails, the package **is** published; only the `latest`
+dist-tag is stale, and the job says so and prints the one command to run from a
+logged-in shell:
+
+```bash
+npm dist-tag add pum-agent@<VERSION> latest
+```
 
 ## Release checklist
 
