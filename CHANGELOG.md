@@ -2,6 +2,19 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.21-beta.1] - 2026-08-16
+
+### Added
+- Added a real OpenTUI Controls screenshot to the README. The screenshot capture script now generates the Transcript, Settings, and Controls images from one deterministic temporary project.
+
+### Changed
+- Improved the generated README screenshots. They use a neutral `gpt-5-codex` session, place each glyph on its exact terminal cell without SVG stretching, and crop the static scrollbar column without changing the live TUI.
+- Documented the npm prerelease dist-tag requirement after `v0.2.20-beta.1` confirmed that trusted publishing covers `npm publish`, but not the later `npm dist-tag add` call.
+
+### Fixed
+- A session launched with `pum w` or `pum worktree` can now use `worktree return`. CLI-created worktrees persist the same relocation record as an in-session start, and resume validates that record before restoring the worktree.
+- Stabilized prompt input tests that pressed Tab or Enter before the asynchronous state required by the key was ready.
+
 ## [0.2.20-beta.1] - 2026-08-16
 
 ### Added
