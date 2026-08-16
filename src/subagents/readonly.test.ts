@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readonlySubagentExtension, readonlyToolBlockReason } from "./readonly";
+import {
+  READONLY_CHILD_OMITTED_TOOL_NAMES,
+  childAllowedToolNames,
+} from "../tool-groups";
 
 describe("readonly subagent guard", () => {
   test("allows inspection and blocks mutation or unknown child tools", () => {
@@ -32,5 +36,32 @@ describe("readonly subagent guard", () => {
       on(name: string) { handlers.push(name); },
     });
     expect(handlers).toEqual([]);
+  });
+});
+
+describe("the two readonly lists", () => {
+  /**
+   * A readonly child is bounded twice: the schema list decides what it can see,
+   * and the guard decides what it may run. They are written in different files
+   * and have to agree, or a tool is either advertised and then refused, or
+   * hidden while the guard would have allowed it.
+   */
+  test("what the schemas omit is exactly what the guard refuses", () => {
+    for (const name of READONLY_CHILD_OMITTED_TOOL_NAMES) {
+      expect(readonlyToolBlockReason(name, {})).toBeDefined();
+    }
+  });
+
+  test("what a readonly child can see, it may run", () => {
+    // `worktree` is the one split tool: the schema offers it, and the guard
+    // narrows it to the two actions that read.
+    for (const name of childAllowedToolNames(true)) {
+      if (name === "worktree") {
+        expect(readonlyToolBlockReason(name, { action: "list" })).toBeUndefined();
+        expect(readonlyToolBlockReason(name, { action: "merge" })).toBeDefined();
+        continue;
+      }
+      expect(readonlyToolBlockReason(name, {})).toBeUndefined();
+    }
   });
 });

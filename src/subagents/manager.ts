@@ -197,11 +197,27 @@ export function countActiveSubagents(
 }
 
 /** Prevent the common duplicate where an agent reports done, then finish_subagent reports it again. */
+/** Longest a message can be and still be nothing but a report that it is over. */
+const MAX_COMPLETION_ONLY_LENGTH = 200;
+
+/**
+ * A message that only says the work is finished.
+ *
+ * The final summary belongs to `finish_subagent`, which is delivered once and
+ * changes the agent's status; a duplicate through `message_agent` is noise the
+ * spawner has to read twice. Only a bare report is refused, though: a message
+ * that asks for something, names where the work landed, or runs long is
+ * carrying information no other tool would deliver, whatever word it opens on.
+ */
 export function isCompletionOnlyMessage(text: string): boolean {
   const message = text.trim();
   if (!message) return false;
+  if (message.length > MAX_COMPLETION_ONLY_LENGTH) return false;
   const requestsAction = /\?|\b(?:please|need|blocked|blocking|conflict|question|review|start|spawn|coordinate|help)\b/i.test(message);
   if (requestsAction) return false;
+  // A path is the substance a bare report lacks: it says where to look rather
+  // than only that there is somewhere to look.
+  if (/[\w.-]+\/[\w./-]+/.test(message)) return false;
   return /^(?:completed|finished|done\b|implemented\b|task complete\b|work complete\b|all requested .* complete)/i.test(message);
 }
 
@@ -1336,6 +1352,26 @@ export class SubagentManager {
         });
 
         pi.registerTool({
+          name: "stop_subagent",
+          label: "Stop Subagent",
+          description: "Abort a subagent this agent spawned and set status stopped. This does not close the retained agent or remove its worktree. A descendant that cannot finish has to be stopped before this agent can finish.",
+          parameters: Type.Object({ target: Type.String({ description: "Subagent id or name" }) }),
+          execute: async (_id, params) => {
+            const record = this.findRecord(params.target);
+            if (!record) throw new Error(`Unknown subagent: ${params.target}`);
+            // Own line of descent only. A child stopping a sibling, or its own
+            // spawner, would reach outside the work it was given.
+            if (!this.isDescendantOf(agentId, record.snapshot.id)) {
+              throw new Error(
+                `${record.snapshot.name} was not spawned by this agent. Stop only agents below you, or report the problem to your spawner.`,
+              );
+            }
+            await this.stop(record.snapshot.id, "stopped");
+            return textResult(`Stopped ${record.snapshot.name}`);
+          },
+        });
+
+        pi.registerTool({
           name: "finish_subagent",
           label: "Finish Subagent",
           description: "Mark this task complete and send the sole final summary to the direct spawner after the status changes. Before this call, recursively close every retained descendant, deepest first. Call this tool exactly once, and do not send the summary with message_agent first.",
@@ -2193,6 +2229,12 @@ export class SubagentManager {
         || a.record.snapshot.startedAt - b.record.snapshot.startedAt
         || a.record.snapshot.name.localeCompare(b.record.snapshot.name),
     );
+  }
+
+  /** True when `candidateId` is somewhere below `parentId` in the spawn tree. */
+  private isDescendantOf(parentId: string, candidateId: string): boolean {
+    return this.retainedDescendants(parentId)
+      .some(({ record }) => record.snapshot.id === candidateId);
   }
 
   private assertNoRetainedDescendants(record: RuntimeRecord, action: "finish" | "merge" | "remove"): void {

@@ -248,3 +248,36 @@ describe("trigger model tools", () => {
     expect(input.cwd).toBe("/repo/child");
   });
 });
+
+describe("trigger results are bounded", () => {
+  test("a long snapshot is truncated and says so", async () => {
+    const template = "x".repeat(20_000);
+    const requester: TriggerRequester = { kind: "main", sessionId: "session-1", cwd: "/repo" };
+    const tools = setup(
+      {
+        create: async (input: any) => snapshot({ ...input, id: "t1" } as any),
+        getTriggers: () => [],
+        inspect: async () => snapshot(),
+        pause: async () => snapshot(),
+        resume: async () => snapshot(),
+        cancel: async () => snapshot(),
+        invoke: async () => snapshot(),
+      } as any,
+      requester,
+      "main",
+    );
+
+    const result = await tools.get("create_trigger").execute("call", {
+      name: "big",
+      executable: "gh",
+      args: [],
+      template,
+      mode: "once",
+      startBehavior: "paused",
+    }, undefined, undefined, {});
+
+    const text = result.content[0].text as string;
+    expect(text.length).toBeLessThan(9_000);
+    expect(text).toContain("truncated at");
+  });
+});

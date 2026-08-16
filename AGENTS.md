@@ -195,6 +195,10 @@ These were chosen deliberately. Change them only on purpose.
   it can change host ACLs. The TUI/model process is never sandboxed. External
   triggers retain deterministic checks and direct argv supervision but do not use
   this backend until approved policy can cross their synchronous spawn boundary.
+  A managed shell does use it: `ShellManager` is built with
+  `SandboxController.shellProcessAdapter()`, so `start_shell` and Bash reach the
+  same decision from the same controller, and a shell cannot run work the Bash
+  tool would have confined.
 - **Additional Check mode paths are explicit and project-scoped.** `/check-path`
   lists, adds, removes, or clears up to 16 canonical directory roots for the
   launch project. Added roots must exist. PUM rejects filesystem roots, paths
@@ -329,6 +333,11 @@ These were chosen deliberately. Change them only on purpose.
 - **Cancelling a turn stops the goal.** An abort still settles the turn, so an
   active goal would otherwise review the work the user just stopped and continue
   it. Esc stops the goal before the abort, and `/goal continue` resumes it.
+- **A child stops only its own descendants.** `stop_subagent` is registered for
+  managed children as well as for main, and a child's call refuses any target
+  that is not below it in the spawn tree. Without it a child could neither close
+  nor abandon a wedged grandchild, and `finish_subagent` refuses to complete
+  while a retained descendant is open, so the agent could never finish.
 - **Goal verdicts fail closed.** One structured verdict decides everything.
   Goal judges are internal agents. They never appear in `list_subagents`, and
   the manager discards them after startup failure, prompt failure, or settlement.

@@ -63,7 +63,6 @@ import { SessionStatsManager } from "./session-stats";
 import { ShellManager } from "./shells/manager";
 import {
   NodeShellFileOperations,
-  NodeShellProcessAdapter,
   systemShellClock,
 } from "./shells/process";
 import {
@@ -160,7 +159,11 @@ export async function start(
   );
   const startedShells = new Set<string>();
   const shellManager = new ShellManager({
-    process: new NodeShellProcessAdapter(),
+    // A managed shell is a process the model started, so it is confined exactly
+    // as the Bash tool is: same controller, same mode decision, same warning
+    // when the backend is unavailable. Passing the plain adapter here would let
+    // start_shell run unconfined work that bash could not.
+    process: sandboxController.shellProcessAdapter(),
     files: new NodeShellFileOperations(),
     clock: systemShellClock,
     // A managed shell starts a real process from model input, so it carries the

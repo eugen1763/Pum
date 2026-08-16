@@ -689,9 +689,49 @@ describe("SubagentManager extension", () => {
     expect(isCompletionOnlyMessage("Completed the first part. Please review the conflict.")).toBe(false);
     expect(isCompletionOnlyMessage("I am blocked on the API shape." )).toBe(false);
     expect(isCompletionOnlyMessage("Can you answer a question?" )).toBe(false);
+    // A report that says where the work landed is carrying something the
+    // spawner cannot get from the completion status alone.
+    expect(isCompletionOnlyMessage(
+      "Done with the parser; the tests are in src/parse.test.ts.",
+    )).toBe(false);
+    expect(isCompletionOnlyMessage("Finished. Wrote src/goal-review.ts.")).toBe(false);
+    // And a long message is not a bare report, whatever word it opens on.
+    expect(isCompletionOnlyMessage(`Completed the sweep. ${"detail ".repeat(40)}`)).toBe(false);
+    // A bare one still is.
+    expect(isCompletionOnlyMessage("Done.")).toBe(true);
+    expect(isCompletionOnlyMessage("Implemented, all tests pass.")).toBe(true);
     expect(isAcknowledgementOnlyMessage("Acknowledged.")).toBe(true);
     expect(isAcknowledgementOnlyMessage("Thanks!" )).toBe(true);
     expect(isAcknowledgementOnlyMessage("Thanks, please run the tests." )).toBe(false);
+  });
+
+  test("a child stops only what it spawned", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "worker", "running");
+    addTestAgent(manager, "grandchild", "running", "worker");
+    addTestAgent(manager, "sibling", "running");
+    const stopped: string[] = [];
+    (manager as any).stop = async (id: string) => { stopped.push(id); };
+
+    const definitions = new Map<string, any>();
+    (manager as any).childExtension("worker").factory({
+      on() {},
+      registerTool(tool: any) { definitions.set(tool.name, tool); },
+    });
+    const stopTool = definitions.get("stop_subagent");
+    // The group advertises this tool to children, so a child has to have it.
+    expect(stopTool).toBeDefined();
+
+    await stopTool.execute("call-1", { target: "grandchild" });
+    expect(stopped).toEqual(["grandchild"]);
+
+    // Reaching sideways or upwards is refused: a child owns its own line of
+    // descent and nothing else.
+    await expect(stopTool.execute("call-2", { target: "sibling" }))
+      .rejects.toThrow(/was not spawned by this agent/);
+    await expect(stopTool.execute("call-3", { target: "nobody" }))
+      .rejects.toThrow(/Unknown subagent/);
+    expect(stopped).toEqual(["grandchild"]);
   });
 
   test("blocks duplicate final reports from the child message tool", async () => {

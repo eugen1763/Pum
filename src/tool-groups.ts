@@ -9,6 +9,10 @@ import { AFK_ANSWER_TOOL_NAME } from "./afk-delegate";
 /**
  * Always-present tool that reveals hidden tool groups in this thread.
  *
+ * Revealing is one-way. A group stays enabled for the rest of the session, and
+ * there is no tool to hide one again: a thread that has seen a tool may have
+ * planned around it, and taking it back mid-task would strand that plan.
+ *
  * PUM does not send every custom tool schema on every request any more. The
  * core tools are always sent. Optional tools live in hidden groups. Calling
  * `enable_tools` with a group name starts sending that group's real tool
@@ -41,7 +45,15 @@ export const CHILD_EXTRA_TOOL_NAMES = ["finish_subagent"] as const;
  */
 export const JUDGE_TOOL_NAMES = ["read", "bash", GOAL_VERDICT_TOOL_NAME] as const;
 
-/** Tools omitted from readonly child schemas because they can mutate files or start mutating work. */
+/**
+ * Tools kept out of a readonly child's schemas.
+ *
+ * Most of them mutate, or start work that mutates. The read-only shell tools
+ * are here for a different reason: a managed shell is a side channel a readonly
+ * child has no business reading, and offering half the group would only invite
+ * calls the guard refuses. `src/subagents/readonly.ts` enforces the same set at
+ * call time, and a test holds the two lists together.
+ */
 export const READONLY_CHILD_OMITTED_TOOL_NAMES = [
   "write",
   "edit",

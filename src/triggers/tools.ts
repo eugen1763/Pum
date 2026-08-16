@@ -103,9 +103,23 @@ function createTriggerSchema(audience: "main" | "subagent") {
   }, { additionalProperties: false });
 }
 
+/** Characters of JSON a trigger tool may put in the model's context. */
+const MAX_TRIGGER_RESULT_CHARS = 8_000;
+
+/**
+ * A trigger result as text, bounded.
+ *
+ * A template can be 64,000 characters and a list can hold many triggers, so an
+ * unbounded dump of what the model just wrote would crowd the context it needs
+ * to act. The details stay complete for the UI and for persistence.
+ */
 function resultText(value: unknown) {
+  const json = JSON.stringify(value, null, 2) ?? String(value);
+  const text = json.length <= MAX_TRIGGER_RESULT_CHARS
+    ? json
+    : `${json.slice(0, MAX_TRIGGER_RESULT_CHARS)}\n… truncated at ${MAX_TRIGGER_RESULT_CHARS.toLocaleString()} characters; inspect_trigger reports one trigger in full`;
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+    content: [{ type: "text" as const, text }],
     details: value,
   };
 }
