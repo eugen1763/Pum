@@ -97,7 +97,10 @@ async function renderApp(options: {
   const session = options.session ?? fakeSession();
   const relocated: string[] = [];
   const relocationHandler: { current?: (request: unknown) => { accepted: boolean; message: string } } = {};
-  const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
+  // Wide enough that the status bar never shreds the directory and branch to
+  // fit. A Windows temp path is long, and this assertion is about rebinding,
+  // not about how the bar sheds segments under pressure.
+  const setup = await createTestRenderer({ width: 200, height: 28, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const manager = {
     getAgents: () => options.agents ?? [],
