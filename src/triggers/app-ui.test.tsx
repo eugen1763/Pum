@@ -94,6 +94,26 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.flush();
 }
 
+// The shell tail arrives through an async getOutput() round trip, so a fixed
+// settle can assert before it renders on a slow runner. Poll the frame instead.
+async function waitForFrame(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  expected: string,
+  timeoutMs = 2000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await setup.renderOnce();
+    await setup.flush();
+    if (setup.captureCharFrame().includes(expected)) return;
+    if (Date.now() > deadline) {
+      expect(setup.captureCharFrame()).toContain(expected);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 async function renderApp(options: { loginRequired?: boolean } = {}) {
   const setup = await createTestRenderer({ width: 90, height: 28, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
@@ -247,7 +267,7 @@ describe("external trigger App controls", () => {
     setup.mockInput.pressArrow("right");
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("API server");
-    expect(setup.captureCharFrame()).toContain("ready");
+    await waitForFrame(setup, "ready");
 
     setup.mockInput.pressKey("k");
     await settle(setup);
