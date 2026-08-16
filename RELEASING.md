@@ -23,26 +23,9 @@ Provenance is attached automatically under OIDC. The workflow still passes
 `--provenance` so a build that somehow loses it fails rather than publishing
 quietly without one.
 
-### The dist-tag exception
-
-A prerelease publishes under `beta` and is then promoted with
-`npm dist-tag add`, which is a second registry call. **Trusted publishing does
-not cover it** — `v0.2.20-beta.1` published cleanly through OIDC and the
-promotion in the same job failed with `E401`. The step needs its own credential,
-so keep a package-scoped `NPM_TOKEN` in the `npm` environment:
-
-1. Limit it to the `pum-agent` package.
-2. Grant read and write access.
-3. Use the shortest practical expiration and rotate it before expiry.
-4. Never print the value, place it in repository files, or paste it into issue or chat text.
-
-If the promotion fails, the package **is** published; only the `latest`
-dist-tag is stale, and the job says so and prints the one command to run from a
-logged-in shell:
-
-```bash
-npm dist-tag add pum-agent@<VERSION> latest
-```
+Prerelease versions publish only under the npm `beta` tag. Stable versions
+publish under `latest`. The workflow does not promote prereleases to `latest`
+and does not require an npm token.
 
 ## Release checklist
 
@@ -70,4 +53,4 @@ retired, because nothing was published under it.
 
 Do not move or reuse a published tag. If a tagged candidate needs changes, prepare a newer version.
 
-Versions with a hyphen publish under the npm `beta` tag and are then promoted to `latest`. Other versions publish directly under `latest`.
+Versions with a hyphen publish under the npm `beta` tag. Other versions publish directly under `latest`.

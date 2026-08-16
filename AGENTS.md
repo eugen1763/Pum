@@ -684,12 +684,10 @@ These were chosen deliberately. Change them only on purpose.
   session JSONL (the same pattern as the news companion file) so they survive
   resume and never enter LLM context. There is no News group because PUM has
   no news model tool; groups with zero tools are dropped.
-- **Release publication uses one package-scoped registry credential.** The
-  GitHub `npm` environment supplies `NPM_TOKEN` for `npm publish` and exact
-  prerelease `npm dist-tag add ... latest` mutations. GitHub OIDC remains
-  enabled for npm provenance. The token must be granular, limited to
-  `pum-agent`, read/write, expiring, and configured with Bypass 2FA. Never
-  print, persist, or expose the token.
+- **Release publication uses npm trusted publishing.** GitHub OIDC publishes
+  prereleases under `beta` and stable versions under `latest`, with npm
+  provenance. The workflow does not promote prereleases to `latest` and does
+  not use an `NPM_TOKEN`. Never print, persist, or expose registry credentials.
 - **Check mode on has deterministic hard blocks and advisory verifier review.**
   On blocks only hard-rule, explicitly suspicious, clearly dangerous, obfuscated,
   malformed, or incompletely analyzed calls. On permits ordinary complete
