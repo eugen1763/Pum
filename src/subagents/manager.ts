@@ -132,6 +132,15 @@ export const SUBAGENT_COMMUNICATION_SYSTEM_PROMPT = `## Inter-agent communicatio
 - Reply again only when the new message contains a question, new information, or a new action.
 - If two agents start acknowledging each other, stop the exchange immediately.`;
 
+export const MANAGED_AGENT_COMPLETION_GUIDANCE =
+  "Merge a managed subagent only after its completion notice arrives and its authoritative status is completed. Idle is not completion.";
+export const MANAGED_AGENT_DESCENDANT_GUIDANCE =
+  "Before a managed merge, removal, or finish, recursively close every retained descendant. Close the deepest descendants first.";
+export const MANAGED_AGENT_CLOSE_GUIDANCE =
+  "A successful managed merge closes the subagent and removes its worktree and branch. If a completed branch adds no commits, close it with worktree remove without force.";
+export const WORKTREE_MOVE_GUIDANCE =
+  "Only the main agent can use start or return. The move occurs after the requesting turn settles, so end that turn immediately after the worktree call.";
+
 export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coordination
 
 - spawn_subagent, message_agent, and list_subagents live in the hidden Subagents tool group. When they are not in the tool list, call enable_tools with Subagents first.
@@ -148,10 +157,13 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Treat "wait for every subagent" as yielding until completion notifications arrive, not as active polling.
 - Use list_subagents only for explicit user requests, recovery after a missing notification, or one status check before a final merge.
 - For a coordinated batch, track unfinished agents from completion notifications.
-- Merge each successful agent after its completion notification arrives and its status is completed. An idle settlement is not completion.
-- Before merging a managed parent, recursively merge or resolve every retained descendant. Close the deepest descendants first.
+- ${MANAGED_AGENT_COMPLETION_GUIDANCE}
+- ${MANAGED_AGENT_DESCENDANT_GUIDANCE}
 - Every retained descendant blocks its parent regardless of status. Completion does not close a descendant.
-- Never use force removal on a managed agent; it is always rejected. Close a completed agent whose branch adds no new commits with a non-force worktree remove.
+- ${MANAGED_AGENT_CLOSE_GUIDANCE}
+- Never use force removal on a managed agent; it is always rejected.
+- stop_subagent stops execution but does not close the retained agent or remove its worktree.
+- ${WORKTREE_MOVE_GUIDANCE}
 - Wait to merge only when another unfinished task has a concrete dependency, a known conflict risk, or a required integration order. State that reason explicitly.
 - If a notification does not arrive, report the notification fault instead of creating a sleep loop.`;
 
@@ -328,6 +340,39 @@ export function spawnSubagentParameters(readonlyAvailable: boolean) {
       description: 'Conversation context mode. Defaults to "fresh". Use "fork" to inherit the immediate requester conversation before this assistant turn.',
     })),
     ...(readonlyAvailable ? { readonly: readonlySpawnParameter() } : {}),
+  }, { additionalProperties: false });
+}
+
+/** Literal actions and conditional argument text reduce malformed first attempts. */
+export function worktreeToolParameters(
+  audience: "main" | "subagent",
+  readonly = false,
+) {
+  const actionNames = readonly
+    ? ["list", "status"] as const
+    : audience === "main"
+      ? ["create", "list", "status", "merge", "remove", "start", "return"] as const
+      : ["create", "list", "status", "merge", "remove"] as const;
+  return Type.Object({
+    action: Type.Union(actionNames.map((action) => Type.Literal(action)), {
+      description: `Required action. Valid actions: ${actionNames.join(", ")}`,
+    }),
+    target: Type.Optional(Type.String({
+      description: "Required for status, merge, and remove. Use a subagent id, worktree name, or branch. Omit for other actions.",
+    })),
+    ...(!readonly ? {
+      name: Type.Optional(Type.String({
+        description: "Optional standalone worktree name for create only. Use spawn_subagent for managed agent work.",
+      })),
+      force: Type.Optional(Type.Boolean({
+        description: "Optional for standalone remove only. Never use force for a managed subagent.",
+      })),
+    } : {}),
+    ...(audience === "main" ? {
+      directory: Type.Optional(Type.String({
+        description: "Optional repository directory for start only. Omit for every other action.",
+      })),
+    } : {}),
   }, { additionalProperties: false });
 }
 
@@ -1294,7 +1339,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "list_subagents",
           label: "List Subagents",
-          description: "List active and completed subagents and their worktrees.",
+          description: "List retained subagents with authoritative status, parent, branch, and worktree. Use status completed, not idle, to decide merge readiness.",
           parameters: Type.Object({}),
           execute: async () => textResult(this.formatAgentList()),
         });
@@ -1302,7 +1347,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "finish_subagent",
           label: "Finish Subagent",
-          description: "Mark this task complete and send the sole final summary to the direct spawner after the agent status changes. Do not send the summary with message_agent first.",
+          description: "Mark this task complete and send the sole final summary to the direct spawner after the status changes. Before this call, recursively close every retained descendant, deepest first. Call this tool exactly once, and do not send the summary with message_agent first.",
           parameters: Type.Object({
             summary: Type.String({ description: "Summary of completed work, tests, and remaining concerns" }),
           }),
@@ -1329,25 +1374,32 @@ export class SubagentManager {
         pi.registerTool({
           name: "worktree",
           label: "Worktree",
-          description: "List, inspect, merge, or remove PUM Git worktrees. Close managed descendants recursively before their parent.",
+          description: "Manage PUM Git worktrees. create makes a standalone worktree, not a subagent. "
+            + MANAGED_AGENT_COMPLETION_GUIDANCE + " "
+            + MANAGED_AGENT_DESCENDANT_GUIDANCE + " "
+            + MANAGED_AGENT_CLOSE_GUIDANCE,
           promptSnippet: "Manage isolated Git worktrees under .pum/worktrees",
-          parameters: Type.Object({
-            action: Type.String({ description: "create, list, status, merge, or remove" }),
-            target: Type.Optional(Type.String({ description: "Worktree id or name" })),
-            name: Type.Optional(Type.String({ description: "Name for a new worktree" })),
-            force: Type.Optional(Type.Boolean({ description: "Force removal of a standalone unmerged worktree" })),
-          }),
+          parameters: worktreeToolParameters(
+            "subagent",
+            toolGroupsRecord?.snapshot.readonly === true,
+          ),
           execute: async (_id, params) => {
             const record = this.records.get(agentId);
             if (record?.snapshot.readonly && !["list", "status"].includes(params.action)) {
               throw new Error(`Readonly subagents cannot run worktree ${params.action}`);
             }
+            const request = params as {
+              action: string;
+              target?: string;
+              name?: string;
+              force?: boolean;
+            };
             return this.worktreeAction(
               this.mainCwd,
-              params.action,
-              params.target,
-              params.name,
-              params.force,
+              request.action,
+              request.target,
+              request.name,
+              request.force,
               record?.snapshot.readonly === true,
             );
           },
@@ -1478,8 +1530,9 @@ export class SubagentManager {
             "Do not route unrelated work to an arbitrary subagent. Keep it pending when no appropriate recipient is clear.",
             "Give each spawn_subagent call a complete, self-contained task.",
             "After spawning background agents, end the current turn. Never poll with bash sleep or status loops.",
-            "Merge each successful agent only after its completion notification arrives and its status is completed, unless a concrete dependency or conflict requires waiting. Idle is not completion.",
-            "Recursively close every retained descendant before merging a managed parent. Close the deepest descendants first.",
+            MANAGED_AGENT_COMPLETION_GUIDANCE,
+            MANAGED_AGENT_DESCENDANT_GUIDANCE,
+            MANAGED_AGENT_CLOSE_GUIDANCE,
           ],
           parameters: this.trackedSpawnSubagentParameters(null),
           execute: async (_id, params, signal, _update, ctx) => {
@@ -1543,7 +1596,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "list_subagents",
           label: "List Subagents",
-          description: "List subagents, status, branch, and worktree.",
+          description: "List retained subagents with authoritative status, parent, branch, and worktree. Use status completed, not idle, to decide merge readiness.",
           parameters: Type.Object({}),
           execute: async (_id, _params, _signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
@@ -1554,7 +1607,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "stop_subagent",
           label: "Stop Subagent",
-          description: "Abort and stop a subagent.",
+          description: "Abort a subagent and set status stopped. This does not close the retained agent or remove its worktree.",
           parameters: Type.Object({ target: Type.String({ description: "Subagent id or name" }) }),
           execute: async (_id, params, _signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
@@ -1568,25 +1621,28 @@ export class SubagentManager {
         pi.registerTool({
           name: "worktree",
           label: "Worktree",
-          description: "Create, list, inspect, merge, or remove PUM Git worktrees. "
-            + "start moves this session into a fresh worktree and return moves it back; "
-            + "both take effect once the current turn ends.",
+          description: "Manage PUM Git worktrees. create makes a standalone worktree; use spawn_subagent for managed agent work. "
+            + MANAGED_AGENT_COMPLETION_GUIDANCE + " "
+            + MANAGED_AGENT_DESCENDANT_GUIDANCE + " "
+            + MANAGED_AGENT_CLOSE_GUIDANCE + " "
+            + WORKTREE_MOVE_GUIDANCE,
           promptSnippet: "Manage isolated Git worktrees under .pum/worktrees",
-          parameters: Type.Object({
-            action: Type.String({ description: "create, list, status, merge, remove, start, or return" }),
-            target: Type.Optional(Type.String({ description: "Worktree id or name" })),
-            name: Type.Optional(Type.String({ description: "Name for a new worktree" })),
-            directory: Type.Optional(Type.String({ description: "Repository to branch from, for start" })),
-            force: Type.Optional(Type.Boolean({ description: "Force removal of an unmerged worktree" })),
-          }),
+          parameters: worktreeToolParameters("main"),
           execute: async (_id, params, _signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
-            if (params.action === "start" || params.action === "return") {
-              return this.requestRelocation(params.action === "start"
-                ? { action: "start", ...(params.directory ? { directory: params.directory } : {}) }
+            const request = params as {
+              action: string;
+              target?: string;
+              name?: string;
+              directory?: string;
+              force?: boolean;
+            };
+            if (request.action === "start" || request.action === "return") {
+              return this.requestRelocation(request.action === "start"
+                ? { action: "start", ...(request.directory ? { directory: request.directory } : {}) }
                 : { action: "return" });
             }
-            return this.worktreeAction(ctx.cwd, params.action, params.target, params.name, params.force);
+            return this.worktreeAction(ctx.cwd, request.action, request.target, request.name, request.force);
           },
         });
       },
@@ -2960,7 +3016,7 @@ export class SubagentManager {
         } catch (error) {
           throw new Error(
             `${output}\nBranch ${record.branch} is merged, but removing the worktree failed. `
-              + `Run "worktree remove ${managedAgent.snapshot.name}" to finish. `
+              + `Call worktree with action "remove" and target "${managedAgent.snapshot.name}" to finish. `
               + (error instanceof Error ? error.message : String(error)),
           );
         }
