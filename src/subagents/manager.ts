@@ -3,6 +3,7 @@ import {
   createAgentSessionFromServices,
   createAgentSessionServices,
   type AgentSession,
+  type BashOperations,
   type ExtensionAPI,
   type ExtensionContext,
   type InlineExtension,
@@ -34,6 +35,7 @@ import {
 } from "../web-search";
 import { bashOutput, bashResultDisplay, editCounts, toolArgs, type ToolCall } from "../tool-line";
 import { toolPreviewFromResult, toolPreviewFromStart } from "../tool-preview";
+import { settledUserBashCall, userBashReaction } from "../user-bash";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
@@ -2229,6 +2231,53 @@ export class SubagentManager {
         `Cannot merge ${record.snapshot.name} before its completion notice arrives. ` +
           "Authoritative status completed alone is not sufficient.",
       );
+    }
+  }
+
+  async executeUserBash(
+    id: string,
+    command: string,
+    operations?: BashOperations,
+  ): Promise<void> {
+    const record = this.findRecord(id);
+    if (!record) throw new Error(`Unknown subagent: ${id}`);
+    await this.ensureRuntime(record);
+    const session = record.session!;
+    const wasStreaming = session.isStreaming;
+    const callId = `user-bash-${randomUUID().slice(0, 12)}`;
+    const call: ToolCall = {
+      id: callId,
+      name: "bash",
+      args: [command.split("\n")[0]!.trim()],
+      state: "running",
+      startedAt: Date.now(),
+      input: { command },
+    };
+    this.appendLine(record, { kind: "tool", call });
+    this.updateStatus(record, "running");
+    let output = "";
+    try {
+      const result = await session.executeBash(command, (chunk) => {
+        output += chunk;
+        this.patchTool(record, callId, { output });
+      }, { id: callId, operations });
+      this.patchTool(record, callId, settledUserBashCall(result));
+      await session.sendCustomMessage(
+        userBashReaction(command),
+        wasStreaming || session.isStreaming
+          ? { deliverAs: "steer" }
+          : { triggerTurn: true },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.patchTool(record, callId, { state: "error", detail: message, isError: true });
+      await session.sendCustomMessage(
+        userBashReaction(command, message),
+        wasStreaming || session.isStreaming
+          ? { deliverAs: "steer" }
+          : { triggerTurn: true },
+      ).catch(() => {});
+      throw error;
     }
   }
 

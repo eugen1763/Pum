@@ -51,6 +51,21 @@ function registeredBash(controller: SandboxController, options: { readonly?: boo
 }
 
 describe("sandbox Bash override", () => {
+  test("sandboxes user Bash while Check mode is off", async () => {
+    setCheckModeConfig({ profile: "off", model: DEFAULT_CHECK_MODEL, additionalPaths: [] });
+    const mock = backend({ state: "enforced", backend: process.platform === "win32" ? "mxc" : "bubblewrap" });
+    const controller = new SandboxController({ backend: mock.value, mode: "auto", platform: process.platform });
+
+    await controller.userBashOperations().exec(
+      "printf sandbox",
+      process.cwd(),
+      { onData() {} },
+    );
+
+    expect(mock.policies).toHaveLength(1);
+    expect(mock.policies[0]!.exactCommand).toBe("printf sandbox");
+  });
+
   test("registers PUM Bash output controls in the model-visible schema", () => {
     const controller = new SandboxController({ mode: "off", platform: process.platform });
     const tool = registeredBash(controller);

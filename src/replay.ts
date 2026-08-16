@@ -23,6 +23,7 @@ import {
   type ManagedShellCompletionMessage,
   type ManagedShellLifecycleEvent,
 } from "./shells/types";
+import { settledUserBashCall } from "./user-bash";
 
 /** Shown on a replayed tool call whose turn ended before a result was stored. */
 export const INTERRUPTED_TOOL_DETAIL = "interrupted";
@@ -262,6 +263,25 @@ export function replayEntries(
     }
 
     const message = entry?.type === "message" ? entry.message : entry;
+
+    if (message?.role === "bashExecution" && typeof message.command === "string") {
+      const call: ToolCall = {
+        id: `user-bash:${entry?.id ?? lines.length}`,
+        name: "bash",
+        args: [message.command.split("\n")[0]!.trim()],
+        state: "running",
+        input: { command: message.command },
+      };
+      Object.assign(call, settledUserBashCall({
+        output: typeof message.output === "string" ? message.output : "",
+        exitCode: typeof message.exitCode === "number" ? message.exitCode : undefined,
+        cancelled: message.cancelled === true,
+        truncated: message.truncated === true,
+        fullOutputPath: typeof message.fullOutputPath === "string" ? message.fullOutputPath : undefined,
+      }));
+      lines.push({ kind: "tool", call });
+      continue;
+    }
 
     if (message?.role === "user") {
       const text = textOf(message.content);

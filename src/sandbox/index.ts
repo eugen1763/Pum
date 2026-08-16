@@ -1,5 +1,6 @@
 import {
   createBashTool,
+  createLocalBashOperations,
   getShellConfig,
   SettingsManager,
   type BashOperations,
@@ -220,6 +221,84 @@ export class SandboxController {
       return `${decision.reason}. Checked Bash commands will be blocked.`;
     }
     return undefined;
+  }
+
+  /** User commands bypass Check mode but still use the configured native sandbox. */
+  userBashOperations(): BashOperations {
+    const controller = this;
+    return {
+      exec: async (command, executionCwd, options) => {
+        let settings = controller.#settings.get(executionCwd);
+        if (!settings) {
+          settings = SettingsManager.create(executionCwd, controller.#agentDir);
+          controller.#settings.set(executionCwd, settings);
+        }
+        const shellPath = settings.getShellPath();
+        const direct = createLocalBashOperations({ shellPath });
+        if (controller.#mode === "off") return direct.exec(command, executionCwd, options);
+
+        const capability = await controller.probe();
+        const decision = decideSandboxMode(controller.#mode, capability);
+        if (decision.action === "block") throw new Error(decision.reason);
+        if (decision.action === "direct") {
+          if (decision.warning) {
+            controller.#emitWarning(
+              `Sandbox enforcement is unavailable. User shell commands will run without native sandboxing. ${capability.reason ?? "The sandbox backend is unavailable."}`,
+            );
+          }
+          return direct.exec(command, executionCwd, options);
+        }
+        if (!controller.#backend) throw new Error("Sandbox backend is unavailable");
+
+        const check = getCheckModeConfig();
+        const result = analyzeCheckPolicy({
+          command,
+          cwd: executionCwd,
+          profile: "balanced",
+          allowedPaths: check.additionalPaths,
+          protectedPaths: [controller.#agentDir],
+        });
+        if (!result.analysis.complete || result.analysis.truncated || !result.analysis.syntaxBalanced) {
+          throw new Error(`Sandbox policy analysis is incomplete: ${result.analysis.errors.join("; ")}`);
+        }
+        if (result.decision === "block") {
+          throw new Error(`Sandbox policy hard block: ${result.reason}`);
+        }
+
+        const shell = getShellConfig(shellPath);
+        const executable = findExecutable(shell.shell, controller.#platform);
+        const privateTemp = await mkdtemp(join(tmpdir(), "pum-user-bash-sandbox-"));
+        const commandFromStdin = shell.commandTransport === "stdin";
+        const args = commandFromStdin ? [...shell.args] : [...shell.args, command];
+        try {
+          const policy = buildSandboxPolicy({
+            command,
+            executionCommand: command,
+            cwd: executionCwd,
+            additionalRoots: check.additionalPaths,
+            result,
+            executable,
+            args,
+            stdin: commandFromStdin,
+            privateTemp,
+            environment: options.env,
+            pumConfigRoot: controller.#agentDir,
+            platform: controller.#platform,
+          });
+          const handle = controller.#backend.spawn(policy, {
+            onStdout: options.onData,
+            onStderr: options.onData,
+            signal: options.signal,
+            timeoutSeconds: options.timeout,
+            stdin: commandFromStdin ? Buffer.from(command) : undefined,
+          });
+          const completed = await handle.completed;
+          return { exitCode: completed.exitCode };
+        } finally {
+          await rm(privateTemp, { recursive: true, force: true }).catch(() => {});
+        }
+      },
+    };
   }
 
   extension(options: SandboxExtensionOptions = {}): InlineExtension {

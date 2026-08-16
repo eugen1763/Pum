@@ -432,6 +432,7 @@ export async function start(
       loginRequired={loginRequired}
       triggerManager={triggerManager}
       shellManager={shellManager}
+      userBashOperations={sandboxController.userBashOperations()}
       onExit={() => shutdown(0)}
     />,
   );

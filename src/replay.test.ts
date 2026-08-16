@@ -11,6 +11,27 @@ import {
 } from "./subagents/types";
 
 describe("subagent transcript replay", () => {
+  test("replays user Bash executions as Bash tool rows", () => {
+    const lines = replayEntries([{
+      id: "bash-entry",
+      type: "message",
+      message: {
+        role: "bashExecution",
+        command: "printf replay",
+        output: "replay",
+        exitCode: 0,
+        cancelled: false,
+        truncated: false,
+      },
+    }], process.cwd(), false);
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      kind: "tool",
+      call: { name: "bash", args: ["printf replay"], state: "ok", output: "replay" },
+    });
+  });
+
   test("restores agent messages and persisted tool state", () => {
     const message = {
       id: "message-1",

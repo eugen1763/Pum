@@ -88,7 +88,9 @@ bun run start    # open the TUI in the current directory
 
 | Key | Effect |
 |---|---|
-| Enter | Send the prompt |
+| Enter | Send the prompt, or execute the command in shell command mode |
+| `!` on an empty prompt | Enter shell command mode without inserting `!` into the command |
+| Backspace / Esc on an empty shell command | Return to normal prompt mode |
 | Up on an empty prompt | Recall the newest queued user message for the selected agent |
 | Ctrl+Enter / Shift+Enter | Insert a new line |
 | `\` then Enter | Insert a new line fallback |
@@ -393,6 +395,15 @@ These were chosen deliberately. Change them only on purpose.
   the `\`. It grows to eight rows, then scrolls. Word wrapping uses character
   fallback for long tokens and reserves six right columns. The `❯` gutter
   follows the cursor's visible row.
+- **An empty `!` enters user shell command mode.** PUM removes the `!` from the
+  command, shows `!` in the gutter, and paints both input rules with `accent`.
+  Backspace or Esc exits when the command is empty. Alt+I does nothing in this
+  mode. Path suggestions and Tab completion remain available. Multiline pasted
+  commands and trailing-`\` newline insertion stay valid. Submission uses
+  `AgentSession.executeBash()` with PUM's Bash operations, so
+  Check mode does not inspect user commands but the configured native sandbox
+  still applies. A running agent receives the result reaction as a steer. An
+  idle agent starts a new turn after the command result enters session context.
 - **Animation is on by default** and turns itself off without true colour.
 - **A signal colour means one thing.** Red is errors and removed lines, green is
   success and added lines, orange is blocked. Everything else decorates: a tool

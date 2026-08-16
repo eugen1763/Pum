@@ -8,7 +8,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
-import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, BashOperations, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AnimationProvider,
@@ -244,6 +244,7 @@ import { parseGoalCommand, type GoalControl } from "./goal-command";
 import { goalLabel, goalLabelColor } from "./goal-line";
 import { goalReviewHeadline, retryDetail, type GoalReviewStatus } from "./goal-review";
 import { buildJudgeTask, collectRepositoryState, judgeTranscript } from "./goal-judge";
+import { settledUserBashCall, userBashReaction } from "./user-bash";
 
 /** Placeholder while the stats popup is closed, so no snapshot is built per event. */
 const EMPTY_STATS_SNAPSHOT: SessionStatsSnapshot = {
@@ -400,6 +401,7 @@ function WorkingRule({
   role,
   label = null,
   trailingRuleColumns = 0,
+  color,
 }: {
   theme: Theme;
   width: number;
@@ -409,10 +411,11 @@ function WorkingRule({
   role: WorkingRuleRole;
   label?: WorkingRuleLabel | readonly WorkingRuleLabel[] | null;
   trailingRuleColumns?: number;
+  color?: string;
 }) {
   const ref = useWorkingRule({
     width,
-    color: dimmed ? theme.dim : theme.border,
+    color: color ?? (dimmed ? theme.dim : theme.border),
     highlight: theme.highlight,
     active: busy,
     mode,
@@ -622,6 +625,7 @@ export function App({
   forcedSandboxMode,
   forcedCheckPaths = [],
   initialCwd,
+  userBashOperations,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -662,6 +666,8 @@ export function App({
   forcedCheckPaths?: readonly string[];
   /** Directory the session starts in. Defaults to the process working directory. */
   initialCwd?: string;
+  /** User commands bypass Check mode but use this native sandbox execution path. */
+  userBashOperations?: BashOperations;
 }) {
   // The one authoritative active directory. Everything directory-dependent
   // reads this rather than process.cwd(), so a live move rebinds by re-render
@@ -782,6 +788,7 @@ export function App({
   const [inputRows, setInputRows] = useState(1);
   const [inputCursorRow, setInputCursorRow] = useState(0);
   const [inputMode, setInputMode] = useState(false);
+  const [shellMode, setShellMode] = useState(false);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [agentSelectorOpen, setAgentSelectorOpen] = useState(false);
   const [agentSelectorCursor, setAgentSelectorCursor] = useState(0);
@@ -932,14 +939,18 @@ export function App({
   );
   // Slash commands only exist for the main agent, so a subagent view neither
   // shows them nor completes them into a message to the child.
-  const commandSuggestions = activeAgentId || stashOpen || commandSuggestionsDismissed
+  const commandSuggestions = shellMode || activeAgentId || stashOpen || commandSuggestionsDismissed
     ? []
     : matchingCommands(commandInput).slice(0, 5);
-  const pathSuggestions = activeAgentId || stashOpen || commandSuggestionsDismissed
+  const pathSuggestions = (!shellMode && activeAgentId) || stashOpen || commandSuggestionsDismissed
     || isCommandInput(commandInput)
     || !shouldAutoShowPathCompletions(commandInput, inputCursorOffset)
     ? []
-    : pathCompletions(commandInput, inputCursorOffset, cwd).slice(0, 5);
+    : pathCompletions(
+      commandInput,
+      inputCursorOffset,
+      shellMode && activeAgent ? activeAgent.worktree.path : cwd,
+    ).slice(0, 5);
   const suggestionCount = commandSuggestions.length || pathSuggestions.length;
   const visibleSettingRows = filterSettingsRows(settingsQuery);
   const visibleModels = useMemo(() => filterModels(
@@ -950,6 +961,7 @@ export function App({
 
   const inputRef = useRef<TextareaRenderable>(null);
   const inputModeRef = useRef(false);
+  const shellModeRef = useRef(false);
   const transcriptScrollRef = useRef<ScrollBoxRenderable>(null);
   const questionnaireInputRef = useRef<TextareaRenderable>(null);
   const spawnPreviewInputRef = useRef<TextareaRenderable>(null);
@@ -1045,6 +1057,14 @@ export function App({
   const setWorking = (value: boolean) => {
     busyRef.current = value;
     setBusy(value);
+  };
+  const setShellInputMode = (value: boolean) => {
+    shellModeRef.current = value;
+    setShellMode(value);
+    if (!value) return;
+    inputModeRef.current = false;
+    setInputMode(false);
+    setStashMode(false);
   };
   const closeSettings = () => {
     settingsOpenRef.current = false;
@@ -3579,6 +3599,59 @@ export function App({
       .catch(restoreFailedDraft);
   };
 
+  const submitShellCommand = () => {
+    const command = inputRef.current?.plainText ?? "";
+    if (!command.trim()) return;
+    const selectedAgentId = activeAgentIdRef.current;
+    setEditorText("");
+    histCursor.current = null;
+    draft.current = "";
+
+    if (selectedAgentId) {
+      void subagentManager.executeUserBash(selectedAgentId, command, userBashOperations)
+        .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
+      return;
+    }
+
+    const id = `user-bash-${randomUUID().slice(0, 12)}`;
+    const call: ToolCall = {
+      id,
+      name: "bash",
+      args: [command.split("\n")[0]!.trim()],
+      state: "running",
+      startedAt: Date.now(),
+      input: { command },
+    };
+    append({ kind: "tool", call });
+    const wasStreaming = session.isStreaming || streamingRef.current;
+    if (!wasStreaming) setWorking(true);
+    let output = "";
+
+    void session.executeBash(command, (chunk) => {
+      output += chunk;
+      patchTool(id, { output });
+    }, { id, operations: userBashOperations }).then(async (result) => {
+      patchTool(id, settledUserBashCall(result));
+      await session.sendCustomMessage(
+        userBashReaction(command),
+        wasStreaming || session.isStreaming
+          ? { deliverAs: "steer" }
+          : { triggerTurn: true },
+      );
+    }).catch(async (error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      patchTool(id, { state: "error", detail: message, isError: true });
+      await session.sendCustomMessage(
+        userBashReaction(command, message),
+        wasStreaming || session.isStreaming
+          ? { deliverAs: "steer" }
+          : { triggerTurn: true },
+      ).catch(() => {});
+    }).finally(() => {
+      if (!session.isStreaming && !streamingRef.current) setWorking(false);
+    });
+  };
+
   const cachedBatchDisplay = (prompts: readonly string[]): string => [
     `Run ${prompts.length} cached tasks with worktree subagents:`,
     ...prompts.map((prompt, index) => `${index + 1}. ${prompt}`),
@@ -4380,6 +4453,7 @@ export function App({
 
     if ((key.meta || key.option) && !key.ctrl && printableKey === "i") {
       key.stopPropagation();
+      if (shellModeRef.current) return;
       const next = !inputModeRef.current;
       inputModeRef.current = next;
       setInputMode(next);
@@ -4426,15 +4500,25 @@ export function App({
       isReturnKey && !hasCtrlForReturn && !hasShiftForReturn && !hasAltForReturn;
     const inputValue = inputRef.current?.plainText ?? "";
     const commandMatches =
-      activeAgentIdRef.current || stashOpenRef.current || commandSuggestionsDismissedRef.current
+      shellModeRef.current || activeAgentIdRef.current || stashOpenRef.current || commandSuggestionsDismissedRef.current
         ? []
         : matchingCommands(inputValue).slice(0, 5);
     const inputCursor = inputRef.current?.cursorOffset ?? inputValue.length;
     const pathMatches =
-      activeAgentIdRef.current || stashOpenRef.current || commandSuggestionsDismissedRef.current
+      (!shellModeRef.current && activeAgentIdRef.current)
+      || stashOpenRef.current
+      || commandSuggestionsDismissedRef.current
       || isCommandInput(inputValue)
         ? []
-        : pathCompletions(inputValue, inputCursor, cwd).slice(0, 5);
+        : pathCompletions(
+          inputValue,
+          inputCursor,
+          shellModeRef.current && activeAgentIdRef.current
+            ? subagentManager.getAgents().find(
+              (agent) => agent.id === activeAgentIdRef.current,
+            )?.worktree.path ?? cwd
+            : cwd,
+        ).slice(0, 5);
     const visiblePathMatches = shouldAutoShowPathCompletions(inputValue, inputCursor)
       ? pathMatches
       : [];
@@ -4445,6 +4529,26 @@ export function App({
       (inputRef.current?.cursorOffset ?? 0) >= inputValue.length;
     const isWordBackspace =
       key.ctrl && (key.name === "backspace" || key.name === "w");
+
+    if (!shellModeRef.current
+      && printableKey === "!"
+      && !inputValue
+      && pendingImages.current.length === 0
+      && pendingPastedTexts.current.length === 0
+      && !stashOpenRef.current) {
+      key.stopPropagation();
+      setShellInputMode(true);
+      return;
+    }
+
+    if (shellModeRef.current
+      && !inputValue
+      && (key.name === "backspace" || key.name === "escape")) {
+      key.stopPropagation();
+      setShellInputMode(false);
+      resetCancelArm();
+      return;
+    }
 
     if ((key.meta || key.option) && key.name === "v") {
       key.stopPropagation();
@@ -4575,6 +4679,12 @@ export function App({
       handleTextareaChange();
       histCursor.current = null;
       if (stashOpenRef.current) setSelectedStash(-1);
+      return;
+    }
+
+    if (shellModeRef.current && isPlainReturn) {
+      key.stopPropagation();
+      submitShellCommand();
       return;
     }
 
@@ -4914,6 +5024,7 @@ export function App({
           role="inputTop"
           label={ruleLabels}
           trailingRuleColumns={ruleLabels.length > 0 ? RULE_LABEL_TRAILING_RULE_COLUMNS : 0}
+          color={shellMode ? theme.accent : undefined}
         />
         {stashOpen ? (
           <PromptStash
@@ -4977,7 +5088,7 @@ export function App({
             {Array.from({ length: inputRows }, (_, row) => (
               <box key={row} style={{ width: 2, height: 1, flexShrink: 0 }}>
                 {suggestionCount === 0 && row === inputCursorRow
-                  ? <text content={inputMode ? "i " : "❯ "} fg={theme.accent} />
+                  ? <text content={shellMode ? "! " : inputMode ? "i " : "❯ "} fg={theme.accent} />
                   : null}
               </box>
             ))}
@@ -4998,7 +5109,7 @@ export function App({
             focused={!transcriptFocused && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
-            onSubmit={() => submitPrompt()}
+            onSubmit={() => shellModeRef.current ? submitShellCommand() : submitPrompt()}
             style={{ width: promptInputColumns, flexShrink: 0, minWidth: 0, height: inputRows }}
           />
           {/* Reserve six columns on normal terminals. This forces wrapping
@@ -5013,6 +5124,7 @@ export function App({
           dimmed={stashOpen}
           mode={settings.workingRuleAnimation}
           role="inputBottom"
+          color={shellMode ? theme.accent : undefined}
         />
         <RenderErrorBoundary theme={theme} label="popup" resetKey={popupResetKey}>
           {loginOpen ? (
