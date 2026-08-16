@@ -6,6 +6,10 @@ import { loadNewsItems, saveNewsItems } from "../news";
 import {
   SUBAGENT_COMMUNICATION_SYSTEM_PROMPT,
   SUBAGENT_COORDINATION_SYSTEM_PROMPT,
+  MANAGED_AGENT_CLOSE_GUIDANCE,
+  MANAGED_AGENT_COMPLETION_GUIDANCE,
+  MANAGED_AGENT_DESCENDANT_GUIDANCE,
+  WORKTREE_MOVE_GUIDANCE,
   IDLE_OPEN_REMINDER_THRESHOLD,
   SubagentManager,
   buildSubagentCapacityPrompt,
@@ -303,14 +307,41 @@ describe("SubagentManager extension", () => {
       "At configured capacity, queue related follow-up work through message_agent instead of spawning another agent.",
     );
     expect(definitions.get("message_agent").description).toContain("durable queued message");
+    expect(definitions.get("list_subagents").description).toContain("authoritative status");
+    expect(definitions.get("stop_subagent").description).toContain("does not close the retained agent");
+    const worktreeTool = definitions.get("worktree");
+    expect(worktreeTool.description).toContain("use spawn_subagent for managed agent work");
+    expect(worktreeTool.description).toContain(MANAGED_AGENT_COMPLETION_GUIDANCE);
+    expect(worktreeTool.description).toContain(MANAGED_AGENT_DESCENDANT_GUIDANCE);
+    expect(worktreeTool.description).toContain(MANAGED_AGENT_CLOSE_GUIDANCE);
+    expect(worktreeTool.description).toContain(WORKTREE_MOVE_GUIDANCE);
+    const worktreeActions = worktreeTool.parameters.properties.action.anyOf.map(
+      (variant: any) => variant.const,
+    );
+    expect(worktreeActions).toEqual([
+      "create", "list", "status", "merge", "remove", "start", "return",
+    ]);
+    expect(worktreeTool.parameters.type).toBe("object");
+    expect(worktreeTool.parameters.additionalProperties).toBe(false);
+    expect(worktreeTool.parameters.properties.target.description).toContain(
+      "Required for status, merge, and remove",
+    );
+    expect(worktreeTool.parameters.properties.name.description).toContain("create only");
+    expect(worktreeTool.parameters.properties.force.description).toContain(
+      "Never use force for a managed subagent",
+    );
+    expect(worktreeTool.parameters.properties.directory.description).toContain("start only");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Use finish_subagent as the only final completion report");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("exactly one successful finish_subagent call");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("Do not automatically reply to an acknowledgement");
     expect(SUBAGENT_COMMUNICATION_SYSTEM_PROMPT).toContain("stop the exchange immediately");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("A normal 'Message from <agent>' is not a completion notification");
-    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("An idle settlement is not completion");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain(MANAGED_AGENT_COMPLETION_GUIDANCE);
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain(MANAGED_AGENT_DESCENDANT_GUIDANCE);
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain(MANAGED_AGENT_CLOSE_GUIDANCE);
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain(WORKTREE_MOVE_GUIDANCE);
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("Never use force removal on a managed agent");
-    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("non-force worktree remove");
+    expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).toContain("stop_subagent stops execution but does not close");
     expect(SUBAGENT_COORDINATION_SYSTEM_PROMPT).not.toContain("as soon as it settles");
 
     handlers.get("message_start")?.[0]?.({
@@ -380,6 +411,10 @@ describe("SubagentManager extension", () => {
       task: "Mutate elsewhere",
     }, undefined, undefined, { sessionManager: { getSessionId: () => "child-session" } }))
       .rejects.toThrow("cannot spawn child agents");
+    expect(tools.get("worktree").parameters.properties.action.anyOf.map(
+      (variant: any) => variant.const,
+    )).toEqual(["list", "status"]);
+    expect(tools.get("worktree").parameters.properties.force).toBeUndefined();
     await expect(tools.get("worktree").execute("merge", { action: "merge", target: "peer" }))
       .rejects.toThrow("cannot run worktree merge");
     await expect((manager as any).resolveTriggerSelector("main-session", {
@@ -673,6 +708,14 @@ describe("SubagentManager extension", () => {
 
     const messageTool = definitions.get("message_agent");
     expect(messageTool.description).toContain("Never use this tool for a final completion report");
+    expect(definitions.get("finish_subagent").description).toContain("recursively close every retained descendant");
+    expect(definitions.get("finish_subagent").description).toContain("exactly once");
+    expect(definitions.get("list_subagents").description).toContain("status completed, not idle");
+    expect(definitions.get("worktree").description).toContain(MANAGED_AGENT_CLOSE_GUIDANCE);
+    expect(definitions.get("worktree").parameters.properties.action.anyOf.map(
+      (variant: any) => variant.const,
+    )).toEqual(["create", "list", "status", "merge", "remove"]);
+    expect(definitions.get("worktree").parameters.properties.directory).toBeUndefined();
     await expect(messageTool.execute("call-1", {
       target: "main",
       message: "Completed and committed the implementation. All tests pass.",
