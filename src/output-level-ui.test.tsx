@@ -159,4 +159,28 @@ describe("output-level transcript UI", () => {
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("prompt focus restored");
   });
+
+  test("selects and expands a row on click without treating a drag as a click", async () => {
+    let copied = "";
+    const setup = await renderMode("quiet", async (text: string) => {
+      copied = text;
+      return "native" as const;
+    });
+    const row = setup.renderer.root.findDescendantById("transcript-line-0");
+    expect(row).toBeDefined();
+
+    await setup.mockMouse.drag(row!.screenX + 3, row!.screenY, row!.screenX + 8, row!.screenY);
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("read · src/a.ts");
+
+    await setup.mockMouse.click(row!.screenX, row!.screenY);
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("read · src/a.ts");
+    expect(setup.captureCharFrame()).toContain("transcript  j/k move");
+
+    setup.mockInput.pressKey("c");
+    await settle(setup);
+    expect(copied).toContain('\"path\": \"src/a.ts\"');
+    expect(copied).toContain("file contents");
+  });
 });

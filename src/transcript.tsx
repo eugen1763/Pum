@@ -3,6 +3,7 @@ import {
   TextAttributes,
   fg,
   type MarkdownRenderable,
+  type MouseEvent as OpenTuiMouseEvent,
   type SyntaxStyle,
 } from "@opentui/core";
 import type { MarkdownProps } from "@opentui/react";
@@ -160,11 +161,13 @@ function Row({
   glyph,
   glyphColor,
   background,
+  onGlyphClick,
   children,
 }: {
   glyph: string;
   glyphColor: string;
   background?: string;
+  onGlyphClick?: (event: OpenTuiMouseEvent) => void;
   children: React.ReactNode;
 }) {
   return (
@@ -178,7 +181,15 @@ function Row({
       {/* A numeric width pins the gutter: a whitespace-only <text> measures
           inconsistently once the message column wraps, losing a column. */}
       <box style={{ width: 2, flexShrink: 0 }}>
-        {glyph.trim() ? <text content={glyph} fg={glyphColor} /> : null}
+        {glyph.trim() ? <text
+          content={glyph}
+          fg={glyphColor}
+          onMouseDown={onGlyphClick ? (event) => {
+            if (event.button !== 0) return;
+            event.stopPropagation();
+            onGlyphClick(event);
+          } : undefined}
+        /> : null}
       </box>
       {/* The nested flex item gives every transcript type the same measured
           remaining-width column as the tool-row body. */}
@@ -518,6 +529,7 @@ export function ToolLine({
   workingCaret = false,
   outputMode = "normal",
   expanded,
+  onDisclosureClick,
 }: {
   theme: Theme;
   syntaxStyle?: SyntaxStyle;
@@ -527,6 +539,8 @@ export function ToolLine({
   outputMode?: TranscriptOutputMode;
   /** Explicit expansion reveals raw retained tool input and result. */
   expanded?: boolean;
+  /** Mouse activation on the disclosure glyph; text remains selectable. */
+  onDisclosureClick?: () => void;
 }) {
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
@@ -572,7 +586,7 @@ export function ToolLine({
 
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
-      <Row glyph={detailGlyph} glyphColor={toolColor}>
+      <Row glyph={detailGlyph} glyphColor={toolColor} onGlyphClick={onDisclosureClick ? () => onDisclosureClick() : undefined}>
         <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
           {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
           <text
@@ -654,16 +668,22 @@ export function ActivitySummaryLine({
   summary,
   expanded,
   outputMode,
+  onDisclosureClick,
 }: {
   theme: Theme;
   syntaxStyle?: SyntaxStyle;
   summary: MinimalToolSummaryLine;
   expanded: boolean;
   outputMode: TranscriptOutputMode;
+  onDisclosureClick?: () => void;
 }) {
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
-      <Row glyph={expanded ? "▾ " : "▸ "} glyphColor={theme.tool}>
+      <Row
+        glyph={expanded ? "▾ " : "▸ "}
+        glyphColor={theme.tool}
+        onGlyphClick={onDisclosureClick ? () => onDisclosureClick() : undefined}
+      >
         <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
           <text content="activity · " fg={theme.tool} selectable style={{ flexShrink: 0 }} />
           <text

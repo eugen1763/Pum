@@ -3789,15 +3789,28 @@ export function App({
     revealTranscriptCursor(next);
   };
 
-  const toggleTranscriptDetail = () => {
-    const line = visibleLines[transcriptCursorRef.current];
+  const selectTranscriptRow = (index: number) => {
+    transcriptFocusedRef.current = true;
+    setTranscriptFocused(true);
+    transcriptCursorRef.current = index;
+    setTranscriptCursor(index);
+    revealTranscriptCursor(index);
+  };
+
+  const toggleTranscriptDetail = (index = transcriptCursorRef.current) => {
+    const line = visibleLines[index];
     if (!line || (line.kind !== "tool" && line.kind !== "tool-summary")) return;
-    const key = projectedLineKey(line, transcriptCursorRef.current);
+    const key = projectedLineKey(line, index);
     const current = detailOverridesRef.current.get(key) ?? outputMode === "verbose";
     const next = new Map(detailOverridesRef.current);
     next.set(key, !current);
     detailOverridesRef.current = next;
     setDetailOverrides(next);
+  };
+
+  const clickTranscriptDisclosure = (index: number) => {
+    selectTranscriptRow(index);
+    toggleTranscriptDetail(index);
   };
 
   const copyTranscriptRow = () => {
@@ -4684,6 +4697,7 @@ export function App({
                     summary={line}
                     expanded={expanded}
                     outputMode={outputMode}
+                    onDisclosureClick={() => clickTranscriptDisclosure(i)}
                   />
                 ) : line.kind === "tool" ? (
                   <ToolLine
@@ -4693,6 +4707,7 @@ export function App({
                     workingCaret={workingCaret}
                     outputMode={outputMode}
                     expanded={expanded}
+                    onDisclosureClick={() => clickTranscriptDisclosure(i)}
                   />
                 ) : line.kind === "agent-message" ? (
                   <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
