@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { COMMANDS, matchingCommands, moveCommandSelection } from "./commands";
+import { COMMANDS, isCommandInput, matchingCommands, moveCommandSelection } from "./commands";
 
 describe("command suggestions", () => {
+  test("only treats a slash in the first input column as a command trigger", () => {
+    expect(isCommandInput("/goal")).toBe(true);
+    expect(isCommandInput("open /goal")).toBe(false);
+    expect(isCommandInput(" /goal")).toBe(false);
+  });
+
   test("includes Check mode path management and wraps selection", () => {
     const matches = matchingCommands("/");
     expect(matches.some((command) => command.name === "/check-path")).toBe(true);

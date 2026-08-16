@@ -237,9 +237,10 @@ describe("goal commands", () => {
     const promptRow = rows.findLastIndex((row) => row.includes("❯"));
     expect(goalRow).toBeGreaterThan(0);
     expect(promptRow).toBeGreaterThan(goalRow);
+    expect(rows[goalRow - 1]?.trim()).toBe("");
     // The rule is one row: rule glyphs and label share it, and nothing wraps.
     expect(rows[goalRow]).toContain("─");
-    expect(rows[goalRow]!.trimEnd().endsWith("tests")).toBe(true);
+    expect(rows[goalRow]!.endsWith("tests ──")).toBe(true);
   });
 
   test("/goal status reports the complete state, and errors keep the draft", async () => {

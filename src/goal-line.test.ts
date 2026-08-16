@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GOAL_LABEL_RIGHT_PADDING, goalLabel, goalLabelColor } from "./goal-line";
+import { RULE_LABEL_SIDE_PADDING, goalLabel, goalLabelColor } from "./goal-line";
 import { createGoal, type GoalRecord, type GoalState } from "./goal";
 import { statusTextWidth } from "./status-metadata";
 import { PRESET_NAMES, loadTheme } from "./theme";
@@ -11,13 +11,15 @@ function goal(text: string, state: GoalState = "active"): GoalRecord {
 describe("goal label", () => {
   test("shows the prefix, the state, and the goal", () => {
     const label = goalLabel(goal("fix the flaky tests"), 120);
-    expect(label?.text).toBe("GOAL · active · fix the flaky tests  ");
+    expect(label?.text).toBe(" GOAL · active · fix the flaky tests ");
   });
 
-  test("ends with exactly two columns of padding", () => {
+  test("has exactly one full-background padding column on each side", () => {
     const label = goalLabel(goal("fix the flaky tests"), 120)!;
-    expect(label.text.endsWith(" ".repeat(GOAL_LABEL_RIGHT_PADDING))).toBe(true);
-    expect(label.text.at(-GOAL_LABEL_RIGHT_PADDING - 1)).not.toBe(" ");
+    expect(label.text.startsWith(" ".repeat(RULE_LABEL_SIDE_PADDING))).toBe(true);
+    expect(label.text.endsWith(" ".repeat(RULE_LABEL_SIDE_PADDING))).toBe(true);
+    expect(label.text.at(RULE_LABEL_SIDE_PADDING)).not.toBe(" ");
+    expect(label.text.at(-RULE_LABEL_SIDE_PADDING - 1)).not.toBe(" ");
   });
 
   test("reports its own rendered width", () => {
@@ -56,8 +58,8 @@ describe("goal label", () => {
 
   test("narrow-but-usable terminals keep the state and the padding", () => {
     const label = goalLabel(goal("fix the flaky tests"), 30)!;
-    expect(label.text.startsWith("GOAL · active")).toBe(true);
-    expect(label.text.endsWith("  ")).toBe(true);
+    expect(label.text.startsWith(" GOAL · active")).toBe(true);
+    expect(label.text.endsWith(" ")).toBe(true);
     expect(label.width).toBeLessThanOrEqual(30);
   });
 

@@ -82,9 +82,10 @@ import {
   webSearch,
   withSearchRoute,
 } from "./web-search";
-import { matchingCommands, moveCommandSelection } from "./commands";
+import { isCommandInput, matchingCommands, moveCommandSelection } from "./commands";
 import { truncateStatusText } from "./status-metadata";
 import { modeLineLabels } from "./mode-line";
+import { RULE_LABEL_TRAILING_RULE_COLUMNS } from "./goal-line";
 import {
   loadRelocation,
   relocationPathsTrusted,
@@ -387,6 +388,7 @@ function WorkingRule({
   mode,
   role,
   label = null,
+  trailingRuleColumns = 0,
 }: {
   theme: Theme;
   width: number;
@@ -395,6 +397,7 @@ function WorkingRule({
   mode: WorkingRuleAnimationMode;
   role: WorkingRuleRole;
   label?: WorkingRuleLabel | readonly WorkingRuleLabel[] | null;
+  trailingRuleColumns?: number;
 }) {
   const ref = useWorkingRule({
     width,
@@ -404,6 +407,7 @@ function WorkingRule({
     mode,
     role,
     label,
+    trailingRuleColumns,
   });
   return <text ref={ref} style={{ flexShrink: 0 }} />;
 }
@@ -756,6 +760,7 @@ export function App({
   const [stashSelection, setStashSelection] = useState<Set<number>>(() => new Set());
   const [stashOpen, setStashOpen] = useState(false);
   const [commandInput, setCommandInput] = useState("");
+  const [inputCursorOffset, setInputCursorOffset] = useState(0);
   const [commandCursor, setCommandCursor] = useState(0);
   const [commandSuggestionsDismissed, setCommandSuggestionsDismissed] = useState(false);
   const [editingStashIndexState, setEditingStashIndexState] = useState<number | null>(null);
@@ -915,6 +920,11 @@ export function App({
   const commandSuggestions = activeAgentId || stashOpen || commandSuggestionsDismissed
     ? []
     : matchingCommands(commandInput).slice(0, 5);
+  const pathSuggestions = activeAgentId || stashOpen || commandSuggestionsDismissed
+    || isCommandInput(commandInput)
+    ? []
+    : pathCompletions(commandInput, inputCursorOffset, cwd).slice(0, 5);
+  const suggestionCount = commandSuggestions.length || pathSuggestions.length;
   const visibleSettingRows = filterSettingsRows(settingsQuery);
   const visibleModels = useMemo(() => filterModels(
     modelRuntime.getAvailableSnapshot(),
@@ -1185,6 +1195,7 @@ export function App({
       : Math.max(0, Math.min(rows - 1, input.visualCursor.visualRow));
     setInputRows(rows);
     setInputCursorRow(cursorRow);
+    setInputCursorOffset(input.cursorOffset);
   };
 
   const scheduleInputMetrics = () => queueMicrotask(syncInputMetrics);
@@ -1210,6 +1221,7 @@ export function App({
   };
 
   const handleInput = (nextValue: string) => {
+    pathCompletionCycle.current = null;
     const edit = { previous: lastInputValue.current, next: nextValue };
 
     // Editing any part of a marker deletes the whole attachment and its temp
@@ -3365,6 +3377,7 @@ export function App({
     const selectedAgentId = activeAgentIdRef.current;
     const targetKey = selectedAgentId ?? "main";
     const rawDisplayText = value ?? inputRef.current?.plainText ?? "";
+    const commandEligible = isCommandInput(rawDisplayText);
     const displayText = rawDisplayText.trim();
     const attachments = value === undefined ? [...pendingImages.current] : [];
     const pastedTexts = value === undefined ? [...pendingPastedTexts.current] : [];
@@ -3451,15 +3464,23 @@ export function App({
       setEditorText(rawDisplayText, rawDisplayText.length, true);
     };
 
-    if (attachments.length === 0 && promptText === "/login") {
+    const appendCommandHistory = () => {
+      if (!persistedPrompt) return;
+      history.current = promptHistoryStore.append(cwd, persistedPrompt);
+      histCursor.current = null;
+      draft.current = "";
+    };
+
+    if (attachments.length === 0 && commandEligible && promptText === "/login") {
+      appendCommandHistory();
       openLogin();
       return;
     }
 
     // AFK is process-global, so it is intercepted above the child routing below.
-    // Anything past that point belongs to one transcript, and /afk belongs to
-    // none of them - including keeping its instructions out of prompt history.
-    if (attachments.length === 0 && runAfkCommand(promptText)) {
+    // Successful command handling still makes the entered command recallable.
+    if (attachments.length === 0 && commandEligible && runAfkCommand(promptText)) {
+      appendCommandHistory();
       setEditorText("");
       return;
     }
@@ -3475,7 +3496,10 @@ export function App({
       return;
     }
 
-    if (attachments.length === 0 && runCommand(promptText)) return;
+    if (attachments.length === 0 && commandEligible && runCommand(promptText)) {
+      appendCommandHistory();
+      return;
+    }
 
     if (persistedPrompt) history.current = promptHistoryStore.append(cwd, persistedPrompt);
     if (persistedPrompt && stashIndex === undefined) {
@@ -4328,6 +4352,13 @@ export function App({
       activeAgentIdRef.current || stashOpenRef.current || commandSuggestionsDismissedRef.current
         ? []
         : matchingCommands(inputValue).slice(0, 5);
+    const inputCursor = inputRef.current?.cursorOffset ?? inputValue.length;
+    const pathMatches =
+      activeAgentIdRef.current || stashOpenRef.current || commandSuggestionsDismissedRef.current
+      || isCommandInput(inputValue)
+        ? []
+        : pathCompletions(inputValue, inputCursor, cwd).slice(0, 5);
+    const inputSuggestionCount = commandMatches.length || pathMatches.length;
     const isContinuationReturn =
       isPlainReturn &&
       inputValue.endsWith("\\") &&
@@ -4422,19 +4453,18 @@ export function App({
         return;
       }
 
-      const inputCursor = inputRef.current?.cursorOffset ?? inputValue.length;
       const previousCycle = pathCompletionCycle.current;
       const continuing = previousCycle !== null
         && previousCycle.currentValue === inputValue
         && previousCycle.currentCursor === inputCursor;
       const completions = continuing
         ? previousCycle!.completions
-        : pathCompletions(inputValue, inputCursor, cwd);
+        : pathMatches;
       if (completions.length > 0) {
         key.stopPropagation();
         const index = continuing
           ? (previousCycle!.index + 1) % completions.length
-          : 0;
+          : Math.min(commandCursorRef.current, completions.length - 1);
         const sourceValue = continuing ? previousCycle!.sourceValue : inputValue;
         const completed = applyPathCompletion(sourceValue, completions[index]!);
         setEditorText(completed.value, completed.cursorOffset, true);
@@ -4475,6 +4505,22 @@ export function App({
       return;
     }
 
+    if (isPlainReturn && pathMatches.length > 0) {
+      key.stopPropagation();
+      const index = Math.min(commandCursorRef.current, pathMatches.length - 1);
+      const completed = applyPathCompletion(inputValue, pathMatches[index]!);
+      setEditorText(completed.value, completed.cursorOffset, true);
+      pathCompletionCycle.current = {
+        sourceValue: inputValue,
+        completions: pathMatches,
+        index,
+        currentValue: completed.value,
+        currentCursor: completed.cursorOffset,
+      };
+      histCursor.current = null;
+      return;
+    }
+
     if (stashOpenRef.current && isPlainReturn) {
       key.stopPropagation();
       if (stashSelectionRef.current.size > 0) {
@@ -4512,11 +4558,11 @@ export function App({
         moveStash(key.name === "up" ? -1 : 1, key.shift);
         return;
       }
-      if (commandMatches.length > 0) {
+      if (inputSuggestionCount > 0) {
         key.stopPropagation();
         const next = moveCommandSelection(
           commandCursorRef.current,
-          commandMatches.length,
+          inputSuggestionCount,
           key.name === "up" ? -1 : 1,
         );
         commandCursorRef.current = next;
@@ -4562,7 +4608,7 @@ export function App({
         key.stopPropagation();
         resetCancelArm();
         setStashMode(false);
-      } else if (commandMatches.length > 0) {
+      } else if (inputSuggestionCount > 0) {
         key.stopPropagation();
         setCommandSuggestionsClosed(true);
         if ((activeAgentId && visibleBusy) || (!activeAgentId && busyRef.current)) {
@@ -4786,6 +4832,7 @@ export function App({
             ) : null}
           </RenderErrorBoundary>
         </scrollbox>
+        {ruleLabels.length > 0 ? <Gap /> : null}
         <WorkingRule
           theme={theme}
           width={Math.max(0, width)}
@@ -4794,6 +4841,7 @@ export function App({
           mode={settings.workingRuleAnimation}
           role="inputTop"
           label={ruleLabels}
+          trailingRuleColumns={ruleLabels.length > 0 ? RULE_LABEL_TRAILING_RULE_COLUMNS : 0}
         />
         {stashOpen ? (
           <PromptStash
@@ -4804,23 +4852,31 @@ export function App({
             height={height}
           />
         ) : null}
-        {commandSuggestions.length > 0 ? (
+        {suggestionCount > 0 ? (
           <box
             style={{
-              height: commandSuggestions.length,
+              height: suggestionCount,
               flexShrink: 0,
               flexDirection: "column",
             }}
           >
-            {commandSuggestions.map((command, index) => {
-              const highlighted = index === Math.min(commandCursor, commandSuggestions.length - 1);
+            {(commandSuggestions.length > 0
+              ? commandSuggestions.map((command) => ({
+                key: command.name,
+                text: `${command.name}  —  ${command.description}`,
+              }))
+              : pathSuggestions.map((completion) => ({
+                key: `${completion.start}:${completion.end}:${completion.replacement}`,
+                text: completion.replacement,
+              }))).map((suggestion, index) => {
+              const highlighted = index === Math.min(commandCursor, suggestionCount - 1);
               return (
-                <box key={command.name} style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
+                <box key={suggestion.key} style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
                   <box style={{ width: 2, flexShrink: 0 }}>
                     {highlighted ? <text content="❯ " fg={theme.accent} /> : null}
                   </box>
                   <text
-                    content={`${command.name}  —  ${command.description}`}
+                    content={suggestion.text}
                     fg={highlighted ? theme.fg : theme.dim}
                     wrapMode="none"
                     style={{ flexGrow: 1, minWidth: 0 }}
@@ -4848,7 +4904,7 @@ export function App({
           >
             {Array.from({ length: inputRows }, (_, row) => (
               <box key={row} style={{ width: 2, height: 1, flexShrink: 0 }}>
-                {commandSuggestions.length === 0 && row === inputCursorRow
+                {suggestionCount === 0 && row === inputCursorRow
                   ? <text content={inputMode ? "i " : "❯ "} fg={theme.accent} />
                   : null}
               </box>

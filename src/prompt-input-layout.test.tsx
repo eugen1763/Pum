@@ -41,6 +41,7 @@ async function renderApp(
   const setup = await createTestRenderer({ width, height, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const session = fakeSession();
+  const history: string[] = [];
   const manager = {
     getAgents: () => [],
     subscribe: () => () => {},
@@ -69,7 +70,14 @@ async function renderApp(
       }}
       searchProviders={[]}
       subagentManager={manager}
-      promptHistoryStore={{ load: () => [], append: () => [], remove: () => [] }}
+      promptHistoryStore={{
+        load: () => [...history],
+        append: (_cwd, prompt) => {
+          if (history.at(-1) !== prompt) history.push(prompt);
+          return [...history];
+        },
+        remove: () => [...history],
+      }}
       promptStashStore={{
         load: () => cachedPrompts,
         append: () => cachedPrompts,
@@ -204,6 +212,35 @@ describe("prompt input layout", () => {
     await settle(setup);
 
     expect(textarea(setup.renderer.root)?.plainText).toBe("review src/app.tsx");
+  });
+
+  test("shows path suggestions with the command-suggestion selection style", async () => {
+    const setup = await renderApp(70, 20);
+    await setup.mockInput.typeText("review src/app");
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("❯ src/app-busy-steer.test.tsx");
+    expect(frame.match(/❯/gu)).toHaveLength(1);
+  });
+
+  test("does not treat a leading slash as a path trigger", async () => {
+    const setup = await renderApp(70, 20);
+    await setup.mockInput.typeText("/src/app");
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).not.toContain("src/app.tsx");
+  });
+
+  test("recalls an executed slash command with the arrow keys", async () => {
+    const setup = await renderApp(70, 20);
+    await setup.mockInput.typeText("/afk");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    setup.mockInput.pressArrow("up");
+    await settle(setup);
+    expect(textarea(setup.renderer.root)?.plainText).toBe("/afk");
   });
 
   test("wraps four columns before the former terminal-edge boundary", async () => {

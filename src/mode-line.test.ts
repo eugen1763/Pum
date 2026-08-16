@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { AFK_RULE_STATES, afkLabelColor, modeLineLabels, type AfkRuleState } from "./mode-line";
 import {
-  GOAL_LABEL_RIGHT_PADDING,
   MIN_RULE_COLUMNS,
+  RULE_LABEL_SIDE_PADDING,
   goalLabel,
   goalLabelColor,
 } from "./goal-line";
@@ -46,8 +46,8 @@ describe("mode line labels", () => {
   test("AFK and the goal share one row, AFK first, each with its own colour", () => {
     const labels = modeLineLabels({ goal: goal(), afk: on, ruleWidth: 200, theme });
     expect(labels).toHaveLength(2);
-    expect(labels[0]!.text).toBe("AFK · on · prefer safe options  ");
-    expect(labels[1]!.text).toBe("GOAL · active · ship the release  ");
+    expect(labels[0]!.text).toBe(" AFK · on · prefer safe options ");
+    expect(labels[1]!.text).toBe(" GOAL · active · ship the release ");
     expect(labels[0]!.color).toBe(afkLabelColor(theme, "on"));
     expect(labels[1]!.color).toBe(goalLabelColor(theme, "active"));
     expect(labels[0]!.color).not.toBe(labels[1]!.color);
@@ -59,12 +59,13 @@ describe("mode line labels", () => {
     }
   });
 
-  test("the last label ends with exactly two columns of right padding", () => {
+  test("each label has one full-background padding column on each side", () => {
     for (const ruleWidth of [200, 100, 56, 28]) {
       const labels = modeLineLabels({ goal: goal(), afk: on, ruleWidth, theme });
-      const last = labels.at(-1)!;
-      expect(last.text.endsWith(" ".repeat(GOAL_LABEL_RIGHT_PADDING))).toBe(true);
-      expect(last.text.at(-GOAL_LABEL_RIGHT_PADDING - 1)).not.toBe(" ");
+      for (const label of labels) {
+        expect(label.text.startsWith(" ".repeat(RULE_LABEL_SIDE_PADDING))).toBe(true);
+        expect(label.text.endsWith(" ".repeat(RULE_LABEL_SIDE_PADDING))).toBe(true);
+      }
     }
   });
 
@@ -92,8 +93,8 @@ describe("mode line narrow-terminal priority", () => {
 
   test("a wide rule shows both states, the instructions, and the goal text", () => {
     expect(shrink(200)).toEqual([
-      "AFK · on · prefer safe options  ",
-      "GOAL · active · ship the release  ",
+      " AFK · on · prefer safe options ",
+      " GOAL · active · ship the release ",
     ]);
   });
 
@@ -107,15 +108,15 @@ describe("mode line narrow-terminal priority", () => {
   });
 
   test("the goal text goes first", () => {
-    expect(shrink(60)).toEqual(["AFK · on · p  ", "GOAL · active  "]);
+    expect(shrink(60)).toEqual([" AFK · on · p ", " GOAL · active "]);
   });
 
   test("the AFK instruction preview goes next", () => {
-    expect(shrink(56)).toEqual(["AFK · on  ", "GOAL · active  "]);
+    expect(shrink(56)).toEqual([" AFK · on ", " GOAL · active "]);
   });
 
   test("the goal goes next, and takes the preview with it", () => {
-    expect(shrink(28)).toEqual(["AFK · on  "]);
+    expect(shrink(28)).toEqual([" AFK · on "]);
   });
 
   test("nothing is painted only when no useful label fits", () => {
@@ -129,13 +130,13 @@ describe("mode line narrow-terminal priority", () => {
     for (let ruleWidth = 12; ruleWidth <= 200; ruleWidth++) {
       const labels = shrink(ruleWidth);
       if (labels.length === 0) continue;
-      expect(labels[0]!.startsWith("AFK · on")).toBe(true);
+      expect(labels[0]!.startsWith(" AFK · on")).toBe(true);
     }
   });
 
   test("both states share the rule rather than one losing to half-rule budget", () => {
     // 34 columns is under twice the two states, so a strict half would drop one.
-    expect(shrink(34)).toEqual(["AFK · on  ", "GOAL · active  "]);
+    expect(shrink(34)).toEqual([" AFK · on ", " GOAL · active "]);
   });
 
   test("a narrowing rule drops in priority order and never puts anything back", () => {
@@ -194,15 +195,15 @@ describe("mode line label text", () => {
   });
 
   test("no instructions means no preview, whatever the width", () => {
-    expect(texts({ afk: { state: "on" }, ruleWidth: 200 })).toEqual(["AFK · on  "]);
+    expect(texts({ afk: { state: "on" }, ruleWidth: 200 })).toEqual([" AFK · on "]);
     expect(texts({ afk: { state: "answering", instructions: "" }, ruleWidth: 200 })).toEqual([
-      "AFK · answering  ",
+      " AFK · answering ",
     ]);
   });
 
   test("every AFK state names itself", () => {
     for (const state of AFK_RULE_STATES) {
-      expect(texts({ afk: { state }, ruleWidth: 200 })[0]).toBe(`AFK · ${state}  `);
+      expect(texts({ afk: { state }, ruleWidth: 200 })[0]).toBe(` AFK · ${state} `);
     }
   });
 
