@@ -258,6 +258,7 @@ import {
   transcriptOutputMode,
 } from "./transcript-output";
 import type { MinimalTranscriptLine } from "./output-minimal";
+import { heldTranscriptLines, type DwellMemory } from "./transcript-dwell";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -878,13 +879,38 @@ export function App({
     settings.showThinking,
   );
   const outputMode = transcriptOutputMode(settings);
+  const showAgentMessages = settings.showAgentMessages !== false;
+  // The dwell rules run before grouping, so an activity row inherits them from
+  // the calls it folds. The memory is per agent and lives outside the rows, so
+  // switching views cannot restart a period the user already watched end.
+  const dwellMemories = useRef<Map<string, DwellMemory>>(new Map());
+  const [dwellTick, setDwellTick] = useState(0);
+  const held = useMemo(() => {
+    const key = activeAgentId ?? "main";
+    const result = heldTranscriptLines(
+      visibleTx.lines,
+      dwellMemories.current.get(key) ?? new Map(),
+      Date.now(),
+    );
+    dwellMemories.current.set(key, result.memory);
+    return result;
+    // dwellTick re-runs this when a deadline falls due; nothing else changes.
+  }, [visibleTx.lines, activeAgentId, dwellTick]);
+  useEffect(() => {
+    if (held.nextDeadline === undefined) return;
+    const timer = setTimeout(
+      () => setDwellTick((tick) => tick + 1),
+      Math.max(0, held.nextDeadline - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [held]);
   const visibleLines = useMemo(
-    () => projectTranscriptLines(visibleTx.lines, outputMode),
-    [visibleTx.lines, outputMode],
+    () => projectTranscriptLines(held.lines, outputMode, showAgentMessages),
+    [held, outputMode, showAgentMessages],
   );
   const visiblePending = useMemo(
-    () => projectPendingTranscriptLines(visibleTx.pending, outputMode),
-    [visibleTx.pending, outputMode],
+    () => projectPendingTranscriptLines(visibleTx.pending, showAgentMessages),
+    [visibleTx.pending, showAgentMessages],
   );
   useLayoutEffect(() => {
     const next = Math.max(0, Math.min(transcriptCursorRef.current, visibleLines.length - 1));
@@ -3707,6 +3733,9 @@ export function App({
     animations: { step: () => update({ animations: !settingsRef.current.animations }) },
     workingRuleAnimation: { step: stepWorkingRuleAnimation },
     outputMode: { step: stepOutputMode },
+    showAgentMessages: { step: () => update({
+      showAgentMessages: settingsRef.current.showAgentMessages === false,
+    }) },
     webSearch: { step: () => update({ webSearch: !settingsRef.current.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
@@ -3759,6 +3788,7 @@ export function App({
     animations: `‹ ${settings.animations ? "on" : "off"} ›`,
     workingRuleAnimation: `‹ ${WORKING_RULE_ANIMATION_LABELS[settings.workingRuleAnimation]} ›${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
     outputMode: `‹ ${OUTPUT_MODE_LABELS[settings.outputMode ?? "normal"]} ›`,
+    showAgentMessages: `‹ ${settings.showAgentMessages === false ? "off" : "on"} ›`,
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,

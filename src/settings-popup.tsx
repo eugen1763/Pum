@@ -11,6 +11,7 @@ export type SettingRowId =
   | "animations"
   | "workingRuleAnimation"
   | "outputMode"
+  | "showAgentMessages"
   | "webSearch"
   | "writingStyle"
   | "explanationStrength"
@@ -38,6 +39,7 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "animations", label: "Animations", category: "Appearance", keywords: "motion global truecolor", description: "Enable interface motion. PUM disables motion when true color is unavailable." },
   { id: "workingRuleAnimation", label: "Working animation", category: "Appearance", keywords: "rules input header coordinated sweep comet pair electric spark constellation random energy transfer off motion", description: "Choose how the header and input rules animate while an agent works." },
   { id: "outputMode", label: "Transcript detail", category: "Appearance", keywords: "transcript tools quiet normal verbose raw summary", description: "Choose grouped Quiet output, live Normal output, or raw Verbose tool results." },
+  { id: "showAgentMessages", label: "Agent messages", category: "Appearance", keywords: "inter agent subagent message conversation transcript hide show delegation", description: "Show messages agents send each other in the transcript. Independent of transcript detail." },
   { id: "providers", label: "Providers", category: "Agent", keywords: "login oauth api key custom endpoint", description: "Open provider login or add an OpenAI-compatible custom endpoint." },
   { id: "model", label: "Model", category: "Agent", keywords: "provider llm active search", description: "Select the model used by the main agent. Search matches provider and model names." },
   { id: "thinkingLevel", label: "Thinking level", category: "Agent", keywords: "reasoning effort clamp capability", description: "Set reasoning effort. Pi clamps the level to the selected model capability." },

@@ -4,7 +4,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { rejectedToolDetails } from "./check-mode";
 import { replayEntries } from "./replay";
-import { ToolLine, toolStateGlyph } from "./transcript";
+import { ToolLine, TOOL_DETAIL_INDENT, toolStateGlyph } from "./transcript";
 import { loadTheme } from "./theme";
 import { bashOutput, bashOutputWindow, bashResultDisplay, type ToolCall } from "./tool-line";
 
@@ -279,11 +279,13 @@ describe("tool line state", () => {
     expect(frameLines.some((line) => line.includes("new five"))).toBe(true);
     expect(frameLines.some((line) => line.includes("a newest output"))).toBe(true);
 
+    // Every tool-related row shares one indent, whatever the tool is called.
     const commandColumn = frameLines.find((line) => line.includes("bash("))!.search(/\S/);
     const outputRows = frameLines.filter((line) =>
       line.includes("more lines") || line.includes("new three") || line.includes("that also wraps")
     );
-    expect(outputRows.every((line) => line.search(/\S/) === commandColumn + "bash(".length)).toBe(true);
+    expect(outputRows.every((line) => line.search(/\S/) === commandColumn + TOOL_DETAIL_INDENT))
+      .toBe(true);
 
     const outputSpans = setup.captureSpans().lines.flatMap((line) => line.spans)
       .filter((span) => span.text.includes("more lines") || span.text.includes("new three"));
@@ -313,88 +315,31 @@ describe("tool line state", () => {
     expect(setup.captureCharFrame()).toContain("live command output");
   });
 
-  test("delays running Bash output until half a second", async () => {
-    const setup = await createTestRenderer({ width: 40, height: 8 });
-    destroy = () => setup.renderer.destroy();
-    const theme = loadTheme("tokyonight");
-
-    createRoot(setup.renderer).render(
-      <ToolLine
-        theme={theme}
-        call={{
-          id: "delayed-bash",
-          name: "bash",
-          args: ["slow"],
-          state: "running",
-          output: "delayed output",
-          startedAt: Date.now(),
-        }}
-      />,
-    );
-    await settle(setup);
-
-    expect(setup.captureCharFrame()).not.toContain("delayed output");
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    await setup.renderOnce();
-    await setup.flush();
-    expect(setup.captureCharFrame()).toContain("delayed output");
-  });
-
-  test("hides Bash output after settlement", async () => {
-    const setup = await createTestRenderer({ width: 40, height: 8 });
-    destroy = () => setup.renderer.destroy();
-    const theme = loadTheme("tokyonight");
-
-    createRoot(setup.renderer).render(
-      <ToolLine
-        theme={theme}
-        call={{
-          id: "settled-bash",
-          name: "bash",
-          args: ["done"],
-          state: "ok",
-          output: "last output that is deliberately much wider than the available terminal row and must not wrap",
-        }}
-      />,
-    );
-    await settle(setup);
-
-    expect(setup.captureCharFrame()).not.toContain("last output");
-  });
-
-  test("keeps visible Bash output for at least two seconds after settlement", async () => {
+  test("renders whatever live output it is handed, settled or not", async () => {
+    // Whether the period is open is decided once, in the dwell layer, so this
+    // row has no timing of its own to get wrong on a remount.
     const setup = await createTestRenderer({ width: 40, height: 8 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
     const root = createRoot(setup.renderer);
-    const startedAt = Date.now() - 500;
-    const output = "brief command output";
 
     root.render(
       <ToolLine
         theme={theme}
-        call={{ id: "brief-bash", name: "bash", args: ["brief"], state: "running", output, startedAt }}
+        call={{ id: "settled-bash", name: "bash", args: ["done"], state: "ok", output: "last output" }}
       />,
     );
     await settle(setup);
-    expect(setup.captureCharFrame()).toContain(output);
+    expect(setup.captureCharFrame()).toContain("last output");
 
     root.render(
       <ToolLine
         theme={theme}
-        call={{ id: "brief-bash", name: "bash", args: ["brief"], state: "ok", output, startedAt }}
+        call={{ id: "settled-bash", name: "bash", args: ["done"], state: "ok" }}
       />,
     );
     await settle(setup);
-    await new Promise((resolve) => setTimeout(resolve, 1_850));
-    await setup.renderOnce();
-    await setup.flush();
-    expect(setup.captureCharFrame()).toContain(output);
-
-    await new Promise((resolve) => setTimeout(resolve, 180));
-    await setup.renderOnce();
-    await setup.flush();
-    expect(setup.captureCharFrame()).not.toContain(output);
+    expect(setup.captureCharFrame()).not.toContain("last output");
   });
 
   test("shows a failed Bash exit code after a dot separator", async () => {
@@ -410,16 +355,13 @@ describe("tool line state", () => {
           name: "bash",
           args: ["failing command"],
           state: "error",
-          output: "last failure output",
           exitCode: 7,
         }}
       />,
     );
     await settle(setup);
 
-    const frame = setup.captureCharFrame();
-    expect(frame).toContain("bash(failing command) · exit 7");
-    expect(frame).not.toContain("last failure output");
+    expect(setup.captureCharFrame()).toContain("bash(failing command) · exit 7");
   });
 
   test("aligns wrapped read ranges under the path argument", async () => {

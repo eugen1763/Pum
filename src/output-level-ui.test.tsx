@@ -77,7 +77,7 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
 async function renderMode(
   mode: OutputMode,
   copyTranscriptText?: any,
-  options: { entries?: unknown[]; height?: number } = {},
+  options: { entries?: unknown[]; height?: number; showAgentMessages?: boolean } = {},
 ) {
   const setup = await createTestRenderer({
     width: 100,
@@ -93,7 +93,14 @@ async function renderMode(
       onNewSession={async () => session}
       loadSessions={async () => []}
       onSwitchSession={async () => session}
-      settings={normalizeSettings({ animations: false, workingRuleAnimation: "off", outputMode: mode })}
+      settings={normalizeSettings({
+        animations: false,
+        workingRuleAnimation: "off",
+        outputMode: mode,
+        ...(options.showAgentMessages === undefined
+          ? {}
+          : { showAgentMessages: options.showAgentMessages }),
+      })}
       searchProviders={[]}
       subagentManager={{
         getAgents: () => [],
@@ -118,11 +125,22 @@ async function renderMode(
 }
 
 describe("output-level transcript UI", () => {
-  test("Quiet groups routine tools and hides agent messages", async () => {
+  test("Quiet groups routine tools and keeps agent messages", async () => {
+    // What one agent said to another is a separate question from tool detail,
+    // so the mode no longer decides it.
     const setup = await renderMode("quiet");
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Read 1 file.");
-    expect(frame).not.toContain("worker → main");
+    expect(frame).toContain("worker → main");
+  });
+
+  test("the agent-message setting hides them in every mode", async () => {
+    for (const mode of ["quiet", "normal", "verbose"] as const) {
+      const setup = await renderMode(mode, undefined, { showAgentMessages: false });
+      expect(setup.captureCharFrame()).not.toContain("worker → main");
+      destroy?.();
+      destroy = undefined;
+    }
   });
 
   test("Normal keeps grouped activity and agent messages", async () => {

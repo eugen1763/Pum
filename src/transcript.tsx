@@ -185,14 +185,20 @@ const lineGroup = (line: GapLine): LineGroup => {
   return line.kind === "text" && line.role === "thinking" ? "thinking" : "other";
 };
 
-/** Exactly one gap around tool/thinking groups, but none inside either group. */
+/**
+ * One gap above every tool row, and one around thinking groups.
+ *
+ * A run of calls reads as separate steps rather than a wall, so each one gets
+ * air above it: a tool row, a grouped activity row, and the goal review that
+ * stands between two turns all carry their own blank line.
+ */
 export function needsTranscriptGap(prev: GapLine | undefined, line: GapLine): boolean {
   if (!prev) return false;
   const prevGroup = lineGroup(prev);
   const group = lineGroup(line);
 
-  // One grouped activity row stands alone, with a blank line on either side.
-  if (prevGroup === "summary" || group === "summary") return true;
+  if (group === "summary" || group === "tool" || group === "review") return true;
+  if (prevGroup === "summary" || prevGroup === "tool" || prevGroup === "review") return true;
   if (prevGroup !== group && (prevGroup !== "other" || group !== "other")) return true;
   if (group !== "other") return false;
 
@@ -297,6 +303,34 @@ function Row({
         {children}
       </box>
     </box>
+  );
+}
+
+/** Columns every tool-related row is indented past its tool row. */
+export const TOOL_DETAIL_INDENT = 2;
+
+/**
+ * Anything a tool row says on a following row: output, a diff, a rejection
+ * reason, an expanded detail. One wrapper rather than a constant each renderer
+ * remembers to apply, so a row type added later cannot forget the indent.
+ */
+function DetailRow({
+  theme,
+  color,
+  children,
+}: {
+  theme: Theme;
+  /** Gutter colour. The rows themselves colour their own text. */
+  color?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Row glyph={GUTTER} glyphColor={color ?? theme.dim}>
+      <box style={{ width: TOOL_DETAIL_INDENT, flexShrink: 0 }} />
+      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+        {children}
+      </box>
+    </Row>
   );
 }
 
@@ -560,9 +594,9 @@ export function toolStateGlyph(state: ToolCall["state"]): string {
 }
 
 const CHECK_MODE_HARD_BLOCK_PREFIX = "Check mode hard block:";
-const BASH_OUTPUT_DELAY_MS = 500;
-const BASH_OUTPUT_MIN_VISIBLE_MS = 2_000;
 export const VERBOSE_RAW_CHARACTER_LIMIT = 200_000;
+/** Lines of result a row shows when it is opened outside Verbose. */
+export const COMPACT_DETAIL_LINES = 20;
 
 function jsonText(value: unknown): string {
   if (value === undefined) return "undefined";
@@ -599,81 +633,104 @@ function RawToolDetails({ theme, call }: { theme: Theme; call: ToolCall }) {
   const clipped = raw.length > VERBOSE_RAW_CHARACTER_LIMIT;
   const content = clipped ? raw.slice(0, VERBOSE_RAW_CHARACTER_LIMIT) : raw;
   return (
-    <Row glyph={GUTTER} glyphColor={theme.dim}>
-      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+    <DetailRow theme={theme}>
+      <text
+        content={content}
+        fg={theme.dim}
+        selectable
+        wrapMode="word"
+        style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+      />
+      {clipped ? <text
+        content={`… raw result capped at ${VERBOSE_RAW_CHARACTER_LIMIT.toLocaleString()} characters; press c to copy the complete data`}
+        fg={theme.dim}
+        selectable
+        wrapMode="word"
+        style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+      /> : null}
+    </DetailRow>
+  );
+}
+
+/**
+ * The text of a tool result, as a person reads it.
+ *
+ * A string result is its own text. Anything structured shows the fields that
+ * carry the output rather than the envelope around them, because the envelope
+ * is what makes a raw dump unreadable.
+ */
+export function resultText(result: unknown): string {
+  if (result === undefined || result === null) return "";
+  if (typeof result === "string") return result;
+  if (typeof result !== "object") return String(result);
+  if (Array.isArray(result)) {
+    return result.map((item) => resultText(item)).filter(Boolean).join("\n");
+  }
+  const record = result as Record<string, unknown>;
+  // A pi tool result is content blocks under an envelope. The blocks are the
+  // output; the envelope is the part that makes a raw dump unreadable.
+  if (Array.isArray(record.content)) {
+    const blocks = resultText(record.content);
+    if (blocks) return blocks;
+  }
+  for (const key of ["output", "text", "stdout", "message", "result", "content"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return jsonText(result);
+}
+
+/** The tail of a result, capped, with a count of what the cap hid. */
+export function compactResultWindow(
+  result: unknown,
+  limit = COMPACT_DETAIL_LINES,
+): { lines: string[]; hidden: number } {
+  const text = resultText(result).replace(/\s+$/, "");
+  if (!text) return { lines: [], hidden: 0 };
+  const lines = text.split("\n");
+  if (lines.length <= limit) return { lines, hidden: 0 };
+  return { lines: lines.slice(lines.length - limit), hidden: lines.length - limit };
+}
+
+/**
+ * What opening a row shows outside Verbose: the result, capped, and nothing
+ * else. No JSON envelope and no echo of the input, which the row above already
+ * spells out — a read row carries its own path, offset and limit. Verbose stays
+ * the raw view, and copying a row still copies everything retained.
+ */
+function CompactToolDetails({ theme, call }: { theme: Theme; call: ToolCall }) {
+  const window = compactResultWindow(call.result);
+  if (window.lines.length === 0) {
+    return (
+      <DetailRow theme={theme}>
         <text
-          content={content}
+          content="no result was retained"
           fg={theme.dim}
           selectable
           wrapMode="word"
           style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
         />
-        {clipped ? <text
-          content={`… raw result capped at ${VERBOSE_RAW_CHARACTER_LIMIT.toLocaleString()} characters; press c to copy the complete data`}
-          fg={theme.dim}
+      </DetailRow>
+    );
+  }
+  const color = call.isError ? theme.error : theme.bashOutput;
+  return (
+    <DetailRow theme={theme} color={color}>
+      <OmittedLines theme={theme} count={window.hidden} />
+      {window.lines.map((line, index) => line ? (
+        <text
+          key={`${index}:${line}`}
+          content={line}
+          fg={color}
           selectable
           wrapMode="word"
           style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
-        /> : null}
-      </box>
-    </Row>
+        />
+      ) : (
+        <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
+      ))}
+    </DetailRow>
   );
-}
-
-function useBashOutputVisible(call: ToolCall): boolean {
-  const initiallyVisible = call.name === "bash"
-    && call.state === "running"
-    && Boolean(call.output)
-    && (call.startedAt === undefined || Date.now() - call.startedAt >= BASH_OUTPUT_DELAY_MS);
-  const [visible, setVisible] = useState(initiallyVisible);
-  const visibleSince = useRef<number | undefined>(initiallyVisible ? Date.now() : undefined);
-
-  useEffect(() => {
-    if (call.name !== "bash" || !call.output) {
-      visibleSince.current = undefined;
-      setVisible(false);
-      return;
-    }
-
-    const show = () => {
-      visibleSince.current ??= Date.now();
-      setVisible(true);
-    };
-
-    if (call.state === "running") {
-      if (call.startedAt === undefined) {
-        show();
-        return;
-      }
-      const delay = BASH_OUTPUT_DELAY_MS - (Date.now() - call.startedAt);
-      if (delay <= 0) {
-        show();
-        return;
-      }
-      visibleSince.current = undefined;
-      setVisible(false);
-      const timer = setTimeout(show, delay);
-      return () => clearTimeout(timer);
-    }
-
-    if (visibleSince.current === undefined) {
-      if (call.startedAt === undefined || Date.now() - call.startedAt < BASH_OUTPUT_DELAY_MS) {
-        setVisible(false);
-        return;
-      }
-      show();
-    }
-
-    const remaining = BASH_OUTPUT_MIN_VISIBLE_MS - (Date.now() - visibleSince.current!);
-    if (remaining <= 0) {
-      setVisible(false);
-      return;
-    }
-    const timer = setTimeout(() => setVisible(false), remaining);
-    return () => clearTimeout(timer);
-  }, [call.id, call.name, call.output, call.startedAt, call.state]);
-
-  return visible;
 }
 
 function rejectedDetail(theme: Theme, detail: string): StyledText {
@@ -712,7 +769,6 @@ export function ToolLine({
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
   const rejected = call.state === "rejected";
-  const bashOutputVisible = useBashOutputVisible(call);
   const toolColor = failed ? theme.error : rejected ? theme.rejection : theme.tool;
   const argColor = failed ? theme.error : rejected ? theme.rejection : theme.toolArg;
   const detailColor = failed ? theme.error : rejected ? theme.rejection : theme.dim;
@@ -737,7 +793,9 @@ export function ToolLine({
     background: theme.bg,
     active: workingCaret,
   });
-  const output = call.name === "bash" && call.output && bashOutputVisible
+  // Whether live output may be shown at all is decided once, in the dwell
+  // layer, so a remount cannot reopen a period that already closed.
+  const output = call.name === "bash" && call.output
     && outputMode !== "quiet"
     && (call.state === "running" || outputMode !== "verbose")
     ? bashOutputWindow(call.output)
@@ -793,42 +851,39 @@ export function ToolLine({
         </box>
       </Row>
       {rejected && call.detail ? (
-        <Row glyph={GUTTER} glyphColor={theme.rejection}>
+        <DetailRow theme={theme} color={theme.rejection}>
           <text
             content={rejectedDetail(theme, call.detail)}
             selectable
             wrapMode="word"
             style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
           />
-        </Row>
+        </DetailRow>
       ) : null}
       {output && (output.hidden > 0 || output.lines.length > 0) ? (
-        <Row glyph={GUTTER} glyphColor={theme.bashOutput}>
-          <box style={{ width: Bun.stringWidth(`${call.name}(`), flexShrink: 0 }} />
-          <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-            {output.hidden > 0 ? (
-              <text
-                content={`... ${output.hidden} more line${output.hidden === 1 ? "" : "s"}`}
-                fg={theme.bashOutput}
-                selectable
-                wrapMode="word"
-                style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
-              />
-            ) : null}
-            {output.lines.map((line, index) => line ? (
-              <text
-                key={`${index}:${line}`}
-                content={line}
-                fg={theme.bashOutput}
-                selectable
-                wrapMode="word"
-                style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
-              />
-            ) : (
-              <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
-            ))}
-          </box>
-        </Row>
+        <DetailRow theme={theme} color={theme.bashOutput}>
+          {output.hidden > 0 ? (
+            <text
+              content={`... ${output.hidden} more line${output.hidden === 1 ? "" : "s"}`}
+              fg={theme.bashOutput}
+              selectable
+              wrapMode="word"
+              style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+            />
+          ) : null}
+          {output.lines.map((line, index) => line ? (
+            <text
+              key={`${index}:${line}`}
+              content={line}
+              fg={theme.bashOutput}
+              selectable
+              wrapMode="word"
+              style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+            />
+          ) : (
+            <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
+          ))}
+        </DetailRow>
       ) : null}
       {inlineDiff ? (
         <DetailedToolPreview
@@ -841,7 +896,10 @@ export function ToolLine({
       {detailedPreview ? (
         <DetailedToolPreview theme={theme} syntaxStyle={syntaxStyle} preview={detailedPreview} />
       ) : null}
-      {(explicitDetails || automaticVerboseDetails) && call.state !== "running"
+      {explicitDetails && call.state !== "running"
+        ? <CompactToolDetails theme={theme} call={call} />
+        : null}
+      {automaticVerboseDetails && call.state !== "running"
         ? <RawToolDetails theme={theme} call={call} />
         : null}
     </box>
@@ -866,8 +924,10 @@ export function ActivitySummaryLine({
 }) {
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
+      {/* No arrow: every activity row expands, so the glyph marked nothing and
+          only added noise down the left edge. The gutter stays clickable. */}
       <Row
-        glyph={expanded ? "▾ " : "▸ "}
+        glyph={GUTTER}
         glyphColor={theme.dim}
         onGlyphClick={onDisclosureClick ? () => onDisclosureClick() : undefined}
       >
@@ -879,16 +939,25 @@ export function ActivitySummaryLine({
           style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
         />
       </Row>
-      {expanded ? summary.calls.map((call) => (
-        <ToolLine
-          key={call.id}
-          theme={theme}
-          syntaxStyle={syntaxStyle}
-          call={call}
-          outputMode={outputMode}
-          expanded
-        />
-      )) : null}
+      {/* The calls belong to the row above, so they sit under the same indent
+          every other tool-related row uses. */}
+      {expanded ? (
+        <box style={{ flexDirection: "row", width: "100%" }}>
+          <box style={{ width: TOOL_DETAIL_INDENT, flexShrink: 0 }} />
+          <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+            {summary.calls.map((call) => (
+              <ToolLine
+                key={call.id}
+                theme={theme}
+                syntaxStyle={syntaxStyle}
+                call={call}
+                outputMode={outputMode}
+                expanded
+              />
+            ))}
+          </box>
+        </box>
+      ) : null}
     </box>
   );
 }
@@ -976,9 +1045,8 @@ export function DetailedToolPreview({
       ? { lines, hidden: 0 }
       : clipDiffPreview(lines, changedLineLimit);
     return (
-      <Row glyph={GUTTER} glyphColor={theme.dim}>
-        <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-          {window.lines.map((line: DiffPreviewLine, index: number) => {
+      <DetailRow theme={theme}>
+        {window.lines.map((line: DiffPreviewLine, index: number) => {
             const color = previewColor(theme, line.kind);
             if (line.kind === "header") {
               return line.text ? (
@@ -1018,30 +1086,27 @@ export function DetailedToolPreview({
                 />
               </box>
             );
-          })}
-          <OmittedLines theme={theme} count={window.hidden} />
-        </box>
-      </Row>
+        })}
+        <OmittedLines theme={theme} count={window.hidden} />
+      </DetailRow>
     );
   }
 
   return (
-    <Row glyph={GUTTER} glyphColor={theme.dim}>
-      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-        {preview.window.lines.map((line, index) => line ? (
-          <text
-            key={`${index}:${line}`}
-            content={line}
-            fg={theme.bashOutput}
-            selectable
-            wrapMode="word"
-            style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
-          />
-        ) : (
-          <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
-        ))}
-        <OmittedLines theme={theme} count={preview.window.hidden} />
-      </box>
-    </Row>
+    <DetailRow theme={theme}>
+      {preview.window.lines.map((line, index) => line ? (
+        <text
+          key={`${index}:${line}`}
+          content={line}
+          fg={theme.bashOutput}
+          selectable
+          wrapMode="word"
+          style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+        />
+      ) : (
+        <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />
+      ))}
+      <OmittedLines theme={theme} count={preview.window.hidden} />
+    </DetailRow>
   );
 }

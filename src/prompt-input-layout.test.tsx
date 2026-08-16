@@ -116,8 +116,11 @@ describe("prompt input layout", () => {
     await settle(setup);
     const lines = setup.captureCharFrame().split("\n");
 
+    // The status row itself is responsive and drops fields on a narrow
+    // terminal, so assert what this test is about: one measured row between
+    // the two rules. Naming a field would tie the test to the checkout name.
     expect(lines[0]).toBe("─".repeat(70));
-    expect(lines[1]).toContain("pum");
+    expect(lines[1]).toContain("mock-model");
     expect(lines[2]).toBe("─".repeat(70));
   });
 
