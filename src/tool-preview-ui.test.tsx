@@ -200,4 +200,72 @@ describe("detailed tool previews", () => {
     expect(added?.spans.some((span) => span.bg.equals(parseColor(theme.diffAddedBg)))).toBe(true);
     expect(removed?.spans.some((span) => span.bg.equals(parseColor(theme.diffRemovedBg)))).toBe(true);
   });
+
+  test("renders regular read details as labeled source instead of raw JSON", async () => {
+    const setup = await createTestRenderer({ width: 72, height: 18 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        syntaxStyle={buildSyntaxStyle(theme)}
+        expanded
+        outputMode="normal"
+        call={{
+          id: "regular-read",
+          name: "read",
+          arg: "src/value.ts · offset=2 · limit=8",
+          state: "ok",
+          input: { path: "src/value.ts", offset: 2, limit: 8 },
+          result: {
+            content: [{ type: "text", text: "const value = 2;\nexport { value };" }],
+            details: { lines: 2 },
+          },
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("input");
+    expect(frame).toContain("path  src/value.ts");
+    expect(frame).toContain("result");
+    expect(frame).toContain("const value = 2;");
+    expect(frame).not.toContain('\"path\"');
+    expect(descendants(setup.renderer.root, CodeRenderable)).toHaveLength(1);
+  });
+
+  test("renders other regular tools as bounded labeled fields and output", async () => {
+    const setup = await createTestRenderer({ width: 72, height: 18 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        expanded
+        outputMode="normal"
+        call={{
+          id: "regular-worktree",
+          name: "worktree",
+          arg: "merge worker",
+          state: "ok",
+          input: { action: "merge", target: "worker" },
+          result: {
+            content: [{ type: "text", text: "Merged worker into main." }],
+            details: { commit: "abc123" },
+          },
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("action  merge");
+    expect(frame).toContain("target  worker");
+    expect(frame).toContain("Merged worker into main.");
+    expect(frame).toContain("details.commit  abc123");
+    expect(frame).not.toContain('\"action\"');
+  });
 });

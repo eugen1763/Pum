@@ -18,7 +18,17 @@ import type { Theme } from "./theme";
 import { bashOutputWindow, type ToolCall } from "./tool-line";
 import type { TranscriptOutputMode } from "./transcript-output";
 import type { MinimalToolSummaryLine } from "./output-minimal";
-import type { DiffPreviewLine, PreviewLanguage, ToolResultPreview } from "./tool-preview";
+import {
+  previewLanguage,
+  type DiffPreviewLine,
+  type PreviewLanguage,
+  type ToolResultPreview,
+} from "./tool-preview";
+import {
+  buildToolDetailModel,
+  type ToolDetailRow,
+  type ToolDetailTone,
+} from "./tool-detail-model";
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
@@ -453,6 +463,132 @@ function RawToolDetails({ theme, call }: { theme: Theme; call: ToolCall }) {
   );
 }
 
+function detailToneColor(theme: Theme, tone: ToolDetailTone): string {
+  if (tone === "error") return theme.error;
+  if (tone === "muted") return theme.dim;
+  return theme.tool;
+}
+
+function detailRowLabel(row: ToolDetailRow): string | undefined {
+  if (row.kind === "field") return row.key;
+  if (row.kind === "list") return row.key ? `${row.key}[${row.index}]` : `[${row.index}]`;
+  return undefined;
+}
+
+function StructuredToolDetails({
+  theme,
+  syntaxStyle,
+  call,
+}: {
+  theme: Theme;
+  syntaxStyle?: SyntaxStyle;
+  call: ToolCall;
+}) {
+  const model = buildToolDetailModel(
+    call.name,
+    call.input,
+    call.result,
+    call.state === "error" || call.state === "rejected" || call.isError === true,
+  );
+  const input = call.input && typeof call.input === "object" ? call.input as Record<string, unknown> : null;
+  const sourceLanguage = call.name === "read" && typeof input?.path === "string"
+    ? previewLanguage(input.path)
+    : undefined;
+
+  return (
+    <Row glyph={GUTTER} glyphColor={theme.dim}>
+      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+        {model.sections.map((section, sectionIndex) => {
+          const color = detailToneColor(theme, section.tone);
+          return (
+            <box
+              key={`${section.title}:${sectionIndex}`}
+              style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}
+            >
+              <text
+                content={new StyledText([{
+                  ...fg(color)(section.title),
+                  attributes: TextAttributes.BOLD,
+                }])}
+                selectable
+                style={{ width: "100%", flexShrink: 0 }}
+              />
+              {section.rows.map((row, rowIndex) => {
+                const label = detailRowLabel(row);
+                if (row.kind === "text") {
+                  const source = row.lines.join("\n");
+                  const useSource = section.title !== "input" && sourceLanguage && syntaxStyle;
+                  return (
+                    <box
+                      key={`${section.title}:text:${rowIndex}`}
+                      style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}
+                    >
+                      {row.key ? <text content={`├ ${row.key}`} fg={theme.toolArg} selectable /> : null}
+                      {useSource ? (
+                        <box style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}>
+                          <text content="│ " fg={theme.dim} />
+                          <code
+                            content={source}
+                            filetype={sourceLanguage}
+                            syntaxStyle={syntaxStyle}
+                            selectable
+                            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
+                          />
+                        </box>
+                      ) : row.lines.map((line, lineIndex) => (
+                        <box
+                          key={`${section.title}:text:${rowIndex}:${lineIndex}`}
+                          style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}
+                        >
+                          <text content="│ " fg={theme.dim} />
+                          <text
+                            content={line}
+                            fg={call.name === "bash" ? theme.bashOutput : color}
+                            selectable
+                            wrapMode="word"
+                            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
+                          />
+                        </box>
+                      ))}
+                      {row.hiddenLines > 0 ? (
+                        <text content={`└ … ${row.hiddenLines} more lines`} fg={theme.dim} selectable />
+                      ) : null}
+                    </box>
+                  );
+                }
+
+                const value = row.kind === "field" || row.kind === "list" ? row.value : row.value;
+                return (
+                  <box
+                    key={`${section.title}:row:${rowIndex}`}
+                    style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}
+                  >
+                    <text content="├ " fg={theme.dim} />
+                    {label ? <text content={`${label}  `} fg={theme.toolArg} selectable /> : null}
+                    <text
+                      content={value}
+                      fg={color}
+                      selectable
+                      wrapMode="word"
+                      style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
+                    />
+                  </box>
+                );
+              })}
+              {section.hiddenRows > 0 ? (
+                <text content={`└ … ${section.hiddenRows} more rows`} fg={theme.dim} selectable />
+              ) : null}
+            </box>
+          );
+        })}
+        {model.hiddenRows > 0 ? (
+          <text content={`… ${model.hiddenRows} rows hidden`} fg={theme.warn} selectable />
+        ) : null}
+      </box>
+    </Row>
+  );
+}
+
 function useBashOutputVisible(call: ToolCall): boolean {
   const initiallyVisible = call.name === "bash"
     && call.state === "running"
@@ -654,6 +790,9 @@ export function ToolLine({
       ) : null}
       {detailedPreview ? (
         <DetailedToolPreview theme={theme} syntaxStyle={syntaxStyle} preview={detailedPreview} />
+      ) : null}
+      {explicitDetails && call.state !== "running" && !detailedPreview ? (
+        <StructuredToolDetails theme={theme} syntaxStyle={syntaxStyle} call={call} />
       ) : null}
       {automaticVerboseDetails && call.state !== "running" && !detailedPreview
         ? <RawToolDetails theme={theme} call={call} />
