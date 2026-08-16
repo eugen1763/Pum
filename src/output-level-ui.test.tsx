@@ -44,7 +44,7 @@ const entries = [
   },
 ];
 
-function fakeSession() {
+function fakeSession(source: unknown[] = entries) {
   return {
     agent: {
       state: {
@@ -52,7 +52,7 @@ function fakeSession() {
         thinkingLevel: "off",
       },
     },
-    sessionManager: { buildContextEntries: () => entries, getEntries: () => entries },
+    sessionManager: { buildContextEntries: () => source, getEntries: () => source },
     sessionFile: undefined,
     sessionId: "output-level-session",
     subscribe: () => () => {},
@@ -74,10 +74,18 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.flush();
 }
 
-async function renderMode(mode: OutputMode, copyTranscriptText?: any) {
-  const setup = await createTestRenderer({ width: 100, height: 50, kittyKeyboard: true });
+async function renderMode(
+  mode: OutputMode,
+  copyTranscriptText?: any,
+  options: { entries?: unknown[]; height?: number } = {},
+) {
+  const setup = await createTestRenderer({
+    width: 100,
+    height: options.height ?? 50,
+    kittyKeyboard: true,
+  });
   destroy = () => setup.renderer.destroy();
-  const session = fakeSession();
+  const session = fakeSession(options.entries);
   createRoot(setup.renderer).render(
     <App
       session={session}
@@ -113,21 +121,21 @@ describe("output-level transcript UI", () => {
   test("Quiet groups routine tools and hides agent messages", async () => {
     const setup = await renderMode("quiet");
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("activity · Read 1 file.");
+    expect(frame).toContain("Read 1 file.");
     expect(frame).not.toContain("worker → main");
   });
 
   test("Normal keeps grouped activity and agent messages", async () => {
     const setup = await renderMode("normal");
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("activity · Read 1 file.");
+    expect(frame).toContain("Read 1 file.");
     expect(frame).toContain("worker → main");
   });
 
   test("Verbose shows individual raw tool results and agent messages", async () => {
     const setup = await renderMode("verbose");
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("read · src/a.ts");
+    expect(frame).toContain("read(src/a.ts)");
     expect(frame).toContain("worker → main");
     expect(frame).toContain('"path": "src/a.ts"');
   });
@@ -146,7 +154,7 @@ describe("output-level transcript UI", () => {
     setup.mockInput.pressArrow("up");
     setup.mockInput.pressEnter();
     await settle(setup);
-    expect(setup.captureCharFrame()).toContain("read · src/a.ts");
+    expect(setup.captureCharFrame()).toContain("read(src/a.ts)");
 
     setup.mockInput.pressKey("c");
     await settle(setup);
@@ -171,11 +179,11 @@ describe("output-level transcript UI", () => {
 
     await setup.mockMouse.drag(row!.screenX + 3, row!.screenY, row!.screenX + 8, row!.screenY);
     await settle(setup);
-    expect(setup.captureCharFrame()).not.toContain("read · src/a.ts");
+    expect(setup.captureCharFrame()).not.toContain("read(src/a.ts)");
 
     await setup.mockMouse.click(row!.screenX, row!.screenY);
     await settle(setup);
-    expect(setup.captureCharFrame()).toContain("read · src/a.ts");
+    expect(setup.captureCharFrame()).toContain("read(src/a.ts)");
     expect(setup.captureCharFrame()).toContain("transcript  j/k move");
 
     setup.mockInput.pressKey("c");

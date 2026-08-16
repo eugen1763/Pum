@@ -9,7 +9,7 @@ export type MinimalToolSummaryLine = {
 
 export type MinimalTranscriptLine = Line | MinimalToolSummaryLine;
 
-/** Mutations and commands stay visible in Quiet and Normal transcript modes. */
+/** Mutations and commands stay visible in Normal. Quiet groups them too. */
 export const IMPORTANT_TOOL_NAMES = new Set(["bash", "write", "edit", "apply_patch", "apply_path"]);
 
 export function isRoutineSuccessfulTool(call: ToolCall): boolean {
@@ -87,11 +87,16 @@ export function minimalToolPhrase(name: string, count: number): string {
   return count === 1 ? `Completed 1 ${label} call` : `Completed ${count} ${label} calls`;
 }
 
+/** Only the first phrase opens the sentence, so the rest lose their capital. */
+const continued = (phrase: string) => phrase.charAt(0).toLowerCase() + phrase.slice(1);
+
 function joinPhrases(phrases: readonly string[]): string {
   if (phrases.length === 0) return "";
-  if (phrases.length === 1) return `${phrases[0]}.`;
-  if (phrases.length === 2) return `${phrases[0]} and ${phrases[1]}.`;
-  return `${phrases.slice(0, -1).join(", ")}, and ${phrases.at(-1)}.`;
+  const [first, ...rest] = phrases as [string, ...string[]];
+  if (rest.length === 0) return `${first}.`;
+  const tail = rest.map(continued);
+  if (tail.length === 1) return `${first} and ${tail[0]}.`;
+  return `${[first, ...tail.slice(0, -1)].join(", ")}, and ${tail.at(-1)}.`;
 }
 
 /**
@@ -115,14 +120,21 @@ export function summarizeSuccessfulToolCalls(calls: readonly ToolCall[]): Minima
 }
 
 /**
- * Convert transcript lines for minimal output mode.
+ * Convert transcript lines for a grouped output mode.
  *
  * Every non-tool line and every non-successful tool call ends a success run.
  * Running, failed, and rejected calls remain unchanged with their details.
+ * `groupEverySuccess` folds commands and mutations in too, which is what makes
+ * Quiet minimal; Normal leaves them as their own rows.
  */
-export function minimalTranscriptLines(lines: readonly Line[]): MinimalTranscriptLine[] {
+export function minimalTranscriptLines(
+  lines: readonly Line[],
+  groupEverySuccess = false,
+): MinimalTranscriptLine[] {
   const result: MinimalTranscriptLine[] = [];
   let successful: ToolCall[] = [];
+  const groups = (call: ToolCall) =>
+    groupEverySuccess ? call.state === "ok" : isRoutineSuccessfulTool(call);
 
   const flush = () => {
     if (successful.length === 0) return;
@@ -131,7 +143,7 @@ export function minimalTranscriptLines(lines: readonly Line[]): MinimalTranscrip
   };
 
   for (const line of lines) {
-    if (line.kind === "tool" && isRoutineSuccessfulTool(line.call)) {
+    if (line.kind === "tool" && groups(line.call)) {
       successful.push(line.call);
       continue;
     }

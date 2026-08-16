@@ -290,11 +290,11 @@ export function StatusBar(props: StatusProps) {
               {part === "model" ? <text content={layout.modelText!} fg={theme.fg} wrapMode="none" /> : null}
               {part === "thinking" ? <text content={layout.thinkingText!} fg={theme.dim} wrapMode="none" /> : null}
               {part === "activeAgent" ? <text content={layout.activeAgentText!} fg={theme.dim} wrapMode="none" /> : null}
-              {part === "shells" ? <text content={`▣ ${props.runningShellCount ?? 0}`} fg={theme.warn} wrapMode="none" /> : null}
+              {part === "shells" ? <text content={`▣ ${props.runningShellCount ?? 0}`} fg={theme.accent} wrapMode="none" /> : null}
               {part === "agents" ? (
                 <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
                   {layout.showIdleAgents && idleAgentCount > 0
-                    ? <text content={`◇ ${idleAgentCount}`} fg={theme.success} />
+                    ? <text content={`◇ ${idleAgentCount}`} fg={theme.dim} />
                     : null}
                   {layout.showRunningAgents && runningAgentCount > 0 ? (
                     <>

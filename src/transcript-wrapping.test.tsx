@@ -63,7 +63,7 @@ describe("transcript wrapping", () => {
         />
         <ToolLine
           theme={theme}
-          call={{ id: "tool", name: "bash", arg: long, detail: "+100 −100", state: "ok" }}
+          call={{ id: "tool", name: "bash", args: [long], detail: "+100 −100", state: "ok" }}
         />
       </box>,
     );

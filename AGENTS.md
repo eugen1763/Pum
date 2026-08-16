@@ -25,6 +25,9 @@ bun run start    # open the TUI in the current directory
 | `src/animation.tsx` | One frame clock; the glow core; shimmer, spinner, caret |
 | `src/status-bar.tsx` | Top bar; always one measured row with responsive field priorities |
 | `src/transcript.tsx` | Row rendering per role |
+| `src/output-minimal.ts` | Grouping successful tool runs into one activity row |
+| `src/tool-preview.ts` | Diff, write, and Bash previews, and inline diff trimming |
+| `src/syntax-grammars.ts` | Registers the tree-sitter grammars vendored under `assets/` |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
 | `src/apply-patch.ts` | Codex patch parser, validation, atomic commit, and pi tool |
 | `src/questionnaire.ts` | Model tool, request queue, answer state, and main/child bridge |
@@ -378,6 +381,36 @@ These were chosen deliberately. Change them only on purpose.
   fallback for long tokens and reserves six right columns. The `❯` gutter
   follows the cursor's visible row.
 - **Animation is on by default** and turns itself off without true colour.
+- **A signal colour means one thing.** Red is errors and removed lines, green is
+  success and added lines, orange is blocked. Everything else decorates: a tool
+  row is `tool(first, second)` with the name, brackets and commas in `tool`
+  (the preset's dim) and the arguments in `toolArg` (its accent), so the only
+  signal on a settled row is the state marker at its right edge. Truncation
+  notices are `dim`; they report, they do not warn. Retarget the two tokens per
+  preset rather than swapping call sites, so `theme.json` keeps one knob each.
+- **The three output modes differ in what they group, not in what they keep.**
+  `projectTranscriptLines` is pure and reprojects the whole transcript without
+  rewriting a session entry. Quiet folds every successful call into one activity
+  row, commands and mutations included, and that row always has a blank line on
+  either side. Normal exempts bash and the mutating tools, and shows an editing
+  tool's diff inline without being asked, capped at
+  `INLINE_DIFF_CHANGED_LINES` changed lines. Verbose is the raw view: every
+  call listed, every row expanded, complete retained input and result, and no
+  rendered diff at all. Expanding any row anywhere shows that raw data.
+- **A written file is a diff of nothing but additions.** One shape for every
+  mutation, so a new file and an edited one read alike. `inlineDiffLines()`
+  drops the patch envelope — `*** Begin Patch`, `@@`, `--- a/file` — because
+  the row already names the file; only a patch touching several files keeps one
+  heading each.
+- **Revealing a row anchors its first line to the top of the viewport.** Use
+  `scrollBy`, never the `scrollTop` setter: only that path marks the scroll as
+  manual, and without it sticky-to-bottom pins the row straight back off the
+  top of the screen as the revealed content grows beneath it.
+- **Five extra tree-sitter grammars are vendored, not downloaded.** OpenTUI
+  ships JavaScript, TypeScript, Markdown and Zig; `assets/tree-sitter` adds
+  Python, JSON, Bash, Rust and Go so a diff highlights offline, in a sandbox,
+  and on the first run. `assets/tree-sitter/README.md` records where each file
+  came from and why Rust comes from a different build.
 - **Every animation paints through one glow core.** A cell's strength becomes a
   colour in `glowColor()`: shaped by `GLOW_SHAPE`, blended in linear light by
   `mixLight()`, and blooming past `GLOW_KNEE` towards white. Blend in linear

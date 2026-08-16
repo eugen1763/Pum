@@ -5,6 +5,7 @@ import {
   type MarkdownRenderable,
   type MouseEvent as OpenTuiMouseEvent,
   type SyntaxStyle,
+  type TextChunk,
 } from "@opentui/core";
 import type { MarkdownProps } from "@opentui/react";
 import { useEffect, useRef, useState } from "react";
@@ -19,16 +20,13 @@ import { bashOutputWindow, type ToolCall } from "./tool-line";
 import type { TranscriptOutputMode } from "./transcript-output";
 import type { MinimalToolSummaryLine } from "./output-minimal";
 import {
-  previewLanguage,
+  clipDiffPreview,
+  inlineDiffLines,
+  INLINE_DIFF_CHANGED_LINES,
   type DiffPreviewLine,
   type PreviewLanguage,
   type ToolResultPreview,
 } from "./tool-preview";
-import {
-  buildToolDetailModel,
-  type ToolDetailRow,
-  type ToolDetailTone,
-} from "./tool-detail-model";
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
@@ -112,19 +110,25 @@ export function settleTranscriptMessage<T extends PendingTranscriptState>(value:
   };
 }
 
-type LineGroup = "tool" | "thinking" | "other";
+type LineGroup = "tool" | "thinking" | "summary" | "other";
 
-const lineGroup = (line: Line): LineGroup => {
+/** Gaps are computed over displayed rows, so grouped activity counts as one. */
+export type GapLine = Line | MinimalToolSummaryLine;
+
+const lineGroup = (line: GapLine): LineGroup => {
+  if (line.kind === "tool-summary") return "summary";
   if (line.kind === "tool") return "tool";
   return line.kind === "text" && line.role === "thinking" ? "thinking" : "other";
 };
 
 /** Exactly one gap around tool/thinking groups, but none inside either group. */
-export function needsTranscriptGap(prev: Line | undefined, line: Line): boolean {
+export function needsTranscriptGap(prev: GapLine | undefined, line: GapLine): boolean {
   if (!prev) return false;
   const prevGroup = lineGroup(prev);
   const group = lineGroup(line);
 
+  // One grouped activity row stands alone, with a blank line on either side.
+  if (prevGroup === "summary" || group === "summary") return true;
   if (prevGroup !== group && (prevGroup !== "other" || group !== "other")) return true;
   if (group !== "other") return false;
 
@@ -134,6 +138,23 @@ export function needsTranscriptGap(prev: Line | undefined, line: Line): boolean 
   const isAnswer = line.kind === "text" && line.role === "assistant";
   const isAgentMessage = line.kind === "agent-message" || prev.kind === "agent-message";
   return isUser || prevIsUser || isAnswer || isAgentMessage;
+}
+
+/**
+ * Where to scroll so a revealed row starts at the top of the viewport.
+ *
+ * Scrolling a row merely "into view" parks one that just grew against the
+ * bottom edge, with the content it revealed still below the fold. A row is
+ * only ever opened to be read, so anchor its first line at the top and show
+ * as much as fits.
+ */
+export function topAnchorScrollTop(
+  rowOffset: number,
+  scrollHeight: number,
+  viewportHeight: number,
+): number {
+  const furthest = Math.max(0, scrollHeight - viewportHeight);
+  return Math.max(0, Math.min(rowOffset, furthest));
 }
 
 const GUTTER = "  ";
@@ -191,7 +212,9 @@ function Row({
       {/* A numeric width pins the gutter: a whitespace-only <text> measures
           inconsistently once the message column wraps, losing a column. */}
       <box style={{ width: 2, flexShrink: 0 }}>
-        {glyph.trim() ? <text
+        {/* A blank gutter still renders when it can be clicked, so a row with
+            no disclosure glyph keeps its mouse target. */}
+        {glyph.trim() || onGlyphClick ? <text
           content={glyph}
           fg={glyphColor}
           onMouseDown={onGlyphClick ? (event) => {
@@ -417,7 +440,7 @@ export function toolStateGlyph(state: ToolCall["state"]): string {
 const CHECK_MODE_HARD_BLOCK_PREFIX = "Check mode hard block:";
 const BASH_OUTPUT_DELAY_MS = 500;
 const BASH_OUTPUT_MIN_VISIBLE_MS = 2_000;
-export const VERBOSE_RAW_CHARACTER_LIMIT = 24_000;
+export const VERBOSE_RAW_CHARACTER_LIMIT = 200_000;
 
 function jsonText(value: unknown): string {
   if (value === undefined) return "undefined";
@@ -428,10 +451,15 @@ function jsonText(value: unknown): string {
   }
 }
 
-/** Stable raw text used by expansion and transcript-row clipboard copy. */
-export function rawToolText(call: ToolCall): string {
+/** `tool(first, second)`, the one spelling every renderer and copy path uses. */
+export function toolCallSignature(call: ToolCall): string {
+  return `${call.name}(${call.args.join(", ")})`;
+}
+
+/** The retained input and result, as text. The row above already names the call. */
+export function rawToolDetailText(call: ToolCall): string {
+  if (call.input === undefined && call.result === undefined) return "No retained input or result.";
   return [
-    `${call.name}${call.arg ? ` · ${call.arg}` : ""}`,
     "input:",
     jsonText(call.input),
     "result:",
@@ -439,8 +467,13 @@ export function rawToolText(call: ToolCall): string {
   ].join("\n");
 }
 
+/** Stable raw text used by transcript-row clipboard copy. */
+export function rawToolText(call: ToolCall): string {
+  return `${toolCallSignature(call)}\n${rawToolDetailText(call)}`;
+}
+
 function RawToolDetails({ theme, call }: { theme: Theme; call: ToolCall }) {
-  const raw = rawToolText(call);
+  const raw = rawToolDetailText(call);
   const clipped = raw.length > VERBOSE_RAW_CHARACTER_LIMIT;
   const content = clipped ? raw.slice(0, VERBOSE_RAW_CHARACTER_LIMIT) : raw;
   return (
@@ -455,137 +488,11 @@ function RawToolDetails({ theme, call }: { theme: Theme; call: ToolCall }) {
         />
         {clipped ? <text
           content={`… raw result capped at ${VERBOSE_RAW_CHARACTER_LIMIT.toLocaleString()} characters; press c to copy the complete data`}
-          fg={theme.warn}
+          fg={theme.dim}
           selectable
           wrapMode="word"
           style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
         /> : null}
-      </box>
-    </Row>
-  );
-}
-
-function detailToneColor(theme: Theme, tone: ToolDetailTone): string {
-  if (tone === "error") return theme.error;
-  if (tone === "muted") return theme.dim;
-  return theme.tool;
-}
-
-function detailRowLabel(row: ToolDetailRow): string | undefined {
-  if (row.kind === "field") return row.key;
-  if (row.kind === "list") return row.key ? `${row.key}[${row.index}]` : `[${row.index}]`;
-  return undefined;
-}
-
-function StructuredToolDetails({
-  theme,
-  syntaxStyle,
-  call,
-}: {
-  theme: Theme;
-  syntaxStyle?: SyntaxStyle;
-  call: ToolCall;
-}) {
-  const model = buildToolDetailModel(
-    call.name,
-    call.input,
-    call.result,
-    call.state === "error" || call.state === "rejected" || call.isError === true,
-  );
-  const input = call.input && typeof call.input === "object" ? call.input as Record<string, unknown> : null;
-  const sourceLanguage = call.name === "read" && typeof input?.path === "string"
-    ? previewLanguage(input.path)
-    : undefined;
-
-  return (
-    <Row glyph={GUTTER} glyphColor={theme.dim}>
-      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-        {model.sections.map((section, sectionIndex) => {
-          const color = detailToneColor(theme, section.tone);
-          return (
-            <box
-              key={`${section.title}:${sectionIndex}`}
-              style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}
-            >
-              <text
-                content={new StyledText([{
-                  ...fg(color)(section.title),
-                  attributes: TextAttributes.BOLD,
-                }])}
-                selectable
-                style={{ width: "100%", flexShrink: 0 }}
-              />
-              {section.rows.map((row, rowIndex) => {
-                const label = detailRowLabel(row);
-                if (row.kind === "text") {
-                  const source = row.lines.join("\n");
-                  const useSource = section.title !== "input" && sourceLanguage && syntaxStyle;
-                  return (
-                    <box
-                      key={`${section.title}:text:${rowIndex}`}
-                      style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}
-                    >
-                      {row.key ? <text content={`├ ${row.key}`} fg={theme.toolArg} selectable /> : null}
-                      {useSource ? (
-                        <box style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}>
-                          <text content="│ " fg={theme.dim} />
-                          <code
-                            content={source}
-                            filetype={sourceLanguage}
-                            syntaxStyle={syntaxStyle}
-                            selectable
-                            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
-                          />
-                        </box>
-                      ) : row.lines.map((line, lineIndex) => (
-                        <box
-                          key={`${section.title}:text:${rowIndex}:${lineIndex}`}
-                          style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}
-                        >
-                          <text content="│ " fg={theme.dim} />
-                          <text
-                            content={line}
-                            fg={call.name === "bash" ? theme.bashOutput : color}
-                            selectable
-                            wrapMode="word"
-                            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
-                          />
-                        </box>
-                      ))}
-                      {row.hiddenLines > 0 ? (
-                        <text content={`└ … ${row.hiddenLines} more lines`} fg={theme.dim} selectable />
-                      ) : null}
-                    </box>
-                  );
-                }
-
-                const value = row.kind === "field" || row.kind === "list" ? row.value : row.value;
-                return (
-                  <box
-                    key={`${section.title}:row:${rowIndex}`}
-                    style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}
-                  >
-                    <text content="├ " fg={theme.dim} />
-                    {label ? <text content={`${label}  `} fg={theme.toolArg} selectable /> : null}
-                    <text
-                      content={value}
-                      fg={color}
-                      selectable
-                      wrapMode="word"
-                      style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
-                    />
-                  </box>
-                );
-              })}
-              {section.hiddenRows > 0 ? (
-                <text content={`└ … ${section.hiddenRows} more rows`} fg={theme.dim} selectable />
-              ) : null}
-            </box>
-          );
-        })}
-        {model.hiddenRows > 0 ? (
-          <text content={`… ${model.hiddenRows} rows hidden`} fg={theme.warn} selectable />
-        ) : null}
       </box>
     </Row>
   );
@@ -688,12 +595,14 @@ export function ToolLine({
   const argColor = failed ? theme.error : rejected ? theme.rejection : theme.toolArg;
   const detailColor = failed ? theme.error : rejected ? theme.rejection : theme.dim;
 
-  const prefix = call.arg
-    ? new StyledText([fg(toolColor)(call.name), fg(detailColor)(" · ")])
-    : null;
-  const bodyChunks = call.arg
-    ? [fg(argColor)(call.arg)]
-    : [fg(toolColor)(call.name)];
+  // `tool(` never wraps, so the arguments wrap under a stable left edge.
+  const prefix = new StyledText([fg(toolColor)(`${call.name}(`)]);
+  const bodyChunks: TextChunk[] = [];
+  for (const [index, arg] of call.args.entries()) {
+    if (index > 0) bodyChunks.push(fg(toolColor)(", "));
+    bodyChunks.push(fg(argColor)(arg));
+  }
+  bodyChunks.push(fg(toolColor)(")"));
   if (call.detail && !rejected) bodyChunks.push(fg(detailColor)(`  ${call.detail}`));
   if (failed && call.name === "bash" && call.exitCode !== undefined) {
     bodyChunks.push(fg(detailColor)(` · exit ${call.exitCode}`));
@@ -701,7 +610,7 @@ export function ToolLine({
 
   const caret = useBlinkingText({
     chunks: bodyChunks,
-    contentKey: `${call.name}:${call.arg}:${call.state}:${call.detail ?? ""}`,
+    contentKey: `${toolCallSignature(call)}:${call.state}:${call.detail ?? ""}`,
     caretColor: failed ? theme.error : rejected ? theme.rejection : theme.accent,
     background: theme.bg,
     active: workingCaret,
@@ -711,24 +620,32 @@ export function ToolLine({
     && (call.state === "running" || outputMode !== "verbose")
     ? bashOutputWindow(call.output)
     : null;
-  const hasRawData = call.input !== undefined || call.result !== undefined;
   const explicitDetails = expanded === true && outputMode !== "verbose";
   const automaticVerboseDetails = outputMode === "verbose" && expanded !== false;
-  const detailedPreview = call.state !== "running"
-    && call.state !== "rejected"
-    && call.preview
-    && (explicitDetails || (!hasRawData && automaticVerboseDetails))
-    && (call.state === "ok" || call.preview.kind === "bash")
+  // A mutation shows its diff without being asked. Verbose is the raw view and
+  // renders no diff at all; expanding one drops the cap rather than hiding it.
+  const inlineDiff = call.preview?.kind === "diff"
+    && call.state === "ok"
+    && outputMode !== "verbose"
     ? call.preview
     : undefined;
-  const detailOpen = expanded ?? outputMode === "verbose";
-  const detailGlyph = expanded === undefined ? GUTTER : detailOpen ? "▾ " : "▸ ";
+  // Bash keeps a preview of its tail, but only when a row is opened by hand.
+  // Verbose renders no preview of any kind: it is the raw view.
+  const detailedPreview = explicitDetails
+    && call.state !== "running"
+    && call.state !== "rejected"
+    && call.preview?.kind === "bash"
+    ? call.preview
+    : undefined;
+  // No disclosure arrow on a tool row: every one of them expands, so the glyph
+  // marked nothing and only added noise down the left edge. The gutter stays
+  // clickable, so the mouse still opens a row.
 
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
-      <Row glyph={detailGlyph} glyphColor={toolColor} onGlyphClick={onDisclosureClick ? () => onDisclosureClick() : undefined}>
+      <Row glyph={GUTTER} glyphColor={toolColor} onGlyphClick={onDisclosureClick ? () => onDisclosureClick() : undefined}>
         <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-          {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
+          <text content={prefix} selectable style={{ flexShrink: 0 }} />
           <text
             ref={workingCaret ? caret : undefined}
             content={workingCaret ? "" : new StyledText(bodyChunks)}
@@ -765,7 +682,7 @@ export function ToolLine({
       ) : null}
       {output && (output.hidden > 0 || output.lines.length > 0) ? (
         <Row glyph={GUTTER} glyphColor={theme.bashOutput}>
-          <box style={{ width: call.arg ? Bun.stringWidth(`${call.name} · `) : 0, flexShrink: 0 }} />
+          <box style={{ width: Bun.stringWidth(`${call.name}(`), flexShrink: 0 }} />
           <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
             {output.hidden > 0 ? (
               <text
@@ -791,13 +708,18 @@ export function ToolLine({
           </box>
         </Row>
       ) : null}
+      {inlineDiff ? (
+        <DetailedToolPreview
+          theme={theme}
+          syntaxStyle={syntaxStyle}
+          preview={inlineDiff}
+          {...(expanded === true ? {} : { changedLineLimit: INLINE_DIFF_CHANGED_LINES })}
+        />
+      ) : null}
       {detailedPreview ? (
         <DetailedToolPreview theme={theme} syntaxStyle={syntaxStyle} preview={detailedPreview} />
       ) : null}
-      {explicitDetails && call.state !== "running" && !detailedPreview ? (
-        <StructuredToolDetails theme={theme} syntaxStyle={syntaxStyle} call={call} />
-      ) : null}
-      {automaticVerboseDetails && call.state !== "running" && !detailedPreview
+      {(explicitDetails || automaticVerboseDetails) && call.state !== "running"
         ? <RawToolDetails theme={theme} call={call} />
         : null}
     </box>
@@ -824,19 +746,16 @@ export function ActivitySummaryLine({
     <box style={{ flexDirection: "column", width: "100%" }}>
       <Row
         glyph={expanded ? "▾ " : "▸ "}
-        glyphColor={theme.tool}
+        glyphColor={theme.dim}
         onGlyphClick={onDisclosureClick ? () => onDisclosureClick() : undefined}
       >
-        <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-          <text content="activity · " fg={theme.tool} selectable style={{ flexShrink: 0 }} />
-          <text
-            content={summary.text}
-            fg={theme.dim}
-            selectable
-            wrapMode="word"
-            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
-          />
-        </box>
+        <text
+          content={summary.text}
+          fg={theme.dim}
+          selectable
+          wrapMode="word"
+          style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
+        />
       </Row>
       {expanded ? summary.calls.map((call) => (
         <ToolLine
@@ -911,7 +830,7 @@ function OmittedLines({ theme, count }: { theme: Theme; count: number }) {
       fg={theme.dim}
       selectable
       wrapMode="word"
-      style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+      style={{ width: "100%", flexShrink: 0, minWidth: 0 }}
     />
   );
 }
@@ -921,16 +840,23 @@ export function DetailedToolPreview({
   theme,
   syntaxStyle,
   preview,
+  changedLineLimit,
 }: {
   theme: Theme;
   syntaxStyle?: SyntaxStyle;
   preview: ToolResultPreview;
+  /** Changed lines shown before the rest collapses to a count. */
+  changedLineLimit?: number;
 }) {
   if (preview.kind === "diff") {
+    const lines = inlineDiffLines(preview.lines);
+    const window = changedLineLimit === undefined
+      ? { lines, hidden: 0 }
+      : clipDiffPreview(lines, changedLineLimit);
     return (
       <Row glyph={GUTTER} glyphColor={theme.dim}>
         <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-          {preview.lines.map((line, index) => {
+          {window.lines.map((line: DiffPreviewLine, index: number) => {
             const color = previewColor(theme, line.kind);
             if (line.kind === "header") {
               return line.text ? (
@@ -940,7 +866,7 @@ export function DetailedToolPreview({
                   fg={color}
                   selectable
                   wrapMode="word"
-                  style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+                  style={{ width: "100%", flexShrink: 0, minWidth: 0 }}
                 />
               ) : <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />;
             }
@@ -971,6 +897,7 @@ export function DetailedToolPreview({
               </box>
             );
           })}
+          <OmittedLines theme={theme} count={window.hidden} />
         </box>
       </Row>
     );
@@ -979,21 +906,11 @@ export function DetailedToolPreview({
   return (
     <Row glyph={GUTTER} glyphColor={theme.dim}>
       <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-        {preview.kind === "write" && preview.language && syntaxStyle ? (
-          preview.window.lines.length > 0 ? (
-            <code
-              content={preview.window.lines.join("\n")}
-              filetype={preview.language}
-              syntaxStyle={syntaxStyle}
-              selectable
-              style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
-            />
-          ) : null
-        ) : preview.window.lines.map((line, index) => line ? (
+        {preview.window.lines.map((line, index) => line ? (
           <text
             key={`${index}:${line}`}
             content={line}
-            fg={preview.kind === "bash" ? theme.bashOutput : theme.dim}
+            fg={theme.bashOutput}
             selectable
             wrapMode="word"
             style={{ width: "100%", flexShrink: 1, minWidth: 0 }}

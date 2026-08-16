@@ -5,8 +5,8 @@ import type { ToolResultPreview } from "./tool-preview";
 export type ToolCall = {
   id: string;
   name: string;
-  /** The one argument worth showing for this tool. */
-  arg: string;
+  /** The arguments worth showing, rendered as `tool(first, second)`. */
+  args: string[];
   state: "running" | "ok" | "error" | "rejected";
   /** "+3 −1" for edits, or an error note. */
   detail?: string;
@@ -93,23 +93,27 @@ export function displayToolPath(path: string, cwd: string): string {
 }
 
 /** Tool args are typed `any`, so every access here is defensive. */
-export function toolArg(name: string, args: any, cwd: string): string {
-  if (!args || typeof args !== "object") return "";
+export function toolArgs(name: string, args: any, cwd: string): string[] {
+  if (!args || typeof args !== "object") return [];
 
   if (name === "bash" && typeof args.command === "string") {
-    return args.command.split("\n")[0]!.trim();
+    return [args.command.split("\n")[0]!.trim()];
   }
-  if (name === "web_search") return webSearchArgument(args);
+  if (name === "web_search") {
+    // web-search.ts owns which fields are safe to show and joins them; this
+    // only unpicks that join so each part becomes its own argument.
+    const query = webSearchArgument(args);
+    return query ? query.split(" · ") : [];
+  }
   if (name === "read" && typeof args.path === "string") {
-    const path = displayToolPath(args.path, cwd);
-    const range: string[] = [];
+    const parts = [displayToolPath(args.path, cwd)];
     if (typeof args.offset === "number" && Number.isFinite(args.offset)) {
-      range.push(`offset=${args.offset}`);
+      parts.push(`offset=${args.offset}`);
     }
     if (typeof args.limit === "number" && Number.isFinite(args.limit)) {
-      range.push(`limit=${args.limit}`);
+      parts.push(`limit=${args.limit}`);
     }
-    return [path, ...range].join(" · ");
+    return parts;
   }
   if ((name === "apply_patch" || name === "apply_path") && typeof args.patch === "string") {
     const paths: string[] = [];
@@ -126,45 +130,44 @@ export function toolArg(name: string, args: any, cwd: string): string {
         paths[updateIndex] = `${paths[updateIndex]} → ${move[1]!.trim().replaceAll("\\", "/")}`;
       }
     }
-    if (paths.length === 1) return paths[0]!;
-    if (paths.length > 1) return `${paths.length} files · ${paths[0]}`;
+    if (paths.length === 1) return [paths[0]!];
+    if (paths.length > 1) return [`${paths.length} files`, paths[0]!];
   }
   if (name === "spawn_subagent" && typeof args.task === "string") {
-    const task = typeof args.name === "string" ? `${args.name} · ${args.task}` : args.task;
-    return args.readonly === true ? `readonly · ${task}` : task;
+    const parts = typeof args.name === "string" ? [args.name, args.task] : [args.task];
+    return args.readonly === true ? ["readonly", ...parts] : parts;
   }
   if (name === "message_agent" && typeof args.target === "string") {
-    return typeof args.message === "string" ? `${args.target} · ${args.message}` : args.target;
+    return typeof args.message === "string" ? [args.target, args.message] : [args.target];
   }
   if (name === "create_trigger" && typeof args.name === "string") {
-    return typeof args.executable === "string" ? `${args.name} · ${args.executable}` : args.name;
+    return typeof args.executable === "string" ? [args.name, args.executable] : [args.name];
   }
-  if (["inspect_trigger", "pause_trigger", "resume_trigger", "cancel_trigger"].includes(name)
-    && typeof args.id === "string") return args.id;
-  if (name === "invoke_trigger" && typeof args.id === "string") {
-    return args.id;
-  }
-  if (name === "stop_subagent" && typeof args.target === "string") return args.target;
-  if (name === "finish_subagent" && typeof args.summary === "string") return args.summary;
+  if (["inspect_trigger", "pause_trigger", "resume_trigger", "cancel_trigger", "invoke_trigger"]
+    .includes(name) && typeof args.id === "string") return [args.id];
+  if (name === "stop_subagent" && typeof args.target === "string") return [args.target];
+  if (name === "finish_subagent" && typeof args.summary === "string") return [args.summary];
   if (name === "worktree" && typeof args.action === "string") {
     // start carries a directory rather than a target or a name.
     const target = args.target ?? args.name ?? (args.action === "start" ? args.directory : undefined);
-    return target ? `${args.action} ${target}` : args.action;
+    return target ? [args.action, String(target)] : [args.action];
   }
   if (name.startsWith("message_cache_")) {
     const action = name.slice("message_cache_".length);
-    if (Array.isArray(args.ids)) return `${action} · ${args.ids.length} id${args.ids.length === 1 ? "" : "s"}`;
-    if (typeof args.id === "string") return `${action} · ${args.id}`;
-    return action;
+    if (Array.isArray(args.ids)) {
+      return [action, `${args.ids.length} id${args.ids.length === 1 ? "" : "s"}`];
+    }
+    if (typeof args.id === "string") return [action, args.id];
+    return [action];
   }
   if (name.startsWith("todo_")) {
     // The id alone is opaque, so pair it with the text when the call carries one.
-    const parts = [args?.id, args?.text, args?.status]
-      .filter((part): part is string => typeof part === "string" && part.length > 0);
-    return parts.join(" · ").split("\n")[0] ?? "";
+    return [args?.id, args?.text, args?.status]
+      .filter((part): part is string => typeof part === "string" && part.length > 0)
+      .map((part) => part.split("\n")[0]!);
   }
   if (name === "enable_tools" && Array.isArray(args.groups)) {
-    return args.groups.filter((group: unknown): group is string => typeof group === "string").join(", ");
+    return args.groups.filter((group: unknown): group is string => typeof group === "string");
   }
   if (name === "questionnaire" && Array.isArray(args.questions)) {
     const count = args.questions.length;
@@ -174,13 +177,19 @@ export function toolArg(name: string, args: any, cwd: string): string {
       : typeof first?.prompt === "string"
         ? first.prompt
         : "";
-    return label ? `${count} question${count === 1 ? "" : "s"} · ${label}` : `${count} questions`;
+    const counted = `${count} question${count === 1 ? "" : "s"}`;
+    return label ? [counted, label] : [counted];
   }
   if (typeof args.path === "string") {
-    return displayToolPath(args.path, cwd);
+    return [displayToolPath(args.path, cwd)];
   }
   const first = Object.values(args).find((v) => typeof v === "string");
-  return typeof first === "string" ? first.split("\n")[0]! : "";
+  return typeof first === "string" ? [first.split("\n")[0]!] : [];
+}
+
+/** One flat line for logs, persistence, and anywhere without styled chunks. */
+export function toolArgText(name: string, args: any, cwd: string): string {
+  return toolArgs(name, args, cwd).join(", ");
 }
 
 /** Count changed lines from a tool result's unified patch details. */

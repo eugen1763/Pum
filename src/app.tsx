@@ -48,6 +48,7 @@ import {
   ActivitySummaryLine,
   AgentMessageLine,
   needsTranscriptGap,
+  topAnchorScrollTop,
   PendingMessageLine,
   rawToolText,
   resolvePendingDelivery,
@@ -60,7 +61,7 @@ import {
   type PendingLine,
   type Role,
 } from "./transcript";
-import { bashOutput, bashResultDisplay, editCounts, toolArg, type ToolCall } from "./tool-line";
+import { bashOutput, bashResultDisplay, editCounts, toolArgs, type ToolCall } from "./tool-line";
 import { toolPreviewFromResult, toolPreviewFromStart } from "./tool-preview";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
@@ -1691,7 +1692,7 @@ export function App({
             call: {
               id: event.toolCallId,
               name: event.toolName,
-              arg: toolArg(event.toolName, event.args, cwd),
+              args: toolArgs(event.toolName, event.args, cwd),
               state: "running",
               startedAt: Date.now(),
               input: event.args,
@@ -1898,7 +1899,7 @@ export function App({
       if (call.phase === "start") {
         append({
           kind: "tool",
-          call: { id: call.id, name: "web_search", arg: call.query, state: "running" },
+          call: { id: call.id, name: "web_search", args: [call.query], state: "running" },
         });
       } else {
         patchTool(call.id, {
@@ -3822,6 +3823,33 @@ export function App({
     queueMicrotask(() => transcriptScrollRef.current?.scrollChildIntoView(`transcript-line-${index}`));
   };
 
+  /**
+   * Put a revealed row's first line at the top of the viewport.
+   *
+   * `scrollChildIntoView` scrolls the least it can, which parks a row that just
+   * grew at the bottom edge with its new content still below the fold. Rows are
+   * only ever expanded to be read, so anchor the top and show as much as fits.
+   * The layout runs after React commits, hence the second, later attempt.
+   */
+  const anchorTranscriptRow = (index: number) => {
+    const apply = () => {
+      const scroll = transcriptScrollRef.current;
+      const row = scroll?.findDescendantById(`transcript-line-${index}`);
+      if (!scroll || !row) return;
+      const target = topAnchorScrollTop(
+        row.y - scroll.content.y,
+        scroll.scrollHeight,
+        scroll.viewport.height,
+      );
+      // scrollBy, not scrollTop: it is the path that marks the scroll as
+      // manual, and without that sticky-to-bottom pins the row straight back
+      // off the top of the screen as the revealed content grows beneath it.
+      if (target !== scroll.scrollTop) scroll.scrollBy({ x: 0, y: target - scroll.scrollTop });
+    };
+    queueMicrotask(apply);
+    setTimeout(apply, 30);
+  };
+
   const moveTranscriptCursor = (step: -1 | 1) => {
     const next = Math.max(0, Math.min(visibleLines.length - 1, transcriptCursorRef.current + step));
     transcriptCursorRef.current = next;
@@ -3846,6 +3874,7 @@ export function App({
     next.set(key, !current);
     detailOverridesRef.current = next;
     setDetailOverrides(next);
+    if (!current) anchorTranscriptRow(index);
   };
 
   const clickTranscriptDisclosure = (index: number) => {
@@ -4670,10 +4699,7 @@ export function App({
     }
   });
 
-  const lastProjectedLine = visibleLines[visibleLines.length - 1];
-  const lastLine: Line | undefined = lastProjectedLine?.kind === "tool-summary"
-    ? { kind: "text", role: "system", text: lastProjectedLine.text }
-    : lastProjectedLine;
+  const lastLine = visibleLines[visibleLines.length - 1];
   // Reset keys for the render boundaries: a shown error clears as soon as the
   // transcript or the open popup changes, so the next state gets a fresh try.
   const transcriptResetKey = `${activeAgentId ?? "main"}:${visibleLines.length}`;
@@ -4790,14 +4816,7 @@ export function App({
                     }
                   />
                 );
-              const currentGapLine: Line = line.kind === "tool-summary"
-                ? { kind: "text", role: "system", text: line.text }
-                : line;
-              const previousProjected = visibleLines[i - 1];
-              const previousGapLine: Line | undefined = previousProjected?.kind === "tool-summary"
-                ? { kind: "text", role: "system", text: previousProjected.text }
-                : previousProjected;
-              const gapBefore = needsTranscriptGap(previousGapLine, currentGapLine);
+              const gapBefore = needsTranscriptGap(visibleLines[i - 1], line);
               return (
                 <box
                   id={`transcript-line-${i}`}

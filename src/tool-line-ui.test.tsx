@@ -107,9 +107,9 @@ describe("tool line state", () => {
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
     const calls: Array<{ call: ToolCall; workingCaret?: boolean }> = [
-      { call: { id: "live", name: "bash", arg: "live command", state: "rejected" }, workingCaret: true },
-      { call: { id: "settled", name: "edit", arg: "settled.ts", state: "rejected" } },
-      { call: { id: "wrapped", name: "bash", arg: "wrapped command with enough text to use another terminal row", state: "rejected" } },
+      { call: { id: "live", name: "bash", args: ["live command"], state: "rejected" }, workingCaret: true },
+      { call: { id: "settled", name: "edit", args: ["settled.ts"], state: "rejected" } },
+      { call: { id: "wrapped", name: "bash", args: ["wrapped command with enough text to use another terminal row"], state: "rejected" } },
       { call: rejectedReplayCall() },
     ];
 
@@ -117,7 +117,7 @@ describe("tool line state", () => {
       <box style={{ flexDirection: "column", width: "100%" }}>
         <ToolLine
           theme={theme}
-          call={{ id: "normal", name: "bash", arg: "normal command", state: "ok" }}
+          call={{ id: "normal", name: "bash", args: ["normal command"], state: "ok" }}
         />
         {calls.map(({ call, workingCaret }) => (
           <ToolLine key={call.id} theme={theme} call={call} workingCaret={workingCaret} />
@@ -177,8 +177,8 @@ describe("tool line state", () => {
 
     createRoot(setup.renderer).render(
       <box style={{ flexDirection: "column", width: "100%" }}>
-        <ToolLine theme={theme} call={{ id: "failed", name: "bash", arg: "failed command", state: "error" }} />
-        <ToolLine theme={theme} call={{ id: "ok", name: "bash", arg: "successful command", state: "ok" }} />
+        <ToolLine theme={theme} call={{ id: "failed", name: "bash", args: ["failed command"], state: "error" }} />
+        <ToolLine theme={theme} call={{ id: "ok", name: "bash", args: ["successful command"], state: "ok" }} />
       </box>,
     );
     await settle(setup);
@@ -197,12 +197,12 @@ describe("tool line state", () => {
     const setup = await createTestRenderer({ width: 52, height: 12 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
-    const arg = "file name.ts · offset=2 · limit=8";
+    const args = ["file name.ts", "offset=2", "limit=8"];
     const calls: Array<{ call: ToolCall; workingCaret?: boolean }> = [
-      { call: { id: "live", name: "read", arg, state: "running" }, workingCaret: true },
-      { call: { id: "settled", name: "read", arg, state: "ok" } },
-      { call: { id: "rejected", name: "read", arg, state: "rejected" } },
-      { call: { id: "failed", name: "read", arg, state: "error" } },
+      { call: { id: "live", name: "read", args, state: "running" }, workingCaret: true },
+      { call: { id: "settled", name: "read", args, state: "ok" } },
+      { call: { id: "rejected", name: "read", args, state: "rejected" } },
+      { call: { id: "failed", name: "read", args, state: "error" } },
       { call: replayedReadCall() },
     ];
 
@@ -215,22 +215,24 @@ describe("tool line state", () => {
     );
     await settle(setup);
 
-    expect(setup.captureCharFrame().match(/file name\.ts · offset=2 · limit=8/g)).toHaveLength(5);
+    expect(setup.captureCharFrame().match(/read\(file name\.ts, offset=2, limit=8\)/g))
+      .toHaveLength(5);
   });
 
   test("wraps bash commands one column earlier inside the transcript scrollbox", async () => {
     const setup = await createTestRenderer({ width: 28, height: 4 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
-    const arg = "abcdefghijklmno";
+    // Long enough that the extra column bash reserves changes where it breaks.
+    const args = ["abcdefghijklmnopq"];
 
     createRoot(setup.renderer).render(
       <scrollbox
         style={{ flexGrow: 1, paddingLeft: 1, paddingRight: 1 }}
         verticalScrollbarOptions={{ visible: true }}
       >
-        <ToolLine theme={theme} call={{ id: "bash", name: "bash", arg, state: "ok" }} />
-        <ToolLine theme={theme} call={{ id: "read", name: "read", arg, state: "ok" }} />
+        <ToolLine theme={theme} call={{ id: "bash", name: "bash", args, state: "ok" }} />
+        <ToolLine theme={theme} call={{ id: "read", name: "read", args, state: "ok" }} />
       </scrollbox>,
     );
     await settle(setup);
@@ -239,10 +241,13 @@ describe("tool line state", () => {
     expect(frameLines.every((line) => line.length === 28)).toBe(true);
     expect(frameLines.every((line) => line.endsWith("█"))).toBe(true);
     const lines = frameLines.map((line) => line.slice(0, -2).trimEnd()).filter((line) => line.trim());
+    // bash breaks one character earlier than read, and both continuations line
+    // up under the opening bracket rather than under the tool name.
     expect(lines).toEqual([
-      "   bash · abcdefghijklmn ✓",
-      "          o",
-      "   read · abcdefghijklmno✓",
+      "   bash(abcdefghijklmnop ✓",
+      "        q)",
+      "   read(abcdefghijklmnopq✓",
+      "        )",
     ]);
   });
 
@@ -257,7 +262,7 @@ describe("tool line state", () => {
         call={{
           id: "streaming-bash",
           name: "bash",
-          arg: "a command that wraps automatically",
+          args: ["a command that wraps automatically"],
           state: "running",
           output: "old one\nold two\nnew three\nnew four\nnew five\na newest output line that also wraps\n",
         }}
@@ -274,11 +279,11 @@ describe("tool line state", () => {
     expect(frameLines.some((line) => line.includes("new five"))).toBe(true);
     expect(frameLines.some((line) => line.includes("a newest output"))).toBe(true);
 
-    const commandColumn = frameLines.find((line) => line.includes("bash ·"))!.search(/\S/);
+    const commandColumn = frameLines.find((line) => line.includes("bash("))!.search(/\S/);
     const outputRows = frameLines.filter((line) =>
       line.includes("more lines") || line.includes("new three") || line.includes("that also wraps")
     );
-    expect(outputRows.every((line) => line.search(/\S/) === commandColumn + "bash · ".length)).toBe(true);
+    expect(outputRows.every((line) => line.search(/\S/) === commandColumn + "bash(".length)).toBe(true);
 
     const outputSpans = setup.captureSpans().lines.flatMap((line) => line.spans)
       .filter((span) => span.text.includes("more lines") || span.text.includes("new three"));
@@ -294,7 +299,7 @@ describe("tool line state", () => {
     const call: ToolCall = {
       id: "mode-bash",
       name: "bash",
-      arg: "slow command",
+      args: ["slow command"],
       state: "running",
       output: "live command output",
     };
@@ -319,7 +324,7 @@ describe("tool line state", () => {
         call={{
           id: "delayed-bash",
           name: "bash",
-          arg: "slow",
+          args: ["slow"],
           state: "running",
           output: "delayed output",
           startedAt: Date.now(),
@@ -346,7 +351,7 @@ describe("tool line state", () => {
         call={{
           id: "settled-bash",
           name: "bash",
-          arg: "done",
+          args: ["done"],
           state: "ok",
           output: "last output that is deliberately much wider than the available terminal row and must not wrap",
         }}
@@ -368,7 +373,7 @@ describe("tool line state", () => {
     root.render(
       <ToolLine
         theme={theme}
-        call={{ id: "brief-bash", name: "bash", arg: "brief", state: "running", output, startedAt }}
+        call={{ id: "brief-bash", name: "bash", args: ["brief"], state: "running", output, startedAt }}
       />,
     );
     await settle(setup);
@@ -377,7 +382,7 @@ describe("tool line state", () => {
     root.render(
       <ToolLine
         theme={theme}
-        call={{ id: "brief-bash", name: "bash", arg: "brief", state: "ok", output, startedAt }}
+        call={{ id: "brief-bash", name: "bash", args: ["brief"], state: "ok", output, startedAt }}
       />,
     );
     await settle(setup);
@@ -403,7 +408,7 @@ describe("tool line state", () => {
         call={{
           id: "failed-bash",
           name: "bash",
-          arg: "failing command",
+          args: ["failing command"],
           state: "error",
           output: "last failure output",
           exitCode: 7,
@@ -413,7 +418,7 @@ describe("tool line state", () => {
     await settle(setup);
 
     const frame = setup.captureCharFrame();
-    expect(frame).toContain("bash · failing command · exit 7");
+    expect(frame).toContain("bash(failing command) · exit 7");
     expect(frame).not.toContain("last failure output");
   });
 
@@ -428,7 +433,7 @@ describe("tool line state", () => {
         call={{
           id: "read-wrap",
           name: "read",
-          arg: "folder/file name.ts · offset=12 · limit=40",
+          args: ["folder/file name.ts", "offset=12", "limit=40"],
           state: "ok",
         }}
       />,
@@ -437,9 +442,56 @@ describe("tool line state", () => {
 
     const lines = setup.captureCharFrame().split("\n").map((line) => line.trimEnd()).filter((line) => line.trim());
     expect(lines.length).toBeGreaterThan(1);
-    expect(lines.slice(1).every((line) => line.search(/\S/) === "  read · ".length)).toBe(true);
+    expect(lines.slice(1).every((line) => line.search(/\S/) === "  read(".length)).toBe(true);
     expect(lines.join(" ")).toContain("offset=12");
     expect(lines.join(" ")).toContain("limit=40");
+  });
+
+  test("renders a call as tool(first, second) with muted brackets", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 4 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{ id: "read", name: "read", args: ["src/a.ts", "offset=2"], state: "ok" }}
+      />,
+    );
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("read(src/a.ts, offset=2)");
+
+    const spans = setup.captureSpans().lines[0]!.spans.filter((span) => span.text.trim());
+    const colorOf = (needle: string) =>
+      spans.find((span) => span.text.includes(needle))!.fg;
+    // The name, the brackets and the comma recede; only the arguments carry the
+    // accent, and no signal colour appears anywhere but the state marker.
+    expect(colorOf("read(").equals(parseColor(theme.tool))).toBe(true);
+    expect(colorOf("src/a.ts").equals(parseColor(theme.toolArg))).toBe(true);
+    expect(colorOf(",").equals(parseColor(theme.tool))).toBe(true);
+    expect(colorOf("✓").equals(parseColor(theme.success))).toBe(true);
+    for (const span of spans) {
+      if (span.text.includes("✓")) continue;
+      expect(span.fg.equals(parseColor(theme.error))).toBe(false);
+      expect(span.fg.equals(parseColor(theme.success))).toBe(false);
+      expect(span.fg.equals(parseColor(theme.rejection))).toBe(false);
+    }
+  });
+
+  test("renders a call with no arguments as empty brackets", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 3 });
+    destroy = () => setup.renderer.destroy();
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={loadTheme("tokyonight")}
+        call={{ id: "l", name: "list_subagents", args: [], state: "ok" }}
+      />,
+    );
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("list_subagents()");
   });
 
   test("updates rejection colors after a theme change", async () => {
@@ -449,7 +501,7 @@ describe("tool line state", () => {
     const call: ToolCall = {
       id: "switch",
       name: "bash",
-      arg: "switch command",
+      args: ["switch command"],
       state: "rejected",
       detail: "Check mode hard block: switch reason",
     };
@@ -459,7 +511,7 @@ describe("tool line state", () => {
       <box style={{ flexDirection: "column", width: "100%" }}>
         <ToolLine
           theme={firstTheme}
-          call={{ id: "normal", name: "bash", arg: "normal command", state: "ok" }}
+          call={{ id: "normal", name: "bash", args: ["normal command"], state: "ok" }}
         />
         <ToolLine theme={firstTheme} call={call} />
       </box>,
@@ -481,7 +533,7 @@ describe("tool line state", () => {
       <box style={{ flexDirection: "column", width: "100%" }}>
         <ToolLine
           theme={nextTheme}
-          call={{ id: "normal", name: "bash", arg: "normal command", state: "ok" }}
+          call={{ id: "normal", name: "bash", args: ["normal command"], state: "ok" }}
         />
         <ToolLine theme={nextTheme} call={call} />
       </box>,

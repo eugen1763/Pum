@@ -1,6 +1,6 @@
 import type { Line } from "./transcript";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
-import { bashResultDisplay, editCounts, toolArg, type ToolCall } from "./tool-line";
+import { bashResultDisplay, editCounts, toolArgs, type ToolCall } from "./tool-line";
 import { questionnaireDetail } from "./questionnaire";
 import { messageCacheDetail } from "./message-cache";
 import {
@@ -141,7 +141,8 @@ function toolEventOf(entry: any): ToolCall | undefined {
   return {
     id: data.id,
     name: data.name,
-    arg: typeof data.arg === "string" ? data.arg : "",
+    // Synthetic tool events persist one flat display string.
+    args: typeof data.arg === "string" && data.arg ? [data.arg] : [],
     state: data.state,
     detail: typeof data.detail === "string" ? data.detail : undefined,
   };
@@ -246,12 +247,12 @@ export function replayEntries(
       const existing = searchCalls.get(search.id);
       if (existing) {
         existing.state = search.state;
-        if (search.query) existing.arg = search.query;
+        if (search.query) existing.args = [search.query];
       } else {
         const call: ToolCall = {
           id: search.id,
           name: "web_search",
-          arg: search.query,
+          args: [search.query],
           state: search.state,
         };
         searchCalls.set(search.id, call);
@@ -279,7 +280,7 @@ export function replayEntries(
           const call: ToolCall = {
             id: block.id,
             name: block.name,
-            arg: toolArg(block.name, block.arguments, cwd),
+            args: toolArgs(block.name, block.arguments, cwd),
             // Nothing proves a replayed call succeeded until its persisted
             // result says so. A call whose turn was cancelled or crashed never
             // gets one, and statsFromEntries already counts that as

@@ -12,7 +12,7 @@ const call = (
   name: string,
   state: ToolCall["state"] = "ok",
   detail?: string,
-): ToolCall => ({ id, name, state, arg: `private argument for ${id}`, detail });
+): ToolCall => ({ id, name, state, args: [`private argument for ${id}`], detail });
 
 const tool = (value: ToolCall): Line => ({ kind: "tool", call: value });
 const text = (value: string): Line => ({ kind: "text", role: "assistant", text: value });
@@ -95,6 +95,50 @@ describe("minimal transcript transformation", () => {
     }
   });
 
+  test("Quiet folds commands and mutations into the run as well", () => {
+    const lines: Line[] = [
+      tool(call("r1", "read")),
+      tool(call("b1", "bash")),
+      tool(call("r2", "read")),
+      tool(call("e1", "edit")),
+    ];
+
+    const result = minimalTranscriptLines(lines, true);
+    expect(result).toHaveLength(1);
+    expect(result[0]!.kind).toBe("tool-summary");
+    if (result[0]?.kind !== "tool-summary") throw new Error("Expected one summary");
+    expect(result[0].text).toBe("Read 2 files, ran 1 command, and edited 1 file.");
+    expect(result[0].calls.map((item) => item.id)).toEqual(["r1", "b1", "r2", "e1"]);
+    expect(result[0].text).not.toContain("private argument");
+  });
+
+  test("a failure still breaks a Quiet run in two", () => {
+    const lines: Line[] = [
+      tool(call("b1", "bash")),
+      tool(call("b2", "bash", "error", "exit 1")),
+      tool(call("b3", "bash")),
+    ];
+
+    expect(minimalTranscriptLines(lines, true).map((line) => line.kind === "tool-summary"
+      ? line.text
+      : line.kind === "tool" ? line.call.id : line.kind)).toEqual([
+      "Ran 1 command.",
+      "b2",
+      "Ran 1 command.",
+    ]);
+  });
+
+  test("reads as one sentence, so only the first phrase keeps its capital", () => {
+    const summary = summarizeSuccessfulToolCalls([
+      call("r1", "read"), call("b1", "bash"), call("e1", "edit"), call("w1", "write"),
+    ]);
+    expect(summary.text).toBe("Read 1 file, ran 1 command, edited 1 file, and wrote 1 file.");
+
+    expect(summarizeSuccessfulToolCalls([call("r1", "read"), call("b1", "bash")]).text)
+      .toBe("Read 1 file and ran 1 command.");
+    expect(summarizeSuccessfulToolCalls([call("r1", "read")]).text).toBe("Read 1 file.");
+  });
+
   test("summarizes an isolated success without its argument", () => {
     expect(minimalTranscriptLines([tool(call("r1", "read"))])).toEqual([{
       kind: "tool-summary",
@@ -103,7 +147,7 @@ describe("minimal transcript transformation", () => {
         id: "r1",
         name: "read",
         state: "ok",
-        arg: "private argument for r1",
+        args: ["private argument for r1"],
         detail: undefined,
       }],
     }]);
@@ -150,8 +194,8 @@ describe("minimal transcript transformation", () => {
     const lines = [tool(originalCall)];
     const result = minimalTranscriptLines(lines);
     if (result[0]?.kind !== "tool-summary") throw new Error("Expected summary");
-    result[0].calls[0]!.arg = "changed";
-    expect(originalCall.arg).toBe("private argument for r1");
+    result[0].calls[0]!.args = ["changed"];
+    expect(originalCall.args).toEqual(["private argument for r1"]);
     expect(lines[0]).toEqual(tool(originalCall));
   });
 

@@ -1,30 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import { displayToolPath, editCounts, toolArg } from "./tool-line";
+import { displayToolPath, editCounts, toolArgs } from "./tool-line";
 
 describe("read tool metadata", () => {
   test("shows the path and only supplied range arguments", () => {
-    expect(toolArg("read", { path: "/repo/src/file name.ts" }, "/repo")).toBe("src/file name.ts");
-    expect(toolArg("read", {
+    expect(toolArgs("read", { path: "/repo/src/file name.ts" }, "/repo"))
+      .toEqual(["src/file name.ts"]);
+    expect(toolArgs("read", {
       path: "/repo/src/file name.ts",
       offset: 12,
-    }, "/repo")).toBe("src/file name.ts · offset=12");
-    expect(toolArg("read", {
+    }, "/repo"))
+      .toEqual(["src/file name.ts", "offset=12"]);
+    expect(toolArgs("read", {
       path: "/repo/src/file name.ts",
       limit: 40,
-    }, "/repo")).toBe("src/file name.ts · limit=40");
-    expect(toolArg("read", {
+    }, "/repo"))
+      .toEqual(["src/file name.ts", "limit=40"]);
+    expect(toolArgs("read", {
       path: "/repo/src/file name.ts",
       offset: 12,
       limit: 40,
-    }, "/repo")).toBe("src/file name.ts · offset=12 · limit=40");
+    }, "/repo"))
+      .toEqual(["src/file name.ts", "offset=12", "limit=40"]);
   });
 
   test("preserves Windows paths and spaces", () => {
-    expect(toolArg("read", {
+    expect(toolArgs("read", {
       path: "C:\\Users\\Jane Doe\\project\\file name.ts",
       offset: 2,
       limit: 8,
-    }, "/repo")).toBe("C:\\Users\\Jane Doe\\project\\file name.ts · offset=2 · limit=8");
+    }, "/repo"))
+      .toEqual(["C:\\Users\\Jane Doe\\project\\file name.ts", "offset=2", "limit=8"]);
   });
 
   test("uses stable separators for project-relative Windows and UNC paths", () => {
@@ -48,70 +53,82 @@ describe("read tool metadata", () => {
 
 describe("apply_patch tool metadata", () => {
   test("shows compact single-file and multi-file arguments", () => {
-    expect(toolArg("apply_patch", {
+    expect(toolArgs("apply_patch", {
       patch: "*** Begin Patch\n*** Update File: src\\one.ts\n@@\n-a\n+b\n*** End Patch",
-    }, "/repo")).toBe("src/one.ts");
+    }, "/repo"))
+      .toEqual(["src/one.ts"]);
 
-    expect(toolArg("apply_patch", {
+    expect(toolArgs("apply_patch", {
       patch: "*** Begin Patch\n*** Update File: old.ts\n*** Move to: new.ts\n@@\n-a\n+b\n*** End Patch",
-    }, "/repo")).toBe("old.ts → new.ts");
+    }, "/repo"))
+      .toEqual(["old.ts → new.ts"]);
 
-    expect(toolArg("apply_patch", {
+    expect(toolArgs("apply_patch", {
       patch: "*** Begin Patch\n*** Add File: one.ts\n+x\n*** Delete File: two.ts\n*** End Patch",
-    }, "/repo")).toBe("2 files · one.ts");
+    }, "/repo"))
+      .toEqual(["2 files", "one.ts"]);
   });
 
   test("summarizes questionnaire arguments without exposing every option", () => {
-    expect(toolArg("questionnaire", {
+    expect(toolArgs("questionnaire", {
       questions: [
         { id: "scope", label: "Scope", prompt: "Choose scope", options: [] },
         { id: "format", prompt: "Choose format", options: [] },
       ],
-    }, "/repo")).toBe("2 questions · Scope");
+    }, "/repo"))
+      .toEqual(["2 questions", "Scope"]);
   });
 
   test("shows enabled tool groups", () => {
-    expect(toolArg("enable_tools", { groups: ["Admin"] }, "/repo")).toBe("Admin");
-    expect(toolArg("enable_tools", { groups: ["Admin", "Subagents"] }, "/repo"))
-      .toBe("Admin, Subagents");
+    expect(toolArgs("enable_tools", { groups: ["Admin"] }, "/repo"))
+      .toEqual(["Admin"]);
+    expect(toolArgs("enable_tools", { groups: ["Admin", "Subagents"] }, "/repo"))
+      .toEqual(["Admin", "Subagents"]);
   });
 
   test("shows only documented web search arguments", () => {
-    expect(toolArg("web_search", {
+    expect(toolArgs("web_search", {
       action: { type: "search", queries: ["first query", "second query"] },
       unrelated: "must not display",
-    }, "/repo")).toBe("first query · second query");
-    expect(toolArg("web_search", {
+    }, "/repo"))
+      .toEqual(["first query", "second query"]);
+    expect(toolArgs("web_search", {
       action: { type: "unknown", payload: "must not display" },
       unrelated: "must not display",
-    }, "/repo")).toBe("");
+    }, "/repo"))
+      .toEqual([]);
   });
 
   test("marks readonly subagent spawns", () => {
-    expect(toolArg("spawn_subagent", { task: "Inspect the parser", readonly: true }, "/repo"))
-      .toBe("readonly · Inspect the parser");
-    expect(toolArg("spawn_subagent", { task: "Inspect", name: "reviewer", readonly: true }, "/repo"))
-      .toBe("readonly · reviewer · Inspect");
+    expect(toolArgs("spawn_subagent", { task: "Inspect the parser", readonly: true }, "/repo"))
+      .toEqual(["readonly", "Inspect the parser"]);
+    expect(toolArgs("spawn_subagent", { task: "Inspect", name: "reviewer", readonly: true }, "/repo"))
+      .toEqual(["readonly", "reviewer", "Inspect"]);
   });
 
   test("summarizes message cache actions without exposing cached text", () => {
-    expect(toolArg("message_cache_list", {}, "/repo")).toBe("list");
-    expect(toolArg("message_cache_add", { text: "large private cached task" }, "/repo")).toBe("add");
-    expect(toolArg("message_cache_delete", { id: "cache-1" }, "/repo")).toBe("delete · cache-1");
-    expect(toolArg("message_cache_send", { ids: ["cache-1", "cache-1"] }, "/repo"))
-      .toBe("send · 2 ids");
+    expect(toolArgs("message_cache_list", {}, "/repo"))
+      .toEqual(["list"]);
+    expect(toolArgs("message_cache_add", { text: "large private cached task" }, "/repo"))
+      .toEqual(["add"]);
+    expect(toolArgs("message_cache_delete", { id: "cache-1" }, "/repo"))
+      .toEqual(["delete", "cache-1"]);
+    expect(toolArgs("message_cache_send", { ids: ["cache-1", "cache-1"] }, "/repo"))
+      .toEqual(["send", "2 ids"]);
   });
 
   test("summarizes trigger tools without exposing templates or argument vectors", () => {
-    expect(toolArg("create_trigger", {
+    expect(toolArgs("create_trigger", {
       name: "tests",
       executable: "bun",
       args: ["test", "--watch"],
       template: "large output template",
-    }, "/repo")).toBe("tests · bun");
-    expect(toolArg("pause_trigger", { id: "trigger-1" }, "/repo")).toBe("trigger-1");
-    expect(toolArg("invoke_trigger", { id: "trigger-1" }, "/repo"))
-      .toBe("trigger-1");
+    }, "/repo"))
+      .toEqual(["tests", "bun"]);
+    expect(toolArgs("pause_trigger", { id: "trigger-1" }, "/repo"))
+      .toEqual(["trigger-1"]);
+    expect(toolArgs("invoke_trigger", { id: "trigger-1" }, "/repo"))
+      .toEqual(["trigger-1"]);
   });
 
   test("counts unified patch additions and removals", () => {

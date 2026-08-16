@@ -68,7 +68,7 @@ export function runWorktreeCommand({
   const call: ToolCall = {
     id,
     name: "worktree",
-    arg: name ? `create ${name}` : "create",
+    args: name ? ["create", name] : ["create"],
     state: "running",
   };
   append(call);

@@ -27,7 +27,7 @@ export function projectTranscriptLines(
   mode: TranscriptOutputMode,
 ): MinimalTranscriptLine[] {
   if (mode === "verbose") return [...lines];
-  const compact = minimalTranscriptLines(lines);
+  const compact = minimalTranscriptLines(lines, mode === "quiet");
   return mode === "quiet"
     ? compact.filter((line) => line.kind !== "agent-message")
     : compact;

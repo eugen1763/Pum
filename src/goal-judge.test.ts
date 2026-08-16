@@ -106,7 +106,7 @@ describe("judge transcript", () => {
       { kind: "text", role: "user", text: "add a parser" },
       { kind: "text", role: "thinking", text: "secret reasoning" },
       { kind: "text", role: "assistant", text: "done" },
-      { kind: "tool", call: { id: "1", name: "bash", arg: "bun test", state: "ok" } },
+      { kind: "tool", call: { id: "1", name: "bash", args: ["bun test"], state: "ok" } },
       { kind: "agent-message", sender: "worker", recipient: "main", text: "blocked" },
     ];
     const rendered = judgeTranscript(lines);

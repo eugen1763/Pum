@@ -5,6 +5,8 @@ import {
   projectTranscriptLines,
   transcriptOutputMode,
 } from "./transcript-output";
+import { needsTranscriptGap, topAnchorScrollTop, type Line } from "./transcript";
+import type { MinimalToolSummaryLine } from "./output-minimal";
 
 describe("transcript output projection", () => {
   test("defaults to Normal and migrates every legacy persisted mode", () => {
@@ -157,5 +159,60 @@ describe("transcript output projection", () => {
     expect(projectPendingTranscriptLines(pending, "normal").map((item) => item.id)).toEqual(["agent", "user"]);
     expect(projectPendingTranscriptLines(pending, "verbose").map((item) => item.id)).toEqual(["agent", "user"]);
     expect(pending[0].delivered).toBe(false);
+  });
+});
+
+describe("blank lines around grouped activity", () => {
+  const text = (role: "user" | "assistant"): Line => ({ kind: "text", role, text: "x" });
+  const toolRow: Line = {
+    kind: "tool",
+    call: { id: "t", name: "read", args: ["a.ts"], state: "ok" },
+  };
+  const summary: MinimalToolSummaryLine = {
+    kind: "tool-summary",
+    text: "Read 1 file.",
+    calls: [toolRow.kind === "tool" ? toolRow.call : ({} as never)],
+  };
+
+  test("a summary row stands alone between any two neighbours", () => {
+    expect(needsTranscriptGap(text("assistant"), summary)).toBe(true);
+    expect(needsTranscriptGap(summary, text("assistant"))).toBe(true);
+    expect(needsTranscriptGap(toolRow, summary)).toBe(true);
+    expect(needsTranscriptGap(summary, toolRow)).toBe(true);
+    // Nothing precedes the first row, so it opens without a leading blank.
+    expect(needsTranscriptGap(undefined, summary)).toBe(false);
+  });
+
+  test("consecutive tool rows still have no gap between them", () => {
+    expect(needsTranscriptGap(toolRow, toolRow)).toBe(false);
+  });
+
+  test("Quiet projects one summary, so its neighbours both gain a gap", () => {
+    const lines: Line[] = [text("user"), toolRow, toolRow, text("assistant")];
+    const projected = projectTranscriptLines(lines, "quiet");
+
+    expect(projected.map((line) => line.kind)).toEqual(["text", "tool-summary", "text"]);
+    expect(needsTranscriptGap(projected[0], projected[1]!)).toBe(true);
+    expect(needsTranscriptGap(projected[1], projected[2]!)).toBe(true);
+  });
+});
+
+describe("anchoring a revealed row", () => {
+  test("puts the row's first line at the top of the viewport", () => {
+    expect(topAnchorScrollTop(40, 200, 20)).toBe(40);
+  });
+
+  test("never scrolls past the end, so a row near the bottom stops short", () => {
+    expect(topAnchorScrollTop(195, 200, 20)).toBe(180);
+    expect(topAnchorScrollTop(400, 200, 20)).toBe(180);
+  });
+
+  test("never scrolls above the start", () => {
+    expect(topAnchorScrollTop(-5, 200, 20)).toBe(0);
+    expect(topAnchorScrollTop(0, 200, 20)).toBe(0);
+  });
+
+  test("stays at the start when everything already fits", () => {
+    expect(topAnchorScrollTop(5, 12, 20)).toBe(0);
   });
 });

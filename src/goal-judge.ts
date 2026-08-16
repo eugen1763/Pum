@@ -72,7 +72,7 @@ export function judgeTranscript(lines: readonly Line[]): string {
       if (line.role === "thinking") continue;
       rendered.push(`${line.role}: ${line.text}`);
     } else if (line.kind === "tool") {
-      const detail = line.call.arg ? ` ${line.call.arg}` : "";
+      const detail = line.call.args.length > 0 ? ` ${line.call.args.join(", ")}` : "";
       rendered.push(`tool ${line.call.name}${detail} [${line.call.state}]`);
     } else {
       rendered.push(`${line.sender} → ${line.recipient}: ${line.text}`);

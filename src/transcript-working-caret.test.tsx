@@ -48,7 +48,7 @@ function ToolLineHarness() {
     const timer = setTimeout(() => setWorking(true), 5);
     return () => clearTimeout(timer);
   }, []);
-  const call: ToolCall = { id: "tool", name: "bash", arg: "ls", state: "running" };
+  const call: ToolCall = { id: "tool", name: "bash", args: ["ls"], state: "running" };
   return <ToolLine theme={loadTheme("tokyonight")} call={call} workingCaret={working} />;
 }
 

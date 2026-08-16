@@ -24,7 +24,7 @@ import {
   type SearchCall,
 } from "./web-search";
 import { SandboxController } from "./sandbox";
-import { toolArg } from "./tool-line";
+import { toolArgText } from "./tool-line";
 import { shutdownSignals, signalExitCode } from "./platform";
 import { SessionStatsManager } from "./session-stats";
 import { prepareHeadlessStatsOutput, type HeadlessStatsOutput } from "./headless-stats";
@@ -235,7 +235,7 @@ async function runPromptSession(
         }
         break;
       case "tool_execution_start":
-        process.stderr.write(`· ${event.toolName} ${toolArg(event.toolName, event.args, cwd)}\n`);
+        process.stderr.write(`· ${event.toolName} ${toolArgText(event.toolName, event.args, cwd)}\n`);
         break;
       case "tool_execution_end":
         if (event.isError) process.stderr.write(`· ${event.toolName} failed\n`);

@@ -1,5 +1,11 @@
 import { CodeRenderable, SyntaxStyle, type BaseRenderable } from "@opentui/core";
 import type { Theme } from "./theme";
+import { registerVendoredGrammars } from "./syntax-grammars";
+
+// Every path that highlights anything comes through here for its SyntaxStyle,
+// so this is the one place that can guarantee the extra grammars are declared
+// before a client starts. Declaring costs nothing until a buffer needs one.
+registerVendoredGrammars();
 
 /** Wait for every highlight request that belongs to a renderable tree. */
 export async function settleSyntaxHighlighting(root: BaseRenderable): Promise<void> {

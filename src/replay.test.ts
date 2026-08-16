@@ -73,7 +73,7 @@ describe("subagent transcript replay", () => {
       call: {
         id: "worktree-1",
         name: "worktree",
-        arg: "create",
+        args: ["create"],
         state: "ok",
         detail: "pum/test",
       },
@@ -175,7 +175,7 @@ describe("subagent transcript replay", () => {
       call: {
         id: "patch-1",
         name: "apply_patch",
-        arg: "src/file.ts",
+        args: ["src/file.ts"],
         state: "ok",
         detail: "+1 −1",
         input: {
@@ -224,7 +224,7 @@ describe("subagent transcript replay", () => {
       call: {
         id: "read-1",
         name: "read",
-        arg: "src/file name.ts · offset=12 · limit=40",
+        args: ["src/file name.ts", "offset=12", "limit=40"],
         state: "ok",
         input: {
           path: "/repo/src/file name.ts",
@@ -270,7 +270,7 @@ describe("subagent transcript replay", () => {
       call: {
         id: "bash-1",
         name: "bash",
-        arg: "printf first; printf last; exit 7",
+        args: ["printf first; printf last; exit 7"],
         state: "error",
         exitCode: 7,
       },
@@ -301,7 +301,7 @@ describe("subagent transcript replay", () => {
       call: {
         id: "search-1",
         name: "web_search",
-        arg: "release date",
+        args: ["release date"],
         state: "ok",
       },
     }]);
@@ -348,7 +348,7 @@ describe("subagent transcript replay", () => {
     expect(lines[0]).toMatchObject({
       kind: "tool",
       // No persisted result: the call is interrupted, not successful.
-      call: { id: "read-windows", arg: "src/file name.ts · limit=8", state: "error" },
+      call: { id: "read-windows", args: ["src/file name.ts", "limit=8"], state: "error" },
     });
   });
 
@@ -386,7 +386,7 @@ describe("subagent transcript replay", () => {
 
     expect(lines[0]).toMatchObject({
       kind: "tool",
-      call: { name: "questionnaire", arg: "1 question · Scope", detail: "1 answer", state: "ok" },
+      call: { name: "questionnaire", args: ["1 question", "Scope"], detail: "1 answer", state: "ok" },
     });
   });
 
@@ -419,7 +419,7 @@ describe("subagent transcript replay", () => {
 
     expect(lines[0]).toMatchObject({
       kind: "tool",
-      call: { name: "message_cache_send", arg: "send · 2 ids", detail: "2 sent", state: "ok" },
+      call: { name: "message_cache_send", args: ["send", "2 ids"], detail: "2 sent", state: "ok" },
     });
   });
 

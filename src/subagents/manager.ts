@@ -32,7 +32,7 @@ import {
   persistSearchCall,
   withSearchRoute,
 } from "../web-search";
-import { bashOutput, bashResultDisplay, editCounts, toolArg, type ToolCall } from "../tool-line";
+import { bashOutput, bashResultDisplay, editCounts, toolArgs, type ToolCall } from "../tool-line";
 import { toolPreviewFromResult, toolPreviewFromStart } from "../tool-preview";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
@@ -457,7 +457,7 @@ export class SubagentManager {
     this.mainApi?.appendEntry(TOOL_EVENT_CUSTOM_TYPE, {
       id: call.id,
       name: call.name,
-      arg: call.arg,
+      arg: call.args.join(", "),
       state: call.state,
       detail: call.detail,
       output: call.output,
@@ -959,7 +959,7 @@ export class SubagentManager {
           call: {
             id: event.toolCallId,
             name: event.toolName,
-            arg: toolArg(event.toolName, event.args, record.snapshot.worktree.path),
+            args: toolArgs(event.toolName, event.args, record.snapshot.worktree.path),
             state: "running",
             startedAt: Date.now(),
             input: event.args,
@@ -2028,7 +2028,7 @@ export class SubagentManager {
       if (call.phase === "start") {
         this.appendLine(record, {
           kind: "tool",
-          call: { id: call.id, name: "web_search", arg: call.query, state: "running" },
+          call: { id: call.id, name: "web_search", args: [call.query], state: "running" },
         });
       } else {
         this.patchTool(record, call.id, {
