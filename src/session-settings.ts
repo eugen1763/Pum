@@ -1,5 +1,4 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { companionFileFor, readCompanion, writeCompanion } from "./session-companion";
 import { normalizeSettings, type PumSettings } from "./settings";
 
 /**
@@ -32,9 +31,10 @@ const OVERRIDABLE = [
 ] as const;
 
 /** Companion file next to the session JSONL: `<session>.settings.json`. */
+const SESSION_SETTINGS_SUFFIX = "settings.json";
+
 export function sessionSettingsFileFor(sessionFile: string): string {
-  const base = basename(sessionFile).replace(/\.jsonl?$/, "");
-  return join(dirname(sessionFile), `${base}.settings.json`);
+  return companionFileFor(sessionFile, SESSION_SETTINGS_SUFFIX);
 }
 
 /** Keep only the fields a session owns, so an old or hand-edited file cannot smuggle others in. */
@@ -51,44 +51,26 @@ export function pickSessionSettings(value: Record<string, unknown>): SessionSett
  * file simply means the session runs on the global settings.
  */
 export function loadSessionSettings(sessionFile: string | undefined): SessionSettings {
-  if (!sessionFile) return {};
-  try {
-    const file = sessionSettingsFileFor(sessionFile);
-    if (!existsSync(file)) return {};
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return pickSessionSettings(parsed as Record<string, unknown>);
-  } catch {
-    return {};
-  }
+  const stored = readCompanion(sessionFile, SESSION_SETTINGS_SUFFIX, isSettingsObject, {});
+  return pickSessionSettings(stored);
 }
+
+const isSettingsObject = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 /** Persist a session's overrides atomically. A failed write never breaks the session. */
 export function saveSessionSettings(
   sessionFile: string | undefined,
   overrides: SessionSettings,
 ): void {
-  if (!sessionFile) return;
-  try {
-    const file = sessionSettingsFileFor(sessionFile);
-    const picked = pickSessionSettings(overrides as Record<string, unknown>);
-    if (Object.keys(picked).length === 0) {
-      // An empty overlay is the same as no file, and leaving one behind would
-      // put a stub beside every session ever opened.
-      rmSync(file, { force: true });
-      return;
-    }
-    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      writeFileSync(temporary, JSON.stringify(picked, null, 2), "utf8");
-      renameSync(temporary, file);
-    } catch (error) {
-      rmSync(temporary, { force: true });
-      throw error;
-    }
-  } catch {
-    // Losing an override is survivable; losing the session is not.
-  }
+  const picked = pickSessionSettings(overrides as Record<string, unknown>);
+  // An empty overlay is the same as no file, and leaving one behind would put a
+  // stub beside every session ever opened.
+  writeCompanion(
+    sessionFile,
+    SESSION_SETTINGS_SUFFIX,
+    Object.keys(picked).length === 0 ? null : picked,
+  );
 }
 
 /**

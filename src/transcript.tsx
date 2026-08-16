@@ -23,7 +23,7 @@ import {
   type GoalReviewStatus,
 } from "./goal-review";
 import type { Theme } from "./theme";
-import { bashOutputWindow, type ToolCall } from "./tool-line";
+import { bashOutputWindow, type BashOutputWindow, type ToolCall } from "./tool-line";
 import type { TranscriptOutputMode } from "./transcript-output";
 import type { MinimalToolSummaryLine } from "./output-minimal";
 import {
@@ -680,16 +680,19 @@ export function resultText(result: unknown): string {
   return jsonText(result);
 }
 
-/** The tail of a result, capped, with a count of what the cap hid. */
+/**
+ * The tail of a result, capped, with a count of what the cap hid.
+ *
+ * The same window Bash output uses, over a different source: one rule for
+ * keeping the newest lines, including how line endings and a trailing newline
+ * are counted.
+ */
 export function compactResultWindow(
   result: unknown,
   limit = COMPACT_DETAIL_LINES,
-): { lines: string[]; hidden: number } {
-  const text = resultText(result).replace(/\s+$/, "");
-  if (!text) return { lines: [], hidden: 0 };
-  const lines = text.split("\n");
-  if (lines.length <= limit) return { lines, hidden: 0 };
-  return { lines: lines.slice(lines.length - limit), hidden: lines.length - limit };
+): BashOutputWindow {
+  const text = resultText(result);
+  return text ? bashOutputWindow(text, limit) : { lines: [], hidden: 0 };
 }
 
 /**

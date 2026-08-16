@@ -1,6 +1,5 @@
 import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
-import { basename, dirname, join } from "node:path";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { companionFileFor, readCompanion, writeCompanion } from "./session-companion";
 import { Type } from "typebox";
 import { GOAL_VERDICT_TOOL_NAME } from "./goal-judge";
 import { TODO_TOOL_NAMES } from "./todo-tools";
@@ -20,6 +19,9 @@ import { AFK_ANSWER_TOOL_NAME } from "./afk-delegate";
  * from the model tool list until they are enabled.
  */
 export const ENABLE_TOOLS = "enable_tools";
+
+/** Companion suffix for this session's enabled groups. */
+const TOOL_GROUPS_SUFFIX = "tool-groups.json";
 
 /**
  * Tools that are always sent in every session.
@@ -214,28 +216,21 @@ export function activeToolNames(
 const isGroupName = (value: unknown): value is ToolGroupName =>
   typeof value === "string" && (TOOL_GROUP_NAMES as readonly string[]).includes(value);
 
-/** Companion file next to the session JSONL: tool-groups.<sessionId>.json */
+/** Companion file next to the session JSONL: `<session>.tool-groups.json` */
 export function toolGroupsFileFor(sessionFile: string): string {
-  const base = basename(sessionFile).replace(/\.jsonl?$/, "");
-  return join(dirname(sessionFile), `${base}.tool-groups.json`);
+  return companionFileFor(sessionFile, TOOL_GROUPS_SUFFIX);
+}
+
+/** Accepts both the current array form and the older `{ groups: [...] }` form. */
+function isStoredGroups(value: unknown): value is unknown[] | { groups: unknown[] } {
+  return Array.isArray(value) || Array.isArray((value as { groups?: unknown })?.groups);
 }
 
 /** Load the enabled groups persisted for a session. Never throws. */
 export function loadToolGroups(sessionFile: string | undefined): ToolGroupName[] {
-  if (!sessionFile) return [];
-  try {
-    const file = toolGroupsFileFor(sessionFile);
-    if (!existsSync(file)) return [];
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    const groups: unknown[] = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray((parsed as { groups?: unknown })?.groups)
-        ? (parsed as { groups: unknown[] }).groups
-        : [];
-    return [...new Set(groups.filter(isGroupName))].sort();
-  } catch {
-    return [];
-  }
+  const stored = readCompanion(sessionFile, TOOL_GROUPS_SUFFIX, isStoredGroups, []);
+  const groups: unknown[] = Array.isArray(stored) ? stored : stored.groups;
+  return [...new Set(groups.filter(isGroupName))].sort();
 }
 
 /** Persist the enabled groups atomically next to the session. Best effort only. */
@@ -243,18 +238,7 @@ export function saveToolGroups(
   sessionFile: string | undefined,
   groups: readonly ToolGroupName[],
 ): void {
-  if (!sessionFile) return;
-  try {
-    const file = toolGroupsFileFor(sessionFile);
-    writeFileSync(
-      `${file}.tmp`,
-      JSON.stringify([...new Set(groups)].sort(), null, 2),
-      "utf8",
-    );
-    renameSync(`${file}.tmp`, file);
-  } catch {
-    // A failed tool-groups write never breaks the session.
-  }
+  writeCompanion(sessionFile, TOOL_GROUPS_SUFFIX, [...new Set(groups)].sort());
 }
 
 /** Human-readable state used as the result text of enable_tools. */

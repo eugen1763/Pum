@@ -1,6 +1,5 @@
-import { basename, dirname, join } from "node:path";
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { companionFileFor, readCompanion, writeCompanion } from "./session-companion";
 
 /**
  * Autonomous goal mode.
@@ -95,10 +94,12 @@ export function isTerminalGoalState(state: GoalState): boolean {
   return TERMINAL_GOAL_STATES.includes(state);
 }
 
-/** Companion file next to the session JSONL: <session>.goal.json */
+/** Companion suffix for a session's goal. */
+const GOAL_SUFFIX = "goal.json";
+
+/** Companion file next to the session JSONL: `<session>.goal.json` */
 export function goalFileFor(sessionFile: string): string {
-  const base = basename(sessionFile).replace(/\.jsonl?$/, "");
-  return join(dirname(sessionFile), `${base}.goal.json`);
+  return companionFileFor(sessionFile, GOAL_SUFFIX);
 }
 
 function boundedText(value: unknown, max: number): string | undefined {
@@ -141,34 +142,12 @@ function isContinuation(value: unknown): value is GoalContinuation {
 
 /** Load the persisted goal for a session. Never throws; corrupt state is no goal. */
 export function loadGoal(sessionFile: string | undefined): GoalRecord | null {
-  if (!sessionFile) return null;
-  try {
-    const file = goalFileFor(sessionFile);
-    if (!existsSync(file)) return null;
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    return isGoalRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return readCompanion(sessionFile, GOAL_SUFFIX, isGoalRecord, null);
 }
 
 /** Persist the goal atomically beside the session. Best effort only. */
 export function saveGoal(sessionFile: string | undefined, goal: GoalRecord | null): void {
-  if (!sessionFile) return;
-  try {
-    const file = goalFileFor(sessionFile);
-    if (!goal) {
-      rmSync(file, { force: true });
-      return;
-    }
-    // pid and time in the temp name, so two PUM processes on one session
-    // cannot interleave write and rename and lose an update.
-    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(temporary, JSON.stringify(goal, null, 2), "utf8");
-    renameSync(temporary, file);
-  } catch {
-    // A failed goal write never breaks the session.
-  }
+  writeCompanion(sessionFile, GOAL_SUFFIX, goal);
 }
 
 export function createGoal(

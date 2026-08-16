@@ -1,6 +1,10 @@
-import { basename, dirname, join } from "node:path";
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import {
+  companionExists,
+  companionFileFor,
+  readCompanion,
+  writeCompanionOrThrow,
+} from "./session-companion";
 
 /**
  * Per-agent todo lists.
@@ -47,9 +51,10 @@ export function isTodoStatus(value: unknown): value is TodoStatus {
 }
 
 /** Companion file next to the session JSONL: <session>.todo.json */
+const TODO_SUFFIX = "todo.json";
+
 export function todoFileFor(sessionFile: string): string {
-  const base = basename(sessionFile).replace(/\.jsonl?$/, "");
-  return join(dirname(sessionFile), `${base}.todo.json`);
+  return companionFileFor(sessionFile, TODO_SUFFIX);
 }
 
 /**
@@ -194,11 +199,8 @@ let sessionlessTasks: readonly TodoTask[] = [];
  */
 export function loadTodoTasks(sessionFile: string | undefined): TodoTask[] {
   if (!sessionFile) return [...sessionlessTasks];
-  try {
-    const file = todoFileFor(sessionFile);
-    if (!existsSync(file)) return [];
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    if (!Array.isArray(parsed)) return [];
+  {
+    const parsed = readCompanion(sessionFile, TODO_SUFFIX, Array.isArray, [] as unknown[]);
     const seen = new Set<string>();
     const tasks: TodoTask[] = [];
     for (const entry of parsed) {
@@ -218,8 +220,6 @@ export function loadTodoTasks(sessionFile: string | undefined): TodoTask[] {
     // File order is arbitrary, so an oversized file drops its lowest-priority
     // tasks rather than whatever happens to sit past the hundredth line.
     return tasks.length > MAX_TODOS ? sortTodoTasks(tasks).slice(0, MAX_TODOS) : tasks;
-  } catch {
-    return [];
   }
 }
 
@@ -229,31 +229,17 @@ function writeTodoTasks(sessionFile: string | undefined, tasks: readonly TodoTas
     sessionlessTasks = [...tasks];
     return;
   }
-  const file = todoFileFor(sessionFile);
   // An empty list with no companion file is nothing to record. Writing it
   // would leave a two-byte "[]" beside every session ever opened.
-  if (tasks.length === 0 && !existsSync(file)) return;
-  // The temp name carries pid and time so two PUM processes on one session
-  // cannot clobber each other's half-written file before the rename.
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    // Storage keeps insertion order; the popup sorts for display. Only an
-    // overflowing list is sorted first, so the tasks that matter least drop
-    // instead of whatever happened to sit last.
-    const stored = tasks.length > MAX_TODOS
-      ? sortTodoTasks(tasks).slice(0, MAX_TODOS)
-      : tasks;
-    writeFileSync(temporary, JSON.stringify(stored, null, 2), "utf8");
-    renameSync(temporary, file);
-  } catch (error) {
-    // The name is never reused, so a leftover temp file would sit there forever.
-    try {
-      rmSync(temporary, { force: true });
-    } catch {
-      // Nothing more to try; the write already failed.
-    }
-    throw error;
-  }
+  if (tasks.length === 0 && !companionExists(sessionFile, TODO_SUFFIX)) return;
+  // Storage keeps insertion order; the popup sorts for display. Only an
+  // overflowing list is sorted first, so the tasks that matter least drop
+  // instead of whatever happened to sit last.
+  const stored = tasks.length > MAX_TODOS
+    ? sortTodoTasks(tasks).slice(0, MAX_TODOS)
+    : tasks;
+  // Throws: a caller in the middle of a transaction has to know.
+  writeCompanionOrThrow(sessionFile, TODO_SUFFIX, stored);
 }
 
 /**

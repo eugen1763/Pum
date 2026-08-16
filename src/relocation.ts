@@ -1,5 +1,4 @@
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { companionFileFor, readCompanion, writeCompanion } from "./session-companion";
 import { isPathInsideOrSame, pathIdentity } from "./platform";
 
 /**
@@ -37,9 +36,10 @@ export type RelocationRecord = {
 export const MAX_RELOCATION_FIELD = 4_096;
 
 /** Companion file next to the session JSONL: `<session>.relocation.json`. */
+const RELOCATION_SUFFIX = "relocation.json";
+
 export function relocationFileFor(sessionFile: string): string {
-  const base = basename(sessionFile).replace(/\.jsonl?$/, "");
-  return join(dirname(sessionFile), `${base}.relocation.json`);
+  return companionFileFor(sessionFile, RELOCATION_SUFFIX);
 }
 
 function boundedText(value: unknown): value is string {
@@ -66,41 +66,14 @@ function isRelocationRecord(value: unknown): value is RelocationRecord {
 
 /** Never throws: corrupt state means no relocation, which resumes in the source. */
 export function loadRelocation(sessionFile: string | undefined): RelocationRecord | null {
-  if (!sessionFile) return null;
-  try {
-    const file = relocationFileFor(sessionFile);
-    if (!existsSync(file)) return null;
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    return isRelocationRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return readCompanion(sessionFile, RELOCATION_SUFFIX, isRelocationRecord, null);
 }
 
 export function saveRelocation(
   sessionFile: string | undefined,
   record: RelocationRecord | null,
 ): void {
-  if (!sessionFile) return;
-  try {
-    const file = relocationFileFor(sessionFile);
-    if (!record) {
-      rmSync(file, { force: true });
-      return;
-    }
-    // pid and time in the temp name, so two PUM processes on one session cannot
-    // interleave write and rename and lose an update.
-    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      writeFileSync(temporary, JSON.stringify(record, null, 2), "utf8");
-      renameSync(temporary, file);
-    } catch (error) {
-      rmSync(temporary, { force: true });
-      throw error;
-    }
-  } catch {
-    // A failed relocation write never breaks the session.
-  }
+  writeCompanion(sessionFile, RELOCATION_SUFFIX, record);
 }
 
 export type RelocationGuardInput = {

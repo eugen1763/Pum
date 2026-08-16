@@ -1,5 +1,9 @@
-import { basename, dirname, join } from "node:path";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  companionExists,
+  companionFileFor,
+  readCompanion,
+  writeCompanion,
+} from "./session-companion";
 
 export type NewsPrompt = {
   /** The user prompt or steer text that produced the answer. */
@@ -39,9 +43,10 @@ export type NewsItem = {
 export const NEWS_CAPACITY = 20;
 
 /** Companion file next to the session JSONL: news.<sessionId>.json */
+const NEWS_SUFFIX = "news.json";
+
 export function newsFileFor(sessionFile: string): string {
-  const base = basename(sessionFile).replace(/\.jsonl?$/, "");
-  return join(dirname(sessionFile), `${base}.news.json`);
+  return companionFileFor(sessionFile, NEWS_SUFFIX);
 }
 
 function isNewsItem(value: unknown): value is NewsItem {
@@ -79,16 +84,8 @@ function isNewsCompletion(value: unknown): value is NewsCompletion {
 
 /** Load the persisted news list for a session. Never throws. */
 export function loadNewsItems(sessionFile: string | undefined): NewsItem[] {
-  if (!sessionFile) return [];
-  try {
-    const file = newsFileFor(sessionFile);
-    if (!existsSync(file)) return [];
-    const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isNewsItem).slice(0, NEWS_CAPACITY);
-  } catch {
-    return [];
-  }
+  const stored = readCompanion(sessionFile, NEWS_SUFFIX, Array.isArray, [] as unknown[]);
+  return stored.filter(isNewsItem).slice(0, NEWS_CAPACITY);
 }
 
 /** Persist the news list atomically next to the session. Best effort only. */
@@ -97,19 +94,10 @@ export function saveNewsItems(
   items: readonly NewsItem[],
 ): void {
   if (!sessionFile) return;
-  try {
-    const file = newsFileFor(sessionFile);
-    // An empty list with no companion file is nothing to record. Writing it
-    // would leave a two-byte "[]" beside every session ever opened.
-    if (items.length === 0 && !existsSync(file)) return;
-    // The temp name carries pid and time so two PUM processes on one session
-    // cannot interleave write and rename and lose an update.
-    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(temporary, JSON.stringify(items.slice(0, NEWS_CAPACITY), null, 2), "utf8");
-    renameSync(temporary, file);
-  } catch {
-    // A failed news write never breaks the session.
-  }
+  // An empty list with no companion file is nothing to record. Writing it would
+  // leave a two-byte "[]" beside every session ever opened.
+  if (items.length === 0 && !companionExists(sessionFile, NEWS_SUFFIX)) return;
+  writeCompanion(sessionFile, NEWS_SUFFIX, items.slice(0, NEWS_CAPACITY));
 }
 
 export type FinishNewsSettlement = {
