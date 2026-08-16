@@ -29,6 +29,7 @@ describe("settings search and navigation", () => {
     expect(filterSettingsRows("comet pair").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("electric spark").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("constellation").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
+    expect(filterSettingsRows("random constellation").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("energy transfer").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("transcript verbose").map((row) => row.id)).toEqual(["outputMode"]);
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual([
