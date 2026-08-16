@@ -423,4 +423,68 @@ describe("transcript Markdown rows", () => {
     expect(markdownRows.map((row) => row.content)).toEqual([markdownText, markdownText]);
     expect(markdownRows.every((row) => row.syntaxStyle === syntaxStyle)).toBe(true);
   });
+
+  test("never draws heading markers between streamed chunks", async () => {
+    reactTestEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    const setup = await createTestRenderer({ width: 40, height: 24 });
+    destroy = () => setup.renderer.destroy();
+    const root = createRoot(setup.renderer);
+    const theme = loadTheme("tokyonight");
+    const syntaxStyle = buildSyntaxStyle(theme);
+    const content = [
+      "## Heading",
+      "",
+      "Body text follows here.",
+      "",
+      "### Another",
+      "",
+      "- a list item",
+      "",
+      "Tail.",
+    ].join("\n");
+
+    let setText: Dispatch<SetStateAction<string>> = () => {};
+    function StreamingHarness() {
+      const [text, updateText] = useState(content.slice(0, 1));
+      setText = updateText;
+      return (
+        <box style={{ flexDirection: "column", width: "100%" }}>
+          <StreamLine
+            theme={theme}
+            syntaxStyle={syntaxStyle}
+            role="assistant"
+            text={text}
+          />
+        </box>
+      );
+    }
+
+    await act(async () => {
+      root.render(<StreamingHarness />);
+      await setup.flush();
+    });
+
+    // A marker is only excusable while the heading is still bare: "##" before
+    // any title text has streamed in has nothing to conceal it against.
+    const bare = /(^|\n)#{1,6} ?$/;
+    const leaked: number[] = [];
+
+    for (let length = 1; length <= content.length; length += 1) {
+      if (length > 1) await act(async () => setText(content.slice(0, length)));
+
+      // The next frame the terminal draws, before the asynchronous highlight
+      // lands. That is the frame the flicker used to live in.
+      await setup.renderOnce();
+      if (setup.captureCharFrame().includes("#") && !bare.test(content.slice(0, length))) {
+        leaked.push(length);
+      }
+
+      await Promise.all(
+        descendants(setup.renderer.root, CodeRenderable).map((row) => row.highlightingDone),
+      );
+      await setup.renderOnce();
+    }
+
+    expect(leaked).toEqual([]);
+  }, 20_000);
 });

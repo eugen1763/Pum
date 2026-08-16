@@ -3,7 +3,7 @@ import type { ScrollBoxRenderable } from "@opentui/core";
 import { buildSyntaxStyle } from "./syntax";
 import { PopupFrame } from "./popup-frame";
 import { formatAge, type NewsItem } from "./news";
-import { TextLine } from "./transcript";
+import { SelectableMarkdown, TextLine } from "./transcript";
 import type { Theme } from "./theme";
 
 /**
@@ -112,7 +112,7 @@ export function NewsPopup({
                   />
                 </box>
                 <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-                  <markdown
+                  <SelectableMarkdown
                     content={current.text}
                     streaming={false}
                     syntaxStyle={syntaxStyle}

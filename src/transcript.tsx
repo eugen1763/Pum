@@ -68,14 +68,35 @@ export function transcriptForThinkingVisibility<T extends PendingTranscriptState
   return { ...value, lines, stream };
 }
 
-/** OpenTUI 0.5.1 supports Markdown selection at runtime but omits the React prop. */
-function SelectableMarkdown({ ref, ...props }: MarkdownProps) {
+// Top-level blocks flip the table default to borderless columns, so the grid
+// style has to be asked for. One frozen object: the setter reapplies the
+// options to every block on assignment, without checking whether they changed.
+const MARKDOWN_TABLE_OPTIONS: MarkdownProps["tableOptions"] = { style: "grid" };
+
+/**
+ * OpenTUI 0.5.1 supports Markdown selection at runtime but omits the React prop.
+ *
+ * Coalesced blocks also hand the renderer one synthetic token carrying the raw
+ * source and no inline children. Its synchronous placeholder then comes from
+ * the inline lexer, which does not know block syntax, so heading markers
+ * survive until the asynchronous highlight conceals them — and every streamed
+ * chunk repaints them. Top-level blocks keep the real heading token, whose
+ * placeholder is concealed from the start.
+ */
+export function SelectableMarkdown({ ref, ...props }: MarkdownProps) {
   const setRef = (renderable: MarkdownRenderable | null) => {
     if (renderable) renderable.selectable = true;
     if (typeof ref === "function") ref(renderable);
     else if (ref) ref.current = renderable;
   };
-  return <markdown {...props} ref={setRef} />;
+  return (
+    <markdown
+      internalBlockMode="top-level"
+      tableOptions={MARKDOWN_TABLE_OPTIONS}
+      {...props}
+      ref={setRef}
+    />
+  );
 }
 
 /** Resolve a delivered message without splitting the active streamed output. */
