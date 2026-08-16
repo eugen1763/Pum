@@ -111,7 +111,7 @@ export function toolArg(name: string, args: any, cwd: string): string {
     }
     return [path, ...range].join(" · ");
   }
-  if (name === "apply_patch" && typeof args.patch === "string") {
+  if ((name === "apply_patch" || name === "apply_path") && typeof args.patch === "string") {
     const paths: string[] = [];
     let updateIndex = -1;
     for (const line of args.patch.replace(/\r\n/g, "\n").split("\n")) {

@@ -14,8 +14,13 @@ import { DEFAULT_GOAL_RETRY_LIMIT, normalizeGoalRetryLimit } from "./goal";
 
 export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
-export const OUTPUT_MODES = ["minimal", "default", "detailed"] as const;
+export const OUTPUT_MODES = ["quiet", "normal", "verbose"] as const;
 export type OutputMode = (typeof OUTPUT_MODES)[number];
+export const OUTPUT_MODE_LABELS: Record<OutputMode, string> = {
+  quiet: "Quiet",
+  normal: "Normal",
+  verbose: "Verbose",
+};
 export const CHECK_MODE_PROFILES = ["off", "on"] as const;
 export type CheckModeProfile = (typeof CHECK_MODE_PROFILES)[number];
 
@@ -96,7 +101,12 @@ export function isOutputMode(value: unknown): value is OutputMode {
 }
 
 export function normalizeOutputMode(value: unknown): OutputMode {
-  return isOutputMode(value) ? value : "default";
+  if (isOutputMode(value)) return value;
+  // Migrate the original transcript level names without changing their order.
+  if (value === "minimal") return "quiet";
+  if (value === "default") return "normal";
+  if (value === "detailed") return "verbose";
+  return "normal";
 }
 
 export function cycleOutputMode(value: unknown, step: number): OutputMode {
@@ -116,7 +126,7 @@ export type PumSettings = {
   animations: boolean;
   /** Animation used for the rules while an agent works. */
   workingRuleAnimation: WorkingRuleAnimationMode;
-  /** Transcript tool-output detail. Legacy settings omit this field and migrate to default. */
+  /** Transcript tool-output detail. Legacy settings and names migrate to normal. */
   outputMode?: OutputMode;
   webSearch: boolean;
   writingStyle: WritingStyle;
@@ -141,7 +151,7 @@ const DEFAULTS: PumSettings = {
   animations: true,
   // Preserve the rule-only behavior used before this setting existed.
   workingRuleAnimation: "input-only",
-  outputMode: "default",
+  outputMode: "normal",
   webSearch: true,
   writingStyle: "none",
   explanationStrength: "simple",

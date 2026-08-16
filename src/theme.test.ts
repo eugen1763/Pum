@@ -28,6 +28,9 @@ describe("rejection theme tokens", () => {
       expect(theme.statsRunning).not.toBe(theme.statsInterrupted);
       expect(theme.popupShadow).toBeTruthy();
       expect(theme.popupShadow).not.toBe(theme.popupBg);
+      expect(theme.diffAddedBg).toBeTruthy();
+      expect(theme.diffRemovedBg).toBeTruthy();
+      expect(theme.diffAddedBg).not.toBe(theme.diffRemovedBg);
     }
   });
 
@@ -39,12 +42,16 @@ describe("rejection theme tokens", () => {
     const statusCwd = PRESETS["github-light"]!.codeType;
     const statsRunning = PRESETS["github-light"]!.statsRunning;
     const statsInterrupted = PRESETS["github-light"]!.statsInterrupted;
+    const diffAddedBg = PRESETS["github-light"]!.diffAddedBg;
+    const diffRemovedBg = PRESETS["github-light"]!.diffRemovedBg;
     writeFileSync(join(directory, "theme.json"), JSON.stringify({
       rejection,
       rejectionBg,
       statusCwd,
       statsRunning,
       statsInterrupted,
+      diffAddedBg,
+      diffRemovedBg,
       popupShadow: PRESETS["github-light"]!.border,
       unknownRejectionToken: "ignored",
     }));
@@ -73,6 +80,8 @@ describe("rejection theme tokens", () => {
     expect(theme.statusCwd).toBe(statusCwd);
     expect(theme.statsRunning).toBe(statsRunning);
     expect(theme.statsInterrupted).toBe(statsInterrupted);
+    expect(theme.diffAddedBg).toBe(diffAddedBg);
+    expect(theme.diffRemovedBg).toBe(diffRemovedBg);
     expect(theme.popupShadow).toBe(PRESETS["github-light"]!.border);
     expect(theme.unknownRejectionToken).toBeUndefined();
   });

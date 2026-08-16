@@ -1,17 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { replayEntries } from "./replay";
 import {
+  projectPendingTranscriptLines,
   projectTranscriptLines,
   transcriptOutputMode,
 } from "./transcript-output";
 
 describe("transcript output projection", () => {
-  test("defaults legacy settings to default and accepts every persisted mode", () => {
-    expect(transcriptOutputMode({})).toBe("default");
-    expect(transcriptOutputMode({ outputMode: "minimal" })).toBe("minimal");
-    expect(transcriptOutputMode({ outputMode: "default" })).toBe("default");
-    expect(transcriptOutputMode({ outputMode: "detailed" })).toBe("detailed");
-    expect(transcriptOutputMode({ outputMode: "unknown" })).toBe("default");
+  test("defaults to Normal and migrates every legacy persisted mode", () => {
+    expect(transcriptOutputMode({})).toBe("normal");
+    expect(transcriptOutputMode({ outputMode: "minimal" })).toBe("quiet");
+    expect(transcriptOutputMode({ outputMode: "default" })).toBe("normal");
+    expect(transcriptOutputMode({ outputMode: "detailed" })).toBe("verbose");
+    expect(transcriptOutputMode({ outputMode: "quiet" })).toBe("quiet");
+    expect(transcriptOutputMode({ outputMode: "normal" })).toBe("normal");
+    expect(transcriptOutputMode({ outputMode: "verbose" })).toBe("verbose");
+    expect(transcriptOutputMode({ outputMode: "unknown" })).toBe("normal");
   });
 
   test("reprojects one canonical replay immediately without mutating it", () => {
@@ -51,13 +55,13 @@ describe("transcript output projection", () => {
     ];
     const canonical = replayEntries(entries, process.cwd(), false);
 
-    const defaultLines = projectTranscriptLines(canonical, "default");
-    const minimalLines = projectTranscriptLines(canonical, "minimal");
-    const detailedLines = projectTranscriptLines(canonical, "detailed");
+    const normalLines = projectTranscriptLines(canonical, "normal");
+    const quietLines = projectTranscriptLines(canonical, "quiet");
+    const verboseLines = projectTranscriptLines(canonical, "verbose");
 
-    expect(defaultLines).toHaveLength(2);
-    expect(detailedLines).toHaveLength(2);
-    expect(minimalLines).toEqual([{
+    expect(normalLines).toHaveLength(1);
+    expect(verboseLines).toHaveLength(2);
+    expect(quietLines).toEqual([{
       kind: "tool-summary",
       text: "Read 2 files.",
       calls: expect.any(Array),
@@ -111,10 +115,47 @@ describe("transcript output projection", () => {
       },
     ], process.cwd(), false);
 
-    expect(projectTranscriptLines(canonical, "minimal").map((line) => line.kind)).toEqual([
+    expect(projectTranscriptLines(canonical, "quiet").map((line) => line.kind)).toEqual([
       "tool-summary",
       "text",
       "tool-summary",
     ]);
+  });
+
+  test("Quiet hides agent messages while Normal and Verbose preserve canonical rows", () => {
+    const canonical = [
+      { kind: "text", role: "assistant", text: "Before" },
+      { kind: "agent-message", sender: "worker", recipient: "main", text: "Update", messageId: "m1" },
+      { kind: "text", role: "assistant", text: "After" },
+    ] as const;
+
+    expect(projectTranscriptLines(canonical, "quiet").map((line) => line.kind)).toEqual(["text", "text"]);
+    expect(projectTranscriptLines(canonical, "normal").map((line) => line.kind)).toEqual([
+      "text", "agent-message", "text",
+    ]);
+    expect(projectTranscriptLines(canonical, "verbose").map((line) => line.kind)).toEqual([
+      "text", "agent-message", "text",
+    ]);
+    expect(canonical[1].kind).toBe("agent-message");
+  });
+
+  test("Quiet hides queued agent messages without mutating pending delivery state", () => {
+    const pending = [
+      {
+        id: "agent",
+        line: { kind: "agent-message", sender: "worker", recipient: "main", text: "queued" },
+        delivered: false,
+      },
+      {
+        id: "user",
+        line: { kind: "text", role: "user", text: "queued prompt" },
+        delivered: false,
+      },
+    ] as const;
+
+    expect(projectPendingTranscriptLines(pending, "quiet").map((item) => item.id)).toEqual(["user"]);
+    expect(projectPendingTranscriptLines(pending, "normal").map((item) => item.id)).toEqual(["agent", "user"]);
+    expect(projectPendingTranscriptLines(pending, "verbose").map((item) => item.id)).toEqual(["agent", "user"]);
+    expect(pending[0].delivered).toBe(false);
   });
 });

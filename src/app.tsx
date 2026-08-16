@@ -34,6 +34,7 @@ import {
   cycleOutputMode,
   MAX_ACTIVE_SUBAGENTS,
   MIN_ACTIVE_SUBAGENTS,
+  OUTPUT_MODE_LABELS,
   SANDBOX_MODES,
   normalizeSettings,
   saveSettings,
@@ -43,9 +44,11 @@ import {
 } from "./settings";
 import { StatusBar } from "./status-bar";
 import {
+  ActivitySummaryLine,
   AgentMessageLine,
   needsTranscriptGap,
   PendingMessageLine,
+  rawToolText,
   resolvePendingDelivery,
   settleTranscriptMessage,
   StreamLine,
@@ -244,12 +247,28 @@ const EMPTY_STATS_SNAPSHOT: SessionStatsSnapshot = {
 };
 import { maxStatsScrollOffset, StatsPopup } from "./stats-popup";
 import {
+  projectPendingTranscriptLines,
   projectTranscriptLines,
   transcriptOutputMode,
 } from "./transcript-output";
+import type { MinimalTranscriptLine } from "./output-minimal";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
+
+function projectedLineKey(line: MinimalTranscriptLine, index: number): string {
+  if (line.kind === "tool-summary") return `summary:${line.calls.map((call) => call.id).join(":")}`;
+  if (line.kind === "tool") return `tool:${line.call.id}`;
+  if (line.kind === "agent-message") return `agent:${line.messageId ?? `${index}:${line.text}`}`;
+  return `text:${line.newsId ?? `${line.role}:${index}:${line.text}`}`;
+}
+
+function projectedLineRawText(line: MinimalTranscriptLine): string {
+  if (line.kind === "tool-summary") return line.calls.map(rawToolText).join("\n\n");
+  if (line.kind === "tool") return rawToolText(line.call);
+  if (line.kind === "agent-message") return `${line.sender} → ${line.recipient}\n${line.text}`;
+  return line.text;
+}
 
 const QUIT_WINDOW_MS = 2000;
 const MAX_INPUT_ROWS = 8;
@@ -576,6 +595,7 @@ export function App({
   readPastedText = readClipboardText,
   stagePastedText = stagePastedTextDefault,
   copyNewsAnswerText = copyTextToClipboard,
+  copyTranscriptText = copyTextToClipboard,
   onExit = () => process.exit(0),
   triggerManager,
   shellManager,
@@ -611,6 +631,8 @@ export function App({
   stagePastedText?: typeof stagePastedTextDefault;
   /** Copies the selected news answer for the popup. */
   copyNewsAnswerText?: typeof copyTextToClipboard;
+  /** Copies raw data for the selected transcript row. */
+  copyTranscriptText?: typeof copyTextToClipboard;
   onExit?: () => void | Promise<void>;
   triggerManager?: TriggerManagerLike;
   shellManager?: ShellManagerLike;
@@ -711,6 +733,12 @@ export function App({
   const [settings, setSettings] = useState(
     () => mergeSessionSettings(globalSettingsRef.current, sessionOverridesRef.current),
   );
+  const [transcriptFocused, setTranscriptFocused] = useState(false);
+  const transcriptFocusedRef = useRef(false);
+  const [transcriptCursor, setTranscriptCursor] = useState(0);
+  const transcriptCursorRef = useRef(0);
+  const [detailOverrides, setDetailOverrides] = useState<Map<string, boolean>>(() => new Map());
+  const detailOverridesRef = useRef(detailOverrides);
   // Mirrors settings for update(): a keypress or an async .then can fire a
   // second update before React commits the first, so update() must build the
   // next value from the latest pending settings, not the render closure.
@@ -834,6 +862,15 @@ export function App({
     () => projectTranscriptLines(visibleTx.lines, outputMode),
     [visibleTx.lines, outputMode],
   );
+  const visiblePending = useMemo(
+    () => projectPendingTranscriptLines(visibleTx.pending, outputMode),
+    [visibleTx.pending, outputMode],
+  );
+  useLayoutEffect(() => {
+    const next = Math.max(0, Math.min(transcriptCursorRef.current, visibleLines.length - 1));
+    transcriptCursorRef.current = next;
+    setTranscriptCursor(next);
+  }, [visibleLines.length, activeAgentId]);
   const visibleBusy = activeAgent
     ? activeAgent.status === "starting" || activeAgent.status === "running"
     : busy;
@@ -857,7 +894,9 @@ export function App({
       `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
     )
     : EMPTY_STATS_SNAPSHOT), [statsOpen, statsManager, session, statsRevision]);
-  const inputHint = cancelArmed
+  const inputHint = transcriptFocused
+    ? " transcript  j/k move  enter details  c copy  esc prompt "
+    : cancelArmed
     ? " esc again to cancel "
     : quitArmed
       ? " ctrl+c again to quit "
@@ -1657,7 +1696,7 @@ export function App({
                 : "ok",
             detail: isRejectedToolResult(event.result, event.toolCallId)
               ? rejectedToolReason(event.result, event.toolCallId)
-              : event.toolName === "edit" || event.toolName === "apply_patch"
+              : event.toolName === "edit" || event.toolName === "apply_patch" || event.toolName === "apply_path"
                 ? editCounts(event.result)
                 : event.toolName === "questionnaire"
                   ? questionnaireDetail(event.result)
@@ -3637,7 +3676,7 @@ export function App({
     providers: "login and custom setup ›",
     animations: `‹ ${settings.animations ? "on" : "off"} ›`,
     workingRuleAnimation: `‹ ${settings.workingRuleAnimation} ›${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
-    outputMode: `‹ ${settings.outputMode ?? "default"} ›`,
+    outputMode: `‹ ${OUTPUT_MODE_LABELS[settings.outputMode ?? "normal"]} ›`,
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
@@ -3727,6 +3766,50 @@ export function App({
     const current = ids.findIndex((id) => id === activeAgentIdRef.current);
     const next = (current + direction + ids.length) % ids.length;
     selectAgentView(ids[next] ?? null);
+  };
+
+  const setTranscriptFocus = (focused: boolean) => {
+    transcriptFocusedRef.current = focused;
+    setTranscriptFocused(focused);
+    if (focused) {
+      const cursor = Math.max(0, visibleLines.length - 1);
+      transcriptCursorRef.current = cursor;
+      setTranscriptCursor(cursor);
+    } else queueMicrotask(() => inputRef.current?.focus());
+  };
+
+  const revealTranscriptCursor = (index: number) => {
+    queueMicrotask(() => transcriptScrollRef.current?.scrollChildIntoView(`transcript-line-${index}`));
+  };
+
+  const moveTranscriptCursor = (step: -1 | 1) => {
+    const next = Math.max(0, Math.min(visibleLines.length - 1, transcriptCursorRef.current + step));
+    transcriptCursorRef.current = next;
+    setTranscriptCursor(next);
+    revealTranscriptCursor(next);
+  };
+
+  const toggleTranscriptDetail = () => {
+    const line = visibleLines[transcriptCursorRef.current];
+    if (!line || (line.kind !== "tool" && line.kind !== "tool-summary")) return;
+    const key = projectedLineKey(line, transcriptCursorRef.current);
+    const current = detailOverridesRef.current.get(key) ?? outputMode === "verbose";
+    const next = new Map(detailOverridesRef.current);
+    next.set(key, !current);
+    detailOverridesRef.current = next;
+    setDetailOverrides(next);
+  };
+
+  const copyTranscriptRow = () => {
+    const line = visibleLines[transcriptCursorRef.current];
+    if (!line) return;
+    copyTranscriptText(projectedLineRawText(line), {
+      osc52: (value) => renderer.copyToClipboardOSC52(value),
+    }).catch((error) => append({
+      kind: "text",
+      role: "error",
+      text: `copy failed: ${String(error)}`,
+    }));
   };
 
   usePaste((event) => {
@@ -3901,6 +3984,22 @@ export function App({
         return;
       }
       if (loginControllerRef.current?.handleKey(key)) key.stopPropagation();
+      return;
+    }
+
+    if (key.ctrl && key.name === "y") {
+      key.stopPropagation();
+      setTranscriptFocus(!transcriptFocusedRef.current);
+      return;
+    }
+
+    if (transcriptFocusedRef.current) {
+      key.stopPropagation();
+      if (key.name === "escape") setTranscriptFocus(false);
+      else if (key.name === "j" || key.name === "down") moveTranscriptCursor(1);
+      else if (key.name === "k" || key.name === "up") moveTranscriptCursor(-1);
+      else if (["return", "enter", "kpenter", "linefeed"].includes(key.name)) toggleTranscriptDetail();
+      else if (key.name === "c" && !key.ctrl && !key.meta && !key.option) copyTranscriptRow();
       return;
     }
 
@@ -4574,13 +4673,17 @@ export function App({
           <RenderErrorBoundary theme={theme} label="transcript" resetKey={transcriptResetKey}>
             {visibleLines.map((line, i) => {
               const workingCaret = visibleBusy && !visibleTx.stream && i === visibleLines.length - 1;
+              const projectedKey = projectedLineKey(line, i);
+              const selected = transcriptFocused && transcriptCursor === i;
+              const expanded = detailOverrides.get(projectedKey) ?? outputMode === "verbose";
               const row =
                 line.kind === "tool-summary" ? (
-                  <TextLine
+                  <ActivitySummaryLine
                     theme={theme}
                     syntaxStyle={syntaxStyle}
-                    role="system"
-                    text={line.text}
+                    summary={line}
+                    expanded={expanded}
+                    outputMode={outputMode}
                   />
                 ) : line.kind === "tool" ? (
                   <ToolLine
@@ -4589,6 +4692,7 @@ export function App({
                     call={line.call}
                     workingCaret={workingCaret}
                     outputMode={outputMode}
+                    expanded={expanded}
                   />
                 ) : line.kind === "agent-message" ? (
                   <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
@@ -4614,19 +4718,16 @@ export function App({
                 ? { kind: "text", role: "system", text: previousProjected.text }
                 : previousProjected;
               const gapBefore = needsTranscriptGap(previousGapLine, currentGapLine);
-              const lineKey =
-                line.kind === "tool-summary"
-                  ? `tool-summary:${i}:${line.text}`
-                  : line.kind === "tool"
-                  ? `tool:${line.call.id}`
-                  : line.kind === "agent-message"
-                    ? `agent:${line.sender}:${line.recipient}:${i}:${line.text}`
-                    : `text:${line.role}:${i}:${line.text}`;
               return (
                 <box
                   id={`transcript-line-${i}`}
-                  key={lineKey}
-                  style={{ flexDirection: "column", width: "100%", flexShrink: 0 }}
+                  key={projectedKey}
+                  style={{
+                    flexDirection: "column",
+                    width: "100%",
+                    flexShrink: 0,
+                    backgroundColor: selected ? theme.selectionBg : "transparent",
+                  }}
                 >
                   {gapBefore ? <Gap /> : null}
                   {row}
@@ -4646,10 +4747,10 @@ export function App({
                 />
               </>
             ) : null}
-            {visibleTx.pending.some((pending) => !pending.delivered) ? (
+            {visiblePending.some((pending) => !pending.delivered) ? (
               <>
                 {(visibleLines.length > 0 || visibleTx.stream) ? <Gap /> : null}
-                {visibleTx.pending.filter((pending) => !pending.delivered).map((pending) => (
+                {visiblePending.filter((pending) => !pending.delivered).map((pending) => (
                   <PendingMessageLine
                     key={pending.id}
                     theme={theme}
@@ -4742,7 +4843,7 @@ export function App({
             selectionBg={theme.selectionBg}
             wrapMode="word"
             scrollMargin={1}
-            focused={!settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible}
+            focused={!transcriptFocused && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => submitPrompt()}

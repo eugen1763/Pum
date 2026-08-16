@@ -9,6 +9,13 @@ export type MinimalToolSummaryLine = {
 
 export type MinimalTranscriptLine = Line | MinimalToolSummaryLine;
 
+/** Mutations and commands stay visible in Quiet and Normal transcript modes. */
+export const IMPORTANT_TOOL_NAMES = new Set(["bash", "write", "edit", "apply_patch", "apply_path"]);
+
+export function isRoutineSuccessfulTool(call: ToolCall): boolean {
+  return call.state === "ok" && !IMPORTANT_TOOL_NAMES.has(call.name);
+}
+
 type ToolPhrase = {
   singular: string;
   plural(count: number): string;
@@ -30,6 +37,7 @@ const TOOL_PHRASES: Readonly<Record<string, ToolPhrase>> = {
   write: counted("Wrote", "file"),
   edit: counted("Edited", "file"),
   apply_patch: counted("Applied", "patch", "patches"),
+  apply_path: counted("Applied", "patch", "patches"),
   bash: counted("Ran", "command"),
   web_search: counted("Ran", "web search", "web searches"),
   questionnaire: counted("Asked", "questionnaire"),
@@ -123,7 +131,7 @@ export function minimalTranscriptLines(lines: readonly Line[]): MinimalTranscrip
   };
 
   for (const line of lines) {
-    if (line.kind === "tool" && line.call.state === "ok") {
+    if (line.kind === "tool" && isRoutineSuccessfulTool(line.call)) {
       successful.push(line.call);
       continue;
     }

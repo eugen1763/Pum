@@ -59,6 +59,7 @@ describe("detailed tool result previews", () => {
       language: "typescript",
     });
     expect(preview.lines[12]?.language).toBe("markdown");
+    expect(toolPreviewFromResult("apply_path", { details: { patch } })).toEqual(preview);
   });
 
   test("uses only parsers bundled by OpenTUI and handles empty windows", () => {
