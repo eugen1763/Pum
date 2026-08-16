@@ -12,8 +12,27 @@ import type { SandboxMode } from "./sandbox/types";
 import { DEFAULT_BASH_OUTPUT, normalizeBashOutput, type BashOutputSettings } from "./bash-output";
 import { DEFAULT_GOAL_RETRY_LIMIT, normalizeGoalRetryLimit } from "./goal";
 
-export const WORKING_RULE_ANIMATION_MODES = ["off", "input-only", "coordinated"] as const;
+export const WORKING_RULE_ANIMATION_MODES = [
+  "off",
+  "input-only",
+  "coordinated",
+  "sparkle-trail",
+  "comet-pair",
+  "electric-spark",
+  "constellation",
+  "energy-transfer",
+] as const;
 export type WorkingRuleAnimationMode = (typeof WORKING_RULE_ANIMATION_MODES)[number];
+export const WORKING_RULE_ANIMATION_LABELS: Record<WorkingRuleAnimationMode, string> = {
+  off: "Off",
+  "input-only": "Input sweep",
+  coordinated: "Coordinated sweep",
+  "sparkle-trail": "Sparkle trail",
+  "comet-pair": "Comet pair",
+  "electric-spark": "Electric spark",
+  constellation: "Constellation",
+  "energy-transfer": "Energy transfer",
+};
 export const OUTPUT_MODES = ["quiet", "normal", "verbose"] as const;
 export type OutputMode = (typeof OUTPUT_MODES)[number];
 export const OUTPUT_MODE_LABELS: Record<OutputMode, string> = {
