@@ -130,6 +130,7 @@ import {
 } from "./explanation-strength";
 import { setCheckModeConfig } from "./check-mode";
 import { applyCheckPathCommand, parseCheckPathCommand } from "./check-paths";
+import { pruneEditedMarkers, reindexMarkers } from "./attachment-markers";
 import {
   captureClipboardImage,
   cleanupPendingImages,
@@ -1170,80 +1171,34 @@ export function App({
   };
 
   const handleInput = (nextValue: string) => {
-    const previous = lastInputValue.current;
-    let value = nextValue;
-    let cleanupCursor: number | null = null;
-    let removedImages = 0;
-    let removedPastedTexts = 0;
-    const kept: PendingImage[] = [];
+    const edit = { previous: lastInputValue.current, next: nextValue };
 
-    for (const image of pendingImages.current) {
-      const exactStart = value.indexOf(image.marker);
-      if (exactStart >= 0) {
-        kept.push({ ...image, start: exactStart, end: exactStart + image.marker.length });
-        continue;
-      }
-
-      // The marker changed. Remove its remaining fragment from the new value
-      // and delete the corresponding temporary image immediately.
-      let prefix = 0;
-      while (
-        prefix < previous.length &&
-        prefix < nextValue.length &&
-        previous[prefix] === nextValue[prefix]
-      ) prefix++;
-      const delta = nextValue.length - previous.length;
-      const start = Math.max(0, Math.min(value.length, Math.min(image.start, prefix)));
-      const end = Math.max(start, Math.min(value.length, image.end + delta));
-      value = value.slice(0, start) + value.slice(end);
-      cleanupCursor = cleanupCursor === null ? start : Math.min(cleanupCursor, start);
-      removePendingImage(image);
-      removedImages++;
-    }
-
-    // Recalculate marker positions after any atomic marker removal.
-    pendingImages.current = kept.flatMap((image) => {
-      const start = value.indexOf(image.marker);
-      if (start < 0) {
-        removePendingImage(image);
-        removedImages++;
-        return [];
-      }
-      return [{ ...image, start, end: start + image.marker.length }];
+    // Editing any part of a marker deletes the whole attachment and its temp
+    // file at once. Both collections share one running draft, so the pastes
+    // prune against what the images already cut, and both are re-anchored
+    // afterwards against the final value.
+    const imagePrune = pruneEditedMarkers(pendingImages.current, {
+      ...edit,
+      value: nextValue,
+      cursor: null,
     });
-
-    // Pasted-text markers follow the same atomic lifecycle as image markers:
-    // editing or removing the marker deletes the temp file immediately.
-    const keptPasted: PendingPastedText[] = [];
-    for (const pasted of pendingPastedTexts.current) {
-      const exactStart = value.indexOf(pasted.marker);
-      if (exactStart >= 0) {
-        keptPasted.push({ ...pasted, start: exactStart, end: exactStart + pasted.marker.length });
-        continue;
-      }
-      let prefix = 0;
-      while (
-        prefix < previous.length &&
-        prefix < nextValue.length &&
-        previous[prefix] === nextValue[prefix]
-      ) prefix++;
-      const delta = nextValue.length - previous.length;
-      const start = Math.max(0, Math.min(value.length, Math.min(pasted.start, prefix)));
-      const fragmentEnd = Math.max(start, Math.min(value.length, pasted.end + delta));
-      value = value.slice(0, start) + value.slice(fragmentEnd);
-      cleanupCursor = cleanupCursor === null ? start : Math.min(cleanupCursor, start);
-      removePendingPastedText(pasted);
-      removedPastedTexts++;
-    }
-    pendingPastedTexts.current = keptPasted.flatMap((pasted) => {
-      const start = value.indexOf(pasted.marker);
-      if (start < 0) {
-        removePendingPastedText(pasted);
-        removedPastedTexts++;
-        return [];
-      }
-      return [{ ...pasted, start, end: start + pasted.marker.length }];
+    const pastedPrune = pruneEditedMarkers(pendingPastedTexts.current, {
+      ...edit,
+      value: imagePrune.value,
+      cursor: imagePrune.cursor,
     });
+    const value = pastedPrune.value;
+    const cleanupCursor = pastedPrune.cursor;
+
+    const images = reindexMarkers(imagePrune.kept, value);
+    const pastes = reindexMarkers(pastedPrune.kept, value);
+    pendingImages.current = images.kept;
+    pendingPastedTexts.current = pastes.kept;
+
+    for (const image of [...imagePrune.removed, ...images.removed]) removePendingImage(image);
+    for (const pasted of [...pastedPrune.removed, ...pastes.removed]) removePendingPastedText(pasted);
+    const removedImages = imagePrune.removed.length + images.removed.length;
+    const removedPastedTexts = pastedPrune.removed.length + pastes.removed.length;
 
     if (value !== nextValue && inputRef.current) {
       inputRef.current.setText(value);
