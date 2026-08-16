@@ -19,12 +19,17 @@ let destroy: (() => void) | undefined;
 afterEach(() => destroy?.());
 
 const values = Object.fromEntries(
-  SETTINGS_ROWS.map((row) => [row.id, row.id === "workingRuleAnimation" ? "‹ coordinated ›" : "‹ on ›"]),
+  SETTINGS_ROWS.map((row) => [row.id, row.id === "workingRuleAnimation" ? "‹ Sparkle trail ›" : "‹ on ›"]),
 ) as Record<SettingRowId, string>;
 
 describe("settings search and navigation", () => {
   test("filters labels, categories, and useful keywords", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
+    expect(filterSettingsRows("sparkle trail").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
+    expect(filterSettingsRows("comet pair").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
+    expect(filterSettingsRows("electric spark").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
+    expect(filterSettingsRows("constellation").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
+    expect(filterSettingsRows("energy transfer").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
     expect(filterSettingsRows("transcript verbose").map((row) => row.id)).toEqual(["outputMode"]);
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual([
       "checkMode", "sandboxMode", "checkModel", "checkPaths",
@@ -176,7 +181,7 @@ describe("settings popup layout", () => {
     expect(frame).toContain("Search");
     expect(frame).toContain("Appearance");
     expect(frame).toContain("Working animation");
-    expect(frame).toContain("coordinated");
+    expect(frame).toContain("Sparkle trail");
     expect(frame).toContain("header and input rules");
     expect(frame).toContain("animate while an agent works");
     expect(frame).toContain("/ search");

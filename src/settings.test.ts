@@ -13,6 +13,7 @@ import {
   OUTPUT_MODE_LABELS,
   OUTPUT_MODES,
   SANDBOX_MODES,
+  WORKING_RULE_ANIMATION_LABELS,
   WORKING_RULE_ANIMATION_MODES,
 } from "./settings";
 import { DEFAULT_BASH_OUTPUT } from "./bash-output";
@@ -60,10 +61,30 @@ describe("PUM settings migration", () => {
   });
 
   test("accepts every working-rule mode including explicit off", () => {
-    expect(WORKING_RULE_ANIMATION_MODES).toEqual(["off", "input-only", "coordinated"]);
+    expect(WORKING_RULE_ANIMATION_MODES).toEqual([
+      "off",
+      "input-only",
+      "coordinated",
+      "sparkle-trail",
+      "comet-pair",
+      "electric-spark",
+      "constellation",
+      "energy-transfer",
+    ]);
     for (const mode of WORKING_RULE_ANIMATION_MODES) {
       expect(normalizeSettings({ workingRuleAnimation: mode }).workingRuleAnimation).toBe(mode);
+      expect(WORKING_RULE_ANIMATION_LABELS[mode].length).toBeGreaterThan(0);
     }
+    expect(WORKING_RULE_ANIMATION_LABELS).toEqual({
+      off: "Off",
+      "input-only": "Input sweep",
+      coordinated: "Coordinated sweep",
+      "sparkle-trail": "Sparkle trail",
+      "comet-pair": "Comet pair",
+      "electric-spark": "Electric spark",
+      constellation: "Constellation",
+      "energy-transfer": "Energy transfer",
+    });
   });
 
   test("migrates and validates the transcript output mode", () => {
