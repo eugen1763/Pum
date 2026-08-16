@@ -155,4 +155,49 @@ describe("detailed tool previews", () => {
       (span) => span.bg.equals(parseColor(theme.diffRemovedBg)),
     )).toBe(true);
   });
+
+  test("uses the highlighted diff instead of raw JSON for a regular expanded patch", async () => {
+    const setup = await createTestRenderer({ width: 72, height: 16 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/value.ts",
+      "@@",
+      "-const value = 1;",
+      "+const value = 2;",
+      "*** End Patch",
+    ].join("\n");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        syntaxStyle={buildSyntaxStyle(theme)}
+        expanded
+        outputMode="normal"
+        call={{
+          id: "regular-patch",
+          name: "apply_patch",
+          arg: "src/value.ts",
+          state: "ok",
+          input: { patch },
+          result: { content: [{ type: "text", text: "Applied patch" }], details: { patch } },
+          preview: diffPreview(patch),
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("const value = 1;");
+    expect(frame).toContain("const value = 2;");
+    expect(frame).not.toContain('\"patch\"');
+    expect(descendants(setup.renderer.root, CodeRenderable)).toHaveLength(2);
+
+    const captured = setup.captureSpans().lines;
+    const added = captured.find((line) => line.spans.map((span) => span.text).join("").includes("value = 2"));
+    const removed = captured.find((line) => line.spans.map((span) => span.text).join("").includes("value = 1"));
+    expect(added?.spans.some((span) => span.bg.equals(parseColor(theme.diffAddedBg)))).toBe(true);
+    expect(removed?.spans.some((span) => span.bg.equals(parseColor(theme.diffRemovedBg)))).toBe(true);
+  });
 });

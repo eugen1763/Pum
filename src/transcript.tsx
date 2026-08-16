@@ -573,11 +573,12 @@ export function ToolLine({
     ? bashOutputWindow(call.output)
     : null;
   const hasRawData = call.input !== undefined || call.result !== undefined;
-  const detailedPreview = outputMode === "verbose"
-    && !hasRawData
-    && call.state !== "running"
+  const explicitDetails = expanded === true && outputMode !== "verbose";
+  const automaticVerboseDetails = outputMode === "verbose" && expanded !== false;
+  const detailedPreview = call.state !== "running"
     && call.state !== "rejected"
     && call.preview
+    && (explicitDetails || (!hasRawData && automaticVerboseDetails))
     && (call.state === "ok" || call.preview.kind === "bash")
     ? call.preview
     : undefined;
@@ -654,7 +655,7 @@ export function ToolLine({
       {detailedPreview ? (
         <DetailedToolPreview theme={theme} syntaxStyle={syntaxStyle} preview={detailedPreview} />
       ) : null}
-      {detailOpen && call.state !== "running"
+      {automaticVerboseDetails && call.state !== "running" && !detailedPreview
         ? <RawToolDetails theme={theme} call={call} />
         : null}
     </box>
