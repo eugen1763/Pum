@@ -11,6 +11,14 @@ afterEach(() => {
   destroy = undefined;
 });
 
+const thinkingEntry = {
+  type: "message",
+  message: {
+    role: "assistant",
+    content: [{ type: "thinking", thinking: "weighing the options" }],
+  },
+};
+
 const entries = [
   {
     type: "message",
@@ -77,7 +85,12 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
 async function renderMode(
   mode: OutputMode,
   copyTranscriptText?: any,
-  options: { entries?: unknown[]; height?: number; showAgentMessages?: boolean } = {},
+  options: {
+    entries?: unknown[];
+    height?: number;
+    showAgentMessages?: boolean;
+    showThinking?: boolean;
+  } = {},
 ) {
   const setup = await createTestRenderer({
     width: 100,
@@ -100,6 +113,7 @@ async function renderMode(
         ...(options.showAgentMessages === undefined
           ? {}
           : { showAgentMessages: options.showAgentMessages }),
+        ...(options.showThinking === undefined ? {} : { showThinking: options.showThinking }),
       })}
       searchProviders={[]}
       subagentManager={{
@@ -132,6 +146,23 @@ describe("output-level transcript UI", () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Read 1 file.");
     expect(frame).toContain("worker → main");
+  });
+
+  test("resumed reasoning is kept and filtered at render, never dropped at load", async () => {
+    // A subagent transcript has always worked this way. If the main transcript
+    // dropped reasoning at load instead, turning the setting on would reveal a
+    // resumed subagent's reasoning and never the main agent's.
+    const withThinking = [...entries, thinkingEntry];
+    const hidden = await renderMode("normal", undefined, { entries: withThinking });
+    expect(hidden.captureCharFrame()).not.toContain("weighing the options");
+    destroy?.();
+    destroy = undefined;
+
+    const shown = await renderMode("normal", undefined, {
+      entries: withThinking,
+      showThinking: true,
+    });
+    expect(shown.captureCharFrame()).toContain("weighing the options");
   });
 
   test("the agent-message setting hides them in every mode", async () => {

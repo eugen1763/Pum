@@ -64,6 +64,7 @@ import {
   type Role,
 } from "./transcript";
 import { bashOutput, bashResultDisplay, editCounts, toolArgs, type ToolCall } from "./tool-line";
+import { interruptedToolCall, settledToolCall, startedToolCall } from "./tool-row";
 import { toolPreviewFromResult, toolPreviewFromStart } from "./tool-preview";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
@@ -681,10 +682,14 @@ export function App({
   });
   const [tx, setTx] = useState<Transcript>(() => {
     // A resumed session already holds messages; show them instead of a blank pane.
+    // Reasoning is always replayed and the display filters it, the way a
+    // subagent transcript already works. Dropping it here would make the
+    // setting reveal a resumed subagent's reasoning but never the main
+    // agent's, so one session would read two ways.
     const replayedLines = replayEntries(
       initialSession.sessionManager.buildContextEntries(),
       cwd,
-      initial.showThinking,
+      true,
     );
     return {
       lines: [
@@ -1119,8 +1124,6 @@ export function App({
     setShellCursor(nextShellCursor);
     setTriggerPopup(true);
   };
-  // The event subscription is set up once, so it reads the toggle via a ref.
-  const showThinkingRef = useRef(initial.showThinking);
   const startupWarningsRef = useRef([...startupWarnings]);
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -1637,7 +1640,7 @@ export function App({
     const visibleStartupWarnings = startupWarningsRef.current;
     startupWarningsRef.current = [];
     const replayedLines = [
-      ...replayEntries(session.sessionManager.buildContextEntries(), cwd, showThinkingRef.current),
+      ...replayEntries(session.sessionManager.buildContextEntries(), cwd, true),
       ...visibleStartupWarnings.map((text): Line => ({ kind: "text", role: "system", text })),
     ];
     const loadedNews = loadNewsItems(session.sessionFile);
@@ -1716,22 +1719,18 @@ export function App({
             delta("assistant", update.delta);
             answerBufRef.current += update.delta;
           }
-          else if (update.type === "thinking_delta" && showThinkingRef.current)
-            delta("thinking", update.delta);
+          // Captured whatever the setting says, so turning it on reveals the
+          // reasoning of this turn rather than only of the next one.
+          else if (update.type === "thinking_delta") delta("thinking", update.delta);
           break;
         }
         case "tool_execution_start":
           append({
             kind: "tool",
-            call: {
-              id: event.toolCallId,
-              name: event.toolName,
-              args: toolArgs(event.toolName, event.args, cwd),
-              state: "running",
-              startedAt: Date.now(),
-              input: event.args,
-              preview: toolPreviewFromStart(event.toolName, event.args),
-            },
+            call: startedToolCall(
+              { id: event.toolCallId, name: event.toolName, args: event.args },
+              cwd,
+            ),
           });
           break;
         case "tool_execution_update":
@@ -1739,31 +1738,14 @@ export function App({
             patchTool(event.toolCallId, { output: bashOutput(event.partialResult) });
           }
           break;
-        case "tool_execution_end": {
-          const bashResult = event.toolName === "bash" ? bashResultDisplay(event.result) : {};
-          const preview = toolPreviewFromResult(event.toolName, event.result);
-          patchTool(event.toolCallId, {
-            state: isRejectedToolResult(event.result, event.toolCallId)
-              ? "rejected"
-              : event.isError
-                ? "error"
-                : "ok",
-            detail: isRejectedToolResult(event.result, event.toolCallId)
-              ? rejectedToolReason(event.result, event.toolCallId)
-              : event.toolName === "edit" || event.toolName === "apply_patch" || event.toolName === "apply_path"
-                ? editCounts(event.result)
-                : event.toolName === "questionnaire"
-                  ? questionnaireDetail(event.result)
-                  : event.toolName.startsWith("message_cache_")
-                    ? messageCacheDetail(event.result)
-                    : undefined,
-            exitCode: bashResult.exitCode,
+        case "tool_execution_end":
+          patchTool(event.toolCallId, settledToolCall({
+            name: event.toolName,
             result: event.result,
             isError: event.isError,
-            ...(preview ? { preview } : {}),
-          });
+            toolCallId: event.toolCallId,
+          }));
           break;
-        }
         case "agent_start":
           streamingRef.current = true;
           setWorking(true);
@@ -1783,6 +1765,17 @@ export function App({
           setThinkingLevel(event.level as ThinkingLevel);
           break;
         case "agent_settled": {
+          // The turn is over, so a row still spinning never got a result. It
+          // settles the way a resumed transcript already shows it, rather than
+          // spinning for the rest of the session.
+          setTx((value) => ({
+            ...value,
+            lines: value.lines.map((line) =>
+              line.kind === "tool" && line.call.state === "running"
+                ? { kind: "tool", call: interruptedToolCall(line.call) }
+                : line,
+            ),
+          }));
           const answer = answerBufRef.current;
           if (userTurnActiveRef.current && answer.trim()) {
             const item: NewsItem = {
@@ -2207,7 +2200,6 @@ export function App({
         additionalPaths: liveCheckPaths(next, cwd),
       });
     }
-    if (patch.showThinking !== undefined) showThinkingRef.current = patch.showThinking;
     if (patch.maxActiveSubagents !== undefined) {
       subagentManager.setMaxActiveSubagents(patch.maxActiveSubagents);
     }

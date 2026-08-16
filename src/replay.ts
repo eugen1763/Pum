@@ -1,8 +1,6 @@
 import type { Line } from "./transcript";
-import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
-import { bashResultDisplay, editCounts, toolArgs, type ToolCall } from "./tool-line";
-import { questionnaireDetail } from "./questionnaire";
-import { messageCacheDetail } from "./message-cache";
+import { type ToolCall } from "./tool-line";
+import { interruptedToolCall, settledToolCall, startedToolCall } from "./tool-row";
 import {
   WEB_SEARCH_CUSTOM_TYPE,
   type SearchCallRecord,
@@ -23,9 +21,6 @@ import {
   type ManagedShellCompletionMessage,
   type ManagedShellLifecycleEvent,
 } from "./shells/types";
-
-/** Shown on a replayed tool call whose turn ended before a result was stored. */
-export const INTERRUPTED_TOOL_DETAIL = "interrupted";
 
 const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
@@ -277,18 +272,14 @@ export function replayEntries(
         } else if (showThinking && block?.type === "thinking" && block.thinking?.trim()) {
           lines.push({ kind: "text", role: "thinking", text: block.thinking.trim() });
         } else if (block?.type === "toolCall") {
-          const call: ToolCall = {
-            id: block.id,
-            name: block.name,
-            args: toolArgs(block.name, block.arguments, cwd),
-            // Nothing proves a replayed call succeeded until its persisted
-            // result says so. A call whose turn was cancelled or crashed never
-            // gets one, and statsFromEntries already counts that as
-            // interrupted, so replay must not show it as a green check.
-            state: "error",
-            detail: INTERRUPTED_TOOL_DETAIL,
-            input: block.arguments,
-          };
+          // The same row the live path builds, then interrupted: nothing proves
+          // a replayed call succeeded until its persisted result says so, and a
+          // call whose turn was cancelled or crashed never gets one.
+          const call = interruptedToolCall(
+            startedToolCall({ id: block.id, name: block.name, args: block.arguments }, cwd),
+          );
+          // A replayed row has no live clock, so it carries no start time.
+          delete call.startedAt;
           calls.set(block.id, call);
           lines.push({ kind: "tool", call });
         }
@@ -299,23 +290,13 @@ export function replayEntries(
     if (message?.role === "toolResult") {
       const call = calls.get(message.toolCallId);
       if (call) {
-        call.result = message;
-        call.isError = message.isError === true;
-        call.state = isRejectedToolResult(message)
-          ? "rejected"
-          : message.isError
-            ? "error"
-            : "ok";
-        if (call.name === "bash" && call.state !== "rejected") {
-          const bashResult = bashResultDisplay(message);
-          call.exitCode = bashResult.exitCode;
-        }
-        // The result decides the note, so drop the interrupted placeholder.
-        call.detail = undefined;
-        if (call.state === "rejected") call.detail = rejectedToolReason(message);
-        else if (call.name === "edit" || call.name === "apply_patch" || call.name === "apply_path") call.detail = editCounts(message);
-        else if (call.name === "questionnaire") call.detail = questionnaireDetail(message);
-        else if (call.name.startsWith("message_cache_")) call.detail = messageCacheDetail(message);
+        // The result decides everything the row shows, exactly as it does live,
+        // so the interrupted placeholder goes with it.
+        Object.assign(call, settledToolCall({
+          name: call.name,
+          result: message,
+          isError: message.isError === true,
+        }));
       }
     }
   }

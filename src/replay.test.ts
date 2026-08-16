@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { rejectedToolDetails } from "./check-mode";
-import { INTERRUPTED_TOOL_DETAIL, replayEntries } from "./replay";
+import { replayEntries } from "./replay";
+import { INTERRUPTED_TOOL_DETAIL } from "./tool-row";
 import { WEB_SEARCH_CUSTOM_TYPE } from "./web-search";
 import {
   AGENT_MESSAGE_CUSTOM_TYPE,

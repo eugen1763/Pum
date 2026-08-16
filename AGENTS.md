@@ -27,6 +27,7 @@ bun run start    # open the TUI in the current directory
 | `src/transcript.tsx` | Row rendering per role |
 | `src/output-minimal.ts` | Grouping successful tool runs into one activity row |
 | `src/transcript-dwell.ts` | How long a row must stay put before it may change |
+| `src/tool-row.ts` | One spelling of a tool row, for live events and for replay |
 | `src/tool-preview.ts` | Diff, write, and Bash previews, and inline diff trimming |
 | `src/syntax-grammars.ts` | Registers the tree-sitter grammars vendored under `assets/` |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
@@ -441,6 +442,22 @@ These were chosen deliberately. Change them only on purpose.
   row carry their own too; the first row of a transcript has nothing to be
   separated from. No tool row shows a disclosure arrow — every one of them
   expands, so the glyph marked nothing. The gutter stays clickable.
+- **A tool row is built once, in `tool-row.ts`.** Three paths build one — the
+  main session's events, a managed child's events, and replay when a session is
+  resumed — and they have to agree exactly, or a call reads one way live and
+  another after a reload. `startedToolCall` and `settledToolCall` are that
+  agreement, previews included: replay derives them the same way, so a mutation
+  keeps its inline diff through a session load. A replayed row carries no
+  `startedAt`, having no live clock to measure against.
+- **A call whose turn ended without a result is interrupted, not running.**
+  Replay has always shown it that way; both live paths now settle any row still
+  spinning when the turn ends, so cancelling a turn leaves the same transcript a
+  reload would.
+- **Reasoning is always captured and always replayed.** The display filters it
+  through `transcriptForThinkingVisibility`, which is how a subagent transcript
+  has always worked. Dropping it at capture or at load instead would let the
+  setting reveal a resumed subagent's reasoning but never the main agent's, and
+  would make turning it on show nothing until the next turn.
 - **Inter-agent messages answer to their own setting.** `showAgentMessages` is
   independent of the output mode: what one agent said to another is a different
   question from how much tool detail to show, so Verbose can hide them and Quiet
