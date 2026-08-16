@@ -124,24 +124,25 @@ describe("transcript output projection", () => {
     ]);
   });
 
-  test("Quiet hides agent messages while Normal and Verbose preserve canonical rows", () => {
+  test("agent messages answer to their own setting, not to the mode", () => {
     const canonical = [
       { kind: "text", role: "assistant", text: "Before" },
       { kind: "agent-message", sender: "worker", recipient: "main", text: "Update", messageId: "m1" },
       { kind: "text", role: "assistant", text: "After" },
     ] as const;
 
-    expect(projectTranscriptLines(canonical, "quiet").map((line) => line.kind)).toEqual(["text", "text"]);
-    expect(projectTranscriptLines(canonical, "normal").map((line) => line.kind)).toEqual([
-      "text", "agent-message", "text",
-    ]);
-    expect(projectTranscriptLines(canonical, "verbose").map((line) => line.kind)).toEqual([
-      "text", "agent-message", "text",
-    ]);
+    for (const mode of ["quiet", "normal", "verbose"] as const) {
+      expect(projectTranscriptLines(canonical, mode, true).map((line) => line.kind)).toEqual([
+        "text", "agent-message", "text",
+      ]);
+      expect(projectTranscriptLines(canonical, mode, false).map((line) => line.kind)).toEqual([
+        "text", "text",
+      ]);
+    }
     expect(canonical[1].kind).toBe("agent-message");
   });
 
-  test("Quiet hides queued agent messages without mutating pending delivery state", () => {
+  test("hiding queued agent messages does not mutate pending delivery state", () => {
     const pending = [
       {
         id: "agent",
@@ -155,9 +156,8 @@ describe("transcript output projection", () => {
       },
     ] as const;
 
-    expect(projectPendingTranscriptLines(pending, "quiet").map((item) => item.id)).toEqual(["user"]);
-    expect(projectPendingTranscriptLines(pending, "normal").map((item) => item.id)).toEqual(["agent", "user"]);
-    expect(projectPendingTranscriptLines(pending, "verbose").map((item) => item.id)).toEqual(["agent", "user"]);
+    expect(projectPendingTranscriptLines(pending, false).map((item) => item.id)).toEqual(["user"]);
+    expect(projectPendingTranscriptLines(pending, true).map((item) => item.id)).toEqual(["agent", "user"]);
     expect(pending[0].delivered).toBe(false);
   });
 });
@@ -183,8 +183,12 @@ describe("blank lines around grouped activity", () => {
     expect(needsTranscriptGap(undefined, summary)).toBe(false);
   });
 
-  test("consecutive tool rows still have no gap between them", () => {
-    expect(needsTranscriptGap(toolRow, toolRow)).toBe(false);
+  test("every tool row gets air above it, so a run reads as separate steps", () => {
+    expect(needsTranscriptGap(toolRow, toolRow)).toBe(true);
+    expect(needsTranscriptGap(text("assistant"), toolRow)).toBe(true);
+    expect(needsTranscriptGap(toolRow, text("assistant"))).toBe(true);
+    // Except the very first row, which has nothing to be separated from.
+    expect(needsTranscriptGap(undefined, toolRow)).toBe(false);
   });
 
   test("Quiet projects one summary, so its neighbours both gain a gap", () => {

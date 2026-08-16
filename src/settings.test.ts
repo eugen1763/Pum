@@ -232,6 +232,7 @@ describe("PUM settings persistence", () => {
       checkPaths: {},
       maxActiveSubagents: 7,
       goalRetryLimit: 10,
+      showAgentMessages: true,
       bashOutput: DEFAULT_BASH_OUTPUT,
     });
   });

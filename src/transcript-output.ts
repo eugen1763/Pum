@@ -21,24 +21,29 @@ export function transcriptOutputMode(settings: unknown): TranscriptOutputMode {
  * resumed transcript without rewriting session entries or model context.
  * Quiet and Normal aggregate routine successful calls. Verbose keeps every
  * canonical tool row and changes ToolLine presentation only.
+ *
+ * Inter-agent messages answer to their own setting, not to the mode. What one
+ * agent said to another is a different question from how much tool detail to
+ * show, so Verbose can hide them and Quiet can keep them.
  */
 export function projectTranscriptLines(
   lines: readonly Line[],
   mode: TranscriptOutputMode,
+  showAgentMessages = true,
 ): MinimalTranscriptLine[] {
-  if (mode === "verbose") return [...lines];
-  const compact = minimalTranscriptLines(lines, mode === "quiet");
-  return mode === "quiet"
-    ? compact.filter((line) => line.kind !== "agent-message")
-    : compact;
+  const visible = showAgentMessages
+    ? lines
+    : lines.filter((line) => line.kind !== "agent-message");
+  if (mode === "verbose") return [...visible];
+  return minimalTranscriptLines(visible, mode === "quiet");
 }
 
-/** Hide queued agent-message display rows in Quiet without changing delivery state. */
+/** Hide queued agent-message display rows without changing delivery state. */
 export function projectPendingTranscriptLines(
   pending: readonly PendingLine[],
-  mode: TranscriptOutputMode,
+  showAgentMessages = true,
 ): PendingLine[] {
-  return mode === "quiet"
-    ? pending.filter((item) => item.line.kind !== "agent-message")
-    : [...pending];
+  return showAgentMessages
+    ? [...pending]
+    : pending.filter((item) => item.line.kind !== "agent-message");
 }

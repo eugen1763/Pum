@@ -26,6 +26,8 @@ bun run start    # open the TUI in the current directory
 | `src/status-bar.tsx` | Top bar; always one measured row with responsive field priorities |
 | `src/transcript.tsx` | Row rendering per role |
 | `src/output-minimal.ts` | Grouping successful tool runs into one activity row |
+| `src/transcript-dwell.ts` | How long a row must stay put before it may change |
+| `src/tool-row.ts` | One spelling of a tool row, for live events and for replay |
 | `src/tool-preview.ts` | Diff, write, and Bash previews, and inline diff trimming |
 | `src/syntax-grammars.ts` | Registers the tree-sitter grammars vendored under `assets/` |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
@@ -415,12 +417,64 @@ These were chosen deliberately. Change them only on purpose.
 - **The three output modes differ in what they group, not in what they keep.**
   `projectTranscriptLines` is pure and reprojects the whole transcript without
   rewriting a session entry. Quiet folds every successful call into one activity
-  row, commands and mutations included, and that row always has a blank line on
-  either side. Normal exempts bash and the mutating tools, and shows an editing
-  tool's diff inline without being asked, capped at
+  row, commands and mutations included. Normal exempts bash and the mutating
+  tools, and shows an editing tool's diff inline without being asked, capped at
   `INLINE_DIFF_CHANGED_LINES` changed lines. Verbose is the raw view: every
   call listed, every row expanded, complete retained input and result, and no
-  rendered diff at all. Expanding any row anywhere shows that raw data.
+  rendered diff at all.
+- **Opening a row outside Verbose is compact.** `CompactToolDetails` shows the
+  result and nothing else: the tail, capped at `COMPACT_DETAIL_LINES`, with a
+  count of what the cap hid. No JSON envelope, and no echo of the input the row
+  above already spells out — a read row carries its own path, offset and limit,
+  so an opened group of reads is exactly the list of what was read. Verbose
+  keeps the raw dump, and copying a row still copies everything retained.
+- **No transcript row changes faster than it can be read.** `transcript-dwell.ts`
+  runs before grouping, so an activity row inherits both rules from the calls it
+  folds. A tool call still running and younger than `YOUNG_ROW_MS` is not drawn
+  at all, so one that settles inside that window appears already settled and
+  never flickers through a running row. Any row that was drawn keeps that form
+  for `MIN_VISIBLE_MS` whatever the canonical transcript does underneath. Age is
+  measured from `startedAt`, not from the first render, so switching to an agent
+  draws its long-running calls at once. Only the form is held; arguments, detail
+  and live output update in place, except on a row whose parts all change
+  together — a goal review's summary arrives with its verdict, so that row is
+  held whole.
+- **The live output period belongs to the call, not to the row.** It opens once
+  a command has run for `LIVE_OUTPUT_DELAY_MS`, closes `MIN_VISIBLE_MS` after it
+  first opened, and never reopens. The decision is made once, in the dwell
+  memory, because every row remounts on an agent switch and a period restarted
+  there would replay output the user already watched end.
+- **One indent for everything a tool says.** Output, diffs, rejection reasons,
+  opened details and an expanded group's calls all go through `DetailRow` at
+  `TOOL_DETAIL_INDENT` columns, so the left edge never moves with the tool name
+  and a row type added later cannot forget it.
+- **Every tool row gets a blank line above it.** A run of calls reads as
+  separate steps rather than a wall. Grouped activity rows and the goal review
+  row carry their own too; the first row of a transcript has nothing to be
+  separated from. No tool row shows a disclosure arrow — every one of them
+  expands, so the glyph marked nothing. The gutter stays clickable.
+- **A tool row is built once, in `tool-row.ts`.** Three paths build one — the
+  main session's events, a managed child's events, and replay when a session is
+  resumed — and they have to agree exactly, or a call reads one way live and
+  another after a reload. `startedToolCall` and `settledToolCall` are that
+  agreement, previews included: replay derives them the same way, so a mutation
+  keeps its inline diff through a session load. A replayed row carries no
+  `startedAt`, having no live clock to measure against.
+- **A call whose turn ended without a result is interrupted, not running.**
+  Replay has always shown it that way; both live paths now settle any row still
+  spinning when the turn ends, so cancelling a turn leaves the same transcript a
+  reload would. A `userInitiated` row is exempt: a `!` command is not part of
+  the agent's turn and outlives it, and its own result owns the row when it
+  finishes.
+- **Reasoning is always captured and always replayed.** The display filters it
+  through `transcriptForThinkingVisibility`, which is how a subagent transcript
+  has always worked. Dropping it at capture or at load instead would let the
+  setting reveal a resumed subagent's reasoning but never the main agent's, and
+  would make turning it on show nothing until the next turn.
+- **Inter-agent messages answer to their own setting.** `showAgentMessages` is
+  independent of the output mode: what one agent said to another is a different
+  question from how much tool detail to show, so Verbose can hide them and Quiet
+  can keep them.
 - **A written file is a diff of nothing but additions.** One shape for every
   mutation, so a new file and an edited one read alike. `inlineDiffLines()`
   drops the patch envelope — `*** Begin Patch`, `@@`, `--- a/file` — because

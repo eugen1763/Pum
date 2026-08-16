@@ -147,6 +147,8 @@ export type PumSettings = {
   workingRuleAnimation: WorkingRuleAnimationMode;
   /** Transcript tool-output detail. Legacy settings and names migrate to normal. */
   outputMode?: OutputMode;
+  /** Show inter-agent messages in the transcript. Independent of the output mode. */
+  showAgentMessages?: boolean;
   webSearch: boolean;
   writingStyle: WritingStyle;
   explanationStrength: ExplanationStrength;
@@ -171,6 +173,7 @@ const DEFAULTS: PumSettings = {
   // Preserve the rule-only behavior used before this setting existed.
   workingRuleAnimation: "input-only",
   outputMode: "normal",
+  showAgentMessages: true,
   webSearch: true,
   writingStyle: "none",
   explanationStrength: "simple",
@@ -196,6 +199,9 @@ export function normalizeSettings(parsed: unknown): PumSettings {
       ? merged.workingRuleAnimation
       : DEFAULTS.workingRuleAnimation,
     outputMode: normalizeOutputMode(merged.outputMode),
+    showAgentMessages: typeof merged.showAgentMessages === "boolean"
+      ? merged.showAgentMessages
+      : DEFAULTS.showAgentMessages,
     writingStyle: isWritingStyle(merged.writingStyle) ? merged.writingStyle : DEFAULTS.writingStyle,
     explanationStrength: isExplanationStrength(merged.explanationStrength)
       ? merged.explanationStrength

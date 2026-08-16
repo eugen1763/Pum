@@ -40,6 +40,8 @@ export function settledUserBashCall(result: UserBashResult): Partial<ToolCall> {
     || (result.exitCode !== undefined && result.exitCode !== 0);
   return {
     state: isError ? "error" : "ok",
+    // The result owns the row now, so any note left by a settle sweep goes.
+    detail: undefined,
     output: result.output,
     exitCode: result.exitCode,
     result: toolResult,

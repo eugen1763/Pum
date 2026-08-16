@@ -3,7 +3,7 @@ import { CodeRenderable, parseColor, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { buildSyntaxStyle } from "./syntax";
-import { ToolLine } from "./transcript";
+import { COMPACT_DETAIL_LINES, ToolLine } from "./transcript";
 import { loadTheme } from "./theme";
 import { diffPreview, toolPreviewFromStart } from "./tool-preview";
 import type { ToolCall } from "./tool-line";
@@ -236,12 +236,14 @@ describe("detailed tool previews", () => {
     );
     await settle(setup);
 
-    // Expanding keeps the diff and adds the complete retained input and result
-    // beneath it, so nothing you were reading disappears when you open a row.
+    // Expanding keeps the diff and adds the result beneath it, so nothing you
+    // were reading disappears when you open a row. The raw input stays in
+    // Verbose: the diff above already says what the patch did.
     const frame = setup.captureCharFrame();
     expect(frame).toContain("const value = 1;");
     expect(frame).toContain("const value = 2;");
-    expect(frame).toContain('\"patch\"');
+    expect(frame).toContain("Applied patch");
+    expect(frame).not.toContain('\"patch\"');
     expect(descendants(setup.renderer.root, CodeRenderable)).toHaveLength(2);
 
     const captured = setup.captureSpans().lines;
@@ -251,7 +253,7 @@ describe("detailed tool previews", () => {
     expect(removed?.spans.some((span) => span.bg.equals(parseColor(theme.diffRemovedBg)))).toBe(true);
   });
 
-  test("expanding a read shows its complete retained input and result", async () => {
+  test("expanding a read shows the file it read, not a raw dump", async () => {
     const setup = await createTestRenderer({ width: 72, height: 18 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
@@ -278,14 +280,16 @@ describe("detailed tool previews", () => {
     await settle(setup);
 
     const frame = setup.captureCharFrame();
+    // The row already carries the path and the range, so the expansion adds
+    // what was read rather than repeating the arguments as JSON.
     expect(frame).toContain("read(src/value.ts, offset=2, limit=8)");
-    expect(frame).toContain("input:");
-    expect(frame).toContain('\"path\": \"src/value.ts\"');
-    expect(frame).toContain("result:");
     expect(frame).toContain("const value = 2;");
+    expect(frame).not.toContain("input:");
+    expect(frame).not.toContain("result:");
+    expect(frame).not.toContain('\"path\"');
   });
 
-  test("expanding any other tool shows its complete retained input and result", async () => {
+  test("expanding any other tool shows its result under the same cap", async () => {
     const setup = await createTestRenderer({ width: 72, height: 18 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
@@ -312,8 +316,36 @@ describe("detailed tool previews", () => {
 
     const frame = setup.captureCharFrame();
     expect(frame).toContain("worktree(merge, worker)");
-    expect(frame).toContain('\"action\": \"merge\"');
-    expect(frame).toContain('\"target\": \"worker\"');
     expect(frame).toContain("Merged worker into main.");
+    expect(frame).not.toContain('\"action\"');
+    expect(frame).not.toContain('\"commit\"');
+  });
+
+  test("a long result is capped, newest lines kept, with a count of the rest", async () => {
+    const setup = await createTestRenderer({ width: 72, height: 30 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const lines = Array.from({ length: 26 }, (_, index) => `line ${index + 1}`);
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        expanded
+        outputMode="normal"
+        call={{
+          id: "long-result",
+          name: "web_search",
+          args: ["ratatui layout"],
+          state: "ok",
+          result: { content: [{ type: "text", text: lines.join("\n") }] },
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain(`... ${26 - COMPACT_DETAIL_LINES} more lines`);
+    expect(frame).not.toContain("line 6\n");
+    expect(frame).toContain("line 26");
   });
 });

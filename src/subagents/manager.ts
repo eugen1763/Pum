@@ -36,6 +36,7 @@ import {
 import { bashOutput, bashResultDisplay, editCounts, toolArgs, type ToolCall } from "../tool-line";
 import { toolPreviewFromResult, toolPreviewFromStart } from "../tool-preview";
 import { settledUserBashCall, userBashReaction } from "../user-bash";
+import { interruptedToolCall, settledToolCall, startedToolCall } from "../tool-row";
 import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
@@ -958,15 +959,10 @@ export class SubagentManager {
       case "tool_execution_start":
         this.appendLine(record, {
           kind: "tool",
-          call: {
-            id: event.toolCallId,
-            name: event.toolName,
-            args: toolArgs(event.toolName, event.args, record.snapshot.worktree.path),
-            state: "running",
-            startedAt: Date.now(),
-            input: event.args,
-            preview: toolPreviewFromStart(event.toolName, event.args),
-          },
+          call: startedToolCall(
+            { id: event.toolCallId, name: event.toolName, args: event.args },
+            record.snapshot.worktree.path,
+          ),
         });
         break;
       case "tool_execution_update":
@@ -974,31 +970,14 @@ export class SubagentManager {
           this.patchTool(record, event.toolCallId, { output: bashOutput(event.partialResult) });
         }
         break;
-      case "tool_execution_end": {
-        const bashResult = event.toolName === "bash" ? bashResultDisplay(event.result) : {};
-        const preview = toolPreviewFromResult(event.toolName, event.result);
-        this.patchTool(record, event.toolCallId, {
-          state: isRejectedToolResult(event.result, event.toolCallId)
-            ? "rejected"
-            : event.isError
-              ? "error"
-              : "ok",
-          detail: isRejectedToolResult(event.result, event.toolCallId)
-            ? rejectedToolReason(event.result, event.toolCallId)
-            : event.toolName === "edit" || event.toolName === "apply_patch" || event.toolName === "apply_path"
-              ? editCounts(event.result)
-              : event.toolName === "questionnaire"
-                ? questionnaireDetail(event.result)
-                : event.toolName.startsWith("message_cache_")
-                  ? messageCacheDetail(event.result)
-                  : undefined,
-          exitCode: bashResult.exitCode,
+      case "tool_execution_end":
+        this.patchTool(record, event.toolCallId, settledToolCall({
+          name: event.toolName,
           result: event.result,
           isError: event.isError,
-          ...(preview ? { preview } : {}),
-        });
+          toolCallId: event.toolCallId,
+        }));
         break;
-      }
       case "agent_start":
         record.userAborted = undefined;
         // Remember a terminal status before the turn overwrites it, so a
@@ -1029,6 +1008,16 @@ export class SubagentManager {
       case "agent_settled": {
         this.messageCacheController?.releaseRequester({ kind: "subagent", id: record.snapshot.id });
         this.updateTranscript(record, flushTranscript);
+        // A row still spinning when the turn ends never got a result, and a
+        // resumed transcript already shows it interrupted rather than running.
+        this.updateTranscript(record, (value) => ({
+          ...value,
+          lines: value.lines.map((line) =>
+            line.kind === "tool" && line.call.state === "running" && !line.call.userInitiated
+              ? { kind: "tool", call: interruptedToolCall(line.call) }
+              : line,
+          ),
+        }));
         if (record.completionMessageIds?.size) {
           for (const messageId of record.completionMessageIds) {
             this.recordSettlementResponse(messageId, record.completionResponse ?? "");
@@ -2252,6 +2241,8 @@ export class SubagentManager {
       state: "running",
       startedAt: Date.now(),
       input: { command },
+      // Not part of the agent's turn, so the settle sweep leaves it alone.
+      userInitiated: true,
     };
     this.appendLine(record, { kind: "tool", call });
     this.updateStatus(record, "running");

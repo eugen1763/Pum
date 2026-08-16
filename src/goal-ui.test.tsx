@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { App } from "./app";
 import { QuestionnaireManager } from "./questionnaire";
 import { loadGoal, saveGoal, type GoalRecord } from "./goal";
+import { MIN_VISIBLE_MS } from "./transcript-dwell";
 
 let destroy: (() => void) | undefined;
 const temporaryDirectories: string[] = [];
@@ -142,6 +143,15 @@ async function settleTurn(setup: Awaited<ReturnType<typeof render>>, answer?: st
 async function type(setup: Awaited<ReturnType<typeof createTestRenderer>>, text: string) {
   await setup.mockInput.typeText(text);
   setup.mockInput.pressEnter();
+  await settle(setup);
+}
+
+/**
+ * Let a held row adopt its new form. Every transcript row keeps the form it was
+ * drawn in for two seconds, so a verdict this fast is on screen only after it.
+ */
+async function afterDwell(setup: Awaited<ReturnType<typeof render>>) {
+  await new Promise((resolve) => setTimeout(resolve, MIN_VISIBLE_MS + 150));
   await settle(setup);
 }
 
@@ -484,7 +494,7 @@ describe("the inline goal review", () => {
       summary: "the retry path is still untested",
       continuation: "add a test for the retry path",
     });
-    await settle(setup);
+    await afterDwell(setup);
 
     const frame = setup.captureCharFrame();
     expect(frame).not.toContain("Goal review · reviewing");
@@ -504,7 +514,7 @@ describe("the inline goal review", () => {
     await waitForGoalJudge(setup);
 
     setup.goalJudges[0]!.onVerdict({ verdict: "completed", summary: "the suite passes ten times" });
-    await settle(setup);
+    await afterDwell(setup);
 
     expect(loadGoal(sessionFile)?.state).toBe("completed");
     const frame = setup.captureCharFrame();
@@ -521,7 +531,7 @@ describe("the inline goal review", () => {
     await waitForGoalJudge(setup);
 
     setup.goalJudges[0]!.onVerdict({ verdict: "maybe" });
-    await settle(setup);
+    await afterDwell(setup);
 
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Goal review · error");
@@ -538,6 +548,7 @@ describe("the inline goal review", () => {
     await settleTurn(setup);
     await waitForGoalJudge(setup);
     await type(setup, "/goal stop");
+    await afterDwell(setup);
     expect(setup.captureCharFrame()).toContain("Goal review · cancelled");
 
     setup.goalJudges[0]!.onVerdict({

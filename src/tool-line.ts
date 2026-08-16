@@ -24,6 +24,8 @@ export type ToolCall = {
   isError?: boolean;
   /** Display-only structured result data used by detailed transcript mode. */
   preview?: ToolResultPreview;
+  /** The user ran this themselves, so it does not belong to the agent's turn. */
+  userInitiated?: boolean;
 };
 
 /** Extract the cumulative text payload from a Bash progress result. */
