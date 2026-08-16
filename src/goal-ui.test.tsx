@@ -85,6 +85,7 @@ async function render(options: {
   questionnaireManager?: QuestionnaireManager;
   nextSessionFile?: string;
   width?: number;
+  triggerManager?: any;
 }) {
   const goalJudges: any[] = [];
   const manager = {
@@ -117,7 +118,8 @@ async function render(options: {
       loadSessions={async () => []}
       onSwitchSession={async () => session}
       settings={settings} searchProviders={[]} subagentManager={manager}
-      {...(options.questionnaireManager ? { questionnaireManager: options.questionnaireManager } : {})} />,
+      {...(options.questionnaireManager ? { questionnaireManager: options.questionnaireManager } : {})}
+      {...(options.triggerManager ? { triggerManager: options.triggerManager } : {})} />,
   );
   await settle(setup);
   return Object.assign(setup, { session, goalJudges });
@@ -195,6 +197,32 @@ describe("goal commands", () => {
 
     expect(setup.goalJudges).toHaveLength(1);
     expect(setup.goalJudges[0]!.modelId).toBe("mock/model");
+  });
+
+  test("waits for an active external trigger before starting the judge", async () => {
+    const sessionFile = tempSessionFile();
+    const listeners = new Set<() => void>();
+    let triggerState = "running";
+    const triggerManager = {
+      subscribe(listener: () => void) { listeners.add(listener); return () => listeners.delete(listener); },
+      getTriggers: () => [{
+        id: "trigger-1", name: "CI", state: triggerState, createdAt: 1,
+        target: { sessionId: "main-session", agentId: null, label: "main" },
+        executable: "gh", args: [], cwd: ".", mode: "once", restartDelayMs: null,
+        expiresAt: Date.now() + 60_000, nextRestartAt: null, fireCount: 0,
+        maxFires: 1, pendingCount: 0, coalescedCount: 0, paused: false,
+      }],
+    };
+    const setup = await render({ sessionFile, prompts: [], triggerManager });
+
+    await type(setup, "/goal fix the flaky tests");
+    await settleTurn(setup);
+    expect(setup.goalJudges).toHaveLength(0);
+
+    triggerState = "idle";
+    for (const listener of listeners) listener();
+    await waitForGoalJudge(setup);
+    expect(setup.goalJudges).toHaveLength(1);
   });
 
   test("the goal rides the rule above the input, not the status bar", async () => {

@@ -784,7 +784,7 @@ export function App({
   const [processTab, setProcessTab] = useState<ProcessTab>("triggers");
   const [triggerCursor, setTriggerCursor] = useState(0);
   const [shellCursor, setShellCursor] = useState(0);
-  const [, setTriggerRevision] = useState(0);
+  const [triggerRevision, setTriggerRevision] = useState(0);
   const [shellRevision, setShellRevision] = useState(0);
   const [shellTails, setShellTails] = useState<Record<string, string>>({});
 
@@ -3095,11 +3095,20 @@ export function App({
       goal: current,
       mainSettled: !streamingRef.current,
       activeWorkerCount: activeWorkersRef.current,
+      activeTriggerCount: (triggerManager?.getTriggers() ?? []).filter(
+        (trigger) => trigger.state === "running" || trigger.state === "waiting",
+      ).length,
       judgeInFlight: judgeStartingRef.current || judgeRef.current !== null,
       pendingInsertions: txRef.current.pending.filter((pending) => !pending.delivered).length,
     });
     if (schedule && current) void startGoalJudge(current);
   };
+
+  // Trigger state changes are review-scheduling events. A running trigger can
+  // block a review, and its later idle or terminal transition can release one.
+  useEffect(() => {
+    maybeScheduleGoalJudge();
+  }, [triggerRevision]);
 
   const deliverGoalContinuation = async (continuation: GoalContinuation) => {
     try {

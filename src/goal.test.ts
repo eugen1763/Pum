@@ -133,6 +133,7 @@ describe("review scheduling", () => {
     goal: noteSettledWork(active()),
     mainSettled: true,
     activeWorkerCount: 0,
+    activeTriggerCount: 0,
     judgeInFlight: false,
     pendingInsertions: 0,
   };
@@ -148,9 +149,10 @@ describe("review scheduling", () => {
     }
   });
 
-  test("refuses while the main agent works, a worker runs, or messages wait", () => {
+  test("refuses while the main agent works, a worker or trigger runs, or messages wait", () => {
     expect(shouldScheduleGoalJudge({ ...base, mainSettled: false })).toBe(false);
     expect(shouldScheduleGoalJudge({ ...base, activeWorkerCount: 1 })).toBe(false);
+    expect(shouldScheduleGoalJudge({ ...base, activeTriggerCount: 1 })).toBe(false);
     expect(shouldScheduleGoalJudge({ ...base, pendingInsertions: 1 })).toBe(false);
   });
 
@@ -342,6 +344,7 @@ describe("goal persistence", () => {
       goal: resumed,
       mainSettled: true,
       activeWorkerCount: 0,
+      activeTriggerCount: 0,
       judgeInFlight: false,
       pendingInsertions: 0,
     })).toBe(false);

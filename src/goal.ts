@@ -252,6 +252,8 @@ export type JudgeScheduleInput = {
   mainSettled: boolean;
   /** Managed subagents in `starting` or `running`, judges excluded. */
   activeWorkerCount: number;
+  /** External triggers with a process running or a result awaiting delivery. */
+  activeTriggerCount: number;
   /** A judge is starting, running, or awaiting result processing. */
   judgeInFlight: boolean;
   /** Queued completion messages and steers not yet inserted into the session. */
@@ -267,6 +269,7 @@ export function shouldScheduleGoalJudge(input: JudgeScheduleInput): boolean {
   if (!goal || goal.state !== "active") return false;
   if (!input.mainSettled) return false;
   if (input.activeWorkerCount > 0) return false;
+  if (input.activeTriggerCount > 0) return false;
   if (input.judgeInFlight) return false;
   if (input.pendingInsertions > 0) return false;
   if (goal.pendingContinuation) return false;

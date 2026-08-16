@@ -299,9 +299,10 @@ These were chosen deliberately. Change them only on purpose.
   so no goal follows the user into it.
 - **The goal judge reviews; it never works.** After a settled main turn PUM
   starts one fresh judge, but only when the goal is active, no managed worker is
-  starting or running, no judge is already in flight, no queued message is still
-  waiting for insertion, and this settled work generation is unjudged. Every one
-  of those is an event, never a poll or a timer. The judge runs in the launch
+  starting or running, no external trigger is running or waiting for delivery,
+  no judge is already in flight, no queued message is still waiting for insertion,
+  and this settled work generation is unjudged. Every one of those is an event,
+  never a poll or a timer. The judge runs in the launch
   project with no worktree and no branch, holds only `read`, `bash`, and
   `goal_verdict`, is readonly whenever Sandbox is not Off, and is told in plain
   words not to mutate anything when it is not. It is excluded from the worker

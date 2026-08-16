@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import { projectStorageKey, type RuntimePlatform } from "./platform";
+import { canonicalRealpathSync, projectStorageKey, type RuntimePlatform } from "./platform";
 import {
   resolvePromptCacheIdentity,
   type PromptCacheIdentity,
@@ -158,10 +158,23 @@ function validHistory(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
+function matchesIdentity(candidate: string, aliases: ReadonlySet<string>, platform: RuntimePlatform): boolean {
+  if (aliases.has(projectStorageKey(candidate, platform))) return true;
+  // A legacy Windows key can contain an 8.3 component while the active
+  // identity uses the expanded long path. Canonicalize only on the real host;
+  // simulated platform tests cannot ask another OS to resolve a path.
+  if (platform !== process.platform) return false;
+  try {
+    return aliases.has(projectStorageKey(canonicalRealpathSync(candidate, platform), platform));
+  } catch {
+    return false;
+  }
+}
+
 function matchingValues(file: JsonFile, identity: PromptCacheIdentity, platform: RuntimePlatform): unknown[] {
   const aliases = new Set(identity.aliases);
   return Object.entries(file).flatMap(([candidate, value]) =>
-    aliases.has(projectStorageKey(candidate, platform)) ? [value] : []
+    matchesIdentity(candidate, aliases, platform) ? [value] : []
   );
 }
 
@@ -360,10 +373,10 @@ export class PromptCacheStore {
     const nextHistoryFile = { ...historyFile, [key]: state.history };
     const nextStashFile = { ...stashFile, [key]: state.stash };
     for (const candidate of Object.keys(nextHistoryFile)) {
-      if (candidate !== key && aliases.has(projectStorageKey(candidate, this.platform))) delete nextHistoryFile[candidate];
+      if (candidate !== key && matchesIdentity(candidate, aliases, this.platform)) delete nextHistoryFile[candidate];
     }
     for (const candidate of Object.keys(nextStashFile)) {
-      if (candidate !== key && aliases.has(projectStorageKey(candidate, this.platform))) delete nextStashFile[candidate];
+      if (candidate !== key && matchesIdentity(candidate, aliases, this.platform)) delete nextStashFile[candidate];
     }
 
     const changes = [
