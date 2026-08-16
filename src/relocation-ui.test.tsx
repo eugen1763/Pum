@@ -7,7 +7,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "./app";
 import { canonicalRealpathSync } from "./platform";
-import { loadRelocation, relocationFileFor, saveRelocation } from "./relocation";
+import {
+  initializeWorktreeLaunchRelocation,
+  loadRelocation,
+  relocationFileFor,
+  saveRelocation,
+  type RelocationRecord,
+} from "./relocation";
+import { startWorktree } from "./worktree-start";
 
 let destroy: (() => void) | undefined;
 const directories: string[] = [];
@@ -93,6 +100,7 @@ async function renderApp(options: {
   agents?: unknown[];
   onRelocate?: (target: string) => Promise<unknown>;
   session?: ReturnType<typeof fakeSession>;
+  initialRelocation?: RelocationRecord;
 } ) {
   const session = options.session ?? fakeSession();
   const relocated: string[] = [];
@@ -123,6 +131,7 @@ async function renderApp(options: {
         relocated.push(target);
         return (await options.onRelocate?.(target)) === null ? null : session;
       }}
+      initialRelocation={options.initialRelocation}
       settings={settings}
       searchProviders={[]}
       subagentManager={manager}
@@ -171,6 +180,32 @@ async function typeAndSettleMove(
 }
 
 describe("/worktree start and return", () => {
+  test("returns from a worktree created by the CLI launch flow", async () => {
+    const repo = repository();
+    const started = await startWorktree(repo);
+    const session = fakeSession();
+    const initialRelocation = initializeWorktreeLaunchRelocation(
+      session.sessionFile,
+      started,
+      123,
+    );
+    const { setup, relocated, relocationHandler } = await renderApp({
+      cwd: started.worktree.path,
+      session,
+      initialRelocation,
+    });
+
+    const answer = relocationHandler.current!({ action: "return" });
+    expect(answer.accepted).toBe(true);
+    session.emit({ type: "agent_settled" });
+    await settleUntil(setup, () => relocated.length === 1);
+
+    expect(relocated).toEqual([repo]);
+    expect(existsSync(started.worktree.path)).toBe(true);
+    expect(loadRelocation(session.sessionFile)).toBeNull();
+    expect(setup.captureCharFrame()).toContain("back in");
+  }, 30_000);
+
   test("moves the session into a generated worktree and back", async () => {
     const repo = repository();
     const { setup, session, relocated } = await renderApp({ cwd: repo });
@@ -251,6 +286,24 @@ describe("/worktree start and return", () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Unknown worktree command");
     expect(frame).toContain("/worktree feature one");
+  }, 30_000);
+
+  test("validates a resumed CLI launch already inside its worktree", async () => {
+    const repo = repository();
+    const started = await startWorktree(repo);
+    const session = fakeSession();
+    initializeWorktreeLaunchRelocation(session.sessionFile, started, 123);
+    execFileSync("git", ["switch", "-c", "unexpected"], {
+      cwd: started.worktree.path,
+      encoding: "utf8",
+    });
+
+    const { setup, relocated } = await renderApp({ cwd: started.worktree.path, session });
+    await settleUntil(setup, () => setup.captureCharFrame().includes("no longer matches"));
+
+    expect(relocated).toEqual([repo]);
+    expect(loadRelocation(session.sessionFile)).toBeNull();
+    expect(setup.captureCharFrame()).toContain(`returned to ${repo}`);
   }, 30_000);
 
   test("a worktree that no longer matches its branch is not restored", async () => {

@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { companionFileFor, readCompanion, writeCompanion } from "./session-companion";
 import { isPathInsideOrSame, pathIdentity } from "./platform";
+import type { WorktreeStart } from "./worktree-start";
 
 /**
  * Where a relocated session is currently running, and what move it still owes.
@@ -74,6 +76,34 @@ export function saveRelocation(
   record: RelocationRecord | null,
 ): void {
   writeCompanion(sessionFile, RELOCATION_SUFFIX, record);
+}
+
+/**
+ * Persist the generated worktree that a `pum worktree` CLI launch entered.
+ *
+ * The CLI creates the checkout before the session exists. This bridges that
+ * launch fact into the same companion record used by in-session start/return.
+ */
+export function initializeWorktreeLaunchRelocation(
+  sessionFile: string | undefined,
+  start: WorktreeStart,
+  now = Date.now(),
+): RelocationRecord {
+  const record: RelocationRecord = {
+    id: `reloc-${randomUUID().slice(0, 8)}`,
+    generation: 1,
+    sourceRoot: start.sourceRoot,
+    worktreePath: start.worktree.path,
+    name: start.worktree.name,
+    branch: start.worktree.branch,
+    baseBranch: start.worktree.baseBranch,
+    baseCommit: start.worktree.baseCommit,
+    location: "worktree",
+    createdAt: now,
+    updatedAt: now,
+  };
+  saveRelocation(sessionFile, record);
+  return record;
 }
 
 export type RelocationGuardInput = {
