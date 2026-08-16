@@ -1,6 +1,6 @@
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "../src/app";
@@ -10,7 +10,7 @@ import { saveGoal, createGoal } from "../src/goal";
 /**
  * Regenerate the README screenshots.
  *
- * `bun run scripts/capture-screenshots.ts`
+ * `bun run scripts/capture-screenshots.tsx`
  *
  * These are real OpenTUI renders, not mockups: the script drives the actual App
  * with a fake session whose entries are replayed exactly as a resumed session
@@ -29,10 +29,13 @@ type Capture = ReturnType<Awaited<ReturnType<typeof createTestRenderer>>["captur
 
 const temporaryDirectories: string[] = [];
 
-function temporarySession(): string {
+function temporaryCaptureFiles(): { project: string; sessionFile: string } {
   const directory = mkdtempSync(join(tmpdir(), "pum-shot-"));
   temporaryDirectories.push(directory);
-  return join(directory, "session.jsonl");
+  const project = join(directory, "pum");
+  mkdirSync(join(project, ".git"), { recursive: true });
+  writeFileSync(join(project, ".git", "HEAD"), "ref: refs/heads/main\n", "utf8");
+  return { project, sessionFile: join(directory, "session.jsonl") };
 }
 
 const hex = (color: { r: number; g: number; b: number }): string => {
@@ -283,9 +286,9 @@ async function capture(options: {
   width: number;
   height: number;
   goal?: string;
-  openSettings?: boolean;
+  popup?: "settings" | "help";
 }): Promise<Capture> {
-  const sessionFile = temporarySession();
+  const { project, sessionFile } = temporaryCaptureFiles();
   if (options.goal) saveGoal(sessionFile, createGoal(options.goal, 10));
   const setup = await createTestRenderer({
     width: options.width,
@@ -301,6 +304,7 @@ async function capture(options: {
       loadSessions={async () => []}
       onSwitchSession={async () => session}
       settings={normalizeSettings({ theme: "tokyonight", animations: false, workingRuleAnimation: "off" })}
+      initialCwd={project}
       searchProviders={[]}
       subagentManager={{
         getAgents: () => [],
@@ -327,8 +331,9 @@ async function capture(options: {
     await setup.flush();
     await new Promise((resolve) => setTimeout(resolve, 120));
   }
-  if (options.openSettings) {
-    setup.mockInput.pressKey("p", { ctrl: true });
+  if (options.popup) {
+    if (options.popup === "settings") setup.mockInput.pressKey("p", { ctrl: true });
+    else setup.mockInput.pressKey("?");
     for (let pass = 0; pass < 3; pass += 1) {
       await setup.renderOnce();
       await setup.flush();
@@ -356,7 +361,7 @@ writeFileSync(
   ),
 );
 
-const settings = await capture({ width: 104, height: 34, openSettings: true });
+const settings = await capture({ width: 104, height: 34, popup: "settings" });
 writeFileSync(
   "docs/images/pum-settings.svg",
   toSvg(
@@ -366,7 +371,17 @@ writeFileSync(
   ),
 );
 
+const controls = await capture({ width: 128, height: 38, popup: "help" });
+writeFileSync(
+  "docs/images/pum-controls.svg",
+  toSvg(
+    controls,
+    "PUM controls panel",
+    "A real OpenTUI render of PUM's controls panel, showing prompt, agent, session, command, and application shortcuts.",
+  ),
+);
+
 for (const directory of temporaryDirectories) {
   rmSync(directory, { recursive: true, force: true });
 }
-console.log("wrote docs/images/pum-transcript.svg and docs/images/pum-settings.svg");
+console.log("wrote docs/images/pum-transcript.svg, docs/images/pum-settings.svg, and docs/images/pum-controls.svg");
