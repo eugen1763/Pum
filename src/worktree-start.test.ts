@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { canonicalPathIdentity, isPathInside, pathsHaveSameIdentity } from "./platform";
@@ -136,3 +136,27 @@ describe("start message", () => {
     expect(message).toContain(UNCOMMITTED_CHANGES_NOTICE);
   });
 });
+
+describe("the source root is a path, not an identity", () => {
+  test("keeps the spelling the filesystem uses", async () => {
+    // sourceRoot is a directory the session runs and writes in, so it must be
+    // the real spelling. canonicalPathIdentity lowercases on Windows, which is
+    // only ever right for comparing two paths.
+    const repo = mkdtempSync(join(tmpdir(), "PumMixedCase-"));
+    try {
+      execFileSync("git", ["init", "-q", "."], { cwd: repo });
+      execFileSync("git", ["config", "user.email", "t@t"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+      writeFileSync(join(repo, "a.txt"), "hi\n");
+      execFileSync("git", ["add", "-A"], { cwd: repo });
+      execFileSync("git", ["commit", "-qm", "init"], { cwd: repo });
+
+      const started = await startWorktree(repo);
+      expect(started.sourceRoot).toContain("PumMixedCase-");
+      expect(existsSync(started.sourceRoot)).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  }, 30_000);
+});
+

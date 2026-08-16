@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
-import { canonicalPathIdentity, isPathInside } from "./platform";
+import { canonicalPathIdentity, canonicalRealpath, isPathInside } from "./platform";
 import { createWorktree, type WorktreeRecord } from "./worktree";
 
 const execFileAsync = promisify(execFile);
@@ -73,7 +73,10 @@ async function repositoryRoot(directory: string): Promise<string> {
     throw new Error(`Cannot start a worktree in ${directory}: it is not inside a git repository`);
   }
   try {
-    return await canonicalPathIdentity(top);
+    // The real spelling, not an identity. This value is used as a directory -
+    // the session runs there and writes there - and canonicalPathIdentity
+    // lowercases on Windows, which is only for comparing two paths.
+    return await canonicalRealpath(top);
   } catch (error) {
     throw new Error(`Cannot start a worktree: repository root ${top} does not resolve: `
       + (error as Error).message);
