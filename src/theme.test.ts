@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PRESETS } from "./theme";
+import { PRESETS, mix, mixLight, rgba } from "./theme";
 
 const temporaryDirectories: string[] = [];
 afterEach(() => {
@@ -119,5 +119,43 @@ describe("rejection theme tokens", () => {
       expect(`${label}: ${exitCode}`).toBe(`${label}: 0`);
       expect(JSON.parse(stdout)).toEqual(PRESETS.tokyonight!);
     }
+  });
+});
+
+describe("linear-light blending", () => {
+  test("keeps the middle of a ramp brighter than an sRGB byte lerp", () => {
+    const black = rgba("#000000");
+    const white = rgba("#ffffff");
+    const half = mixLight(black, white, 0.5);
+
+    expect(half.r).toBeGreaterThan(mix(black, white, 0.5).r);
+    // 0.5 in linear light is roughly mid grey to the eye, near sRGB 0.73.
+    // RGBA stores eight bits a channel, so compare within one step of that.
+    expect(half.r).toBeCloseTo(0.5 ** (1 / 2.2), 2);
+    expect(half.g).toBeCloseTo(half.r, 10);
+    expect(half.b).toBeCloseTo(half.r, 10);
+  });
+
+  test("pins both ends and rises without a dip", () => {
+    const base = rgba("#292e42");
+    const highlight = rgba("#7aa2f7");
+
+    expect(mixLight(base, highlight, 0)).toEqual(base);
+    expect(mixLight(base, highlight, 1)).toEqual(highlight);
+    let previous = -1;
+    for (let step = 0; step <= 20; step++) {
+      const { r, g, b } = mixLight(base, highlight, step / 20);
+      const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      expect(luminance).toBeGreaterThan(previous);
+      previous = luminance;
+    }
+  });
+
+  test("clamps out-of-range positions to the two endpoints", () => {
+    const base = rgba("#101010");
+    const highlight = rgba("#f0f0f0");
+
+    expect(mixLight(base, highlight, -1)).toEqual(base);
+    expect(mixLight(base, highlight, 2)).toEqual(highlight);
   });
 });

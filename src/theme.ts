@@ -456,4 +456,21 @@ export function mix(a: RGBA, b: RGBA, t: number): RGBA {
   );
 }
 
+const GAMMA = 2.2;
+
+/**
+ * Blend two colours in linear light rather than in gamma-encoded bytes.
+ *
+ * `mix()` lerps the stored sRGB values, so the middle of a ramp comes out
+ * darker than the eye expects and an animated sweep sags as it passes. Undoing
+ * the transfer curve first keeps the ramp's brightness even end to end.
+ */
+export function mixLight(a: RGBA, b: RGBA, t: number): RGBA {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  const channel = (from: number, to: number) =>
+    (from ** GAMMA + (to ** GAMMA - from ** GAMMA) * t) ** (1 / GAMMA);
+  return RGBA.fromValues(channel(a.r, b.r), channel(a.g, b.g), channel(a.b, b.b), 1);
+}
+
 export const rgba = (color: string): RGBA => parseColor(color);

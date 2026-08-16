@@ -234,6 +234,7 @@ export function TextLine({
     chunks: [fg(color)(displayText)],
     contentKey: `${role}:${displayText}`,
     caretColor: color,
+    background: theme.bg,
     active: workingCaret && !isAssistant,
   });
   const markdownCaret = useMarkdownCaret(text, workingCaret && isAssistant);
@@ -301,6 +302,7 @@ export function StreamLine({
     text: displayText,
     color,
     highlight: theme.highlight,
+    background: theme.bg,
     active: role === "thinking",
     caret: true,
   });
@@ -701,6 +703,7 @@ export function ToolLine({
     chunks: bodyChunks,
     contentKey: `${call.name}:${call.arg}:${call.state}:${call.detail ?? ""}`,
     caretColor: failed ? theme.error : rejected ? theme.rejection : theme.accent,
+    background: theme.bg,
     active: workingCaret,
   });
   const output = call.name === "bash" && call.output && bashOutputVisible

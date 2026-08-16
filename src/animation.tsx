@@ -13,11 +13,12 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   type ReactNode,
   type RefObject,
 } from "react";
-import { mix, rgba } from "./theme";
+import { mixLight, rgba } from "./theme";
 import type { WorkingRuleAnimationMode } from "./settings";
 
 /** A colour sweep quantised to 256 colours reads as flicker, not motion. */
@@ -26,8 +27,19 @@ export function supportsTrueColor(): boolean {
   return v === "truecolor" || v === "24bit";
 }
 
-export const PULSE = "▁▂▃▄▅▆▇▆▅▄▃▂".split("");
-const PULSE_MS = 70;
+export const PULSE_LEVELS = "▁▂▃▄▅▆▇█".split("");
+export const PULSE_PERIOD_MS = 840;
+
+/**
+ * The pulse height rides a cosine rather than a frame counter, so it slows at
+ * the top and the bottom of the swing instead of stepping at a constant rate.
+ */
+export function pulseGlyph(elapsedMs: number): string {
+  const phase = ((elapsedMs % PULSE_PERIOD_MS) + PULSE_PERIOD_MS) % PULSE_PERIOD_MS;
+  const height = (1 - Math.cos((phase / PULSE_PERIOD_MS) * 2 * Math.PI)) / 2;
+  const level = Math.min(PULSE_LEVELS.length - 1, Math.floor(height * PULSE_LEVELS.length));
+  return PULSE_LEVELS[level]!;
+}
 
 // "Brisk": the shimmer head travels ~28 characters a second. Motion is derived
 // from elapsed time, so it looks the same whatever the renderer's frame rate is.
@@ -37,13 +49,94 @@ const SHIMMER_WIDTH = 7;
 const SHIMMER_TAIL = 120;
 
 const CARET = "▊";
+export const CARET_PERIOD_MS = 900;
+/** Ramp length at each end of the caret's cycle, as a share of the period. */
+const CARET_RAMP = 0.12;
+/** Quantised fade steps, so one ramp costs a bounded number of repaints. */
+export const CARET_FADE_STEPS = 16;
+
+/** Smoothstep by cosine: flat at both ends, so neither end shows a corner. */
+const ease = (t: number) => (1 - Math.cos(Math.max(0, Math.min(1, t)) * Math.PI)) / 2;
+
 /**
- * Same display width as the caret, so blinking never changes layout.
- * Braille blank is not whitespace, so it cannot turn a partial `#` into a
- * Markdown heading when the caret blinks off.
+ * The caret dissolves into the background instead of switching off. The block
+ * glyph stays in place for the whole cycle, so the row's width never changes
+ * and no glyph swap can rewrite the text underneath it.
  */
-export const CARET_PLACEHOLDER = "\u2800";
-const CARET_PERIOD_MS = 900;
+export function caretAlpha(elapsedMs: number): number {
+  const phase = (((elapsedMs % CARET_PERIOD_MS) + CARET_PERIOD_MS) % CARET_PERIOD_MS)
+    / CARET_PERIOD_MS;
+  const lit = 0.6;
+  if (phase < CARET_RAMP) return ease(phase / CARET_RAMP);
+  if (phase < lit) return 1;
+  if (phase < lit + CARET_RAMP) return ease(1 - (phase - lit) / CARET_RAMP);
+  return 0;
+}
+
+/**
+ * How far a lit cell carries after the head has passed it.
+ *
+ * A terminal cell is enormous next to the thing being animated, so motion on
+ * this grid reads as stepping unless every cell keeps a fading wake. Decay is
+ * per millisecond rather than per frame, so the wake is the same length
+ * whatever rate the renderer runs at.
+ */
+export const TRAIL_HALF_LIFE_MS = 90;
+/** Below this a trailing cell can no longer tint an eight-bit channel. */
+const TRAIL_FLOOR = 1 / 255;
+
+export function decayTrail(previous: number, current: number, deltaMs: number): number {
+  // A negative step means the working clock restarted. Drop the old wake.
+  if (deltaMs < 0) return current;
+  if (deltaMs === 0) return Math.max(previous, current);
+  const faded = previous * 0.5 ** (deltaMs / TRAIL_HALF_LIFE_MS);
+  return Math.max(current, faded < TRAIL_FLOOR ? 0 : faded);
+}
+
+/**
+ * Raised-cosine falloff. A linear ramp holds one slope from head to tail, so
+ * the eye reads a sliding wedge with a corner on it. Flattening at the peak
+ * and again at the edge turns the same motion into a glow.
+ */
+export function glowFalloff(distance: number, radius: number): number {
+  if (!(radius > 0)) return 0;
+  const spread = Math.abs(distance) / radius;
+  if (spread >= 1) return 0;
+  return (Math.cos(spread * Math.PI) + 1) / 2;
+}
+
+/** Where the ramp reaches the highlight and starts blooming past it. */
+export const GLOW_KNEE = 0.85;
+/**
+ * Strength is shaped before it becomes colour. Blending in linear light makes
+ * even a two-percent wake visible, which left every trail smeared across the
+ * whole rule; this keeps a faint cell faint without a cutoff to pop at.
+ */
+const GLOW_SHAPE = 1.8;
+const WHITE = rgba("#ffffff");
+
+/** The hot core of a sweep: the highlight lifted towards white. */
+export function bloomColor(highlight: RGBA): RGBA {
+  return mixLight(highlight, WHITE, 0.45);
+}
+
+/**
+ * Base up to the knee, then a hot core above it. Two stops rather than one
+ * give the head somewhere brighter to go than the plain highlight colour.
+ */
+export function glowColor(base: RGBA, highlight: RGBA, bloom: RGBA, strength: number): RGBA {
+  if (strength <= 0) return base;
+  if (strength >= 1) return bloom;
+  return strength >= GLOW_KNEE
+    ? mixLight(highlight, bloom, (strength - GLOW_KNEE) / (1 - GLOW_KNEE))
+    : mixLight(base, highlight, (strength / GLOW_KNEE) ** GLOW_SHAPE);
+}
+
+/** Weight is a second channel: the core of a sweep draws a heavier rule. */
+const HEAVY_RULE_STRENGTH = 0.62;
+export function weightedGlyph(glyph: string, strength: number): string {
+  return glyph === "\u2500" && strength >= HEAVY_RULE_STRENGTH ? "\u2501" : glyph;
+}
 
 const RULE_CHARS_PER_MS = 0.08;
 const RULE_HIGHLIGHT_WIDTH = 10;
@@ -51,6 +144,7 @@ const COMET_CHARS_PER_MS = 0.035;
 const ELECTRIC_FRAME_MS = 140;
 const CONSTELLATION_SPACING = 13;
 const RANDOM_CONSTELLATION_CYCLE_MS = 2000;
+const CONSTELLATION_HALO = 0.34;
 const ENERGY_CYCLE_MS = 3600;
 
 export type WorkingRuleRole = "headerTop" | "headerBottom" | "inputTop" | "inputBottom";
@@ -198,20 +292,30 @@ export function AnimationProvider({
   );
 }
 
-function shimmer(text: string, base: RGBA, hi: RGBA, elapsedMs: number): StyledText {
+/** Exported for the test that guards the run-coalescing loop below. */
+export function shimmer(text: string, base: RGBA, hi: RGBA, elapsedMs: number): StyledText {
   const start = Math.max(0, text.length - SHIMMER_TAIL);
   const tail = text.slice(start);
-  const chunks = [];
+  const bloom = bloomColor(hi);
+  const chunks: TextChunk[] = [];
   if (start > 0) chunks.push(fg(base)(text.slice(0, start)));
 
   // The head runs past the end before wrapping, so there is a beat between sweeps.
   const period = tail.length + SHIMMER_WIDTH * 3;
   const head = ((elapsedMs * SHIMMER_CHARS_PER_MS) % period) - SHIMMER_WIDTH;
+  // Everything outside the head is one colour, so it is also one chunk.
+  let runColor: RGBA | null = null;
+  let runText = "";
   for (let i = 0; i < tail.length; i++) {
-    const d = Math.abs(i - head);
-    const w = d < SHIMMER_WIDTH ? 1 - d / SHIMMER_WIDTH : 0;
-    chunks.push(fg(w > 0 ? mix(base, hi, w * w) : base)(tail[i]!));
+    const color = glowColor(base, hi, bloom, glowFalloff(i - head, SHIMMER_WIDTH));
+    if (runColor && sameColor(runColor, color)) runText += tail[i]!;
+    else {
+      if (runColor && runText) chunks.push(fg(runColor)(runText));
+      runColor = color;
+      runText = tail[i]!;
+    }
   }
+  if (runColor && runText) chunks.push(fg(runColor)(runText));
   return new StyledText(chunks);
 }
 
@@ -226,10 +330,12 @@ export function useShimmerText(opts: {
   text: string;
   color: string;
   highlight: string;
+  /** What the caret dissolves into between blinks. */
+  background: string;
   active: boolean;
   caret?: boolean;
 }) {
-  const { text, color, highlight, active, caret = false } = opts;
+  const { text, color, highlight, background, active, caret = false } = opts;
   const ref = useRef<TextRenderable>(null);
   const { subscribe, enabled } = useClock();
   const latest = useRef(text);
@@ -249,20 +355,18 @@ export function useShimmerText(opts: {
     }
     const base = rgba(color);
     const hi = rgba(highlight);
+    const behind = rgba(background);
     const stop = subscribe((elapsedMs) => {
       if (!ref.current) return;
       const styled = shimmer(latest.current, base, hi, elapsedMs);
-      if (caret) {
-        const visible = elapsedMs % CARET_PERIOD_MS < CARET_PERIOD_MS * 0.6;
-        styled.chunks.push(fg(visible ? hi : base)(visible ? CARET : CARET_PLACEHOLDER));
-      }
+      if (caret) styled.chunks.push(fg(mixLight(behind, hi, caretAlpha(elapsedMs)))(CARET));
       ref.current.content = styled;
     });
     return () => {
       stop();
       plain();
     };
-  }, [active, enabled, color, highlight, caret, subscribe, plain]);
+  }, [active, enabled, color, highlight, background, caret, subscribe, plain]);
 
   // Repaint when the text changes but nothing is animating.
   useEffect(() => {
@@ -272,40 +376,46 @@ export function useShimmerText(opts: {
   return ref;
 }
 
-/** Own styled text and append a width-stable blinking caret while active. */
+/** Own styled text and append a width-stable fading caret while active. */
 export function useBlinkingText(opts: {
   chunks: TextChunk[];
   contentKey: string;
   caretColor: string;
+  /** What the caret dissolves into between blinks. */
+  background: string;
   active: boolean;
 }): RefObject<TextRenderable | null> {
-  const { chunks, contentKey, caretColor, active } = opts;
+  const { chunks, contentKey, caretColor, background, active } = opts;
   const ref = useRef<TextRenderable>(null);
   const { subscribe, enabled } = useClock();
   const latest = useRef(chunks);
-  const caretVisible = useRef(true);
+  const caretStep = useRef(CARET_FADE_STEPS);
   latest.current = chunks;
+
+  // Parsing two colour strings a repaint is wasted work on a hot path.
+  const behind = useMemo(() => rgba(background), [background]);
+  const lit = useMemo(() => rgba(caretColor), [caretColor]);
 
   const paint = useCallback(() => {
     if (!ref.current) return;
-    const caret = caretVisible.current ? CARET : CARET_PLACEHOLDER;
-    ref.current.content = new StyledText([...latest.current, fg(caretColor)(caret)]);
-  }, [caretColor]);
+    const color = mixLight(behind, lit, caretStep.current / CARET_FADE_STEPS);
+    ref.current.content = new StyledText([...latest.current, fg(color)(CARET)]);
+  }, [behind, lit]);
 
   useEffect(() => {
     if (!active) return;
     if (!enabled) {
-      caretVisible.current = true;
+      caretStep.current = CARET_FADE_STEPS;
       paint();
       return;
     }
 
-    let lastVisible = caretVisible.current;
+    // Repaint on a quantised step rather than every frame: the fade is only
+    // worth as many repaints as the eye can tell apart.
     const stop = subscribe((elapsedMs) => {
-      const nextVisible = elapsedMs % CARET_PERIOD_MS < CARET_PERIOD_MS * 0.6;
-      if (nextVisible === lastVisible) return;
-      lastVisible = nextVisible;
-      caretVisible.current = nextVisible;
+      const step = Math.round(caretAlpha(elapsedMs) * CARET_FADE_STEPS);
+      if (step === caretStep.current) return;
+      caretStep.current = step;
       paint();
     });
     paint();
@@ -376,7 +486,26 @@ export type WorkingRuleCell = {
 const STATIC_STRENGTH: RuleStrength = () => 0;
 const STATIC_GLYPH: RuleGlyph = () => "─";
 
+/** How far each sparkle trails the sweep head, and how bright it burns. */
+const SPARKLE_OFFSETS = [0, 5, 11];
+const SPARKLE_WEIGHTS = [1, 0.68, 0.35];
+const SPARKLE_GLYPHS = ["✦", "✧", "·"];
+
 const clampStrength = (value: number) => Math.max(0, Math.min(1, value));
+
+/** A trapezoid envelope with eased shoulders, for cross-fading two beats. */
+const window = (
+  value: number,
+  riseFrom: number,
+  riseTo: number,
+  fallFrom: number,
+  fallTo: number,
+) => {
+  if (value <= riseFrom || value >= fallTo) return 0;
+  if (value < riseTo) return ease((value - riseFrom) / (riseTo - riseFrom));
+  if (value <= fallFrom) return 1;
+  return ease(1 - (value - fallFrom) / (fallTo - fallFrom));
+};
 
 const roleSeed = (role: WorkingRuleRole) => {
   switch (role) {
@@ -412,17 +541,14 @@ export function randomConstellationCenters(
   return centers.sort((a, b) => a - b);
 }
 
-const linearStrength = (head: number): RuleStrength => (column) => {
-  const distance = Math.abs(column - head);
-  return distance < RULE_HIGHLIGHT_WIDTH ? 1 - distance / RULE_HIGHLIGHT_WIDTH : 0;
-};
+const linearStrength = (head: number): RuleStrength => (column) =>
+  glowFalloff(column - head, RULE_HIGHLIGHT_WIDTH);
 
 /** The original input-rule sweep, including its wrapped highlight tail. */
 const wrappedStrength = (head: number, width: number): RuleStrength => (column) => {
   const clockwise = (head - column + width) % width;
   const counterclockwise = (column - head + width) % width;
-  const distance = Math.min(clockwise, counterclockwise);
-  return distance < RULE_HIGHLIGHT_WIDTH ? 1 - distance / RULE_HIGHLIGHT_WIDTH : 0;
+  return glowFalloff(Math.min(clockwise, counterclockwise), RULE_HIGHLIGHT_WIDTH);
 };
 
 /** Return one animated rule cell for all selectable working-rule modes. */
@@ -450,28 +576,32 @@ export function workingRuleCell(
   if (mode === "sparkle-trail") {
     const state = coordinatedRuleState(width, elapsedMs, cycleWidth);
     if ((state.pair === "input") !== isInputRule(role)) return { strength: 0, glyph: "─" };
-    const head = Math.round(state.head);
-    const sparkleColumns = [head, head - state.direction * 5, head - state.direction * 11];
-    const sparkleGlyphs = ["✦", "✧", "·"];
-    const sparkleIndex = sparkleColumns.indexOf(column);
-    const sweep = linearStrength(state.head)(column);
-    const sparkleStrength = sparkleIndex < 0 ? 0 : [1, 0.68, 0.35][sparkleIndex]!;
-    return {
-      strength: Math.max(sweep, sparkleStrength),
-      glyph: sparkleIndex < 0 ? "─" : sparkleGlyphs[sparkleIndex]!,
-    };
+    let strength = linearStrength(state.head)(column);
+    let glyph = "─";
+    let best = 0;
+    // A sparkle sits between two cells for most of its travel. Splitting it
+    // across both, brightest cell first, lets it glide with the sweep instead
+    // of jumping a whole column at a time.
+    for (let sparkle = 0; sparkle < SPARKLE_OFFSETS.length; sparkle++) {
+      const center = state.head - state.direction * SPARKLE_OFFSETS[sparkle]!;
+      const share = 1 - Math.abs(column - center);
+      if (share <= 0) continue;
+      const lit = SPARKLE_WEIGHTS[sparkle]! * share;
+      strength = Math.max(strength, lit);
+      if (lit <= best) continue;
+      best = lit;
+      // The dimmer half of a straddling sparkle drops one tier, so the pair
+      // reads as one spark crossing a cell boundary rather than as two.
+      glyph = SPARKLE_GLYPHS[share >= 0.5 ? sparkle : Math.min(sparkle + 1, 2)]!;
+    }
+    return { strength: clampStrength(strength), glyph };
   }
 
   if (mode === "comet-pair") {
     const travel = (elapsedMs * COMET_CHARS_PER_MS) % Math.max(1, width);
     const heads = [travel, width - 1 - travel];
     const distance = Math.min(...heads.map((head) => Math.abs(column - head)));
-    return {
-      strength: distance < RULE_HIGHLIGHT_WIDTH
-        ? clampStrength(1 - distance / RULE_HIGHLIGHT_WIDTH)
-        : 0,
-      glyph: "─",
-    };
+    return { strength: glowFalloff(distance, RULE_HIGHLIGHT_WIDTH), glyph: "─" };
   }
 
   if (mode === "electric-spark") {
@@ -481,12 +611,14 @@ export function workingRuleCell(
     const seed = roleSeed(role);
     const primary = hashPosition(frame, seed, Math.max(1, width - 1));
     const secondary = hashPosition(frame, seed + 29, width);
-    const fade = 1 - frameProgress / 0.68;
+    // Strike hard, then fall away on a curve. A linear decay reads as a
+    // shutter closing; this one keeps the arc alive as it dies.
+    const fade = ease(1 - frameProgress / 0.68);
     const primaryDistance = Math.min(Math.abs(column - primary), Math.abs(column - (primary + 1)));
     const secondaryDistance = Math.abs(column - secondary);
     const strength = Math.max(
-      primaryDistance <= 2 ? fade * (1 - primaryDistance / 3) : 0,
-      secondaryDistance <= 1 ? fade * 0.45 * (1 - secondaryDistance / 2) : 0,
+      fade * glowFalloff(primaryDistance, 3),
+      fade * 0.45 * glowFalloff(secondaryDistance, 2),
     );
     const glyph = column === primary ? "╴" : column === primary + 1 ? "╶" :
       column === secondary ? "·" : "─";
@@ -495,12 +627,19 @@ export function workingRuleCell(
 
   if (mode === "constellation") {
     const seed = roleSeed(role);
-    const isStar = (column + seed * 3) % CONSTELLATION_SPACING === 0;
-    if (!isStar) return { strength: 0, glyph: "─" };
-    const phase = elapsedMs / 850 + column * 0.47 + seed * 1.3;
-    const strength = 0.12 + ((Math.sin(phase) + 1) / 2) * 0.88;
-    const glyph = strength > 0.82 ? "✦" : strength > 0.48 ? "✧" : "·";
-    return { strength, glyph };
+    const spacing = (offset: number) => (column + offset + seed * 3) % CONSTELLATION_SPACING === 0;
+    // A star ends at its own cell unless it carries a halo, which is what
+    // makes it bloom on the rule rather than switch on and off in place.
+    const halo = spacing(1) || spacing(-1);
+    if (!spacing(0) && !halo) return { strength: 0, glyph: "─" };
+    const star = spacing(0) ? column : spacing(1) ? column + 1 : column - 1;
+    // Stars sit thirteen columns apart, so any fixed phase step per column put
+    // them all within a fifth of a radian of each other and they blinked in
+    // unison. A hashed offset gives each one its own place in the cycle.
+    const phase = elapsedMs / 620 + hashPosition(star, seed, 628) / 100;
+    const peak = 0.12 + ((Math.sin(phase) + 1) / 2) * 0.88;
+    if (!spacing(0)) return { strength: peak * CONSTELLATION_HALO, glyph: "·" };
+    return { strength: peak, glyph: peak > 0.82 ? "✦" : peak > 0.48 ? "✧" : "·" };
   }
 
   if (mode === "random-constellation") {
@@ -511,9 +650,10 @@ export function workingRuleCell(
     if (fade <= 0.01) return { strength: 0, glyph: "─" };
     const centers = randomConstellationCenters(width, cycle, role);
     const distance = Math.min(...centers.map((center) => Math.abs(column - center)));
-    if (distance > 1) return { strength: 0, glyph: "─" };
-    const strength = fade * (distance === 0 ? 1 : 0.62);
-    const glyph = strength < 0.2 ? "·" :
+    if (distance > 2) return { strength: 0, glyph: "─" };
+    // The outer ring is what gives each sparkle somewhere to bloom into.
+    const strength = fade * (distance === 0 ? 1 : distance === 1 ? 0.62 : 0.24);
+    const glyph = distance === 2 || strength < 0.2 ? "·" :
       strength < 0.58 ? "✧" :
         distance === 0 ? "✦" : "✧";
     return { strength, glyph };
@@ -523,42 +663,41 @@ export function workingRuleCell(
     const phase = (elapsedMs % ENERGY_CYCLE_MS) / ENERGY_CYCLE_MS;
     const center = (width - 1) / 2;
     const input = isInputRule(role);
+    // The three beats overlap and cross-fade. Cutting between them left a
+    // visible step at each handover, which is the one thing a wave must not do.
+    let strength = 0;
+    let glyph = "─";
 
-    if (phase < 0.45 && input) {
-      const progress = phase / 0.45;
-      const leftHead = center * progress;
-      const rightHead = width - 1 - center * progress;
-      const charged = column <= leftHead || column >= rightHead;
-      const distance = Math.min(Math.abs(column - leftHead), Math.abs(column - rightHead));
-      return {
-        strength: charged ? Math.max(0.22, 1 - distance / 7) : 0,
-        glyph: "─",
-      };
+    if (input) {
+      const charge = window(phase, 0, 0.04, 0.42, 0.48);
+      if (charge > 0) {
+        const progress = ease(phase / 0.48);
+        const leftHead = center * progress;
+        const rightHead = width - 1 - center * progress;
+        const charged = column <= leftHead || column >= rightHead;
+        const distance = Math.min(Math.abs(column - leftHead), Math.abs(column - rightHead));
+        // The glow spills past each head, so the charged wire has no hard end.
+        strength = charge * Math.max(charged ? 0.22 : 0, glowFalloff(distance, 7));
+      }
+
+      const flash = window(phase, 0.42, 0.5, 0.5, 0.6);
+      if (flash > 0) {
+        const distance = Math.abs(column - center);
+        strength = Math.max(strength, flash * glowFalloff(distance, 8));
+        if (distance < 0.6 && flash > 0.35) glyph = "✦";
+      }
+    } else {
+      const discharge = window(phase, 0.54, 0.6, 0.88, 0.94);
+      if (discharge > 0) {
+        const progress = ease((phase - 0.54) / 0.4);
+        const heads = [center - progress * center, center + progress * center];
+        const distance = Math.min(...heads.map((head) => Math.abs(column - head)));
+        strength = discharge * glowFalloff(distance, RULE_HIGHLIGHT_WIDTH);
+        if (distance < 0.55 && discharge > 0.35) glyph = "✧";
+      }
     }
 
-    if (phase < 0.55 && input) {
-      const distance = Math.abs(column - center);
-      const flash = 1 - Math.abs(phase - 0.5) / 0.05;
-      return {
-        strength: distance < 8 ? clampStrength(flash * (1 - distance / 8)) : 0,
-        glyph: distance < 0.6 ? "✦" : "─",
-      };
-    }
-
-    if (phase >= 0.55 && phase < 0.9 && !input) {
-      const progress = (phase - 0.55) / 0.35;
-      const distanceFromCenter = progress * center;
-      const heads = [center - distanceFromCenter, center + distanceFromCenter];
-      const distance = Math.min(...heads.map((head) => Math.abs(column - head)));
-      return {
-        strength: distance < RULE_HIGHLIGHT_WIDTH
-          ? clampStrength(1 - distance / RULE_HIGHLIGHT_WIDTH)
-          : 0,
-        glyph: distance < 0.55 ? "✧" : "─",
-      };
-    }
-
-    return { strength: 0, glyph: "─" };
+    return { strength: clampStrength(strength), glyph };
   }
 
   return { strength: 0, glyph: "─" };
@@ -577,10 +716,7 @@ export function ruleText(
   trailingRuleColumns = 0,
   glyph: RuleGlyph = STATIC_GLYPH,
 ): StyledText {
-  const swept = (column: number) => {
-    const value = strength(column);
-    return value > 0 ? mix(base, hi, value * 0.8) : base;
-  };
+  const bloom = bloomColor(hi);
   const list = toLabels(labels);
   const trailingColumns = Math.max(0, Math.min(width, trailingRuleColumns));
   const labelEdge = width - trailingColumns;
@@ -590,7 +726,31 @@ export function ruleText(
   );
   const ruleColumns = Math.max(0, labelEdge - labelWidth);
   const chunks: TextChunk[] = [];
-  for (let column = 0; column < ruleColumns; column++) chunks.push(fg(swept(column))(glyph(column)));
+
+  // Most of a rule is one flat colour. Emitting a chunk a column costs the
+  // renderer a few hundred spans a frame for no visible gain, so equal-colour
+  // columns are merged into one run and only a change flushes it.
+  let runColor: RGBA | null = null;
+  let runText = "";
+  const flush = () => {
+    if (runColor && runText) chunks.push(fg(runColor)(runText));
+    runColor = null;
+    runText = "";
+  };
+  const paintColumn = (column: number) => {
+    const value = strength(column);
+    const color = glowColor(base, hi, bloom, value);
+    const text = weightedGlyph(glyph(column), value);
+    if (runColor && sameColor(runColor, color)) runText += text;
+    else {
+      flush();
+      runColor = color;
+      runText = text;
+    }
+  };
+
+  for (let column = 0; column < ruleColumns; column++) paintColumn(column);
+  flush();
 
   let column = ruleColumns;
   paint: for (const label of list) {
@@ -598,14 +758,17 @@ export function ruleText(
       const segmentWidth = Bun.stringWidth(segment);
       // Never split a grapheme across the right edge, even mid-label.
       if (column + segmentWidth > labelEdge) break paint;
-      chunks.push(bg(swept(column))(fg(label.color)(segment)));
+      chunks.push(bg(glowColor(base, hi, bloom, strength(column)))(fg(label.color)(segment)));
       column += segmentWidth;
     }
   }
   // A clipped grapheme can leave the row short. Finish it with plain rule.
-  for (; column < width; column++) chunks.push(fg(swept(column))(glyph(column)));
+  for (; column < width; column++) paintColumn(column);
+  flush();
   return new StyledText(chunks);
 }
+
+const sameColor = (a: RGBA, b: RGBA) => a === b || (a.r === b.r && a.g === b.g && a.b === b.b);
 
 /** Paint one rule from the shared frame clock without per-frame React state. */
 export function useWorkingRule(opts: {
@@ -651,20 +814,31 @@ export function useWorkingRule(opts: {
 
     const base = rgba(color);
     const hi = rgba(highlight);
+    // The wake each cell carries between frames, and the glyph it is showing.
+    // Both are kept for the life of this rule, so a frame allocates neither.
+    const trail = new Float64Array(width);
+    const glyphs = new Array<string>(width).fill("─");
+    let lastElapsedMs = -1;
+
     return subscribe(() => {
       if (!ref.current) return;
       const elapsedMs = workingElapsed();
+      const deltaMs = lastElapsedMs < 0 ? 0 : elapsedMs - lastElapsedMs;
+      lastElapsedMs = elapsedMs;
       const cycleWidth = workingRuleCycleWidth();
-      const cells = Array.from({ length: width }, (_, column) =>
-        workingRuleCell(mode, role, width, elapsedMs, column, cycleWidth));
+      for (let column = 0; column < width; column++) {
+        const cell = workingRuleCell(mode, role, width, elapsedMs, column, cycleWidth);
+        trail[column] = decayTrail(trail[column]!, cell.strength, deltaMs);
+        glyphs[column] = cell.glyph;
+      }
       ref.current.content = ruleText(
         width,
         base,
         hi,
-        (column) => cells[column]?.strength ?? 0,
+        (column) => trail[column] ?? 0,
         label,
         trailingRuleColumns,
-        (column) => cells[column]?.glyph ?? "─",
+        (column) => glyphs[column] ?? "─",
       );
     });
   }, [
@@ -704,8 +878,12 @@ export function useSpinner(active: boolean): RefObject<TextRenderable | null> {
       if (ref.current) ref.current.content = "•";
       return;
     }
+    let last = "";
     return subscribe((elapsedMs) => {
-      if (ref.current) ref.current.content = PULSE[Math.floor(elapsedMs / PULSE_MS) % PULSE.length]!;
+      const glyph = pulseGlyph(elapsedMs);
+      if (glyph === last) return;
+      last = glyph;
+      if (ref.current) ref.current.content = glyph;
     });
   }, [active, enabled, subscribe]);
 

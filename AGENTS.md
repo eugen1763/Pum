@@ -22,7 +22,7 @@ bun run start    # open the TUI in the current directory
 | `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
 | `src/theme.ts` | Semantic colour tokens, nine presets, `theme.json` merge |
 | `src/popup-frame.tsx` | Shared responsive popup frame and semantic drop shadow |
-| `src/animation.tsx` | One frame clock; shimmer, spinner, caret |
+| `src/animation.tsx` | One frame clock; the glow core; shimmer, spinner, caret |
 | `src/status-bar.tsx` | Top bar; always one measured row with responsive field priorities |
 | `src/transcript.tsx` | Row rendering per role |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
@@ -378,6 +378,16 @@ These were chosen deliberately. Change them only on purpose.
   fallback for long tokens and reserves six right columns. The `❯` gutter
   follows the cursor's visible row.
 - **Animation is on by default** and turns itself off without true colour.
+- **Every animation paints through one glow core.** A cell's strength becomes a
+  colour in `glowColor()`: shaped by `GLOW_SHAPE`, blended in linear light by
+  `mixLight()`, and blooming past `GLOW_KNEE` towards white. Blend in linear
+  light or the middle of a ramp sags; shape the strength first or a wake of two
+  percent is still visible and every trail smears the whole rule. Falloffs are
+  raised cosines, not linear ramps, so no head or tail carries a corner.
+  `useWorkingRule()` holds the only mutable state, a per-column wake decayed by
+  `decayTrail()` on elapsed milliseconds. `ruleText()` merges equal-colour
+  columns into one chunk, so a wide rule costs tens of chunks a frame and not
+  one a column - anything filtering its chunks must expect runs, not cells.
 - **Image markers are atomic input attachments.** Alt+V stores clipboard image
   bytes under the system temp directory and inserts `[Image #n]`. Any marker
   edit removes the full marker and file. Sending converts files to pi image

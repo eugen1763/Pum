@@ -257,6 +257,7 @@ function Working({ theme, elapsedSec, mode }: {
     text: "working",
     color: theme.accent,
     highlight: theme.highlight,
+    background: theme.bg,
     active: mode === "full",
   });
   if (mode === "pulse") return <WorkingPulse theme={theme} />;
