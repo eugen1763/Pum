@@ -398,7 +398,10 @@ export function TextLine({
     <Row glyph={GUTTER} glyphColor={color}>
       <text
         ref={workingCaret ? textCaret : undefined}
-        content={workingCaret ? "" : displayText}
+        // The caret hook repaints this imperatively on the frame clock. Passing
+        // the text anyway means the row is never blank while it waits for the
+        // first tick, which is a visible flash and an unreliable test.
+        content={displayText}
         fg={color}
         selectable
         wrapMode="word"
@@ -446,6 +449,7 @@ export function StreamLine({
       ) : (
         <text
           ref={shimmer}
+          content={displayText}
           selectable
           wrapMode="word"
           style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
@@ -536,6 +540,7 @@ export function GoalReviewLine({
       >
         <text
           ref={shimmer}
+          content={headline}
           selectable
           wrapMode="word"
           style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
@@ -831,7 +836,7 @@ export function ToolLine({
           <text content={prefix} selectable style={{ flexShrink: 0 }} />
           <text
             ref={workingCaret ? caret : undefined}
-            content={workingCaret ? "" : new StyledText(bodyChunks)}
+            content={new StyledText(bodyChunks)}
             selectable
             wrapMode="word"
             style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}

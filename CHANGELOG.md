@@ -20,6 +20,7 @@ All notable changes to PUM are documented in this file.
 - Trigger tool results are bounded at 8,000 characters. A template can be 64,000, so the model's own input could crowd out the context it needed to act on it.
 
 ### Fixed
+- A row with the working caret is no longer blank until the first animation tick. It was handed empty content and repainted imperatively on the frame clock, so the body of a running tool row flashed empty, and a loaded machine could hold it there long enough to fail a test.
 - The Release workflow publishes through npm trusted publishing. GitHub Actions presents the job's OIDC identity and npm issues a credential for that one publish, so no token is stored, nothing expires, and nothing works from a laptop. The dist-tag promotion keeps a token for now, because it is a second registry call the publish credential may not cover.
 - Switching to an agent no longer replays command output that already ended. The live output period was component state, so remounting a row restarted it, showing output again for two seconds every time you came back. The period now belongs to the call and never reopens.
 - A resumed session keeps its diffs. Replay never derived a tool preview, so an edit showed its diff while the session ran and nothing at all after it was loaded from history, and a restored subagent lost every diff it had. A tool row is now built the same way from live events and from replay, and a test compares the two.
