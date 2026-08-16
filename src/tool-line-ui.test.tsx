@@ -286,6 +286,28 @@ describe("tool line state", () => {
     expect(outputSpans.every((span) => span.fg.equals(parseColor(theme.bashOutput)))).toBe(true);
   });
 
+  test("Quiet hides the live Bash tail while Normal shows it", async () => {
+    const setup = await createTestRenderer({ width: 50, height: 10 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const root = createRoot(setup.renderer);
+    const call: ToolCall = {
+      id: "mode-bash",
+      name: "bash",
+      arg: "slow command",
+      state: "running",
+      output: "live command output",
+    };
+
+    root.render(<ToolLine theme={theme} outputMode="quiet" call={call} />);
+    await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("live command output");
+
+    root.render(<ToolLine theme={theme} outputMode="normal" call={call} />);
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("live command output");
+  });
+
   test("delays running Bash output until half a second", async () => {
     const setup = await createTestRenderer({ width: 40, height: 8 });
     destroy = () => setup.renderer.destroy();

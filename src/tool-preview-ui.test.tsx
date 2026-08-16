@@ -57,7 +57,7 @@ describe("detailed tool previews", () => {
     root.render(
       <ToolLine
         theme={theme}
-        outputMode="detailed"
+        outputMode="verbose"
         call={{ id: "bash", name: "bash", arg: "fail", state: "error", exitCode: 1, preview }}
       />,
     );
@@ -80,7 +80,7 @@ describe("detailed tool previews", () => {
       <ToolLine
         theme={theme}
         syntaxStyle={syntaxStyle}
-        outputMode="detailed"
+        outputMode="verbose"
         call={{ id: "write", name: "write", arg: "src/generated.ts", state: "ok", preview }}
       />,
     );
@@ -118,7 +118,7 @@ describe("detailed tool previews", () => {
       <ToolLine
         theme={theme}
         syntaxStyle={syntaxStyle}
-        outputMode="detailed"
+        outputMode="verbose"
         call={{ id: "patch", name: "apply_patch", arg: "2 files", state: "ok", preview }}
       />,
     );
@@ -140,5 +140,19 @@ describe("detailed tool previews", () => {
     expect(removals.length).toBeGreaterThan(0);
     expect(additions.every((span) => span.fg.equals(parseColor(theme.success)))).toBe(true);
     expect(removals.every((span) => span.fg.equals(parseColor(theme.error)))).toBe(true);
+
+    const captured = setup.captureSpans().lines;
+    const addedRows = captured.filter((line) => line.spans.map((span) => span.text).join("").includes("newValue"));
+    const removedRows = captured.filter((line) => line.spans.map((span) => span.text).join("").includes("oldValue"));
+    expect(addedRows).toHaveLength(1);
+    expect(removedRows).toHaveLength(1);
+    // The two-column transcript gutter stays transparent. The diff marker,
+    // syntax-highlighted source, and remaining visible row use the diff token.
+    expect(addedRows[0]!.spans.slice(1).filter((span) => span.text).every(
+      (span) => span.bg.equals(parseColor(theme.diffAddedBg)),
+    )).toBe(true);
+    expect(removedRows[0]!.spans.slice(1).filter((span) => span.text).every(
+      (span) => span.bg.equals(parseColor(theme.diffRemovedBg)),
+    )).toBe(true);
   });
 });

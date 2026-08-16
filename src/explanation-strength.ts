@@ -8,9 +8,10 @@ let currentStrength: ExplanationStrength = "simple";
 export const EXPLANATION_PROMPTS: Record<Exclude<ExplanationStrength, "none">, string> = {
   simple: `## Explanation strength: simple
 
-Use regular assistant output to state briefly what you are doing and why.
-Give concise progress updates before important actions.
-Summarize the result when the work is complete.
+For small tasks, avoid progress narration.
+For complex or multi-step tasks, state the plan and important milestones briefly.
+Put these updates in regular assistant output.
+Use short bullets for the result and validation when coding work is complete.
 Do not put these explanations only in hidden reasoning.`,
   detailed: `## Explanation strength: detailed
 

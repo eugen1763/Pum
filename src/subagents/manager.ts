@@ -938,7 +938,7 @@ export class SubagentManager {
               : "ok",
           detail: isRejectedToolResult(event.result, event.toolCallId)
             ? rejectedToolReason(event.result, event.toolCallId)
-            : event.toolName === "edit" || event.toolName === "apply_patch"
+            : event.toolName === "edit" || event.toolName === "apply_patch" || event.toolName === "apply_path"
               ? editCounts(event.result)
               : event.toolName === "questionnaire"
                 ? questionnaireDetail(event.result)

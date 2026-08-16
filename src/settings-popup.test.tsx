@@ -25,7 +25,7 @@ const values = Object.fromEntries(
 describe("settings search and navigation", () => {
   test("filters labels, categories, and useful keywords", () => {
     expect(filterSettingsRows("working").map((row) => row.id)).toEqual(["workingRuleAnimation"]);
-    expect(filterSettingsRows("transcript detailed").map((row) => row.id)).toEqual(["outputMode"]);
+    expect(filterSettingsRows("transcript verbose").map((row) => row.id)).toEqual(["outputMode"]);
     expect(filterSettingsRows("safety").map((row) => row.id)).toEqual([
       "checkMode", "sandboxMode", "checkModel", "checkPaths",
     ]);
@@ -34,6 +34,9 @@ describe("settings search and navigation", () => {
     expect(filterSettingsRows("parallel capacity").map((row) => row.id)).toEqual(["maxActiveSubagents"]);
     expect(filterSettingsRows("verify tools bash").map((row) => row.id)).toEqual(["checkMode"]);
     expect(filterSettingsRows("external trigger process").map((row) => row.id)).toContain("checkMode");
+    expect(SETTINGS_ROWS.find((row) => row.id === "outputMode")?.label).toBe("Transcript detail");
+    expect(SETTINGS_ROWS.find((row) => row.id === "explanationStrength")?.label).toBe("Progress narration");
+    expect(SETTINGS_ROWS.find((row) => row.id === "showThinking")?.label).toBe("Thinking traces");
     expect(SETTINGS_ROWS.find((row) => row.id === "checkModel")?.description)
       .toContain("complete Check mode proposals");
     expect(SETTINGS_ROWS.every((row) => row.description.length > 20)).toBe(true);

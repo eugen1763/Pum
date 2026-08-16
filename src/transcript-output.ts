@@ -1,4 +1,4 @@
-import type { Line } from "./transcript";
+import type { Line, PendingLine } from "./transcript";
 import {
   minimalTranscriptLines,
   type MinimalTranscriptLine,
@@ -19,12 +19,26 @@ export function transcriptOutputMode(settings: unknown): TranscriptOutputMode {
  *
  * Keep this boundary pure. Mode changes can then rerender the complete live or
  * resumed transcript without rewriting session entries or model context.
- * Minimal-mode aggregation plugs into this function during final integration.
- * Detailed mode keeps row identity and changes only ToolLine presentation.
+ * Quiet and Normal aggregate routine successful calls. Verbose keeps every
+ * canonical tool row and changes ToolLine presentation only.
  */
 export function projectTranscriptLines(
   lines: readonly Line[],
   mode: TranscriptOutputMode,
 ): MinimalTranscriptLine[] {
-  return mode === "minimal" ? minimalTranscriptLines(lines) : [...lines];
+  if (mode === "verbose") return [...lines];
+  const compact = minimalTranscriptLines(lines);
+  return mode === "quiet"
+    ? compact.filter((line) => line.kind !== "agent-message")
+    : compact;
+}
+
+/** Hide queued agent-message display rows in Quiet without changing delivery state. */
+export function projectPendingTranscriptLines(
+  pending: readonly PendingLine[],
+  mode: TranscriptOutputMode,
+): PendingLine[] {
+  return mode === "quiet"
+    ? pending.filter((item) => item.line.kind !== "agent-message")
+    : [...pending];
 }

@@ -80,6 +80,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["Ctrl+O", "Open the agent's todo list"],
       ["Ctrl+T", "Open Processes"],
       ["Ctrl+End", "Scroll transcript to the end"],
+      ["Ctrl+Y", "Focus transcript; j/k move, Enter details, c copy"],
       ["/ in Settings", "Focus the settings search"],
       ["Esc", "Close; twice to cancel work"],
       ["Ctrl+C", "Close popup; clear; twice quits"],

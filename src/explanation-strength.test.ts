@@ -27,7 +27,9 @@ describe("explanation strength", () => {
 
     setExplanationStrength("simple");
     const simple = handler({ systemPrompt: "base" });
-    expect(simple?.systemPrompt).toContain("state briefly what you are doing and why");
+    expect(simple?.systemPrompt).toContain("For small tasks, avoid progress narration");
+    expect(simple?.systemPrompt).toContain("complex or multi-step tasks");
+    expect(simple?.systemPrompt).toContain("Use short bullets");
     expect(simple?.systemPrompt).toContain("regular assistant output");
 
     setExplanationStrength("detailed");

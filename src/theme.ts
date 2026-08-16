@@ -48,6 +48,9 @@ export type Theme = {
   codeComment: string;
   codeFunction: string;
   codeType: string;
+  /** Backgrounds for added and removed rows in transcript diff previews. */
+  diffAddedBg: string;
+  diffRemovedBg: string;
 };
 
 const tokyonight: Theme = {
@@ -85,6 +88,8 @@ const tokyonight: Theme = {
   codeComment: "#565f89",
   codeFunction: "#7aa2f7",
   codeType: "#2ac3de",
+  diffAddedBg: "#233b32",
+  diffRemovedBg: "#3b2630",
 };
 
 const gruvbox: Theme = {
@@ -122,6 +127,8 @@ const gruvbox: Theme = {
   codeComment: "#928374",
   codeFunction: "#fabd2f",
   codeType: "#8ec07c",
+  diffAddedBg: "#323b2c",
+  diffRemovedBg: "#442e2b",
 };
 
 const catppuccin: Theme = {
@@ -159,6 +166,8 @@ const catppuccin: Theme = {
   codeComment: "#6c7086",
   codeFunction: "#89b4fa",
   codeType: "#f9e2af",
+  diffAddedBg: "#263a32",
+  diffRemovedBg: "#402c35",
 };
 
 const nord: Theme = {
@@ -196,6 +205,8 @@ const nord: Theme = {
   codeComment: "#616e88",
   codeFunction: "#88c0d0",
   codeType: "#8fbcbb",
+  diffAddedBg: "#35443d",
+  diffRemovedBg: "#49383e",
 };
 
 const dracula: Theme = {
@@ -233,6 +244,8 @@ const dracula: Theme = {
   codeComment: "#6272a4",
   codeFunction: "#50fa7b",
   codeType: "#8be9fd",
+  diffAddedBg: "#294134",
+  diffRemovedBg: "#493139",
 };
 
 const rosepine: Theme = {
@@ -270,6 +283,8 @@ const rosepine: Theme = {
   codeComment: "#6e6a86",
   codeFunction: "#31748f",
   codeType: "#f6c177",
+  diffAddedBg: "#263a3a",
+  diffRemovedBg: "#3d2b37",
 };
 
 const solarized: Theme = {
@@ -307,6 +322,8 @@ const solarized: Theme = {
   codeComment: "#586e75",
   codeFunction: "#268bd2",
   codeType: "#2aa198",
+  diffAddedBg: "#123c37",
+  diffRemovedBg: "#443239",
 };
 
 const kanagawa: Theme = {
@@ -344,6 +361,8 @@ const kanagawa: Theme = {
   codeComment: "#727169",
   codeFunction: "#7e9cd8",
   codeType: "#7fb4ca",
+  diffAddedBg: "#293b32",
+  diffRemovedBg: "#412e34",
 };
 
 const githubLight: Theme = {
@@ -381,6 +400,8 @@ const githubLight: Theme = {
   codeComment: "#6e7781",
   codeFunction: "#8250df",
   codeType: "#953800",
+  diffAddedBg: "#dafbe1",
+  diffRemovedBg: "#ffebe9",
 };
 
 export const PRESETS: Record<string, Theme> = {

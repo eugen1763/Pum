@@ -16,6 +16,7 @@ import {
 import type { Theme } from "./theme";
 import { bashOutputWindow, type ToolCall } from "./tool-line";
 import type { TranscriptOutputMode } from "./transcript-output";
+import type { MinimalToolSummaryLine } from "./output-minimal";
 import type { DiffPreviewLine, PreviewLanguage, ToolResultPreview } from "./tool-preview";
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
@@ -393,6 +394,53 @@ export function toolStateGlyph(state: ToolCall["state"]): string {
 const CHECK_MODE_HARD_BLOCK_PREFIX = "Check mode hard block:";
 const BASH_OUTPUT_DELAY_MS = 500;
 const BASH_OUTPUT_MIN_VISIBLE_MS = 2_000;
+export const VERBOSE_RAW_CHARACTER_LIMIT = 24_000;
+
+function jsonText(value: unknown): string {
+  if (value === undefined) return "undefined";
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/** Stable raw text used by expansion and transcript-row clipboard copy. */
+export function rawToolText(call: ToolCall): string {
+  return [
+    `${call.name}${call.arg ? ` · ${call.arg}` : ""}`,
+    "input:",
+    jsonText(call.input),
+    "result:",
+    jsonText(call.result),
+  ].join("\n");
+}
+
+function RawToolDetails({ theme, call }: { theme: Theme; call: ToolCall }) {
+  const raw = rawToolText(call);
+  const clipped = raw.length > VERBOSE_RAW_CHARACTER_LIMIT;
+  const content = clipped ? raw.slice(0, VERBOSE_RAW_CHARACTER_LIMIT) : raw;
+  return (
+    <Row glyph={GUTTER} glyphColor={theme.dim}>
+      <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+        <text
+          content={content}
+          fg={theme.dim}
+          selectable
+          wrapMode="word"
+          style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+        />
+        {clipped ? <text
+          content={`… raw result capped at ${VERBOSE_RAW_CHARACTER_LIMIT.toLocaleString()} characters; press c to copy the complete data`}
+          fg={theme.warn}
+          selectable
+          wrapMode="word"
+          style={{ width: "100%", flexShrink: 1, minWidth: 0 }}
+        /> : null}
+      </box>
+    </Row>
+  );
+}
 
 function useBashOutputVisible(call: ToolCall): boolean {
   const initiallyVisible = call.name === "bash"
@@ -468,14 +516,17 @@ export function ToolLine({
   syntaxStyle,
   call,
   workingCaret = false,
-  outputMode = "default",
+  outputMode = "normal",
+  expanded,
 }: {
   theme: Theme;
   syntaxStyle?: SyntaxStyle;
   call: ToolCall;
   workingCaret?: boolean;
-  /** Detailed-mode renderers use this without changing canonical call data. */
+  /** Verbose renderers use this without changing canonical call data. */
   outputMode?: TranscriptOutputMode;
+  /** Explicit expansion reveals raw retained tool input and result. */
+  expanded?: boolean;
 }) {
   const spinner = useSpinner(call.state === "running");
   const failed = call.state === "error";
@@ -503,20 +554,25 @@ export function ToolLine({
     active: workingCaret,
   });
   const output = call.name === "bash" && call.output && bashOutputVisible
-    && (call.state === "running" || outputMode !== "detailed")
+    && outputMode !== "quiet"
+    && (call.state === "running" || outputMode !== "verbose")
     ? bashOutputWindow(call.output)
     : null;
-  const detailedPreview = outputMode === "detailed"
+  const hasRawData = call.input !== undefined || call.result !== undefined;
+  const detailedPreview = outputMode === "verbose"
+    && !hasRawData
     && call.state !== "running"
     && call.state !== "rejected"
     && call.preview
     && (call.state === "ok" || call.preview.kind === "bash")
     ? call.preview
     : undefined;
+  const detailOpen = expanded ?? outputMode === "verbose";
+  const detailGlyph = expanded === undefined ? GUTTER : detailOpen ? "▾ " : "▸ ";
 
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
-      <Row glyph={GUTTER} glyphColor={toolColor}>
+      <Row glyph={detailGlyph} glyphColor={toolColor}>
         <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
           {prefix ? <text content={prefix} selectable style={{ flexShrink: 0 }} /> : null}
           <text
@@ -584,6 +640,51 @@ export function ToolLine({
       {detailedPreview ? (
         <DetailedToolPreview theme={theme} syntaxStyle={syntaxStyle} preview={detailedPreview} />
       ) : null}
+      {detailOpen && call.state !== "running"
+        ? <RawToolDetails theme={theme} call={call} />
+        : null}
+    </box>
+  );
+}
+
+/** Compact grouped routine activity with optional raw child expansion. */
+export function ActivitySummaryLine({
+  theme,
+  syntaxStyle,
+  summary,
+  expanded,
+  outputMode,
+}: {
+  theme: Theme;
+  syntaxStyle?: SyntaxStyle;
+  summary: MinimalToolSummaryLine;
+  expanded: boolean;
+  outputMode: TranscriptOutputMode;
+}) {
+  return (
+    <box style={{ flexDirection: "column", width: "100%" }}>
+      <Row glyph={expanded ? "▾ " : "▸ "} glyphColor={theme.tool}>
+        <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+          <text content="activity · " fg={theme.tool} selectable style={{ flexShrink: 0 }} />
+          <text
+            content={summary.text}
+            fg={theme.dim}
+            selectable
+            wrapMode="word"
+            style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
+          />
+        </box>
+      </Row>
+      {expanded ? summary.calls.map((call) => (
+        <ToolLine
+          key={call.id}
+          theme={theme}
+          syntaxStyle={syntaxStyle}
+          call={call}
+          outputMode={outputMode}
+          expanded
+        />
+      )) : null}
     </box>
   );
 }
@@ -595,24 +696,33 @@ function previewColor(theme: Theme, kind: DiffPreviewLine["kind"]): string {
   return theme.tool;
 }
 
+function previewBackground(theme: Theme, kind: DiffPreviewLine["kind"]): string {
+  if (kind === "add") return theme.diffAddedBg;
+  if (kind === "remove") return theme.diffRemovedBg;
+  return "transparent";
+}
+
 function PreviewSource({
   content,
   language,
   syntaxStyle,
   fallbackColor,
+  background,
 }: {
   content: string;
   language?: PreviewLanguage;
   syntaxStyle?: SyntaxStyle;
   fallbackColor: string;
+  background?: string;
 }) {
-  if (!content) return <box style={{ height: 1, flexShrink: 0 }} />;
+  if (!content) return <box style={{ height: 1, flexShrink: 0, backgroundColor: background ?? "transparent" }} />;
   if (language && syntaxStyle) {
     return (
       <code
         content={content}
         filetype={language}
         syntaxStyle={syntaxStyle}
+        bg={background}
         selectable
         style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
       />
@@ -622,6 +732,7 @@ function PreviewSource({
     <text
       content={content}
       fg={fallbackColor}
+      bg={background}
       selectable
       wrapMode="word"
       style={{ flexGrow: 1, flexShrink: 1, minWidth: 0, width: "100%" }}
@@ -671,15 +782,28 @@ export function DetailedToolPreview({
               ) : <box key={`${index}:blank`} style={{ height: 1, flexShrink: 0 }} />;
             }
             return (
-              <box key={`${index}:${line.text}`} style={{ flexDirection: "row", width: "100%", flexShrink: 0 }}>
+              <box
+                key={`${index}:${line.text}`}
+                style={{
+                  flexDirection: "row",
+                  width: "100%",
+                  flexShrink: 0,
+                  backgroundColor: previewBackground(theme, line.kind),
+                }}
+              >
                 <box style={{ width: 1, flexShrink: 0 }}>
-                  <text content={line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "} fg={color} />
+                  <text
+                    content={line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "}
+                    fg={color}
+                    bg={previewBackground(theme, line.kind)}
+                  />
                 </box>
                 <PreviewSource
                   content={line.source}
                   language={line.language}
                   syntaxStyle={syntaxStyle}
                   fallbackColor={color}
+                  background={previewBackground(theme, line.kind)}
                 />
               </box>
             );

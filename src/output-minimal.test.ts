@@ -24,6 +24,7 @@ describe("minimal tool phrases", () => {
     expect(minimalToolPhrase("write", 2)).toBe("Wrote 2 files");
     expect(minimalToolPhrase("edit", 2)).toBe("Edited 2 files");
     expect(minimalToolPhrase("apply_patch", 2)).toBe("Applied 2 patches");
+    expect(minimalToolPhrase("apply_path", 2)).toBe("Applied 2 patches");
     expect(minimalToolPhrase("bash", 2)).toBe("Ran 2 commands");
     expect(minimalToolPhrase("web_search", 2)).toBe("Ran 2 web searches");
     expect(minimalToolPhrase("questionnaire", 2)).toBe("Asked 2 questionnaires");
@@ -71,7 +72,7 @@ describe("minimal tool phrases", () => {
 });
 
 describe("minimal transcript transformation", () => {
-  test("aggregates a consecutive mixed success run in first-occurrence order", () => {
+  test("groups routine calls but keeps successful commands and mutations visible", () => {
     const lines: Line[] = [
       tool(call("r1", "read")),
       tool(call("b1", "bash")),
@@ -80,13 +81,16 @@ describe("minimal transcript transformation", () => {
     ];
 
     const result = minimalTranscriptLines(lines);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      kind: "tool-summary",
-      text: "Read 2 files, Ran 1 command, and Edited 1 file.",
-    });
+    expect(result.map((line) => line.kind === "tool-summary"
+      ? line.text
+      : line.kind === "tool" ? line.call.id : line.kind)).toEqual([
+      "Read 1 file.",
+      "b1",
+      "Read 1 file.",
+      "e1",
+    ]);
     if (result[0]?.kind === "tool-summary") {
-      expect(result[0].calls.map((item) => item.id)).toEqual(["r1", "b1", "r2", "e1"]);
+      expect(result[0].calls.map((item) => item.id)).toEqual(["r1"]);
       expect(result[0].text).not.toContain("private argument");
     }
   });

@@ -312,7 +312,7 @@ export function replayEntries(
         // The result decides the note, so drop the interrupted placeholder.
         call.detail = undefined;
         if (call.state === "rejected") call.detail = rejectedToolReason(message);
-        else if (call.name === "edit" || call.name === "apply_patch") call.detail = editCounts(message);
+        else if (call.name === "edit" || call.name === "apply_patch" || call.name === "apply_path") call.detail = editCounts(message);
         else if (call.name === "questionnaire") call.detail = questionnaireDetail(message);
         else if (call.name.startsWith("message_cache_")) call.detail = messageCacheDetail(message);
       }

@@ -10,6 +10,7 @@ import {
   MIN_ACTIVE_SUBAGENTS,
   normalizeSettings,
   normalizeOutputMode,
+  OUTPUT_MODE_LABELS,
   OUTPUT_MODES,
   SANDBOX_MODES,
   WORKING_RULE_ANIMATION_MODES,
@@ -39,7 +40,7 @@ describe("PUM settings migration", () => {
   test("preserves migration defaults for old files", () => {
     const settings = normalizeSettings({ animations: true, theme: "gruvbox" });
     expect(settings.workingRuleAnimation).toBe("input-only");
-    expect(settings.outputMode).toBe("default");
+    expect(settings.outputMode).toBe("normal");
     expect(settings.explanationStrength).toBe("simple");
     expect(settings.animations).toBe(true);
     expect(settings.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
@@ -66,16 +67,19 @@ describe("PUM settings migration", () => {
   });
 
   test("migrates and validates the transcript output mode", () => {
-    expect(OUTPUT_MODES).toEqual(["minimal", "default", "detailed"]);
+    expect(OUTPUT_MODES).toEqual(["quiet", "normal", "verbose"]);
+    expect(OUTPUT_MODE_LABELS).toEqual({ quiet: "Quiet", normal: "Normal", verbose: "Verbose" });
     for (const outputMode of OUTPUT_MODES) {
       expect(normalizeSettings({ outputMode }).outputMode).toBe(outputMode);
       expect(normalizeOutputMode(outputMode)).toBe(outputMode);
     }
-    expect(normalizeSettings({ outputMode: "verbose" } as any).outputMode).toBe("default");
-    expect(normalizeOutputMode("verbose")).toBe("default");
-    expect(cycleOutputMode("default", 1)).toBe("detailed");
-    expect(cycleOutputMode("detailed", 1)).toBe("minimal");
-    expect(cycleOutputMode("minimal", -1)).toBe("detailed");
+    expect(normalizeOutputMode("minimal")).toBe("quiet");
+    expect(normalizeOutputMode("default")).toBe("normal");
+    expect(normalizeOutputMode("detailed")).toBe("verbose");
+    expect(normalizeOutputMode("unknown")).toBe("normal");
+    expect(cycleOutputMode("normal", 1)).toBe("verbose");
+    expect(cycleOutputMode("verbose", 1)).toBe("quiet");
+    expect(cycleOutputMode("quiet", -1)).toBe("verbose");
   });
 
   test("replaces unknown enum values with migration defaults", () => {
@@ -169,7 +173,7 @@ describe("PUM settings persistence", () => {
       `  theme: "gruvbox",`,
       `  animations: false,`,
       `  workingRuleAnimation: "coordinated",`,
-      `  outputMode: "detailed",`,
+      `  outputMode: "verbose",`,
       `  webSearch: false,`,
       `  writingStyle: "none",`,
       `  explanationStrength: "detailed",`,
@@ -192,7 +196,7 @@ describe("PUM settings persistence", () => {
       theme: "gruvbox",
       animations: false,
       workingRuleAnimation: "coordinated",
-      outputMode: "detailed",
+      outputMode: "verbose",
       webSearch: false,
       writingStyle: "none",
       explanationStrength: "detailed",
@@ -251,7 +255,7 @@ describe("PUM settings persistence", () => {
     const loaded = JSON.parse(result.stdout);
     expect(loaded.theme).toBe("tokyonight");
     expect(loaded.animations).toBe(true);
-    expect(loaded.outputMode).toBe("default");
+    expect(loaded.outputMode).toBe("normal");
     expect(loaded.checkMode).toBe("off");
     expect(loaded.sandboxMode).toBe("auto");
     expect(loaded.maxActiveSubagents).toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
