@@ -2,7 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { applyPathCompletion, pathCompletions } from "./path-autocomplete";
+import {
+  applyPathCompletion,
+  pathCompletions,
+  shouldAutoShowPathCompletions,
+} from "./path-autocomplete";
 
 let cwd: string | undefined;
 let home: string | undefined;
@@ -43,6 +47,14 @@ function homeSandbox() {
 }
 
 describe("path autocomplete", () => {
+  test("automatically shows suggestions after three token characters", () => {
+    expect(shouldAutoShowPathCompletions("s", 1)).toBe(false);
+    expect(shouldAutoShowPathCompletions("sr", 2)).toBe(false);
+    expect(shouldAutoShowPathCompletions("src", 3)).toBe(true);
+    expect(shouldAutoShowPathCompletions("inspect @sr", 11)).toBe(false);
+    expect(shouldAutoShowPathCompletions("inspect @src", 12)).toBe(true);
+  });
+
   test("completes the path token under the cursor", () => {
     const root = project();
     const input = "review src/app.t please";

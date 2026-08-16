@@ -71,6 +71,12 @@ function pathToken(input: string, cursorOffset: number): PathToken | null {
   return { start: replacementStart, end, fragment, prefix };
 }
 
+/** Automatically show path suggestions after three characters in the current token. */
+export function shouldAutoShowPathCompletions(input: string, cursorOffset: number): boolean {
+  const token = pathToken(input, cursorOffset);
+  return token !== null && Array.from(token.fragment).length >= 3;
+}
+
 function insideOrSame(root: string, candidate: string): boolean {
   const difference = relative(root, candidate);
   return difference === "" || (!difference.startsWith(`..${sep}`) && difference !== ".." && !isAbsolute(difference));
