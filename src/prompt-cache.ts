@@ -10,6 +10,11 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { projectStorageKey, type RuntimePlatform } from "./platform";
+import {
+  resolvePromptCacheIdentity,
+  type PromptCacheIdentity,
+  type PromptCacheIdentityResolver,
+} from "./prompt-cache-identity";
 
 export type PromptCacheOwner =
   | { type: "user" }
@@ -153,10 +158,10 @@ function validHistory(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
-function matchingValues(file: JsonFile, cwd: string, platform: RuntimePlatform): unknown[] {
-  const canonical = projectStorageKey(cwd, platform);
+function matchingValues(file: JsonFile, identity: PromptCacheIdentity, platform: RuntimePlatform): unknown[] {
+  const aliases = new Set(identity.aliases);
   return Object.entries(file).flatMap(([candidate, value]) =>
-    projectStorageKey(candidate, platform) === canonical ? [value] : []
+    aliases.has(projectStorageKey(candidate, platform)) ? [value] : []
   );
 }
 
@@ -315,6 +320,7 @@ export class PromptCacheStore {
     private readonly stashPath: string,
     private readonly platform: RuntimePlatform = process.platform,
     private readonly ops: PromptCacheFileOps = DEFAULT_FILE_OPS,
+    private readonly resolveIdentity: PromptCacheIdentityResolver = resolvePromptCacheIdentity,
   ) {
     this.lockPath = `${historyPath}.lock`;
   }
@@ -336,9 +342,11 @@ export class PromptCacheStore {
   ): PromptCacheState {
     const historyFile = readJson(this.historyPath, this.ops);
     const stashFile = readJson(this.stashPath, this.ops);
-    const key = projectStorageKey(cwd, this.platform);
-    const history = matchingValues(historyFile, cwd, this.platform).flatMap(validHistory);
-    const stashEntries = matchingValues(stashFile, cwd, this.platform).flatMap((value) =>
+    const identity = this.resolveIdentity(cwd, this.platform);
+    const key = identity.key;
+    const aliases = new Set(identity.aliases);
+    const history = matchingValues(historyFile, identity, this.platform).flatMap(validHistory);
+    const stashEntries = matchingValues(stashFile, identity, this.platform).flatMap((value) =>
       Array.isArray(value) ? value : []
     );
     const state: PromptCacheState = {
@@ -352,10 +360,10 @@ export class PromptCacheStore {
     const nextHistoryFile = { ...historyFile, [key]: state.history };
     const nextStashFile = { ...stashFile, [key]: state.stash };
     for (const candidate of Object.keys(nextHistoryFile)) {
-      if (candidate !== key && projectStorageKey(candidate, this.platform) === key) delete nextHistoryFile[candidate];
+      if (candidate !== key && aliases.has(projectStorageKey(candidate, this.platform))) delete nextHistoryFile[candidate];
     }
     for (const candidate of Object.keys(nextStashFile)) {
-      if (candidate !== key && projectStorageKey(candidate, this.platform) === key) delete nextStashFile[candidate];
+      if (candidate !== key && aliases.has(projectStorageKey(candidate, this.platform))) delete nextStashFile[candidate];
     }
 
     const changes = [

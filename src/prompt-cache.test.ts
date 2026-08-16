@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +27,28 @@ function readJson(path: string): Record<string, unknown> {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function gitWorktreeFixture() {
+  const directory = mkdtempSync(join(tmpdir(), "pum-prompt-cache-git-"));
+  directories.push(directory);
+  const primary = join(directory, "primary");
+  const linked = join(directory, "linked");
+  mkdirSync(primary);
+  git(primary, ["init", "-q", "-b", "main"]);
+  git(primary, ["config", "user.email", "test@example.com"]);
+  git(primary, ["config", "user.name", "PUM Test"]);
+  writeFileSync(join(primary, "tracked.txt"), "initial\n");
+  git(primary, ["add", "tracked.txt"]);
+  git(primary, ["commit", "-qm", "initial"]);
+  git(primary, ["worktree", "add", "-q", "-b", "linked", linked]);
+  const historyPath = join(directory, "history.json");
+  const stashPath = join(directory, "prompt-stash.json");
+  return { primary, linked, historyPath, stashPath, store: new PromptCacheStore(historyPath, stashPath) };
+}
+
 afterEach(() => {
   for (const directory of directories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
@@ -33,6 +56,65 @@ afterEach(() => {
 });
 
 describe("prompt history and cache cleanup", () => {
+  test("shares history and stash with the primary Git worktree", () => {
+    const { primary, linked, historyPath, stashPath, store } = gitWorktreeFixture();
+
+    store.appendHistory(primary, "from primary");
+    store.appendStash(primary, "cached in primary");
+    expect(store.loadHistory(linked)).toEqual(["from primary"]);
+    expect(store.loadStash(linked).map((entry) => entry.text)).toEqual(["cached in primary"]);
+
+    store.appendHistory(linked, "from linked");
+    store.appendStash(linked, "cached in linked");
+    expect(store.loadHistory(primary)).toEqual(["from primary", "from linked"]);
+    expect(store.loadStash(primary).map((entry) => entry.text)).toEqual([
+      "cached in primary",
+      "cached in linked",
+    ]);
+    expect(Object.keys(readJson(historyPath))).toEqual([primary]);
+    expect(Object.keys(readJson(stashPath))).toEqual([primary]);
+  });
+
+  test("migrates old isolated linked-worktree cache entries", () => {
+    const { primary, linked, historyPath, stashPath, store } = gitWorktreeFixture();
+    writeJson(historyPath, { [primary]: ["primary"], [linked]: ["linked"] });
+    writeJson(stashPath, {
+      [primary]: [{ text: "primary cached", executed: false }],
+      [linked]: [{ text: "linked cached", executed: false }],
+    });
+
+    expect(store.loadHistory(linked)).toEqual(["primary", "linked"]);
+    expect(store.loadStash(linked).map((entry) => entry.text)).toEqual([
+      "primary cached",
+      "linked cached",
+    ]);
+    expect(Object.keys(readJson(historyPath))).toEqual([primary]);
+    expect(Object.keys(readJson(stashPath))).toEqual([primary]);
+  });
+
+  test("keeps corresponding subdirectories shared without merging the whole repository", () => {
+    const { primary, linked, store } = gitWorktreeFixture();
+    const primarySubdirectory = join(primary, "src");
+    const linkedSubdirectory = join(linked, "src");
+    mkdirSync(primarySubdirectory);
+    mkdirSync(linkedSubdirectory);
+
+    store.appendHistory(primarySubdirectory, "from primary src");
+
+    expect(store.loadHistory(linkedSubdirectory)).toEqual(["from primary src"]);
+    expect(store.loadHistory(primary)).toEqual([]);
+  });
+
+  test("maps a worktree created from another linked worktree back to the primary", () => {
+    const { primary, linked, store } = gitWorktreeFixture();
+    const nested = join(linked, "nested-worktree");
+    git(linked, ["worktree", "add", "-q", "-b", "nested", nested]);
+
+    store.appendHistory(nested, "from nested");
+
+    expect(store.loadHistory(primary)).toEqual(["from nested"]);
+  });
+
   test("retains 100 recent sent entries plus every cached occurrence", () => {
     const { historyPath, stashPath, store } = fixture();
     const cwd = "/work/one";

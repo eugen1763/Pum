@@ -330,8 +330,10 @@ These were chosen deliberately. Change them only on purpose.
   working-rule animation sweeps the whole row, label included, and the static
   behavior is unchanged when animation is off.
 - **Sessions persist** to `<config dir>/sessions`.
-- **Prompt cleanup preserves every stash occurrence.** For each normalized
-  working-directory identity, history also retains the 100 most recent sent
+- **Prompt cleanup preserves every stash occurrence.** Corresponding directories
+  in linked Git worktrees use the primary worktree's normalized cache identity;
+  non-Git directories stay isolated. For each cache identity, history also
+  retains the 100 most recent sent
   occurrences not reserved by the stash. Duplicate text uses occurrence counts,
   not a set. Loads and mutations reconcile legacy keys and persist atomically.
   The stash itself is bounded per working directory (500 entries, 1M characters)
