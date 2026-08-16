@@ -50,6 +50,7 @@ const RULE_HIGHLIGHT_WIDTH = 10;
 const COMET_CHARS_PER_MS = 0.035;
 const ELECTRIC_FRAME_MS = 140;
 const CONSTELLATION_SPACING = 13;
+const RANDOM_CONSTELLATION_CYCLE_MS = 2000;
 const ENERGY_CYCLE_MS = 3600;
 
 export type WorkingRuleRole = "headerTop" | "headerBottom" | "inputTop" | "inputBottom";
@@ -393,6 +394,24 @@ const hashPosition = (frame: number, seed: number, width: number) => {
   return Math.abs(value) % width;
 };
 
+/** Choose stable, random-looking sparkle centers for one two-second cycle. */
+export function randomConstellationCenters(
+  width: number,
+  cycle: number,
+  role: WorkingRuleRole,
+): number[] {
+  if (width <= 0) return [];
+  if (width < 3) return [Math.floor((width - 1) / 2)];
+  const wanted = Math.max(1, Math.floor(width / 18));
+  const centers: number[] = [];
+  const seed = roleSeed(role);
+  for (let attempt = 0; attempt < wanted * 8 && centers.length < wanted; attempt++) {
+    const candidate = 1 + hashPosition(cycle * 37 + attempt, seed * 41 + attempt, width - 2);
+    if (centers.every((center) => Math.abs(center - candidate) > 3)) centers.push(candidate);
+  }
+  return centers.sort((a, b) => a - b);
+}
+
 const linearStrength = (head: number): RuleStrength => (column) => {
   const distance = Math.abs(column - head);
   return distance < RULE_HIGHLIGHT_WIDTH ? 1 - distance / RULE_HIGHLIGHT_WIDTH : 0;
@@ -481,6 +500,22 @@ export function workingRuleCell(
     const phase = elapsedMs / 850 + column * 0.47 + seed * 1.3;
     const strength = 0.12 + ((Math.sin(phase) + 1) / 2) * 0.88;
     const glyph = strength > 0.82 ? "✦" : strength > 0.48 ? "✧" : "·";
+    return { strength, glyph };
+  }
+
+  if (mode === "random-constellation") {
+    const cycle = Math.floor(elapsedMs / RANDOM_CONSTELLATION_CYCLE_MS);
+    const progress = (elapsedMs % RANDOM_CONSTELLATION_CYCLE_MS) /
+      RANDOM_CONSTELLATION_CYCLE_MS;
+    const fade = Math.sin(progress * Math.PI);
+    if (fade <= 0.01) return { strength: 0, glyph: "─" };
+    const centers = randomConstellationCenters(width, cycle, role);
+    const distance = Math.min(...centers.map((center) => Math.abs(column - center)));
+    if (distance > 1) return { strength: 0, glyph: "─" };
+    const strength = fade * (distance === 0 ? 1 : 0.62);
+    const glyph = strength < 0.2 ? "·" :
+      strength < 0.58 ? "✧" :
+        distance === 0 ? "✦" : "✧";
     return { strength, glyph };
   }
 

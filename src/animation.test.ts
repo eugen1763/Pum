@@ -3,6 +3,7 @@ import type { StyledText } from "@opentui/core";
 import {
   coordinatedRuleState,
   markdownCaretContent,
+  randomConstellationCenters,
   ruleText,
   workingRuleCell,
   workingRuleFrameState,
@@ -146,6 +147,24 @@ describe("additional working-rule animations", () => {
     expect(quietHeader.strength).toBe(0);
     expect(quietInput.strength).toBe(0);
     expect(headerWave.strength).toBeGreaterThan(0);
+  });
+
+  test("random constellation fades three-cell sparkles over two seconds", () => {
+    const width = 80;
+    const centers = randomConstellationCenters(width, 0, "inputTop");
+    expect(centers).toEqual(randomConstellationCenters(width, 0, "inputTop"));
+    expect(centers).not.toEqual(randomConstellationCenters(width, 1, "inputTop"));
+    const center = centers[0]!;
+    expect(workingRuleCell("random-constellation", "inputTop", width, 0, center))
+      .toEqual({ strength: 0, glyph: "─" });
+    expect(workingRuleCell("random-constellation", "inputTop", width, 1000, center))
+      .toEqual({ strength: 1, glyph: "✦" });
+    expect(workingRuleCell("random-constellation", "inputTop", width, 1000, center - 1))
+      .toEqual({ strength: 0.62, glyph: "✧" });
+    expect(workingRuleCell("random-constellation", "inputTop", width, 1000, center + 1))
+      .toEqual({ strength: 0.62, glyph: "✧" });
+    expect(workingRuleCell("random-constellation", "inputTop", width, 2000, center))
+      .toEqual({ strength: 0, glyph: "─" });
   });
 
   test("sparkle glyphs keep the rendered rule exactly one row wide", () => {
