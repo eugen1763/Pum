@@ -82,6 +82,7 @@ export const resolvePromptCacheIdentity: PromptCacheIdentityResolver = (cwd, pla
     if (suffix === ".." || suffix.startsWith(`..${paths.sep}`) || paths.isAbsolute(suffix)) return fallback;
 
     const primaryDirectory = paths.resolve(primaryRoot, suffix);
+    const rawPrimaryDirectory = paths.resolve(primaryRaw, suffix);
     let canonicalPrimaryDirectory = primaryDirectory;
     try {
       canonicalPrimaryDirectory = canonicalRealpathSync(primaryDirectory, platform);
@@ -89,6 +90,10 @@ export const resolvePromptCacheIdentity: PromptCacheIdentityResolver = (cwd, pla
     const key = projectStorageKey(canonicalPrimaryDirectory, platform);
     const aliases = [...new Set([
       key,
+      // Git can report the primary worktree with an 8.3 component while the
+      // canonical identity expands it. Keep the raw spelling so old Windows
+      // cache rows migrate instead of being silently left isolated.
+      projectStorageKey(rawPrimaryDirectory, platform),
       projectStorageKey(cwd, platform),
       projectStorageKey(current, platform),
     ])];

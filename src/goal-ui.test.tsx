@@ -143,6 +143,15 @@ async function type(setup: Awaited<ReturnType<typeof createTestRenderer>>, text:
   await settle(setup);
 }
 
+async function waitForGoalJudge(setup: Awaited<ReturnType<typeof render>>) {
+  const deadline = Date.now() + 2_000;
+  while (setup.goalJudges.length === 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await setup.renderOnce();
+    await setup.flush();
+  }
+}
+
 /** Answer the second option of a one-question confirmation, or cancel it. */
 async function answer(
   setup: Awaited<ReturnType<typeof createTestRenderer>>,
@@ -182,6 +191,7 @@ describe("goal commands", () => {
 
     await type(setup, "/goal fix the flaky tests");
     await settleTurn(setup);
+    await waitForGoalJudge(setup);
 
     expect(setup.goalJudges).toHaveLength(1);
     expect(setup.goalJudges[0]!.modelId).toBe("mock/model");

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PromptCacheStore, type PromptCacheFileOps } from "./prompt-cache";
+import { resolvePromptCacheIdentity } from "./prompt-cache-identity";
 
 const directories: string[] = [];
 
@@ -71,8 +72,9 @@ describe("prompt history and cache cleanup", () => {
       "cached in primary",
       "cached in linked",
     ]);
-    expect(Object.keys(readJson(historyPath))).toEqual([primary]);
-    expect(Object.keys(readJson(stashPath))).toEqual([primary]);
+    const primaryKey = resolvePromptCacheIdentity(primary, process.platform).key;
+    expect(Object.keys(readJson(historyPath))).toEqual([primaryKey]);
+    expect(Object.keys(readJson(stashPath))).toEqual([primaryKey]);
   });
 
   test("migrates old isolated linked-worktree cache entries", () => {
@@ -88,8 +90,9 @@ describe("prompt history and cache cleanup", () => {
       "primary cached",
       "linked cached",
     ]);
-    expect(Object.keys(readJson(historyPath))).toEqual([primary]);
-    expect(Object.keys(readJson(stashPath))).toEqual([primary]);
+    const primaryKey = resolvePromptCacheIdentity(primary, process.platform).key;
+    expect(Object.keys(readJson(historyPath))).toEqual([primaryKey]);
+    expect(Object.keys(readJson(stashPath))).toEqual([primaryKey]);
   });
 
   test("keeps corresponding subdirectories shared without merging the whole repository", () => {
