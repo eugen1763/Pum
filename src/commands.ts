@@ -26,6 +26,10 @@ export const COMMANDS: Command[] = [
     description: "Work a draft into one goal, then start it",
   },
   {
+    name: "/afk",
+    description: "Toggle away mode, or start it with instructions",
+  },
+  {
     name: "/history",
     description: "Browse saved sessions for this directory",
   },

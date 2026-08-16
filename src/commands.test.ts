@@ -29,6 +29,14 @@ describe("command suggestions", () => {
       .toBe("Open Processes on the Triggers tab");
   });
 
+  test("includes /afk, which App routes before the model sees it", () => {
+    expect(COMMANDS.find((command) => command.name === "/afk")?.description)
+      .toBe("Toggle away mode, or start it with instructions");
+    expect(matchingCommands("/af").map((command) => command.name)).toContain("/afk");
+    expect(matchingCommands("/afk stop asking about tests").map((command) => command.name))
+      .toEqual(["/afk"]);
+  });
+
   test("does not replace multiline input with command navigation", () => {
     expect(matchingCommands("/clear\nkeep this text")).toEqual([]);
   });
