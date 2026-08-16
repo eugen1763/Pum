@@ -103,7 +103,7 @@ describe("Markdown streaming caret", () => {
 describe("goal label on the working rule", () => {
   const base = rgba("#292e42");
   const highlight = rgba("#ffffff");
-  const label = { text: "GOAL · active · ship it  ", width: 25, color: "#7aa2f7" };
+  const label = { text: " GOAL · active · ship it ", width: 25, color: "#7aa2f7" };
   const plainWidth = (text: import("@opentui/core").StyledText) =>
     text.chunks.reduce((width, chunk) => width + Bun.stringWidth(chunk.text ?? ""), 0);
 
@@ -114,12 +114,12 @@ describe("goal label on the working rule", () => {
     }
   });
 
-  test("the label sits at the right end, after the rule glyphs", () => {
-    const painted = ruleText(80, base, highlight, () => 0, label);
+  test("the label keeps two plain rule columns at the right edge", () => {
+    const painted = ruleText(80, base, highlight, () => 0, label, 2);
     const text = painted.chunks.map((chunk) => chunk.text ?? "").join("");
     expect(text.startsWith("─")).toBe(true);
-    expect(text.endsWith("ship it  ")).toBe(true);
-    expect(text).toBe(`${"─".repeat(80 - label.width)}${label.text}`);
+    expect(text.endsWith("ship it ──")).toBe(true);
+    expect(text).toBe(`${"─".repeat(80 - label.width - 2)}${label.text}──`);
   });
 
   test("the label carries the rule colour as its background", () => {
@@ -154,8 +154,8 @@ describe("goal label on the working rule", () => {
 describe("several labels on one working rule", () => {
   const base = rgba("#292e42");
   const highlight = rgba("#ffffff");
-  const afk = { text: "AFK · on  ", width: 10, color: "#bb9af7" };
-  const goal = { text: "GOAL · active · ship it  ", width: 25, color: "#7aa2f7" };
+  const afk = { text: " AFK · on ", width: 10, color: "#bb9af7" };
+  const goal = { text: " GOAL · active · ship it ", width: 25, color: "#7aa2f7" };
   const plainWidth = (text: StyledText) =>
     text.chunks.reduce((width, chunk) => width + Bun.stringWidth(chunk.text ?? ""), 0);
   const painted = (text: StyledText) => text.chunks.map((chunk) => chunk.text ?? "").join("");

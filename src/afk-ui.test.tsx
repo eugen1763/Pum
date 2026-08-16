@@ -148,8 +148,11 @@ describe("/afk in the app", () => {
     // exactly one row carries both, and it is the rule.
     const ruleRows = rows.filter((row) => row.includes("AFK") && row.includes("─"));
     expect(ruleRows).toHaveLength(1);
+    const ruleIndex = rows.indexOf(ruleRows[0]!);
+    expect(rows[ruleIndex - 1]?.trim()).toBe("");
+    expect(ruleRows[0]!.endsWith("──")).toBe(true);
     // Painted onto the rule, not stacked above it.
-    expect(rows[rows.indexOf(ruleRows[0]!) + 1]).toContain("❯");
+    expect(rows[ruleIndex + 1]).toContain("❯");
     for (const row of rows) expect(Array.from(row).length).toBeLessThanOrEqual(100);
   });
 

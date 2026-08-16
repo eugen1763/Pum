@@ -112,11 +112,13 @@ describe.skipIf(!tmux)("goal rule in a real terminal", () => {
     expect(labelled).toHaveLength(1);
 
     const ruleRow = rows.findIndex((row) => row.includes("GOAL · active"));
-    // One row: rule glyphs on the left, the label flush against the right edge.
+    // One blank row separates the transcript from the labelled input-top rule.
+    expect(rows[ruleRow - 1]?.trim()).toBe("");
+    // One row: rule glyphs surround the padded label without wrapping.
     expect(rows[ruleRow]).toContain("─");
-    expect(rows[ruleRow]!.trimEnd()).toMatch(/^─+GOAL · active · fix the flaky tests/);
-    expect(Bun.stringWidth(rows[ruleRow]!.trimEnd())).toBeLessThanOrEqual(COLUMNS);
-    // The label keeps its two right-padding columns inside the terminal.
+    expect(rows[ruleRow]).toMatch(/^─+ GOAL · active · fix the flaky tests/);
+    expect(rows[ruleRow]!.endsWith(" ──")).toBe(true);
+    expect(Bun.stringWidth(rows[ruleRow]!)).toBeLessThanOrEqual(COLUMNS);
     expect(rows[ruleRow]!.length).toBeLessThanOrEqual(COLUMNS);
     // Nothing wrapped: the row below is the prompt, not more of the rule.
     expect(rows[ruleRow + 1]).toContain("❯");

@@ -1,7 +1,7 @@
 import {
-  GOAL_LABEL_RIGHT_PADDING,
   LABEL_SEPARATOR,
   MIN_LABEL_COLUMNS,
+  RULE_LABEL_SIDE_PADDING,
   goalLabelColor,
   goalLabelWithin,
   goalMinColumns,
@@ -39,7 +39,7 @@ const MIN_PREVIEW_COLUMNS = statusTextWidth(LABEL_SEPARATOR) + 1;
 
 /** Narrowest AFK label worth painting: the prefix, this state, the padding. */
 const afkMinColumns = (afk: AfkRuleState): number =>
-  statusTextWidth(`${PREFIX}${LABEL_SEPARATOR}${afk.state}`) + GOAL_LABEL_RIGHT_PADDING;
+  statusTextWidth(`${PREFIX}${LABEL_SEPARATOR}${afk.state}`) + RULE_LABEL_SIDE_PADDING * 2;
 
 /** Foreground for the AFK label, by what AFK is doing. */
 export function afkLabelColor(theme: Theme, state: AfkRuleStateName): string {
@@ -58,8 +58,8 @@ function afkLabel(
   if (available <= 0) return null;
 
   const head = `${PREFIX}${LABEL_SEPARATOR}${afk.state}`;
-  const padding = " ".repeat(GOAL_LABEL_RIGHT_PADDING);
-  const headWidth = statusTextWidth(head) + GOAL_LABEL_RIGHT_PADDING;
+  const padding = " ".repeat(RULE_LABEL_SIDE_PADDING);
+  const headWidth = statusTextWidth(head) + RULE_LABEL_SIDE_PADDING * 2;
   if (headWidth > available) return null;
 
   const textColumns =
@@ -67,7 +67,9 @@ function afkLabel(
   // The rule is one row, so multi-line instructions collapse to one line first.
   const oneLine = (afk.instructions ?? "").replace(/\s+/g, " ").trim();
   const preview = oneLine && textColumns > 0 ? truncateStatusText(oneLine, textColumns) : null;
-  const text = preview ? `${head}${LABEL_SEPARATOR}${preview}${padding}` : `${head}${padding}`;
+  const text = preview
+    ? `${padding}${head}${LABEL_SEPARATOR}${preview}${padding}`
+    : `${padding}${head}${padding}`;
   return { text, width: statusTextWidth(text) };
 }
 

@@ -67,8 +67,13 @@ export const COMMANDS: Command[] = [
   },
 ];
 
+/** Only a slash in the first input column starts a PUM command. */
+export function isCommandInput(input: string): boolean {
+  return input.startsWith("/");
+}
+
 export function matchingCommands(input: string): Command[] {
-  if (!input.startsWith("/") || input.includes("\n")) return [];
+  if (!isCommandInput(input) || input.includes("\n")) return [];
   const name = input.split(/\s/, 1)[0]!;
   // No command name holds a second separator, so one means the user is typing
   // an absolute path. Leaving it to prefix matching would let Tab on /u turn

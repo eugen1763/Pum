@@ -378,8 +378,8 @@ const wrappedStrength = (head: number, width: number): RuleStrength => (column) 
 };
 
 /**
- * One rule row. The labels sit at the right end as a group and take the swept
- * rule colour as their background, so the whole row animates as a single wave.
+ * One rule row. The labels sit near the right end as a group and take the swept
+ * rule colour as their background. Optional trailing rule columns stay visible.
  */
 export function ruleText(
   width: number,
@@ -387,17 +387,20 @@ export function ruleText(
   hi: RGBA,
   strength: RuleStrength,
   labels: WorkingRuleLabels = null,
+  trailingRuleColumns = 0,
 ): StyledText {
   const swept = (column: number) => {
     const value = strength(column);
     return value > 0 ? mix(base, hi, value * 0.8) : base;
   };
   const list = toLabels(labels);
+  const trailingColumns = Math.max(0, Math.min(width, trailingRuleColumns));
+  const labelEdge = width - trailingColumns;
   const labelWidth = Math.min(
     list.reduce((total, label) => total + Math.max(0, label.width), 0),
-    width,
+    labelEdge,
   );
-  const ruleColumns = Math.max(0, width - labelWidth);
+  const ruleColumns = Math.max(0, labelEdge - labelWidth);
   const chunks: TextChunk[] = [];
   for (let column = 0; column < ruleColumns; column++) chunks.push(fg(swept(column))("─"));
 
@@ -406,7 +409,7 @@ export function ruleText(
     for (const { segment } of labelSegmenter.segment(label.text)) {
       const segmentWidth = Bun.stringWidth(segment);
       // Never split a grapheme across the right edge, even mid-label.
-      if (column + segmentWidth > width) break paint;
+      if (column + segmentWidth > labelEdge) break paint;
       chunks.push(bg(swept(column))(fg(label.color)(segment)));
       column += segmentWidth;
     }
@@ -426,8 +429,10 @@ export function useWorkingRule(opts: {
   role: WorkingRuleRole;
   /** Optional right-aligned labels painted on the rule colour, left to right. */
   label?: WorkingRuleLabels;
+  /** Plain rule columns kept after the right-aligned labels. */
+  trailingRuleColumns?: number;
 }): RefObject<TextRenderable | null> {
-  const { width, color, highlight, active, mode, role, label = null } = opts;
+  const { width, color, highlight, active, mode, role, label = null, trailingRuleColumns = 0 } = opts;
   const ref = useRef<TextRenderable>(null);
   const { subscribe, workingElapsed, workingRuleCycleWidth, enabled } = useClock();
   // The only dependency-array proxy for the labels, so it has to cover them all.
@@ -436,9 +441,18 @@ export function useWorkingRule(opts: {
     .join("\u0000");
 
   const plain = useCallback(() => {
-    if (ref.current) ref.current.content = ruleText(width, rgba(color), rgba(color), STATIC_STRENGTH, label);
+    if (ref.current) {
+      ref.current.content = ruleText(
+        width,
+        rgba(color),
+        rgba(color),
+        STATIC_STRENGTH,
+        label,
+        trailingRuleColumns,
+      );
+    }
     // The base and highlight are the same colour here, so nothing is swept.
-  }, [color, width, labelKey]);
+  }, [color, width, labelKey, trailingRuleColumns]);
 
   useEffect(() => {
     const canAnimate = mode === "coordinated" || (mode === "input-only" && isInputRule(role));
@@ -459,7 +473,14 @@ export function useWorkingRule(opts: {
         workingRuleCycleWidth(),
       );
       if (!state) {
-        ref.current.content = ruleText(width, base, base, STATIC_STRENGTH, label);
+        ref.current.content = ruleText(
+          width,
+          base,
+          base,
+          STATIC_STRENGTH,
+          label,
+          trailingRuleColumns,
+        );
         return;
       }
       ref.current.content = ruleText(
@@ -468,6 +489,7 @@ export function useWorkingRule(opts: {
         hi,
         mode === "input-only" ? wrappedStrength(state.head, width) : linearStrength(state.head),
         label,
+        trailingRuleColumns,
       );
     });
   }, [
@@ -479,6 +501,7 @@ export function useWorkingRule(opts: {
     color,
     highlight,
     labelKey,
+    trailingRuleColumns,
     plain,
     subscribe,
     workingElapsed,

@@ -11,8 +11,10 @@ import type { Theme } from "./theme";
  * see `mode-line.ts`.
  */
 
-/** Columns of padding inside a label, on its right edge. */
-export const GOAL_LABEL_RIGHT_PADDING = 2;
+/** Columns of full-background padding on each side of label text. */
+export const RULE_LABEL_SIDE_PADDING = 1;
+/** Columns of plain rule kept after the right-aligned label group. */
+export const RULE_LABEL_TRAILING_RULE_COLUMNS = 2;
 /** Separates a label's prefix, its state, and its text. */
 export const LABEL_SEPARATOR = " · ";
 /** Below this a label cannot say anything useful, so the rule stays plain. */
@@ -22,7 +24,7 @@ export const MIN_RULE_COLUMNS = 4;
 const PREFIX = "GOAL";
 
 export type GoalLabel = {
-  /** Exactly what is painted, right padding included. */
+  /** Exactly what is painted, including one padding column on each side. */
   text: string;
   /** Rendered terminal columns. */
   width: number;
@@ -54,7 +56,7 @@ export function ruleLabelBudget(ruleWidth: number, minColumns = MIN_LABEL_COLUMN
 
 /** Narrowest goal label worth painting: the prefix, this state, the padding. */
 export function goalMinColumns(goal: GoalRecord): number {
-  return statusTextWidth(`${PREFIX}${LABEL_SEPARATOR}${goal.state}`) + GOAL_LABEL_RIGHT_PADDING;
+  return statusTextWidth(`${PREFIX}${LABEL_SEPARATOR}${goal.state}`) + RULE_LABEL_SIDE_PADDING * 2;
 }
 
 /**
@@ -69,15 +71,17 @@ export function goalLabelWithin(
   if (!goal || available <= 0) return null;
 
   const head = `${PREFIX}${LABEL_SEPARATOR}${goal.state}`;
-  const padding = " ".repeat(GOAL_LABEL_RIGHT_PADDING);
-  const headWidth = statusTextWidth(head) + GOAL_LABEL_RIGHT_PADDING;
+  const padding = " ".repeat(RULE_LABEL_SIDE_PADDING);
+  const headWidth = statusTextWidth(head) + RULE_LABEL_SIDE_PADDING * 2;
   if (headWidth > available) return null;
 
   const textColumns = available - headWidth - statusTextWidth(LABEL_SEPARATOR);
   // The rule is one row, so a multi-line goal collapses to a single line first.
   const oneLine = goal.text.replace(/\s+/g, " ").trim();
   const text = includeText && textColumns > 0 ? truncateStatusText(oneLine, textColumns) : null;
-  const label = text ? `${head}${LABEL_SEPARATOR}${text}${padding}` : `${head}${padding}`;
+  const label = text
+    ? `${padding}${head}${LABEL_SEPARATOR}${text}${padding}`
+    : `${padding}${head}${padding}`;
   return { text: label, width: statusTextWidth(label), state: goal.state };
 }
 
