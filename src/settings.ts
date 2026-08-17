@@ -163,6 +163,8 @@ export type PumSettings = {
   goalRetryLimit?: number;
   /** Bash output summarization policy (context-length control). */
   bashOutput?: BashOutputSettings;
+  /** Enable the optional J-Space task-state and routing layer. */
+  jspace?: boolean;
 };
 
 const SETTINGS_PATH = join(AGENT_DIR, "pum.json");
@@ -184,6 +186,7 @@ const DEFAULTS: PumSettings = {
   maxActiveSubagents: DEFAULT_MAX_ACTIVE_SUBAGENTS,
   goalRetryLimit: DEFAULT_GOAL_RETRY_LIMIT,
   bashOutput: { ...DEFAULT_BASH_OUTPUT },
+  jspace: false,
 };
 
 export function normalizeSettings(parsed: unknown): PumSettings {
@@ -216,6 +219,7 @@ export function normalizeSettings(parsed: unknown): PumSettings {
     maxActiveSubagents: normalizeMaxActiveSubagents(merged.maxActiveSubagents),
     goalRetryLimit: normalizeGoalRetryLimit(merged.goalRetryLimit),
     bashOutput: normalizeBashOutput(merged.bashOutput),
+    jspace: typeof merged.jspace === "boolean" ? merged.jspace : DEFAULTS.jspace,
   };
 }
 
