@@ -194,7 +194,7 @@ const entries = [
     type: "message",
     message: {
       role: "assistant",
-      content: [{ type: "toolCall", id: "c2", name: "read", arguments: { path: "src/theme.test.ts" } }],
+      content: [{ type: "toolCall", id: "c2", name: "read", arguments: { path: "tests/theme.test.ts" } }],
     },
   },
   {
@@ -230,7 +230,7 @@ const entries = [
     type: "message",
     message: {
       role: "assistant",
-      content: [{ type: "toolCall", id: "c4", name: "bash", arguments: { command: "bun test src/theme.test.ts" } }],
+      content: [{ type: "toolCall", id: "c4", name: "bash", arguments: { command: "bun test tests/theme.test.ts" } }],
     },
   },
   {
@@ -262,7 +262,7 @@ const entries = [
       role: "assistant",
       content: [{
         type: "text",
-        text: "## Done\n\nThe accent is now `#89b4fa`, and the preset tests pass.\n\n- `src/theme.ts` — one token changed\n- `src/theme.test.ts` — unchanged, 14 pass",
+        text: "## Done\n\nThe accent is now `#89b4fa`, and the preset tests pass.\n\n- `src/theme.ts` — one token changed\n- `tests/theme.test.ts` — unchanged, 14 pass",
       }],
     },
   },

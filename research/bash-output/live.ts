@@ -36,7 +36,7 @@ const commands: Array<{ name: string; command: string; patterns?: string[]; full
   },
   {
     name: "real bun test subset",
-    command: `bun test src/animation.test.ts --preload '' 2>&1 | head -2000 || true`,
+    command: `bun test tests/animation.test.ts --preload '' 2>&1 | head -2000 || true`,
   },
 ];
 

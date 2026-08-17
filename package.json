@@ -31,8 +31,7 @@
   "files": [
     "src/**/*.ts",
     "src/**/*.tsx",
-    "!src/**/*.test.ts",
-    "!src/**/*.test.tsx",
+    "!tests/**",
     "assets/tree-sitter/**",
     "LICENSE"
   ],

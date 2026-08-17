@@ -212,8 +212,8 @@ Default PUM policy (`DEFAULT_BASH_OUTPUT` in `src/bash-output.ts`):
 | `src/sandbox/index.ts` | all three bash-tool creation paths wrapped |
 | `src/settings.ts` | `bashOutput` config (optional, defaults on) + normalize |
 | `src/headless.ts`, `src/main.tsx` | load `bashOutput` at startup |
-| `src/settings.test.ts` | round-trip + migration expectations updated |
-| `src/bash-output.test.ts` | 25 unit tests (filters, bounds, patterns, wrapper) |
+| `tests/settings.test.ts` | round-trip + migration expectations updated |
+| `tests/bash-output.test.ts` | 25 unit tests (filters, bounds, patterns, wrapper) |
 
 ## 12. Security and correctness review fixes
 
