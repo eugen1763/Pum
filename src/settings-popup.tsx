@@ -15,6 +15,7 @@ export type SettingRowId =
   | "webSearch"
   | "writingStyle"
   | "explanationStrength"
+  | "jspace"
   | "checkMode"
   | "sandboxMode"
   | "checkModel"
@@ -48,6 +49,7 @@ export const SETTINGS_ROWS: readonly SettingRow[] = [
   { id: "goalRetryLimit", label: "Goal retries", category: "Agent", keywords: "goal judge incomplete consecutive retry limit autonomous continuation fail", description: "Set how many consecutive incomplete goal reviews are allowed before the goal fails. 0 means no limit." },
   { id: "writingStyle", label: "Writing style", category: "Agent", keywords: "response prose ste simplified technical english", description: "Add per-turn response guidance. STE requests concise Simplified Technical English." },
   { id: "explanationStrength", label: "Progress narration", category: "Agent", keywords: "progress updates output none simple detailed adaptive rationale", description: "Choose how much assistant prose explains plans, actions, decisions, and results." },
+  { id: "jspace", label: "J-Space", category: "Agent", keywords: "task state routing ledger milestone verification deepseek optional inference control", description: "Enable the optional J-Space task-state and routing layer. It is off by default." },
   { id: "webSearch", label: "Web search", category: "Agent", keywords: "internet hosted codex provider", description: "Allow hosted web search on supported Codex providers. Other providers are unchanged." },
   { id: "checkMode", label: "Check mode", category: "Safety", keywords: "on off verify tools hard block bash edit patch trigger process", description: "Turn Check mode on or off. On checks bash, edit, apply_patch, and external-trigger process proposals, with hard security rules." },
   { id: "sandboxMode", label: "Sandbox", category: "Safety", keywords: "os isolation auto require off enforcement fallback bash", description: "Choose automatic fallback, required OS enforcement, or no OS sandbox for Bash commands." },

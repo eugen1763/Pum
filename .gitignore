@@ -7,3 +7,19 @@ node_modules/
 skills-lock.json
 .tmp-*.ts
 .pum-goal-tmux-*/
+
+# Local credential-shaped files. PUM never reads these. They must not reach a
+# commit, so `git add -A` cannot pick them up.
+.boto
+.config/
+.credentials.json
+.htpasswd
+.pgpass
+.s3cfg
+.terraform.d
+.terraformrc
+credentials.toml
+secrets.json
+secrets.yaml
+secrets.yml
+token.json

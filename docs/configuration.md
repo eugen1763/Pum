@@ -16,7 +16,7 @@ from pi's own configuration directory.
 | `auth.json` | Provider credentials and custom-provider keys |
 | `models.json` | Custom endpoints and model metadata; submitted keys are not stored here |
 | `settings.json` | Model and thinking level, managed by pi |
-| `pum.json` | Everything in the settings panel: theme, animation, thinking traces, transcript detail, agent messages, search, writing style, explanation strength, Check mode, extra Check mode roots (`checkPaths`), sandbox, Bash output limits (`bashOutput`), subagent limit, goal retries |
+| `pum.json` | Everything in the settings panel: theme, animation, thinking traces, transcript detail, agent messages, search, writing style, explanation strength, optional J-Space, Check mode, extra Check mode roots (`checkPaths`), sandbox, Bash output limits (`bashOutput`), subagent limit, goal retries |
 | `theme.json` | Optional semantic colour overrides |
 | `history.json` | Prompt history by working directory |
 | `prompt-stash.json` | Cached prompts by working directory (legacy filename) |
@@ -29,11 +29,17 @@ Changes in `Ctrl+P` apply to the current session and persist beside it, leaving
 the global `pum.json` alone. Press `s` in the panel to promote the current
 settings to the global defaults.
 
+J-Space is disabled by default. Enable `J-Space` in `Ctrl+P` for the current
+session, or press `s` to make the choice global. Enabled sessions add a compact
+routing ledger and persist it in `<session>.jspace.json`. The equivalent global
+setting is `{"jspace": true}` in `pum.json`. See the [J-Space integration
+notes](jspace.md) for the design and references.
+
 ## Companion files
 
 Small pieces of state live beside a session's JSONL rather than inside it, named
 after it — `<session>.goal.json`, `.todo.json`, `.news.json`, `.settings.json`,
-`.tool-groups.json`, `.relocation.json`. They never enter the model's context,
+`.tool-groups.json`, `.jspace.json`, `.relocation.json`. They never enter the model's context,
 they are written atomically, and a missing or corrupt one is simply no state:
 losing a todo list must never stop a session opening. Deleting a session sweeps
 its companions with it.

@@ -138,6 +138,7 @@ import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
 import type { SessionHistoryItem } from "./session-history-metadata";
 import { setWritingStyle, WRITING_STYLES } from "./writing-style";
+import { loadJspace, saveJspace, setJspaceEnabled } from "./jspace";
 import {
   EXPLANATION_STRENGTHS,
   setExplanationStrength,
@@ -777,6 +778,9 @@ export function App({
   // second update before React commits the first, so update() must build the
   // next value from the latest pending settings, not the render closure.
   const settingsRef = useRef(settings);
+  useEffect(() => {
+    setJspaceEnabled(settings.jspace === true);
+  }, [settings.jspace]);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(
     session.agent.state.thinkingLevel as ThinkingLevel,
   );
@@ -2238,6 +2242,12 @@ export function App({
     if (patch.explanationStrength !== undefined) {
       setExplanationStrength(patch.explanationStrength);
     }
+    if (patch.jspace !== undefined) {
+      setJspaceEnabled(patch.jspace);
+      // Turning J-Space off retires its ledger. A file left beside the session
+      // would come back as the goal of a much later turn.
+      if (!patch.jspace) saveJspace(session.sessionFile, null);
+    }
     if (patch.sandboxMode !== undefined) {
       onSandboxModeChange?.(forcedSandboxMode ?? patch.sandboxMode);
     }
@@ -3196,6 +3206,7 @@ export function App({
         transcript: judgeTranscript(txRef.current.lines),
         repository,
         mutable: (forcedSandboxMode ?? settingsRef.current.sandboxMode ?? "auto") === "off",
+        jspace: settingsRef.current.jspace === true ? loadJspace(session.sessionFile) : null,
       });
       const agent = subagentManager.spawnGoalJudge({
         task,
@@ -3835,6 +3846,7 @@ export function App({
     webSearch: { step: () => update({ webSearch: !settingsRef.current.webSearch }) },
     writingStyle: { step: stepWritingStyle },
     explanationStrength: { step: stepExplanationStrength },
+    jspace: { step: () => update({ jspace: settingsRef.current.jspace !== true }) },
     checkMode: { step: stepCheckMode },
     sandboxMode: { step: stepSandboxMode },
     checkModel: { enter: () => {
@@ -3888,6 +3900,7 @@ export function App({
     webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
     writingStyle: `‹ ${settings.writingStyle} ›`,
     explanationStrength: `‹ ${settings.explanationStrength} ›`,
+    jspace: `‹ ${settings.jspace === true ? "on" : "off"} ›`,
     checkMode: `‹ ${settings.checkMode} ›`,
     sandboxMode: `‹ ${settings.sandboxMode ?? "auto"} ›`,
     checkModel: `${settings.checkModel} ›`,
