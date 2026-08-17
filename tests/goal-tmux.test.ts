@@ -34,7 +34,7 @@ async function run(args: string[]): Promise<string> {
 const HARNESS = `
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { App } from "${join(import.meta.dir, "app")}";
+import { App } from "${join(import.meta.dir, "..", "src", "app")}";
 
 const sessionFile = process.argv[2];
 const session = {
