@@ -13,6 +13,7 @@ All notable changes to PUM are documented in this file.
 
 ### Fixed
 - A session launched with `pum w` or `pum worktree` can now use `worktree return`. CLI-created worktrees persist the same relocation record as an in-session start, and resume validates that record before restoring the worktree.
+- A relocated session is now discoverable from both its source repository and generated worktree. Both locations resume the same canonical JSONL through validated pointer files, and return removes the worktree-side pointer.
 - Stabilized prompt input tests that pressed Tab or Enter before the asynchronous state required by the key was ready.
 
 ## [0.2.20-beta.1] - 2026-08-16

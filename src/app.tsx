@@ -100,6 +100,10 @@ import {
   startRelocationBlockReason,
   type RelocationRecord,
 } from "./relocation";
+import {
+  settleSessionResumeAliasesAtSource,
+  syncSessionResumeAliases,
+} from "./session-resume-alias";
 import { AGENT_NOTICE_CUSTOM_TYPE } from "./subagents/types";
 import {
   loadSessionSettings,
@@ -633,7 +637,7 @@ export function App({
   session: AgentSession;
   modelRuntime: ModelRuntime;
   onNewSession: () => Promise<AgentSession | null>;
-  loadSessions: () => Promise<SessionHistoryItem[]>;
+  loadSessions: (cwd?: string) => Promise<SessionHistoryItem[]>;
   onSwitchSession: (path: string) => Promise<AgentSession | null>;
   /** Move this same session to another directory. Null when it could not move. */
   onRelocate?: (targetCwd: string) => Promise<AgentSession | null>;
@@ -2024,6 +2028,15 @@ export function App({
     saveRelocation(session.sessionFile, record.location === "source" && !record.pending
       ? null
       : record);
+    try {
+      syncSessionResumeAliases(session.sessionFile, record);
+    } catch (error) {
+      appendMainLine({
+        kind: "text",
+        role: "error",
+        text: `the session moved, but its resume alias could not be updated: ${String(error)}`,
+      });
+    }
     setCwd(target);
     // The check-mode roots follow the move immediately: the next tool call must
     // not be judged against the directory the session just left.
@@ -2165,6 +2178,11 @@ export function App({
         }
         relocationRef.current = null;
         setRelocation(null);
+        try {
+          settleSessionResumeAliasesAtSource(session.sessionFile, record);
+        } catch {
+          // The stale worktree is still denied. Alias cleanup is best effort.
+        }
         saveRelocation(session.sessionFile, null);
         appendMainLine({
           kind: "text",
@@ -2366,7 +2384,7 @@ export function App({
     newsOpenRef.current = false;
     setStatsOpen(false);
     statsOpenRef.current = false;
-    loadSessions()
+    loadSessions(cwdRef.current)
       .then((sessions) => {
         setHistorySessions(sessions);
         setHistoryOpen(true);
