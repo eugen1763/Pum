@@ -43,7 +43,7 @@ bun run start    # open the TUI in the current directory
 | `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/text-paste.ts` | Bounded local clipboard text capture for secure login fields |
-| `src/pasted-text.ts` | Oversized prompt text becomes a `[Pasted text #n]` marker backed by a system-temp file |
+| `src/pasted-text.ts` | Large or multiline prompt pastes become a `[Pasted text #n]` marker backed by a system-temp file |
 | `src/clipboard.ts` | Completed text selection copy routes for native clipboards and OSC 52 |
 | `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
@@ -101,7 +101,7 @@ bun run start    # open the TUI in the current directory
 | Ctrl+Backspace / Ctrl+W | Delete the previous word |
 | Ctrl+H | Open session history when the terminal reports it distinctly |
 | Ctrl+N | Open recent answers (News); `n` jumps to the answer, `p` to the user prompt, and `c` copies the selected answer |
-| Ctrl+End | Scroll to the end of the selected transcript |
+| Ctrl+End on an empty prompt | Scroll to the end of the selected transcript |
 | Tab | Open/close the prompt stash on empty input; complete commands or local paths otherwise |
 | Shift+Up / Shift+Down | Extend a prompt-stash selection |
 | Enter on a stash selection | Ask the main agent to coordinate and merge worktree subagents |
@@ -405,7 +405,15 @@ These were chosen deliberately. Change them only on purpose.
   Shift+Enter add a line. A trailing `\` plus Enter is the fallback and removes
   the `\`. It grows to eight rows, then scrolls. Word wrapping uses character
   fallback for long tokens and reserves six right columns. The `❯` gutter
-  follows the cursor's visible row.
+  follows the cursor's visible row. Up and Down move through displayed wrapped
+  rows. Home and End move within the displayed row. Ctrl+Home and Ctrl+End move
+  to the prompt boundaries. Ctrl+Left and Ctrl+Right move by words. Ctrl+Up and
+  Ctrl+Down move to the prompt boundaries. Ctrl+End scrolls the transcript only
+  when the prompt is empty.
+- **Long text pastes become attachments early.** A paste over 16 KiB or over
+  three logical lines becomes a `[Pasted text #n]` marker backed by a private
+  temporary file. Stack traces therefore stay compact before they fill the
+  prompt. Three lines or fewer stay inline when the byte limit also permits it.
 - **An empty `!` enters user shell command mode.** PUM removes the `!` from the
   command, shows `!` in the gutter, and paints both input rules with `accent`.
   Backspace or Esc exits when the command is empty. Alt+I does nothing in this

@@ -3,8 +3,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerSandboxTempReadRoot, unregisterSandboxTempReadRoot } from "./filesystem-sandbox";
 
-/** Pasted text at or below this size stays inline in the draft. */
+/** Pasted text at or below this size stays inline unless it has too many lines. */
 export const MAX_PASTED_TEXT_BYTES = 16 * 1024;
+/** A paste with more logical lines becomes an attachment, even when it is small. */
+export const MAX_PASTED_TEXT_LINES = 3;
+
+/** True when a paste should become a staged `[Pasted text #n]` attachment. */
+export function shouldStagePastedText(text: string): boolean {
+  if (Buffer.byteLength(text, "utf8") > MAX_PASTED_TEXT_BYTES) return true;
+
+  let lines = 1;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (character !== "\n" && character !== "\r") continue;
+    if (character === "\r" && text[index + 1] === "\n") index += 1;
+    lines += 1;
+    if (lines > MAX_PASTED_TEXT_LINES) return true;
+  }
+  return false;
+}
 
 export type PendingPastedText = {
   id: number;
