@@ -110,6 +110,25 @@ function textarea(root: BaseRenderable): TextareaRenderable | undefined {
   return undefined;
 }
 
+function pressNavigation(
+  setup: Awaited<ReturnType<typeof renderApp>>,
+  name: "up" | "down" | "left" | "right" | "home" | "end",
+  modifiers: { ctrl?: boolean; shift?: boolean } = {},
+) {
+  setup.renderer.keyInput.processParsedKey({
+    name,
+    ctrl: modifiers.ctrl ?? false,
+    meta: false,
+    shift: modifiers.shift ?? false,
+    option: false,
+    sequence: "",
+    number: false,
+    raw: "",
+    eventType: "press",
+    source: "kitty",
+  });
+}
+
 describe("prompt input layout", () => {
   test("renders the header-bottom rule directly below StatusBar", async () => {
     const setup = await renderApp(70, 16);
@@ -306,5 +325,74 @@ describe("prompt input layout", () => {
     expect(first?.indexOf("alpha")).toBe(2);
     expect(second?.indexOf("zeta")).toBe(2);
     expect(frame).not.toContain("epsil\non");
+  });
+
+  test("moves Up and Down through displayed wrapped rows", async () => {
+    const setup = await renderApp(40, 16);
+    await setup.mockInput.typeText("alpha beta gamma delta epsilon zeta");
+    await settle(setup);
+    const input = textarea(setup.renderer.root)!;
+    const endOffset = input.cursorOffset;
+    const endRow = input.visualCursor.visualRow;
+
+    pressNavigation(setup, "up");
+    await settle(setup);
+    expect(input.visualCursor.visualRow).toBe(endRow - 1);
+    expect(input.cursorOffset).toBeLessThan(endOffset);
+
+    pressNavigation(setup, "down");
+    await settle(setup);
+    expect(input.visualCursor.visualRow).toBe(endRow);
+    expect(input.cursorOffset).toBe(endOffset);
+  });
+
+  test("uses Home and End for the displayed row and Ctrl for the full prompt", async () => {
+    const setup = await renderApp(40, 16);
+    const text = "alpha beta gamma delta epsilon zeta";
+    await setup.mockInput.typeText(text);
+    await settle(setup);
+    const input = textarea(setup.renderer.root)!;
+    const wrappedRow = input.visualCursor.visualRow;
+
+    pressNavigation(setup, "home");
+    await settle(setup);
+    expect(input.visualCursor.visualRow).toBe(wrappedRow);
+    expect(input.cursorOffset).toBeGreaterThan(0);
+
+    pressNavigation(setup, "end");
+    await settle(setup);
+    expect(input.cursorOffset).toBe(text.length);
+
+    pressNavigation(setup, "home", { ctrl: true });
+    await settle(setup);
+    expect(input.cursorOffset).toBe(0);
+
+    pressNavigation(setup, "end", { ctrl: true });
+    await settle(setup);
+    expect(input.cursorOffset).toBe(text.length);
+  });
+
+  test("keeps Ctrl+Arrow navigation inside the prompt", async () => {
+    const setup = await renderApp(40, 16);
+    const text = "alpha beta gamma delta epsilon zeta";
+    await setup.mockInput.typeText(text);
+    await settle(setup);
+    const input = textarea(setup.renderer.root)!;
+
+    pressNavigation(setup, "left", { ctrl: true });
+    await settle(setup);
+    expect(input.cursorOffset).toBe(text.lastIndexOf("zeta"));
+
+    pressNavigation(setup, "right", { ctrl: true });
+    await settle(setup);
+    expect(input.cursorOffset).toBe(text.length);
+
+    pressNavigation(setup, "up", { ctrl: true });
+    await settle(setup);
+    expect(input.cursorOffset).toBe(0);
+
+    pressNavigation(setup, "down", { ctrl: true });
+    await settle(setup);
+    expect(input.cursorOffset).toBe(text.length);
   });
 });

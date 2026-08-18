@@ -10,6 +10,8 @@ All notable changes to PUM are documented in this file.
 ### Changed
 - Improved the generated README screenshots. They use a neutral `gpt-5-codex` session, place each glyph on its exact terminal cell without SVG stretching, and crop the static scrollbar column without changing the live TUI.
 - Documented the npm prerelease dist-tag requirement after `v0.2.20-beta.1` confirmed that trusted publishing covers `npm publish`, but not the later `npm dist-tag add` call.
+- Prompt navigation now follows displayed wrapped rows. Home and End stay on the visible row, Ctrl navigation stays inside a non-empty prompt, and Ctrl+End retains transcript scrolling for an empty prompt.
+- Text pastes longer than three lines now become `[Pasted text #n]` attachments immediately, including small stack traces. The existing 16 KiB limit still applies.
 
 ### Fixed
 - A session launched with `pum w` or `pum worktree` can now use `worktree return`. CLI-created worktrees persist the same relocation record as an in-session start, and resume validates that record before restoring the worktree.

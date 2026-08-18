@@ -295,7 +295,7 @@ describe("prompt gutter follows the cursor without typing", () => {
     expect(moved.split("\n").findIndex((line) => line.includes("❯ alpha"))).toBe(-1);
   });
 
-  test("Home moves the gutter to the first line of a multiline prompt", async () => {
+  test("Home stays on the displayed line and Ctrl+Home moves to the prompt start", async () => {
     const setup = await renderApp({ width: 60 });
     await setup.mockInput.typeText("alpha");
     setup.mockInput.pressEnter({ shift: true });
@@ -304,7 +304,23 @@ describe("prompt gutter follows the cursor without typing", () => {
 
     setup.mockInput.pressKey("\x1b[H"); // Home
     await settle(setup);
-    const moved = setup.captureCharFrame();
+    let moved = setup.captureCharFrame();
+    expect(moved.split("\n").findIndex((line) => line.includes("❯ beta"))).toBeGreaterThanOrEqual(0);
+
+    setup.renderer.keyInput.processParsedKey({
+      name: "home",
+      ctrl: true,
+      meta: false,
+      shift: false,
+      option: false,
+      sequence: "\x1b[1;5H",
+      number: false,
+      raw: "\x1b[1;5H",
+      eventType: "press",
+      source: "kitty",
+    });
+    await settle(setup);
+    moved = setup.captureCharFrame();
     expect(moved.split("\n").findIndex((line) => line.includes("❯ alpha"))).toBeGreaterThanOrEqual(0);
   });
 

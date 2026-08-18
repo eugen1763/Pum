@@ -137,6 +137,38 @@ describe("large text paste placeholder", () => {
     expect(pastedTextFiles().length).toBe(0);
   });
 
+  test("a four-line stack trace becomes a marker even when it is small", async () => {
+    const setup = await renderApp();
+    const stack = [
+      "Error: failed",
+      "    at first (app.ts:1:1)",
+      "    at second (app.ts:2:1)",
+      "    at third (app.ts:3:1)",
+    ].join("\n");
+
+    await setup.mockInput.pasteBracketedText(stack);
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("[Pasted text #1]");
+    expect(frame).not.toContain("Error: failed");
+    expect(pastedTextFiles().length).toBe(1);
+  });
+
+  test("a three-line paste stays inline", async () => {
+    const setup = await renderApp();
+
+    await setup.mockInput.pasteBracketedText("one\ntwo\nthree");
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("one");
+    expect(frame).toContain("two");
+    expect(frame).toContain("three");
+    expect(frame).not.toContain("[Pasted text");
+    expect(pastedTextFiles().length).toBe(0);
+  });
+
   test("the marker uses the [Pasted text #n] form and the temp file holds the payload", async () => {
     const setup = await renderApp();
 

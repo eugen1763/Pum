@@ -6,8 +6,10 @@ import { canonicalRealpathSync } from "../src/platform";
 import {
   cleanupPendingPastedTexts,
   MAX_PASTED_TEXT_BYTES,
+  MAX_PASTED_TEXT_LINES,
   pastedTextReadBlock,
   removePendingPastedText,
+  shouldStagePastedText,
   stagePastedText,
 } from "../src/pasted-text";
 import { validateSandboxPath } from "../src/filesystem-sandbox";
@@ -132,7 +134,20 @@ describe("pastedTextReadBlock", () => {
 });
 
 describe("threshold", () => {
-  test("is exactly 16 KiB", () => {
+  test("keeps the existing 16 KiB byte limit", () => {
     expect(MAX_PASTED_TEXT_BYTES).toBe(16 * 1024);
+    expect(shouldStagePastedText("x".repeat(MAX_PASTED_TEXT_BYTES))).toBe(false);
+    expect(shouldStagePastedText("x".repeat(MAX_PASTED_TEXT_BYTES + 1))).toBe(true);
+  });
+
+  test("stages a paste after three logical lines", () => {
+    expect(MAX_PASTED_TEXT_LINES).toBe(3);
+    expect(shouldStagePastedText("one\ntwo\nthree")).toBe(false);
+    expect(shouldStagePastedText("one\ntwo\nthree\nfour")).toBe(true);
+  });
+
+  test("counts CRLF and bare carriage returns as one line break each", () => {
+    expect(shouldStagePastedText("one\r\ntwo\r\nthree")).toBe(false);
+    expect(shouldStagePastedText("one\rtwo\rthree\rfour")).toBe(true);
   });
 });

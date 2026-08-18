@@ -158,9 +158,9 @@ import {
 } from "./image-paste";
 import {
   cleanupPendingPastedTexts,
-  MAX_PASTED_TEXT_BYTES,
   pastedTextReadBlock,
   removePendingPastedText,
+  shouldStagePastedText,
   stagePastedText as stagePastedTextDefault,
   type PendingPastedText,
 } from "./pasted-text";
@@ -293,6 +293,37 @@ const QUIT_WINDOW_MS = 2000;
 const MAX_INPUT_ROWS = 8;
 /** Keys that move around without changing the text. */
 const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
+
+type PromptTextareaAction =
+  | "visual-line-home"
+  | "visual-line-end"
+  | "buffer-home"
+  | "buffer-end"
+  | "select-visual-line-home"
+  | "select-visual-line-end"
+  | "select-buffer-home"
+  | "select-buffer-end";
+
+/** Standard editor navigation, with wrapped rows treated as visible lines. */
+export const PROMPT_TEXTAREA_KEY_BINDINGS: Array<{
+  name: string;
+  action: PromptTextareaAction;
+  ctrl?: boolean;
+  shift?: boolean;
+}> = [
+  { name: "home", action: "visual-line-home" },
+  { name: "end", action: "visual-line-end" },
+  { name: "home", shift: true, action: "select-visual-line-home" },
+  { name: "end", shift: true, action: "select-visual-line-end" },
+  { name: "home", ctrl: true, action: "buffer-home" },
+  { name: "end", ctrl: true, action: "buffer-end" },
+  { name: "home", ctrl: true, shift: true, action: "select-buffer-home" },
+  { name: "end", ctrl: true, shift: true, action: "select-buffer-end" },
+  { name: "up", ctrl: true, action: "buffer-home" },
+  { name: "down", ctrl: true, action: "buffer-end" },
+  { name: "up", ctrl: true, shift: true, action: "select-buffer-home" },
+  { name: "down", ctrl: true, shift: true, action: "select-buffer-end" },
+];
 
 /**
  * An Enter carrying an explicit modifier, encoded in the escape sequence.
@@ -653,7 +684,7 @@ export function App({
   promptStashStore?: PromptStashStore;
   captureImage?: typeof captureClipboardImage;
   readPastedText?: typeof readClipboardText;
-  /** Store oversized pasted text in a temp file and show a marker in its place. */
+  /** Store large or multiline pasted text in a temp file and show a marker. */
   stagePastedText?: typeof stagePastedTextDefault;
   /** Copies the selected news answer for the popup. */
   copyNewsAnswerText?: typeof copyTextToClipboard;
@@ -1468,7 +1499,7 @@ export function App({
   };
 
   /**
-   * Replace one oversized paste with a `[Pasted text #n]` marker. The text is
+   * Replace one large or multiline paste with a `[Pasted text #n]` marker. The text is
    * written to a private temp file that the agent can `read` during the turn.
    */
   const stageLargePastedText = (event: PasteEvent) => {
@@ -1487,7 +1518,7 @@ export function App({
     const input = inputRef.current;
     if (!input?.focused) return;
     const text = stripAnsiSequences(decodePasteBytes(event.bytes));
-    if (Buffer.byteLength(text, "utf8") <= MAX_PASTED_TEXT_BYTES) return;
+    if (!shouldStagePastedText(text)) return;
 
     event.stopPropagation();
     const id = nextPastedTextId.current++;
@@ -4531,7 +4562,13 @@ export function App({
       return;
     }
 
-    if (key.ctrl && key.name === "end") {
+    if (
+      key.ctrl &&
+      key.name === "end" &&
+      !inputRef.current?.plainText &&
+      pendingImages.current.length === 0 &&
+      pendingPastedTexts.current.length === 0
+    ) {
       key.stopPropagation();
       const transcriptScroll = transcriptScrollRef.current;
       if (transcriptScroll) transcriptScroll.scrollTop = transcriptScroll.scrollHeight;
@@ -5176,6 +5213,7 @@ export function App({
             cursorColor={theme.accent}
             selectionBg={theme.selectionBg}
             wrapMode="word"
+            keyBindings={PROMPT_TEXTAREA_KEY_BINDINGS}
             scrollMargin={1}
             focused={!transcriptFocused && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible}
             onContentChange={handleTextareaChange}
