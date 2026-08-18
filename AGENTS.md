@@ -52,6 +52,7 @@ bun run start    # open the TUI in the current directory
 | `src/subagents/readonly.ts` | Fail-closed readonly child tool guard |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
 | `src/queue-recall.ts` | Atomic newest-first recall of queued user messages |
+| `src/session-resume-alias.ts` | Trusted source/worktree pointers to one canonical relocated session JSONL |
 | `src/session-history-metadata.ts` | Bounded session JSONL metadata and usage index |
 | `src/session-history-popup.tsx` | Responsive session history list and metadata rows |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
@@ -240,6 +241,13 @@ These were chosen deliberately. Change them only on purpose.
   on a different branch drops the record and stays in the source repository,
   because authorizing a stale path could hand writes to a directory the user
   never chose.
+- **Relocated sessions use aliases, never copied JSONL files.** The canonical
+  session stays in its source session directory. A bounded pointer in the
+  generated worktree's session directory makes `-r` and session history resolve
+  that same file. Source subdirectories receive a source-root pointer too.
+  Return removes the worktree pointer. Alias loading validates the canonical
+  session, relocation identity, generated branch, and source/worktree paths;
+  stale, corrupt, linked, missing, or replaced targets fail closed.
 - **Session settings live beside the session.** `<session>.settings.json` holds
   only the fields that differ from global, following the same atomic-write and
   defensive-load rules as the goal and todo companions. An empty overlay deletes

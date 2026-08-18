@@ -70,6 +70,11 @@ import {
   lifecycleEventFromSnapshot,
 } from "./shells/lifecycle";
 import { initializeWorktreeLaunchRelocation, type RelocationRecord } from "./relocation";
+import {
+  continueRecentProjectSession,
+  listProjectSessions,
+  syncSessionResumeAliases,
+} from "./session-resume-alias";
 import type { WorktreeStart } from "./worktree-start";
 
 /**
@@ -265,6 +270,17 @@ export async function start(
   const searchProviders = installWebSearch(modelRuntime);
 
   const cwd = process.cwd();
+  // A CLI worktree launch keeps the canonical session under the source
+  // repository. The generated checkout receives a trusted resume alias, so
+  // both locations resolve to the same JSONL.
+  const startupSessionManager = context.worktreeStart
+    ? SessionManager.create(
+      context.worktreeStart.sourceRoot,
+      sessionDir(context.worktreeStart.sourceRoot),
+    )
+    : options.resume
+      ? await continueRecentProjectSession(cwd)
+      : SessionManager.create(cwd, sessionDir(cwd));
   const sessionRuntime = await createAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
       const services = await createAgentSessionServices({
@@ -307,9 +323,7 @@ export async function start(
     {
       cwd,
       agentDir: AGENT_DIR,
-      sessionManager: options.resume
-        ? SessionManager.continueRecent(cwd, sessionDir(cwd))
-        : SessionManager.create(cwd, sessionDir(cwd)),
+      sessionManager: startupSessionManager,
     },
   );
 
@@ -324,6 +338,9 @@ export async function start(
       context.worktreeStart,
     )
     : undefined;
+  if (initialRelocation) {
+    syncSessionResumeAliases(sessionRuntime.session.sessionManager.getSessionFile(), initialRelocation);
+  }
 
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
   const terminalTitle = new TerminalTitleController((title) => renderer.setTerminalTitle(title));
@@ -400,8 +417,8 @@ export async function start(
         if (!result.cancelled) statsManager.bindMainSession(sessionRuntime.session);
         return result.cancelled ? null : sessionRuntime.session;
       }}
-      loadSessions={async () => sessionHistoryIndex.load(
-        await SessionManager.list(cwd, sessionDir(cwd)),
+      loadSessions={async (directory = cwd) => sessionHistoryIndex.load(
+        await listProjectSessions(directory),
       )}
       onSwitchSession={async (path) => {
         const result = await sessionRuntime.switchSession(path);

@@ -42,6 +42,7 @@ export const COMPANION_SUFFIXES = [
   ".goal.json",
   ".todo.json",
   ".settings.json",
+  ".relocation.json",
 ] as const;
 
 const DEFAULT_MAX_CACHE_ENTRIES = 256;
