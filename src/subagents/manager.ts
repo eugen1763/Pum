@@ -37,7 +37,6 @@ import { bashOutput, bashResultDisplay, editCounts, toolArgs, type ToolCall } fr
 import { toolPreviewFromResult, toolPreviewFromStart } from "../tool-preview";
 import { settledUserBashCall, userBashReaction } from "../user-bash";
 import { interruptedToolCall, settledToolCall, startedToolCall } from "../tool-row";
-import { applyPatchExtension } from "../apply-patch";
 import { questionnaireDetail, type QuestionnaireManager } from "../questionnaire";
 import {
   recallNewestQueuedUserMessage,
@@ -437,7 +436,7 @@ export class SubagentManager {
     this.modelRuntime = options.modelRuntime;
     this.agentDir = options.agentDir;
     this.maxActiveSubagents = normalizeMaxActiveSubagents(options.maxActiveSubagents);
-    this.childExtensionFactories = [applyPatchExtension, ...(options.childExtensionFactories ?? [])];
+    this.childExtensionFactories = [...(options.childExtensionFactories ?? [])];
     this.childExtensionFactoriesForAgent = options.childExtensionFactoriesForAgent ?? [];
     this.sandboxModeSource = options.sandboxModeSource ?? (() => "off");
     this.questionnaireManager = options.questionnaireManager;

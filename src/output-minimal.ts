@@ -10,7 +10,7 @@ export type MinimalToolSummaryLine = {
 export type MinimalTranscriptLine = Line | MinimalToolSummaryLine;
 
 /** Mutations and commands stay visible in Normal. Quiet groups them too. */
-export const IMPORTANT_TOOL_NAMES = new Set(["bash", "write", "edit", "apply_patch", "apply_path"]);
+export const IMPORTANT_TOOL_NAMES = new Set(["bash", "write", "edit"]);
 
 export function isRoutineSuccessfulTool(call: ToolCall): boolean {
   return call.state === "ok" && !IMPORTANT_TOOL_NAMES.has(call.name);
@@ -36,8 +36,6 @@ const TOOL_PHRASES: Readonly<Record<string, ToolPhrase>> = {
   read: counted("Read", "file"),
   write: counted("Wrote", "file"),
   edit: counted("Edited", "file"),
-  apply_patch: counted("Applied", "patch", "patches"),
-  apply_path: counted("Applied", "patch", "patches"),
   bash: counted("Ran", "command"),
   web_search: counted("Ran", "web search", "web searches"),
   questionnaire: counted("Asked", "questionnaire"),

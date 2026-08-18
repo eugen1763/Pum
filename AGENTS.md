@@ -31,7 +31,6 @@ bun run start    # open the TUI in the current directory
 | `src/tool-preview.ts` | Diff, write, and Bash previews, and inline diff trimming |
 | `src/syntax-grammars.ts` | Registers the tree-sitter grammars vendored under `assets/` |
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
-| `src/apply-patch.ts` | Codex patch parser, validation, atomic commit, and pi tool |
 | `src/questionnaire.ts` | Model tool, request queue, answer state, and main/child bridge |
 | `src/tool-groups.ts` | Hidden tool groups, the `enable_tools` tool, and per-session persistence |
 | `src/questionnaire-popup.tsx` | OpenTUI questionnaire popup and responsive layout |
@@ -120,10 +119,12 @@ These were chosen deliberately. Change them only on purpose.
 
 - **Bun** as the runtime. OpenTUI's renderer needs it.
 - **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for direct TUI startup (or `src/headless.ts` for `-p`). Unknown options and commands exit with code 2, but `-h`/`--help` and `-v`/`--version` print and exit 0 even when a later argument is invalid. `--` ends option parsing, so an operand may start with `-`. In `pum s`/`pum sr` the `login` keyword must come before any mount directory, so a directory genuinely named `login` stays mountable after `--`. Startup accepts `login`, `-r`/`--resume`, and `-p`/`--prompt <text>`. `pum s` and `pum sr` launch the TUI through the outer sandbox. `pum ss` probes the runtime without starting the TUI.
-- **`-p` is headless.** `pum -p "<text>"` runs one prompt in `src/headless.ts` with only read, write, edit, apply_patch, and bash. It keeps the configured Check mode (on/off), sandbox, writing style, and explanation strength. Interactive tools (questionnaire, enable_tools, subagents, triggers, message cache) are not registered. The session persists to the normal per-directory store, so `-r` and the TUI can continue it. Headless mode does not combine with `pum s` or `pum sr` in the current launcher protocol.
+- **`-p` is headless.** `pum -p "<text>"` runs one prompt in `src/headless.ts` with only read, write, edit, and bash. It keeps the configured Check mode (on/off), sandbox, writing style, and explanation strength. Interactive tools (questionnaire, enable_tools, subagents, triggers, message cache) are not registered. The session persists to the normal per-directory store, so `-r` and the TUI can continue it. Headless mode does not combine with `pum s` or `pum sr` in the current launcher protocol.
 - **`@earendil-works/pi-coding-agent`**, not `pi-ai` on its own. It brings the
   agent loop, session files, and the `read`/`write`/`edit`/`bash` tools. Using
   `pi-ai` alone would mean writing all of that here.
+- **There is no custom patch model tool.** Use pi's `edit` tool for targeted
+  file mutations. Do not register or advertise `apply_patch` as a session tool.
 - **OpenTUI with React** for the UI.
 - **PUM keeps its own config dir**, `~/.config/pum` (override with `PUM_DIR`).
   It does not share pi's `~/.pi/agent`, so it needs its own login. pi stores
@@ -164,8 +165,8 @@ These were chosen deliberately. Change them only on purpose.
   endpoint and probes only the OpenAI-compatible `/models` route. PUM does not
   infer a different API shape from a failed probe. Config writes use a temporary
   file and atomic rename.
-- **Check mode is a single on/off toggle.** Off runs bash, edit, and apply_patch
-  without approval. On applies the deterministic policy plus verifier review
+- **Check mode is a single on/off toggle.** Off runs bash and edit without
+  approval. On applies the deterministic policy plus verifier review
   (the behavior formerly called "balanced"): complete project-local calls,
   explicit external reads, and project-local edits are allowed; hard rules block.
   The verifier is advisory on top of complete deterministic validation, so an
@@ -206,7 +207,7 @@ These were chosen deliberately. Change them only on purpose.
   boundary, and PUM's configuration boundary. Bash, edit, and external-trigger
   checks use the extra roots. Windows containment compares canonical identities,
   so short and long path spellings cannot disagree about authorization.
-  `apply_patch` remains project-local. On-mode Bash and process checks can read
+  On-mode Bash and process checks can read
   explicit external filesystem operands without adding a root. On-mode still
   blocks external
   location changes, writes, execution operands, ambiguous access, credential
@@ -254,8 +255,7 @@ These were chosen deliberately. Change them only on purpose.
   on Windows for the deterministic policy.
 - **The filesystem sandbox covers file tools.** `read`, `write`, and `edit` are
   limited to the project and configured `/check-path` roots before execution.
-  `apply_patch` validates every patch path before its atomic project-local
-  commit. Credential-sensitive paths and symbolic-link or junction components
+  Credential-sensitive paths and symbolic-link or junction components
   are blocked. This is a process-local path guard, not operating-system
   isolation for bash, scripts, extensions, or trigger processes.
 - **The guard validates the path the tool will actually open.** pi's `read` tool
@@ -270,14 +270,10 @@ These were chosen deliberately. Change them only on purpose.
   credential rules still apply. A model-supplied temp path never matches.
 - **Mutating a multiply-linked file is refused.** A hard link is an ordinary file
   to `lstat`, so containment alone cannot tell whether an in-project name aliases
-  content outside the project. Writes, edits, and patches to a file with a link
+  content outside the project. Writes and edits to a file with a link
   count above one are blocked; reads stay allowed, because hard links are common
   in real trees. The check cannot say where the other links point, and it is a
   check-time test rather than a guarantee against a link created afterwards.
-- **An insert-only patch hunk needs an anchor.** A hunk with no context lines, no
-  `@@` header, and no `*** End of File` marker is rejected when the patch is
-  parsed, so preview, validation, and apply all agree. Silent placement at end of
-  file is not a supported spelling.
 - **Bash output is summarized to a bounded head+tail view.** `src/bash-output.ts`
   wraps pi's bash tool in main and managed child sessions. The default keeps
   first 30 / last 40 lines within 3KB, strips ANSI, drops progress-only lines,
@@ -291,12 +287,6 @@ These were chosen deliberately. Change them only on purpose.
   `patterns` (regexes whose matching lines survive elision). The `bashOutput`
   setting in `pum.json` tunes or disables it. See `research/bash-output/`.
 - **Questionnaires render in PUM, not pi's default UI.** The shared controller queues main-agent and child-agent requests. The popup owns no global keyboard handler. `app.tsx` routes keys and removes prompt focus while a request is active. Custom draft text stays in the OpenTUI textarea until explicit submission.
-- **`apply_patch` is an atomic project-local mutation tool.** It parses and
-  validates the complete Codex patch before writes. It rejects traversal,
-  absolute paths, escaping symlinks, conflicting paths, missing context, and
-  ambiguous context. It acquires pi mutation queues for every touched path,
-  stages outputs, backs up existing files, and restores all files after a
-  commit failure.
 - **A goal is one session's durable instruction.** `/goal <text>` stores it in a
   companion file beside the session JSONL and starts a turn at once. `/goalf
   <draft>` runs one interview turn that questions the user through the ordinary
@@ -529,8 +519,8 @@ These were chosen deliberately. Change them only on purpose.
   schema exposes `readonly` only when Sandbox is not Off. Live Sandbox changes
   update the registered TypeBox schema objects. Execution and direct manager
   calls reject readonly requests while Sandbox is Off. The snapshot persists
-  the flag, and resume restores it. Readonly children omit `write`, `edit`,
-  `apply_patch`, child spawning, inter-agent delegation, process-starting trigger
+  the flag, and resume restores it. Readonly children omit `write`, `edit`, child
+  spawning, inter-agent delegation, process-starting trigger
   tools, and message-cache mutation tools. A fail-closed child hook blocks
   unknown tools and mutation-capable combined tools. Worktree access permits only `list`
   and `status`. Main agents cannot create external triggers for readonly children.
@@ -671,7 +661,7 @@ These were chosen deliberately. Change them only on purpose.
   web search, check mode, and writing style.
 - **Optional tools live in hidden per-session groups.** PUM does not send
   every custom tool schema on every request. Core tools (read, write, edit,
-  apply_patch, bash, questionnaire; finish_subagent for children) are always
+  bash, questionnaire; finish_subagent for children) are always
   sent. The Admin (trigger + message-cache), Subagents, and Worktree groups
   are hidden until the model reveals them. One always-present `enable_tools`
   tool (registered per session) accepts group names; its execute calls
@@ -723,8 +713,8 @@ These were chosen deliberately. Change them only on purpose.
   remain blocked.
 - **Check mode verifies complete structured proposals.** Bash requests include
   all stages, operators, pipelines, redirections, substitutions, environment
-  assignments, mutation intent, and boundaries. `edit` and `apply_patch`
-  requests include the proposed unified diff, changed paths, line counts,
+  assignments, mutation intent, and boundaries. `edit` requests include the
+  proposed unified diff, changed paths, line counts,
   sensitivity flags, project containment, complete-content findings, and a
   SHA-256 digest. Invalid, stale, malformed, or incompletely analyzed requests
   block without mutation. Length alone does not block a fully validated on-mode
@@ -735,7 +725,7 @@ These were chosen deliberately. Change them only on purpose.
   reply can receive one bounded adjudication under the shared 15-second watchdog.
 - **Checked tools stay out of parallel mixed batches.** pi prepares every tool
   in a parallel assistant batch before it executes any tool. A waiting `bash`,
-  `edit`, `apply_patch`, or external-trigger process check would make unrelated
+  `edit`, or external-trigger process check would make unrelated
   `read` calls look stuck. Run reads first, then issue each checked tool in a
   later assistant step. Run `create_trigger`, `resume_trigger`, and
   `invoke_trigger` separately because each tool can start a checked process.

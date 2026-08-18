@@ -14,13 +14,12 @@ starts. They are independent, and none of them replaces the others.
 
 ## Filesystem sandbox
 
-The process-local filesystem sandbox validates `read`, `write`, `edit`, and
-`apply_patch` before execution.
+The process-local filesystem sandbox validates `read`, `write`, and `edit`
+before execution.
 
 - Project paths and `/check-path` roots are allowed.
 - Credential-sensitive paths are blocked.
 - Symbolic links and junctions in tool paths are blocked.
-- `apply_patch` stays project-local and keeps its atomic validation.
 
 This boundary does not isolate `bash`, package scripts, extensions, or trigger
 processes from the operating system. Use a container, VM, or policy-controlled
@@ -29,7 +28,7 @@ sandbox for stronger isolation.
 ## Check mode
 
 Select Check mode in `Ctrl+P` — **Off** or **On**. It applies to `bash`, `edit`,
-`apply_patch`, external-trigger processes, and managed shells.
+external-trigger processes, and managed shells.
 
 - **Off:** checked tools run without the deterministic policy or the advisory verifier. This is the default.
 - **On:** the deterministic policy runs first, then an advisory verifier reviews the complete proposal.
@@ -55,8 +54,8 @@ exception is a deterministic match for a direct main-agent `npm publish` or
 `npm dist-tag add ... latest`, which On allows outright; managed subagents
 cannot use it.
 
-For `edit` and `apply_patch`, PUM validates the complete proposed change before
-any mutation. Review data includes the unified diff, changed paths, line counts,
+For `edit`, PUM validates the complete proposed change before any mutation.
+Review data includes the unified diff, changed paths, line counts,
 sensitivity flags, project containment, and full-content SHA-256. Invalid,
 stale, malformed, escaping, or incompletely analyzed input blocks the call.
 Verifier prompts stay bounded: an oversized review sends complete validation
@@ -68,8 +67,8 @@ be the whole thing.
 `/check-path list | add <directory> | remove <directory> | clear` manages up to
 16 additional directory roots for the current launch project. The filesystem
 sandbox applies them to `read`, `write`, and `edit`; Bash, edit, and
-external-trigger checks use them too; `apply_patch` stays project-local. Added
-roots are canonicalized and remain subject to every hard block.
+external-trigger checks use them too. Added roots are canonicalized and remain
+subject to every hard block.
 
 ## Native sandbox
 

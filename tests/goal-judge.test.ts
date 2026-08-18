@@ -24,7 +24,7 @@ describe("judge tool", () => {
   test("a judge session holds only read, bash, and the verdict tool", () => {
     expect(judgeAllowedToolNames().sort()).toEqual(["bash", GOAL_VERDICT_TOOL_NAME, "read"].sort());
     for (const blocked of [
-      "write", "edit", "apply_patch", "spawn_subagent", "message_agent",
+      "write", "edit", "spawn_subagent", "message_agent",
       "finish_subagent", "worktree", "create_trigger", "start_shell",
     ]) {
       expect(judgeAllowedToolNames()).not.toContain(blocked);

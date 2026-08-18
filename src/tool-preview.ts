@@ -236,7 +236,7 @@ export function toolPreviewFromResult(
       ? undefined
       : { kind: "bash", window: previewWindow(output, DETAILED_BASH_LINE_LIMIT, "end") };
   }
-  if (name === "edit" || name === "apply_patch" || name === "apply_path") {
+  if (name === "edit") {
     const patch = (result as { details?: { patch?: unknown } } | null)?.details?.patch;
     return typeof patch === "string" ? diffPreview(patch) : undefined;
   }

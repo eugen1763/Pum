@@ -44,8 +44,8 @@ called `login`.
 
 ## Headless runs
 
-`pum -p "<text>"` runs one prompt with `read`, `write`, `edit`, `apply_patch`,
-and `bash`, and nothing else: the interactive tools need a running TUI. It keeps
+`pum -p "<text>"` runs one prompt with `read`, `write`, `edit`, and `bash`, and
+nothing else: the interactive tools need a running TUI. It keeps
 the configured Check mode, sandbox, writing style, and explanation strength, and
 the session persists to the normal per-directory store, so `-r` and the TUI can
 continue it.

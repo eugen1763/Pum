@@ -51,24 +51,7 @@ describe("read tool metadata", () => {
   });
 });
 
-describe("apply_patch tool metadata", () => {
-  test("shows compact single-file and multi-file arguments", () => {
-    expect(toolArgs("apply_patch", {
-      patch: "*** Begin Patch\n*** Update File: src\\one.ts\n@@\n-a\n+b\n*** End Patch",
-    }, "/repo"))
-      .toEqual(["src/one.ts"]);
-
-    expect(toolArgs("apply_patch", {
-      patch: "*** Begin Patch\n*** Update File: old.ts\n*** Move to: new.ts\n@@\n-a\n+b\n*** End Patch",
-    }, "/repo"))
-      .toEqual(["old.ts → new.ts"]);
-
-    expect(toolArgs("apply_patch", {
-      patch: "*** Begin Patch\n*** Add File: one.ts\n+x\n*** Delete File: two.ts\n*** End Patch",
-    }, "/repo"))
-      .toEqual(["2 files", "one.ts"]);
-  });
-
+describe("other tool metadata", () => {
   test("summarizes questionnaire arguments without exposing every option", () => {
     expect(toolArgs("questionnaire", {
       questions: [

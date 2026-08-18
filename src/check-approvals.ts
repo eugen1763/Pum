@@ -8,7 +8,7 @@
  * to compute a stable input digest.
  */
 
-export type CheckedToolName = "bash" | "edit" | "apply_patch";
+export type CheckedToolName = "bash" | "edit";
 export type CheckApprovalIdentity =
   | { kind: "main" }
   | { kind: "subagent"; agentId: string };

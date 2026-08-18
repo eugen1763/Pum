@@ -14,7 +14,6 @@ import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-pro
 import { explanationStrengthExtension, setExplanationStrength } from "./explanation-strength";
 import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
-import { applyPatchExtension } from "./apply-patch";
 import {
   installWebSearch,
   observeSearchCalls,
@@ -35,7 +34,7 @@ import { prepareHeadlessStatsOutput, type HeadlessStatsOutput } from "./headless
  * are not constructed here, and subagent, trigger, and message-cache tools
  * need the running TUI for routing and notifications.
  */
-const HEADLESS_TOOL_NAMES = ["read", "write", "edit", "apply_patch", "bash"];
+const HEADLESS_TOOL_NAMES = ["read", "write", "edit", "bash"];
 
 /**
  * Handle one hosted web-search call from a headless run.
@@ -189,7 +188,6 @@ async function runPromptSession(
             checkModePromptExtension,
             checkModeExtension,
             sandboxController.extension(),
-            applyPatchExtension,
           ],
         },
       });

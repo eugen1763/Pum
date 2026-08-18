@@ -44,7 +44,7 @@ export function settledToolCall(
   const { name, result, isError, toolCallId } = input;
   const rejected = isRejectedToolResult(result, toolCallId);
   const preview = toolPreviewFromResult(name, result);
-  const mutation = name === "edit" || name === "apply_patch" || name === "apply_path";
+  const mutation = name === "edit";
   return {
     state: rejected ? "rejected" : isError ? "error" : "ok",
     detail: rejected

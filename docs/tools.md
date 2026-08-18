@@ -2,19 +2,12 @@
 
 [← Back to the README](../README.md)
 
-Every session always has `read`, `write`, `edit`, `apply_patch`, `bash`, and the
-questionnaire. Everything else lives in a hidden group that the model reveals
+Every session always has `read`, `write`, `edit`, `bash`, and the questionnaire.
+Everything else lives in a hidden group that the model reveals
 with `enable_tools` when it needs it, so a schema the turn will not use never
 costs context: **Admin** (triggers and the message cache), **Subagents**,
 **Worktree**, **Shells**, and **Todo**. Revealing is one-way for the rest of the
 session.
-
-## Atomic `apply_patch`
-
-`apply_patch` supports add, update, delete, move, multiple files, and multiple
-hunks. PUM validates the whole patch before changing anything and rejects
-traversal, absolute paths, escaping symlinks, path conflicts, and ambiguous
-context. A failed commit restores every touched file.
 
 ## Interactive questionnaires
 

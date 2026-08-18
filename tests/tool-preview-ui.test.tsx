@@ -127,7 +127,7 @@ describe("detailed tool previews", () => {
       <ToolLine
         theme={theme}
         syntaxStyle={syntaxStyle}
-        call={{ id: "patch", name: "apply_patch", args: ["2 files"], state: "ok", preview }}
+        call={{ id: "edit", name: "edit", args: ["2 files"], state: "ok", preview }}
       />,
     );
     await settle(setup);
@@ -183,12 +183,12 @@ describe("detailed tool previews", () => {
         syntaxStyle={buildSyntaxStyle(theme)}
         outputMode="verbose"
         call={{
-          id: "verbose-patch",
-          name: "apply_patch",
+          id: "verbose-edit",
+          name: "edit",
           args: ["src/value.ts"],
           state: "ok",
-          input: { patch },
-          result: { content: [{ type: "text", text: "Applied patch" }], details: { patch } },
+          input: { path: "src/value.ts", edits: [{ oldText: "const value = 1;", newText: "const value = 2;" }] },
+          result: { content: [{ type: "text", text: "Edited src/value.ts" }], details: { patch } },
           preview: diffPreview(patch),
         }}
       />,
@@ -197,7 +197,7 @@ describe("detailed tool previews", () => {
 
     const frame = setup.captureCharFrame();
     expect(frame).toContain("input:");
-    expect(frame).toContain('\"patch\"');
+    expect(frame).toContain('\"edits\"');
     // Verbose is the debugging view: no rendered diff, so no diff backgrounds.
     expect(setup.captureSpans().lines.some((line) =>
       line.spans.some((span) => span.bg.equals(parseColor(theme.diffAddedBg))))).toBe(false);
@@ -224,12 +224,12 @@ describe("detailed tool previews", () => {
         expanded
         outputMode="normal"
         call={{
-          id: "regular-patch",
-          name: "apply_patch",
+          id: "regular-edit",
+          name: "edit",
           args: ["src/value.ts"],
           state: "ok",
-          input: { patch },
-          result: { content: [{ type: "text", text: "Applied patch" }], details: { patch } },
+          input: { path: "src/value.ts", edits: [{ oldText: "const value = 1;", newText: "const value = 2;" }] },
+          result: { content: [{ type: "text", text: "Edited src/value.ts" }], details: { patch } },
           preview: diffPreview(patch),
         }}
       />,
@@ -242,8 +242,8 @@ describe("detailed tool previews", () => {
     const frame = setup.captureCharFrame();
     expect(frame).toContain("const value = 1;");
     expect(frame).toContain("const value = 2;");
-    expect(frame).toContain("Applied patch");
-    expect(frame).not.toContain('\"patch\"');
+    expect(frame).toContain("Edited src/value.ts");
+    expect(frame).not.toContain('\"edits\"');
     expect(descendants(setup.renderer.root, CodeRenderable)).toHaveLength(2);
 
     const captured = setup.captureSpans().lines;
