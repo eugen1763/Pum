@@ -41,8 +41,6 @@ describe("settings search and navigation", () => {
     expect(filterSettingsRows("external trigger process").map((row) => row.id)).toContain("checkMode");
     expect(SETTINGS_ROWS.find((row) => row.id === "outputMode")?.label).toBe("Transcript detail");
     expect(SETTINGS_ROWS.find((row) => row.id === "explanationStrength")?.label).toBe("Progress narration");
-    expect(SETTINGS_ROWS.find((row) => row.id === "jspace")?.label).toBe("J-Space");
-    expect(SETTINGS_ROWS.find((row) => row.id === "jspace")?.description).toContain("off by default");
     expect(SETTINGS_ROWS.find((row) => row.id === "showThinking")?.label).toBe("Thinking traces");
     expect(SETTINGS_ROWS.find((row) => row.id === "checkModel")?.description)
       .toContain("complete Check mode proposals");

@@ -81,7 +81,6 @@ bun run start    # open the TUI in the current directory
 | `src/triggers/tools.ts` | Main/child trigger model tools and target authorization |
 | `src/triggers/popup.tsx` | Responsive Ctrl+T trigger management popup |
 | `src/writing-style.ts` | Configurable per-turn system-prompt writing guidance |
-| `src/jspace.ts` | Optional J-Space task routing, state ledger, checkpoints, and tool-seam tracking |
 | `src/identity.ts` | PUM identity in the system prompt and pi-docs section removal, with no-op guards |
 | `src/platform.ts` | Cross-platform path identities, containment, config paths, and signals |
 | `src/terminal-title.ts` | Pure title formatting and best-effort deduplicated terminal updates |

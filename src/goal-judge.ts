@@ -1,6 +1,5 @@
 import { Type } from "typebox";
 import type { GoalRecord } from "./goal";
-import { formatJspaceState, type JSpaceState } from "./jspace";
 import type { Line } from "./transcript";
 
 /**
@@ -121,8 +120,6 @@ export type JudgeTaskInput = {
   tests?: string;
   /** True when the judge runs without OS sandbox enforcement. */
   mutable: boolean;
-  /** Optional J-Space state for better completion and coverage review. */
-  jspace?: JSpaceState | null;
 };
 
 function block(title: string, body: string): string {
@@ -148,7 +145,6 @@ export function buildJudgeTask(input: JudgeTaskInput): string {
     block("git diff against HEAD", input.repository.diff),
   ];
   if (input.tests) parts.push(block("Test results", input.tests));
-  if (input.jspace) parts.push(block("J-Space task state", formatJspaceState(input.jspace)));
   parts.push(
     `\nReview the work against the goal, then call ${GOAL_VERDICT_TOOL_NAME} exactly once.`,
   );

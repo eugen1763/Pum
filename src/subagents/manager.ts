@@ -290,11 +290,7 @@ type ManagerOptions = {
   agentDir: string;
   maxActiveSubagents?: number;
   childExtensionFactories?: InlineExtension[];
-  childExtensionFactoriesForAgent?: Array<(
-    agentId: string,
-    readonly: boolean,
-    role: SubagentRole,
-  ) => InlineExtension | undefined>;
+  childExtensionFactoriesForAgent?: Array<(agentId: string, readonly: boolean) => InlineExtension>;
   sandboxModeSource?: () => SandboxMode;
   questionnaireManager?: QuestionnaireManager;
   spawnPreviewManager?: SpawnPreviewManager;
@@ -405,11 +401,7 @@ export class SubagentManager {
   private readonly modelRuntime: ModelRuntime;
   private readonly agentDir: string;
   private readonly childExtensionFactories: InlineExtension[];
-  private readonly childExtensionFactoriesForAgent: Array<(
-    agentId: string,
-    readonly: boolean,
-    role: SubagentRole,
-  ) => InlineExtension | undefined>;
+  private readonly childExtensionFactoriesForAgent: Array<(agentId: string, readonly: boolean) => InlineExtension>;
   private readonly sandboxModeSource: () => SandboxMode;
   private readonly questionnaireManager?: QuestionnaireManager;
   private readonly spawnPreviewManager?: SpawnPreviewManager;
@@ -2036,13 +2028,10 @@ export class SubagentManager {
         extensionFactories: [
           ...this.childExtensionFactories,
           readonlySubagentExtension(record.snapshot.readonly === true),
-          ...this.childExtensionFactoriesForAgent
-            .map((factory) => factory(
-              record.snapshot.id,
-              record.snapshot.readonly === true,
-              record.snapshot.role ?? "worker",
-            ))
-            .filter((extension): extension is InlineExtension => extension !== undefined),
+          ...this.childExtensionFactoriesForAgent.map((factory) => factory(
+            record.snapshot.id,
+            record.snapshot.readonly === true,
+          )),
           this.childExtension(record.snapshot.id),
         ],
       },

@@ -28,7 +28,6 @@ const OVERRIDABLE = [
   "maxActiveSubagents",
   "goalRetryLimit",
   "bashOutput",
-  "jspace",
 ] as const;
 
 /** Companion file next to the session JSONL: `<session>.settings.json`. */

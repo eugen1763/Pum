@@ -9,7 +9,6 @@ import { mkdirSync } from "node:fs";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { identityExtension } from "./identity";
-import { jspaceExtension, setJspaceEnabled } from "./jspace";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
 import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-prompt";
 import { explanationStrengthExtension, setExplanationStrength } from "./explanation-strength";
@@ -148,7 +147,6 @@ async function runPromptSession(
   }
 
   const settings = loadSettings();
-  setJspaceEnabled(settings.jspace === true);
   const sandboxController = new SandboxController({
     mode: settings.sandboxMode ?? "auto",
     agentDir: AGENT_DIR,
@@ -186,7 +184,6 @@ async function runPromptSession(
         resourceLoaderOptions: {
           extensionFactories: [
             identityExtension,
-            jspaceExtension,
             writingStyleExtension,
             explanationStrengthExtension,
             checkModePromptExtension,

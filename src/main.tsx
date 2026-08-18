@@ -15,7 +15,6 @@ import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { installWebSearch, webSearch } from "./web-search";
 import { identityExtension } from "./identity";
-import { jspaceExtension, setJspaceEnabled } from "./jspace";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
 import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-prompt";
 import {
@@ -95,7 +94,6 @@ export async function start(
   const loginRequired = options.login || (await modelRuntime.getAvailable()).length === 0;
 
   const settings = loadSettings();
-  setJspaceEnabled(settings.jspace === true);
   const outerSandbox = outerSandboxContext();
   // The source repository joins the outer-sandbox roots rather than the saved
   // check paths: it is true of this process only, and `/check-path` must not
@@ -247,7 +245,6 @@ export async function start(
       checkModePromptExtension,
     ],
     childExtensionFactoriesForAgent: [
-      (_agentId, _readonly, role) => role === "worker" ? jspaceExtension : undefined,
       (agentId) => createCheckModeExtension(modelRuntime, {
         identity: { kind: "subagent", agentId },
         observeRequest: (observation) => statsManager.observeCheck({
@@ -277,7 +274,6 @@ export async function start(
         resourceLoaderOptions: {
           extensionFactories: [
             identityExtension,
-            jspaceExtension,
             writingStyleExtension,
             explanationStrengthExtension,
             checkModePromptExtension,

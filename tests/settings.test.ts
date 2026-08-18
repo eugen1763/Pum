@@ -32,8 +32,6 @@ describe("PUM settings migration", () => {
     expect(settings.animations).toBe(true);
     // Already-correct validation must not regress.
     expect(normalizeSettings({ maxActiveSubagents: 25 } as any).maxActiveSubagents).toBe(25);
-    expect(normalizeSettings({ jspace: true }).jspace).toBe(true);
-    expect(normalizeSettings({ jspace: "yes" } as any).jspace).toBe(false);
     expect(normalizeSettings({ maxActiveSubagents: 26 } as any).maxActiveSubagents)
       .toBe(DEFAULT_MAX_ACTIVE_SUBAGENTS);
     expect(normalizeSettings({ maxActiveSubagents: 0 } as any).maxActiveSubagents)
@@ -50,7 +48,6 @@ describe("PUM settings migration", () => {
     expect(settings.checkPaths).toEqual({});
     expect(settings.sandboxMode).toBe("auto");
     expect(settings.bashOutput).toEqual(DEFAULT_BASH_OUTPUT);
-    expect(settings.jspace).toBe(false);
   });
 
   test("normalizes bounded additional Check mode paths", () => {
@@ -236,7 +233,6 @@ describe("PUM settings persistence", () => {
       maxActiveSubagents: 7,
       goalRetryLimit: 10,
       showAgentMessages: true,
-      jspace: false,
       bashOutput: DEFAULT_BASH_OUTPUT,
     });
   });
