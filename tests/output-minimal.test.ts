@@ -23,8 +23,6 @@ describe("minimal tool phrases", () => {
     expect(minimalToolPhrase("read", 3)).toBe("Read 3 files");
     expect(minimalToolPhrase("write", 2)).toBe("Wrote 2 files");
     expect(minimalToolPhrase("edit", 2)).toBe("Edited 2 files");
-    expect(minimalToolPhrase("apply_patch", 2)).toBe("Applied 2 patches");
-    expect(minimalToolPhrase("apply_path", 2)).toBe("Applied 2 patches");
     expect(minimalToolPhrase("bash", 2)).toBe("Ran 2 commands");
     expect(minimalToolPhrase("web_search", 2)).toBe("Ran 2 web searches");
     expect(minimalToolPhrase("questionnaire", 2)).toBe("Asked 2 questionnaires");

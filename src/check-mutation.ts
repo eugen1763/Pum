@@ -2,7 +2,6 @@ import { generateUnifiedPatch } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, parse, relative, resolve, sep } from "node:path";
-import { previewApplyPatch } from "./apply-patch";
 import type { CheckedToolName } from "./check-approvals";
 import {
   canonicalPathIdentityAllowMissing,
@@ -18,14 +17,12 @@ export type MutationSensitivity = {
 };
 
 export type MutationPreview = {
-  toolName: "edit" | "apply_patch";
+  toolName: "edit";
   unifiedDiff: string;
   changedPaths: string[];
   additions: number;
   removals: number;
   sensitivity: MutationSensitivity;
-  destructive: boolean;
-  deletedPaths: number;
   projectContained: true;
   contentChars: number;
   contentSha256: string;
@@ -60,14 +57,6 @@ export function pathSensitivity(path: string, mode?: number): MutationSensitivit
     || /(?:^|\/)bin\//.test(normalized)
     || /\.(?:sh|bash|zsh|fish|ps1|bat|cmd|exe|com)$/.test(name);
   return { executable, config, credential };
-}
-
-function mergeSensitivity(values: MutationSensitivity[]): MutationSensitivity {
-  return values.reduce((result, value) => ({
-    executable: result.executable || value.executable,
-    config: result.config || value.config,
-    credential: result.credential || value.credential,
-  }), { executable: false, config: false, credential: false });
 }
 
 function windowsAbsolute(path: string): boolean {
@@ -249,8 +238,6 @@ async function previewEdit(
     changedPaths: [validated.display],
     ...lineCounts(patch),
     sensitivity: pathSensitivity(validated.display, validated.mode),
-    destructive: false,
-    deletedPaths: 0,
     projectContained: true,
     ...completeContentMetadata(patch),
     settingsFile: validated.settingsFile,
@@ -265,21 +252,5 @@ export async function previewMutation(
   settingsFiles: readonly string[] = [],
 ): Promise<MutationPreview | undefined> {
   if (toolName === "edit") return previewEdit(cwd, input, allowedPaths, settingsFiles);
-  if (toolName !== "apply_patch") return undefined;
-  if (!input || typeof input !== "object" || typeof (input as { patch?: unknown }).patch !== "string") {
-    throw new Error("Apply patch input is invalid");
-  }
-  const preview = await previewApplyPatch(cwd, (input as { patch: string }).patch);
-  return {
-    toolName: "apply_patch",
-    unifiedDiff: preview.patch,
-    changedPaths: preview.files,
-    additions: preview.additions,
-    removals: preview.removals,
-    sensitivity: mergeSensitivity(preview.files.map((path) => pathSensitivity(path))),
-    destructive: preview.operations.some((operation) => operation.type === "delete"),
-    deletedPaths: preview.operations.filter((operation) => operation.type === "delete").length,
-    projectContained: true,
-    ...completeContentMetadata(preview.patch),
-  };
+  return undefined;
 }

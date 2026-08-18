@@ -16,7 +16,6 @@ import {
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { applyPatchExtension } from "../src/apply-patch";
 import { Type } from "typebox";
 import {
   ADMIN_GROUP_TOOL_NAMES,
@@ -120,7 +119,7 @@ describe("tool group membership", () => {
   test("readonly children omit mutation tools from core, allowlist, and enabled groups", () => {
     const active = activeToolNames(["Admin", "Subagents", "Worktree", "Shells"], "subagent", true);
     for (const tool of [
-      "write", "edit", "apply_patch", "spawn_subagent", "message_agent", "create_trigger",
+      "write", "edit", "spawn_subagent", "message_agent", "create_trigger",
       "resume_trigger", "invoke_trigger", "message_cache_add", "message_cache_delete",
       "message_cache_send", ...SHELLS_GROUP_TOOL_NAMES,
     ]) {
@@ -277,7 +276,7 @@ describe("tool group wiring in a real session", () => {
       cwd: repo,
       agentDir,
       modelRuntime: runtime,
-      resourceLoaderOptions: { extensionFactories: [applyPatchExtension, groupToolStubExtension, groups.extension()] },
+      resourceLoaderOptions: { extensionFactories: [groupToolStubExtension, groups.extension()] },
     });
     const result = await createAgentSessionFromServices({
       services,
@@ -293,9 +292,10 @@ describe("tool group wiring in a real session", () => {
     const toolNames = () => result.session.agent.state.tools.map((tool) => tool.name);
 
     // Core tools and enable_tools are always present.
-    for (const core of ["read", "write", "edit", "apply_patch", "bash", ENABLE_TOOLS]) {
+    for (const core of ["read", "write", "edit", "bash", ENABLE_TOOLS]) {
       expect(toolNames()).toContain(core);
     }
+    expect(toolNames()).not.toContain("apply_patch");
     // Hidden groups are completely absent from the outgoing tool list.
     for (const tool of ["create_trigger", "message_cache_list", "spawn_subagent", "worktree"]) {
       expect(toolNames()).not.toContain(tool);
@@ -324,7 +324,7 @@ describe("tool group wiring in a real session", () => {
       cwd: repo,
       agentDir,
       modelRuntime: runtime,
-      resourceLoaderOptions: { extensionFactories: [applyPatchExtension, groupToolStubExtension, groups2.extension()] },
+      resourceLoaderOptions: { extensionFactories: [groupToolStubExtension, groups2.extension()] },
     });
     const resumed = await createAgentSessionFromServices({
       services: services2,

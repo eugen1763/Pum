@@ -34,7 +34,6 @@ import { cleanupBashOutputCaptures } from "./bash-output";
 import { shutdownSignals, signalExitCode } from "./platform";
 import { createShutdown } from "./shutdown";
 import { settleSyntaxHighlighting } from "./syntax";
-import { applyPatchExtension } from "./apply-patch";
 import { QuestionnaireManager } from "./questionnaire";
 import { ToolGroupsController, mainAllowedToolNames } from "./tool-groups";
 import { SpawnPreviewManager } from "./subagents/spawn-preview";
@@ -296,7 +295,6 @@ export async function start(
             filesystemSandboxExtension,
             mainCheckModeExtension,
             sandboxExtension,
-            applyPatchExtension,
             questionnaireManager.extension({ id: "main", name: "main" }),
             mainToolGroups.extension(),
             mainTodoTools.extension(),

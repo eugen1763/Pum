@@ -2,6 +2,11 @@
 
 All notable changes to PUM are documented in this file.
 
+## Unreleased
+
+### Removed
+- Removed the custom `apply_patch` model tool. Sessions now use pi's `edit` tool for targeted file mutations.
+
 ## [0.2.21-beta.1] - 2026-08-16
 
 ### Added

@@ -212,7 +212,12 @@ const entries = [
     type: "message",
     message: {
       role: "assistant",
-      content: [{ type: "toolCall", id: "c3", name: "apply_patch", arguments: { patch } }],
+      content: [{
+        type: "toolCall",
+        id: "c3",
+        name: "edit",
+        arguments: { path: "src/theme.ts", edits: [{ oldText: 'accent: "#7aa2f7"', newText: 'accent: "#89b4fa"' }] },
+      }],
     },
   },
   {
@@ -220,8 +225,8 @@ const entries = [
     message: {
       role: "toolResult",
       toolCallId: "c3",
-      toolName: "apply_patch",
-      content: [{ type: "text", text: "Applied patch to src/theme.ts" }],
+      toolName: "edit",
+      content: [{ type: "text", text: "Edited src/theme.ts" }],
       details: { patch },
       isError: false,
     },

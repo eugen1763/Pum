@@ -8,7 +8,6 @@ import {
   filesystemSandboxExtension,
   registerSandboxTempReadRoot,
   unregisterSandboxTempReadRoot,
-  validateSandboxPatch,
   validateSandboxPath,
 } from "../src/filesystem-sandbox";
 import { canonicalRealpathSync, pathsHaveSameIdentity } from "../src/platform";
@@ -55,19 +54,6 @@ describe("filesystem sandbox", () => {
     symlinkSync(outside, join(project, "link"));
 
     await expect(validateSandboxPath(project, "link/secret.txt")).rejects.toThrow("symbolic link");
-  });
-
-  test("validates all apply_patch paths before execution", async () => {
-    const project = directory("pum-sandbox-patch-");
-    writeFileSync(join(project, "old.txt"), "old\n");
-
-    await expect(validateSandboxPatch(project, "*** Begin Patch\n"
-      + "*** Update File: old.txt\n@@\n-old\n+new\n"
-      + "*** Add File: new.txt\n+new\n"
-      + "*** End Patch")).resolves.toBeUndefined();
-    await expect(validateSandboxPatch(project, "*** Begin Patch\n"
-      + "*** Add File: ../outside.txt\n+no\n"
-      + "*** End Patch")).rejects.toThrow("parent traversal");
   });
 
   test.skipIf(process.platform === "win32")("validates the curly-apostrophe variant a read actually opens", async () => {
@@ -136,12 +122,9 @@ describe("filesystem sandbox", () => {
 
     await expect(validateSandboxPath(project, "hard.txt", [], "write")).rejects.toThrow("hard link");
     await expect(validateSandboxPath(project, "hard.txt", [], "read")).resolves.toBeDefined();
-    await expect(validateSandboxPatch(project, "*** Begin Patch\n"
-      + "*** Update File: hard.txt\n@@\n-secret\n+leaked\n"
-      + "*** End Patch")).rejects.toThrow("hard link");
   });
 
-  test("blocks write, edit, and apply_patch for readonly children but preserves reads", async () => {
+  test("blocks write and edit for readonly children but preserves reads", async () => {
     const project = directory("pum-readonly-sandbox-hook-");
     const source = join(project, "source.ts");
     writeFileSync(source, "export const value = 1;\n");
@@ -158,7 +141,6 @@ describe("filesystem sandbox", () => {
     for (const [toolName, input] of [
       ["write", { path: source, content: "changed" }],
       ["edit", { path: source, edits: [{ oldText: "value", newText: "changed" }] }],
-      ["apply_patch", { patch: "*** Begin Patch\n*** Delete File: source.ts\n*** End Patch" }],
     ] as const) {
       const result = await handlers.get("tool_call")?.({ toolName, input }, context);
       expect(result).toMatchObject({ block: true });
@@ -166,7 +148,7 @@ describe("filesystem sandbox", () => {
     }
   });
 
-  test("blocks read, edit, and apply_patch tool calls before execution", async () => {
+  test("blocks read and edit tool calls before execution", async () => {
     const project = directory("pum-sandbox-hook-project-");
     const outside = directory("pum-sandbox-hook-outside-");
     const outsideFile = join(outside, "outside.ts");
@@ -182,7 +164,6 @@ describe("filesystem sandbox", () => {
     for (const [toolName, input] of [
       ["read", { path: outsideFile }],
       ["edit", { path: outsideFile, edits: [{ oldText: "outside", newText: "inside" }] }],
-      ["apply_patch", { patch: "*** Begin Patch\n*** Add File: ../outside.ts\n+no\n*** End Patch" }],
     ] as const) {
       const result = await handlers.get("tool_call")?.({ toolName, input }, context);
       expect(result).toMatchObject({ block: true });

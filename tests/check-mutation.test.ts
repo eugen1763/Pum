@@ -94,16 +94,6 @@ describe("mutation previews", () => {
     expect(await Bun.file(path).text()).toContain("value = 1");
   });
 
-  test("previews apply_patch without weakening atomic validation", async () => {
-    const cwd = project();
-    writeFileSync(join(cwd, "a.txt"), "old\n");
-    const preview = await previewMutation("apply_patch", cwd, {
-      patch: "*** Begin Patch\n*** Update File: a.txt\n@@\n-old\n+new\n*** End Patch",
-    });
-    expect(preview).toMatchObject({ changedPaths: ["a.txt"], additions: 1, removals: 1 });
-    expect(await Bun.file(join(cwd, "a.txt")).text()).toBe("old\n");
-  });
-
   test("marks executable, config, and credential-sensitive paths", () => {
     const cwd = project();
     const script = join(cwd, "deploy.sh");

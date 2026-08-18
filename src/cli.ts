@@ -215,7 +215,7 @@ Worktrees:
   the new worktree runs the TUI and has no earlier session.
 
 Non-interactive mode:
-  "pum -p" runs the coding tools (read, write, edit, apply_patch, bash) with
+  "pum -p" runs the coding tools (read, write, edit, bash) with
   the configured Check mode. Interactive tools stay off. Combine with -r to
   continue the latest session for the current directory. --statsFile creates
   missing parent directories and fails before startup when the file exists,

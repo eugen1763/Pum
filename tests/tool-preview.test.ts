@@ -68,7 +68,7 @@ describe("detailed tool result previews", () => {
       language: "typescript",
     });
     expect(preview.lines[12]?.language).toBe("markdown");
-    expect(toolPreviewFromResult("apply_path", { details: { patch } })).toEqual(preview);
+    expect(toolPreviewFromResult("edit", { details: { patch } })).toEqual(preview);
   });
 
   test("uses only parsers PUM can load and handles empty windows", () => {

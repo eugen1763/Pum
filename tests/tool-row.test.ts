@@ -13,12 +13,11 @@ import type { ToolCall } from "../src/tool-line";
 const cwd = "/repo";
 
 const patch = [
-  "*** Begin Patch",
-  "*** Update File: src/value.ts",
-  "@@",
+  "--- src/value.ts",
+  "+++ src/value.ts",
+  "@@ -1 +1 @@",
   "-const value = 1;",
   "+const value = 2;",
-  "*** End Patch",
 ].join("\n");
 
 /** What the live event handlers do: start a row, then settle it on the result. */
@@ -52,9 +51,9 @@ function replayedCall(name: string, args: unknown, result: unknown, isError = fa
 describe("a settled call reads the same live and replayed", () => {
   const cases: Array<{ name: string; args: unknown; result: Record<string, unknown> }> = [
     {
-      name: "apply_patch",
-      args: { patch },
-      result: { content: [{ type: "text", text: "Applied patch" }], details: { patch } },
+      name: "edit",
+      args: { path: "src/value.ts", edits: [{ oldText: "const value = 1;", newText: "const value = 2;" }] },
+      result: { content: [{ type: "text", text: "Edited src/value.ts" }], details: { patch } },
     },
     {
       name: "read",
@@ -90,8 +89,11 @@ describe("a settled call reads the same live and replayed", () => {
   test("a mutation keeps its diff preview through a reload", () => {
     // Without this the same edit shows its diff live and nothing at all after
     // the session is loaded from history.
-    const replayed = replayedCall("apply_patch", { patch }, {
-      content: [{ type: "text", text: "Applied patch" }],
+    const replayed = replayedCall("edit", {
+      path: "src/value.ts",
+      edits: [{ oldText: "const value = 1;", newText: "const value = 2;" }],
+    }, {
+      content: [{ type: "text", text: "Edited src/value.ts" }],
       details: { patch },
     });
     expect(replayed.preview?.kind).toBe("diff");

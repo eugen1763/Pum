@@ -25,7 +25,7 @@ export const HARD_BLOCKED_RULES = [
 const PERMITTED_RULES: readonly string[] = [
   "Run complete project-local bash calls.",
   "Read project files and explicit external files.",
-  "Edit and apply_patch inside the project.",
+  "Edit files inside the project.",
   "Deterministic validation must be complete before a call is allowed.",
 ];
 
@@ -43,7 +43,7 @@ export function buildCheckModePrompt(state: CheckModePromptState): string {
     + `Check mode: ${state.profile}. Sandbox: ${sandboxLabel}. `
     + `Additional approved roots: ${roots}.`;
   if (state.profile === "off") {
-    return `${header}\n\nCheck mode is off. Bash, edit, and apply_patch run without approval checks.`;
+    return `${header}\n\nCheck mode is off. Bash and edit run without approval checks.`;
   }
   const lines = [
     header,

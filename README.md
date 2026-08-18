@@ -50,7 +50,7 @@ drives the actual TUI and converts the captured cells to SVG.
 
 ## What it does
 
-- **A full coding loop** — `read`, `write`, `edit`, `bash`, and atomic `apply_patch`, with streaming Markdown, syntax highlighting, usage, cost, and Git status.
+- **A full coding loop** — `read`, `write`, `edit`, and `bash`, with streaming Markdown, syntax highlighting, usage, cost, and Git status.
 - **Parallel subagents** — persistent agents in isolated Git worktrees that message each other durably and report to their spawner. See [Subagents](docs/subagents.md).
 - **Goals that outlive a turn** — `/goal` keeps working, reviewed after each turn by a judge that reads but never writes. See [Goals](docs/goals.md).
 - **Supervised processes** — background shells and external triggers such as `gh run watch`, which wake the exact agent that was waiting. See [Tools](docs/tools.md).

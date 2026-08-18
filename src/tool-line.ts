@@ -117,24 +117,6 @@ export function toolArgs(name: string, args: any, cwd: string): string[] {
     }
     return parts;
   }
-  if ((name === "apply_patch" || name === "apply_path") && typeof args.patch === "string") {
-    const paths: string[] = [];
-    let updateIndex = -1;
-    for (const line of args.patch.replace(/\r\n/g, "\n").split("\n")) {
-      const file = line.match(/^\*\*\* (Add|Update|Delete) File: (.+)$/);
-      if (file) {
-        paths.push(file[2]!.trim().replaceAll("\\", "/"));
-        updateIndex = file[1] === "Update" ? paths.length - 1 : -1;
-        continue;
-      }
-      const move = line.match(/^\*\*\* Move to: (.+)$/);
-      if (move && updateIndex >= 0) {
-        paths[updateIndex] = `${paths[updateIndex]} → ${move[1]!.trim().replaceAll("\\", "/")}`;
-      }
-    }
-    if (paths.length === 1) return [paths[0]!];
-    if (paths.length > 1) return [`${paths.length} files`, paths[0]!];
-  }
   if (name === "spawn_subagent" && typeof args.task === "string") {
     const parts = typeof args.name === "string" ? [args.name, args.task] : [args.task];
     return args.readonly === true ? ["readonly", ...parts] : parts;

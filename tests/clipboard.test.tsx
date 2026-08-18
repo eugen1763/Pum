@@ -187,7 +187,7 @@ describe("transcript selection", () => {
     createRoot(setup.renderer).render(
       <ToolLine
         theme={theme}
-        call={{ id: "patch", name: "apply_patch", args: ["src/file.ts"], detail: "+2 −1", state: "running" }}
+        call={{ id: "edit", name: "edit", args: ["src/file.ts"], detail: "+2 −1", state: "running" }}
         workingCaret
       />,
     );
@@ -197,7 +197,7 @@ describe("transcript selection", () => {
     const [prefix, body] = textRows;
     expect(prefix?.selectable).toBe(true);
     expect(body?.selectable).toBe(true);
-    expect(prefix?.plainText).toContain("apply_patch(");
+    expect(prefix?.plainText).toContain("edit(");
     expect(body?.plainText).toContain("src/file.ts)  +2 −1");
 
     completeSelection(setup, body!);

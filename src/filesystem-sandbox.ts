@@ -6,7 +6,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getCheckModeConfig, rejectedToolDetails } from "./check-mode";
 import { isCredentialSensitivePath } from "./check-policy";
-import { parseApplyPatch } from "./apply-patch";
 import {
   canonicalPathIdentityAllowMissing,
   canonicalRealpathSync,
@@ -14,7 +13,7 @@ import {
   pathsHaveSameIdentity,
 } from "./platform";
 
-export const FILESYSTEM_SANDBOX_TOOL_NAMES = ["read", "write", "edit", "apply_patch"] as const;
+export const FILESYSTEM_SANDBOX_TOOL_NAMES = ["read", "write", "edit"] as const;
 type FilesystemSandboxToolName = (typeof FILESYSTEM_SANDBOX_TOOL_NAMES)[number];
 
 export type SandboxPath = {
@@ -174,7 +173,7 @@ function sandboxPathError(inputPath: string): Error {
 
 /**
  * Resolve a tool path against the project and verify its canonical boundary.
- * Missing final path components are allowed so write and Add File can create them.
+ * Missing final path components are allowed so write can create them.
  * A `read` is validated against the variant pi's read tool will open, and may
  * also reach PUM's own registered temporary read roots.
  */
@@ -213,22 +212,7 @@ export async function validateSandboxPath(
   return { absolute, root };
 }
 
-/** Validate every path in an atomic Codex patch before the patch tool runs. */
-export async function validateSandboxPatch(
-  cwd: string,
-  patch: string,
-): Promise<void> {
-  const operations = parseApplyPatch(patch);
-  for (const operation of operations) {
-    await validateSandboxPath(cwd, operation.path);
-    if (operation.type === "update" && operation.moveTo) {
-      await validateSandboxPath(cwd, operation.moveTo);
-    }
-  }
-}
-
-function toolPath(toolName: FilesystemSandboxToolName, input: Record<string, unknown>): string | undefined {
-  if (toolName === "apply_patch") return undefined;
+function toolPath(input: Record<string, unknown>): string | undefined {
   return typeof input.path === "string" ? input.path : undefined;
 }
 
@@ -248,8 +232,7 @@ export function createFilesystemSandboxExtension(
       pi.on("before_agent_start", (event) => ({
         systemPrompt: `${event.systemPrompt}\n\n## Filesystem sandbox\n\n`
           + "- The read, write, and edit tools are limited to the project and configured allowed roots.\n"
-          + "- The apply_patch tool is limited to the project and validates every patch path.\n"
-          + (readonly ? "- This readonly child cannot use write, edit, or apply_patch.\n" : "")
+          + (readonly ? "- This readonly child cannot use write or edit.\n" : "")
           + "- The read tool may also read the temporary files PUM stages for you, such as pasted text and full bash output.\n"
           + "- Do not access credential-sensitive paths or paths through symbolic links or junctions.\n"
           + "- Do not attempt to bypass the filesystem sandbox with alternate path spellings.",
@@ -263,15 +246,9 @@ export function createFilesystemSandboxExtension(
             throw new Error(`readonly child cannot use ${toolName}`);
           }
           const allowedPaths = getCheckModeConfig().additionalPaths;
-          if (toolName === "apply_patch") {
-            const patch = (event.input as Record<string, unknown>).patch;
-            if (typeof patch !== "string") throw new Error("apply_patch requires a patch string");
-            await validateSandboxPatch(ctx.cwd, patch);
-          } else {
-            const path = toolPath(toolName, event.input);
-            if (!path) throw new Error(`${toolName} requires a path`);
-            await validateSandboxPath(ctx.cwd, path, allowedPaths, toolName === "read" ? "read" : "write");
-          }
+          const path = toolPath(event.input);
+          if (!path) throw new Error(`${toolName} requires a path`);
+          await validateSandboxPath(ctx.cwd, path, allowedPaths, toolName === "read" ? "read" : "write");
         } catch (error) {
           const reason = `Filesystem sandbox blocked ${toolName}: ${error instanceof Error ? error.message : String(error)}`;
           rejected.set(event.toolCallId, reason);

@@ -44,7 +44,7 @@ describe("buildCheckModePrompt", () => {
     expect(block).toContain("Sandbox: auto");
     expect(block).toContain("Permitted when Check mode is on:");
     expect(block).toContain("complete project-local bash calls");
-    expect(block).toContain("Edit and apply_patch inside the project");
+    expect(block).toContain("Edit files inside the project");
     expect(block).toContain("Hard-blocked when Check mode is on:");
     // The narrow npm pack/install rules stay out of the prompt. The npm publish
     // sentence is the documented UNSAFE allow exception.

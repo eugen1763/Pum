@@ -9,7 +9,6 @@ import {
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { applyPatchExtension } from "../../src/apply-patch";
 import { QuestionnaireManager } from "../../src/questionnaire";
 import { SubagentManager } from "../../src/subagents/manager";
 import { createWorktree, listWorktrees } from "../../src/worktree";
@@ -239,6 +238,7 @@ describe("background subagents", () => {
     const childSession = (manager as any).records.get(child.id).session;
     const childTool = childSession.agent.state.tools.find((tool: any) => tool.name === "questionnaire");
     expect(childTool).toBeDefined();
+    expect(childSession.agent.state.tools.map((tool: any) => tool.name)).not.toContain("apply_patch");
     const childExecution = childTool.execute("child-questionnaire", { questions: [{
       id: "format",
       prompt: "Choose format",
@@ -252,41 +252,6 @@ describe("background subagents", () => {
     });
     await manager.detachMain();
     unsubscribeUi();
-  });
-
-  test("makes apply_patch available in main and child pi sessions", async () => {
-    const runtime = await ModelRuntime.create({
-      authPath: join(agentDir, "auth.json"),
-      modelsPath: join(agentDir, "models.json"),
-    });
-    const model = runtime.getModel("mock", "mock-model");
-    expect(model).toBeDefined();
-    const services = await createAgentSessionServices({
-      cwd: repo,
-      agentDir,
-      modelRuntime: runtime,
-      resourceLoaderOptions: { extensionFactories: [applyPatchExtension] },
-    });
-    const main = await createAgentSessionFromServices({
-      services,
-      sessionManager: SessionManager.inMemory(repo),
-      model,
-      tools: ["read", "write", "edit", "apply_patch", "bash"],
-    });
-    expect(main.session.agent.state.tools.map((tool) => tool.name)).toContain("apply_patch");
-    main.session.dispose();
-
-    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
-    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
-    const child = await manager.spawn({
-      task: "Wait for apply_patch availability inspection.",
-      name: "apply-patch-availability-child",
-      modelId: "mock/mock-model",
-      thinkingLevel: "off",
-    });
-    const childSession = (manager as any).records.get(child.id).session;
-    expect(childSession.agent.state.tools.map((tool: any) => tool.name)).toContain("apply_patch");
-    await manager.detachMain();
   });
 
   test("overrides Bash in main and managed child sessions", async () => {

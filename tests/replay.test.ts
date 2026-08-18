@@ -163,54 +163,6 @@ describe("subagent transcript replay", () => {
     }]);
   });
 
-  test("restores apply_patch arguments and changed-line details", () => {
-    const lines = replayEntries([
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          content: [{
-            type: "toolCall",
-            id: "patch-1",
-            name: "apply_patch",
-            arguments: {
-              patch: "*** Begin Patch\n*** Update File: src/file.ts\n@@\n-old\n+new\n*** End Patch",
-            },
-          }],
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolCallId: "patch-1",
-          toolName: "apply_patch",
-          content: [{ type: "text", text: "applied" }],
-          details: { patch: "--- src/file.ts\n+++ src/file.ts\n@@ -1 +1 @@\n-old\n+new\n" },
-          isError: false,
-        },
-      },
-    ], process.cwd(), true);
-
-    expect(lines[0]).toMatchObject({
-      kind: "tool",
-      call: {
-        id: "patch-1",
-        name: "apply_patch",
-        args: ["src/file.ts"],
-        state: "ok",
-        detail: "+1 −1",
-        input: {
-          patch: "*** Begin Patch\n*** Update File: src/file.ts\n@@\n-old\n+new\n*** End Patch",
-        },
-        result: {
-          content: [{ type: "text", text: "applied" }],
-          isError: false,
-        },
-      },
-    });
-  });
-
   test("restores read path and range arguments", () => {
     const lines = replayEntries([
       {

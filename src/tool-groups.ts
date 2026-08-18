@@ -26,14 +26,13 @@ const TOOL_GROUPS_SUFFIX = "tool-groups.json";
 /**
  * Tools that are always sent in every session.
  *
- * The pi built-ins (read, write, edit, apply_patch, bash) must never be
+ * The pi built-ins (read, write, edit, bash) must never be
  * filtered. Questionnaire is PUM's always-present model tool.
  */
 export const CORE_TOOL_NAMES = [
   "read",
   "write",
   "edit",
-  "apply_patch",
   "bash",
   "questionnaire",
 ] as const;
@@ -59,7 +58,6 @@ export const JUDGE_TOOL_NAMES = ["read", "bash", GOAL_VERDICT_TOOL_NAME] as cons
 export const READONLY_CHILD_OMITTED_TOOL_NAMES = [
   "write",
   "edit",
-  "apply_patch",
   "spawn_subagent",
   "message_agent",
   "create_trigger",

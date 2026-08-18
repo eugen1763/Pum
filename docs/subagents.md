@@ -41,8 +41,8 @@ When the Sandbox setting is `Auto` or `Require`, `spawn_subagent` also accepts
 `readonly: true`. A readonly child inspects files and runs sandboxed inspection
 commands.
 
-PUM omits `write`, `edit`, `apply_patch`, child spawning, inter-agent
-delegation, process-starting trigger tools, managed shells, and message-cache
+PUM omits `write`, `edit`, child spawning, inter-agent delegation,
+process-starting trigger tools, managed shells, and message-cache
 mutation from that child, and a fail-closed guard refuses anything else it was
 never offered. Worktree access is limited to `list` and `status`. Bash requires
 an enforced native sandbox, receives read-only project, `/check-path`, and
