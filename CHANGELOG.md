@@ -7,6 +7,9 @@ All notable changes to PUM are documented in this file.
 ### Removed
 - Removed the custom `apply_patch` model tool. Sessions now use pi's `edit` tool for targeted file mutations.
 
+### Fixed
+- Checking out a cached prompt now writes its text after the cache view closes, so the Windows textarea placeholder commit cannot restore an empty draft.
+
 ## [0.2.21-beta.1] - 2026-08-16
 
 ### Added

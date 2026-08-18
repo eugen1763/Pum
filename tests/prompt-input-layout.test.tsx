@@ -203,20 +203,22 @@ describe("prompt input layout", () => {
     expect(setup.captureCharFrame()).not.toContain("/compress");
   });
 
-  test("shows when a cached prompt is checked out for editing", async () => {
+  test("checks out a cached prompt after the cache-close commit", async () => {
     const setup = await renderApp(70, 20, [{ text: "cached draft", executed: false }]);
-    // Each press depends on the state the previous one committed: Tab opens the
-    // cache, Up selects a row, Tab checks that row out. Sending all three
-    // before React commits makes the last Tab complete a path instead.
+    // Terminals can deliver this short key burst before React commits the open
+    // cache view. Refs bind the selection, and the post-commit checkout must
+    // keep the placeholder update from restoring the empty input on Windows.
     setup.mockInput.pressTab();
-    await settle(setup);
     setup.mockInput.pressArrow("up");
-    await settle(setup);
     setup.mockInput.pressTab();
     await settle(setup);
 
     expect(textarea(setup.renderer.root)?.plainText).toBe("cached draft");
     expect(setup.captureCharFrame()).toContain("editing cache #1");
+
+    await setup.renderOnce();
+    await setup.flush();
+    expect(textarea(setup.renderer.root)?.plainText).toBe("cached draft");
   });
 
   test("does not overflow a narrow terminal with confirmation hints", async () => {

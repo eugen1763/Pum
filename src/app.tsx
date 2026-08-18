@@ -1076,6 +1076,14 @@ export function App({
   });
   /** Cache row currently checked out into the selected transcript input. */
   const editingStashIndex = useRef<number | null>(null);
+  /**
+   * Text to install after the cache view closes.
+   *
+   * Closing the cache changes the textarea placeholder. OpenTUI can apply that
+   * placeholder commit after an imperative setText call and restore the empty
+   * input on Windows. A layout effect orders the text write after that commit.
+   */
+  const pendingStashCheckout = useRef<{ index: number; text: string } | null>(null);
   const quitTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const lastQuitPress = useRef(0);
   const cancelTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -1322,6 +1330,16 @@ export function App({
     setCommandInput(value);
     scheduleInputMetrics();
   };
+
+  useLayoutEffect(() => {
+    if (stashOpen) return;
+    const checkout = pendingStashCheckout.current;
+    if (!checkout) return;
+    pendingStashCheckout.current = null;
+    if (editingStashIndex.current !== checkout.index) return;
+    setEditorText(checkout.text);
+    inputRef.current?.focus();
+  });
 
   const handleInput = (nextValue: string) => {
     pathCompletionCycle.current = null;
@@ -4726,7 +4744,7 @@ export function App({
           const index = stashCursorRef.current;
           const prompt = index >= 0 ? stashRef.current[index] : undefined;
           if (prompt && inputRef.current) {
-            setEditorText(prompt.text);
+            pendingStashCheckout.current = { index, text: prompt.text };
             setEditingStash(index);
             histCursor.current = null;
             draft.current = "";
