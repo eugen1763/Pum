@@ -47,6 +47,10 @@ describe("Help popup layout", () => {
     // Triggers tab, /processes keeps the last one.
     expect(controls).toContainEqual(["/processes", "Open Processes on last tab"]);
     expect(controls).toContainEqual(["/triggers", "Open Processes on Triggers"]);
+    expect(controls).toContainEqual([
+      "/background",
+      "Start a managed agent for the selected transcript",
+    ]);
     expect(controls.some(([key]) => key === "Ctrl+P")).toBe(true);
     expect(controls.some(([key]) => key === "/ in Settings")).toBe(true);
   });
@@ -68,7 +72,7 @@ describe("Help popup layout", () => {
     expect(frame).toContain("Prompt");
     expect(frame).toContain("History and sessions");
     expect(frame).toContain("Commands");
-    expect(frame).toContain("Ctrl+P");
+    expect(frame).toContain("Application");
     expect(frame).toContain("esc or ? close");
 
     const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));

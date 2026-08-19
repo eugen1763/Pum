@@ -30,6 +30,10 @@ export const COMMANDS: Command[] = [
     description: "Toggle away mode, or start it with instructions",
   },
   {
+    name: "/background",
+    description: "Start a managed worktree agent for the selected transcript",
+  },
+  {
     name: "/history",
     description: "Browse saved sessions for this directory",
   },
@@ -81,6 +85,16 @@ export function matchingCommands(input: string): Command[] {
   // /usr/lib into /new.
   if (/[/\\]/.test(input.slice(1))) return [];
   return COMMANDS.filter((command) => command.name.startsWith(input));
+}
+
+export function matchingCommandsForTarget(
+  input: string,
+  target: "main" | "subagent",
+): Command[] {
+  const matches = matchingCommands(input);
+  return target === "subagent"
+    ? matches.filter((command) => command.name === "/background")
+    : matches;
 }
 
 export function moveCommandSelection(current: number, count: number, step: -1 | 1): number {
