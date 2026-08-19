@@ -87,7 +87,11 @@ import {
   webSearch,
   withSearchRoute,
 } from "./web-search";
-import { isCommandInput, matchingCommands, moveCommandSelection } from "./commands";
+import {
+  isCommandInput,
+  matchingCommandsForTarget,
+  moveCommandSelection,
+} from "./commands";
 import { truncateStatusText } from "./status-metadata";
 import { modeLineLabels } from "./mode-line";
 import { RULE_LABEL_TRAILING_RULE_COLUMNS } from "./goal-line";
@@ -114,6 +118,7 @@ import {
 } from "./session-settings";
 import { AfkController, type AfkStatus } from "./afk";
 import { parseAfkCommand } from "./afk-command";
+import { parseBackgroundCommand } from "./background-command";
 import {
   afkAnswerFailureText,
   buildAfkTask,
@@ -1006,11 +1011,14 @@ export function App({
     1,
     width - 2 - promptRightColumns - visibleInputHint.length,
   );
-  // Slash commands only exist for the main agent, so a subagent view neither
-  // shows them nor completes them into a message to the child.
-  const commandSuggestions = shellMode || activeAgentId || stashOpen || commandSuggestionsDismissed
+  // Most slash commands belong to main. A selected mutable agent can still own
+  // a descendant started with /background, so expose only that command there.
+  const commandSuggestions = shellMode || stashOpen || commandSuggestionsDismissed
     ? []
-    : matchingCommands(commandInput).slice(0, 5);
+    : matchingCommandsForTarget(
+      commandInput,
+      activeAgentId ? "subagent" : "main",
+    ).slice(0, 5);
   const pathSuggestions = (!shellMode && activeAgentId) || stashOpen || commandSuggestionsDismissed
     || isCommandInput(commandInput)
     || !shouldAutoShowPathCompletions(commandInput, inputCursorOffset)
@@ -3551,6 +3559,99 @@ export function App({
     return true;
   };
 
+  const appendRequesterLine = (requesterAgentId: string | null, line: Line) => {
+    if (requesterAgentId === null || !subagentManager.getAgent(requesterAgentId)) {
+      appendMainLine(line);
+    } else {
+      subagentManager.appendAgentLine(requesterAgentId, line);
+    }
+  };
+
+  /** Start a fresh managed child without occupying or steering the requester. */
+  const runBackgroundCommand = (
+    text: string,
+    requesterAgentId: string | null,
+    draftText = text,
+  ): boolean => {
+    const command = parseBackgroundCommand(text);
+    if (!command) return false;
+    const requesterKey = requesterAgentId ?? "main";
+    const restoreDraft = () => {
+      if (activeAgentIdRef.current !== requesterAgentId) {
+        if (!(viewDrafts.current.get(requesterKey) ?? "")) {
+          viewDrafts.current.set(requesterKey, draftText);
+        }
+        return;
+      }
+      if (!(inputRef.current?.plainText ?? "")) {
+        viewDrafts.current.set(requesterKey, draftText);
+        setEditorText(draftText, draftText.length, true);
+      }
+    };
+    if (command.kind === "error") {
+      setEditorText(draftText, draftText.length, true);
+      appendRequesterLine(requesterAgentId, {
+        kind: "text",
+        role: "error",
+        text: command.message,
+      });
+      return true;
+    }
+    if (sessionSwitchRef.current) {
+      setEditorText(draftText, draftText.length, true);
+      appendRequesterLine(requesterAgentId, {
+        kind: "text",
+        role: "error",
+        text: "wait for the session change to finish before starting a background agent",
+      });
+      return true;
+    }
+    if (relocatingRef.current || pendingRelocationRef.current) {
+      setEditorText(draftText, draftText.length, true);
+      appendRequesterLine(requesterAgentId, {
+        kind: "text",
+        role: "error",
+        text: "wait for the worktree move to finish before starting a background agent",
+      });
+      return true;
+    }
+
+    setEditingStash(null);
+    viewDrafts.current.set(requesterKey, "");
+    setEditorText("");
+    histCursor.current = null;
+    draft.current = "";
+    void (async () => {
+      // The registry and every child session belong to the active main session.
+      // Bind it before spawning so an App-start race cannot persist elsewhere.
+      await subagentManager.bindMainSession(session.sessionManager, cwd);
+      const spawned = requesterAgentId === null
+        ? await subagentManager.spawnBackground({
+          task: command.prompt,
+          requesterAgentId: null,
+          modelId: `${session.agent.state.model.provider}/${session.agent.state.model.id}`,
+          thinkingLevel: String(session.agent.state.thinkingLevel),
+        })
+        : await subagentManager.spawnBackground({
+          task: command.prompt,
+          requesterAgentId,
+        });
+      appendRequesterLine(requesterAgentId, {
+        kind: "text",
+        role: "system",
+        text: `background agent started: ${spawned.name} (${spawned.id})\n${spawned.worktree.branch}\n${spawned.worktree.path}`,
+      });
+    })().catch((error) => {
+      appendRequesterLine(requesterAgentId, {
+        kind: "text",
+        role: "error",
+        text: `background agent could not start: ${String(error)}`,
+      });
+      restoreDraft();
+    });
+    return true;
+  };
+
   const submitPrompt = (value?: string, stashIndex?: number) => {
     // Read the selected agent from the ref, not the state. A view switch updates
     // the ref synchronously, but a switch-then-send in one input chunk runs
@@ -3577,6 +3678,26 @@ export function App({
     persistedPrompt = persistedPrompt.trim();
 
     if (!promptText && attachments.length === 0 && pastedTexts.length === 0) return;
+
+    const backgroundCandidate = commandEligible ? parseBackgroundCommand(promptText) : null;
+    if (backgroundCandidate?.kind === "error") {
+      setEditorText(rawDisplayText, rawDisplayText.length, true);
+      appendRequesterLine(selectedAgentId, {
+        kind: "text",
+        role: "error",
+        text: backgroundCandidate.message,
+      });
+      return;
+    }
+    if (backgroundCandidate && (attachments.length > 0 || pastedTexts.length > 0)) {
+      setEditorText(rawDisplayText, rawDisplayText.length, true);
+      appendRequesterLine(selectedAgentId, {
+        kind: "text",
+        role: "error",
+        text: "/background accepts text only; remove image and pasted-text attachments",
+      });
+      return;
+    }
 
     // The main session is being replaced, so keep the draft rather than deliver
     // into a session that is about to be aborted and disposed.
@@ -3656,6 +3777,17 @@ export function App({
     if (attachments.length === 0 && commandEligible && promptText === "/login") {
       appendCommandHistory();
       openLogin();
+      return;
+    }
+
+    // /background belongs to the selected transcript, unlike the main-only
+    // command router below, and must never become an ordinary child message.
+    if (
+      attachments.length === 0
+      && commandEligible
+      && runBackgroundCommand(promptText, selectedAgentId, rawDisplayText)
+    ) {
+      if (!selectedAgentId) appendCommandHistory();
       return;
     }
 
@@ -4626,9 +4758,12 @@ export function App({
       isReturnKey && !hasCtrlForReturn && !hasShiftForReturn && !hasAltForReturn;
     const inputValue = inputRef.current?.plainText ?? "";
     const commandMatches =
-      shellModeRef.current || activeAgentIdRef.current || stashOpenRef.current || commandSuggestionsDismissedRef.current
+      shellModeRef.current || stashOpenRef.current || commandSuggestionsDismissedRef.current
         ? []
-        : matchingCommands(inputValue).slice(0, 5);
+        : matchingCommandsForTarget(
+          inputValue,
+          activeAgentIdRef.current ? "subagent" : "main",
+        ).slice(0, 5);
     const inputCursor = inputRef.current?.cursorOffset ?? inputValue.length;
     const pathMatches =
       (!shellModeRef.current && activeAgentIdRef.current)
@@ -4756,7 +4891,7 @@ export function App({
         queueMicrotask(() => inputRef.current?.focus());
         return;
       }
-      if (!activeAgentId && commandMatches.length > 0 && !/\s/.test(inputValue)) {
+      if (commandMatches.length > 0 && !/\s/.test(inputValue)) {
         key.stopPropagation();
         const selected = commandMatches[Math.min(commandCursorRef.current, commandMatches.length - 1)]!;
         setEditorText(selected.name);

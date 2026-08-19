@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { COMMANDS, isCommandInput, matchingCommands, moveCommandSelection } from "../src/commands";
+import {
+  COMMANDS,
+  isCommandInput,
+  matchingCommands,
+  matchingCommandsForTarget,
+  moveCommandSelection,
+} from "../src/commands";
 
 describe("command suggestions", () => {
   test("only treats a slash in the first input column as a command trigger", () => {
@@ -41,6 +47,18 @@ describe("command suggestions", () => {
     expect(matchingCommands("/af").map((command) => command.name)).toContain("/afk");
     expect(matchingCommands("/afk stop asking about tests").map((command) => command.name))
       .toEqual(["/afk"]);
+  });
+
+  test("offers /background to main and selected subagents without exposing main-only commands", () => {
+    expect(COMMANDS.find((command) => command.name === "/background")?.description)
+      .toBe("Start a managed worktree agent for the selected transcript");
+    expect(matchingCommandsForTarget("/back", "main").map((command) => command.name))
+      .toEqual(["/background"]);
+    expect(matchingCommandsForTarget("/back", "subagent").map((command) => command.name))
+      .toEqual(["/background"]);
+    expect(matchingCommandsForTarget("/", "subagent").map((command) => command.name))
+      .toEqual(["/background"]);
+    expect(matchingCommandsForTarget("/clear", "subagent")).toEqual([]);
   });
 
   test("does not replace multiline input with command navigation", () => {

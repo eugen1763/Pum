@@ -354,6 +354,82 @@ describe("SubagentManager extension", () => {
     expect(events).toContainEqual({ type: "main-pending-resolve", id: "message-1" });
   });
 
+  test("starts fresh user background agents under the exact requester", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "parent", "idle");
+    const parent = (manager as any).records.get("parent");
+    parent.snapshot.modelId = "child/model";
+    parent.snapshot.thinkingLevel = "high";
+    const requests: any[] = [];
+    (manager as any).spawn = async (options: any) => {
+      requests.push(options);
+      return { ...parent.snapshot, task: options.task, parentAgentId: options.parentAgentId };
+    };
+
+    await manager.spawnBackground({
+      task: "Main task",
+      requesterAgentId: null,
+      modelId: "main/model",
+      thinkingLevel: "medium",
+    });
+    await manager.spawnBackground({ task: "Nested task", requesterAgentId: "parent" });
+
+    expect(requests).toEqual([
+      {
+        task: "Main task",
+        modelId: "main/model",
+        thinkingLevel: "medium",
+        parentAgentId: null,
+        context: "fresh",
+        createWorktree: true,
+        role: "worker",
+      },
+      {
+        task: "Nested task",
+        modelId: "child/model",
+        thinkingLevel: "high",
+        parentAgentId: "parent",
+        context: "fresh",
+        createWorktree: true,
+        role: "worker",
+      },
+    ]);
+  });
+
+  test("rejects unavailable owners for user background agents", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "readonly", "idle");
+    (manager as any).records.get("readonly").snapshot.readonly = true;
+    addTestAgent(manager, "completed", "completed");
+    addTestAgent(manager, "internal", "idle");
+    (manager as any).records.get("internal").snapshot.role = "judge";
+
+    await expect(manager.spawnBackground({ task: "x", requesterAgentId: "missing" }))
+      .rejects.toThrow("no longer exists");
+    await expect(manager.spawnBackground({ task: "x", requesterAgentId: "readonly" }))
+      .rejects.toThrow("Readonly subagents cannot spawn child agents");
+    await expect(manager.spawnBackground({ task: "x", requesterAgentId: "completed" }))
+      .rejects.toThrow("cannot spawn while completed");
+    await expect(manager.spawnBackground({ task: "x", requesterAgentId: "internal" }))
+      .rejects.toThrow("Internal agents cannot own background agents");
+  });
+
+  test("refreshes the managed worktree root when the same session relocates", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    const api = {};
+    const oldSessionManager = { getSessionId: () => "main-session" };
+    const sessionManager = { getSessionId: () => "main-session" };
+    (manager as any).mainApi = api;
+    (manager as any).parentSessionId = "main-session";
+    (manager as any).mainSessionManager = oldSessionManager;
+    (manager as any).mainCwd = "/old/root";
+
+    await manager.bindMainSession(sessionManager as any, "/new/root");
+
+    expect((manager as any).mainSessionManager).toBe(sessionManager);
+    expect((manager as any).mainCwd).toBe("/new/root");
+  });
+
   test("exposes readonly spawn only while Sandbox is on and rejects it while Sandbox is Off", async () => {
     let sandboxMode: "auto" | "off" = "auto";
     const onManager = new SubagentManager({

@@ -59,6 +59,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/clear", "Start a fresh session"],
       ["/goal", "Set or control a goal"],
       ["/goalf", "Work out a goal, then start it"],
+      ["/background", "Start a managed agent for the selected transcript"],
       ["/history", "Browse saved sessions"],
       ["/login", "Add or update a provider"],
       ["/news", "Open recent answers (News)"],

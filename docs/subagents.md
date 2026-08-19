@@ -16,6 +16,12 @@ related work and runs independent groups in parallel. Use `Ctrl+L` to select an
 agent transcript; input then goes to that agent. Finished or interrupted agents
 stay available until you merge or remove them.
 
+`/background <prompt>` starts one managed agent immediately and leaves the
+current transcript usable. The selected transcript owns the new child, so using
+the command from a subagent creates a descendant; using it from main creates a
+top-level agent. The child receives only the supplied prompt as fresh task
+context. Readonly subagents cannot own descendants.
+
 ## Merging
 
 A managed merge requires both authoritative `completed` status and a persisted

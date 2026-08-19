@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { MarkdownRenderable, type BaseRenderable } from "@opentui/core";
+import { MarkdownRenderable, TextareaRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot, flushSync } from "@opentui/react";
 import { App } from "../../src/app";
@@ -18,6 +18,15 @@ function markdownContent(root: BaseRenderable): string[] {
   };
   visit(root);
   return content;
+}
+
+function textarea(root: BaseRenderable): TextareaRenderable | undefined {
+  if (root instanceof TextareaRenderable) return root;
+  for (const child of root.getChildren()) {
+    const found = textarea(child);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 const snapshot: SubagentSnapshot = {
@@ -127,6 +136,9 @@ async function renderCacheApp(options: {
   initialStash?: Array<{ text: string; executed: boolean }>;
   onMainPrompt?: (prompt: string) => unknown | Promise<unknown>;
   onSubagentMessage?: (id: string, prompt: string) => unknown | Promise<unknown>;
+  onBackgroundSpawn?: (request: any) => unknown | Promise<unknown>;
+  onBindMainSession?: () => unknown | Promise<unknown>;
+  onAgentLine?: (id: string, line: any) => void;
   messageCacheController?: MessageCacheController;
 }) {
   const setup = await createTestRenderer({ width: 80, height: 24, kittyKeyboard: true });
@@ -136,8 +148,17 @@ async function renderCacheApp(options: {
   session.prompt = async (prompt: string) => { await options.onMainPrompt?.(prompt); };
   const manager = {
     getAgents: () => [snapshot],
+    getAgent: (id: string) => id === snapshot.id ? snapshot : undefined,
     subscribe: () => () => {},
-    bindMainSession: async () => {},
+    bindMainSession: async () => { await options.onBindMainSession?.(); },
+    spawnBackground: async (request: any) => await options.onBackgroundSpawn?.(request) ?? {
+      ...snapshot,
+      id: "background-1",
+      name: "background-one",
+      parentAgentId: request.requesterAgentId,
+      task: request.task,
+    },
+    appendAgentLine: (id: string, line: any) => options.onAgentLine?.(id, line),
     sendUserMessage: async (id: string, prompt: string) => { await options.onSubagentMessage?.(id, prompt); },
     abortAgent: async () => {},
     persistToolEvent() {},
@@ -377,6 +398,115 @@ describe("subagent transcript UI", () => {
       prompt: "Inspect the retry path.",
     }]);
     expect(mainPrompts).toEqual([]);
+  });
+
+  test("keeps a missing background prompt in the main draft", async () => {
+    const requests: any[] = [];
+    const { setup } = await renderCacheApp({
+      onBackgroundSpawn: (request) => { requests.push(request); },
+    });
+
+    await setup.mockInput.typeText("/background   ");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(textarea(setup.renderer.root)?.plainText).toBe("/background   ");
+    expect(setup.captureCharFrame()).toContain("/background needs a prompt");
+    expect(requests).toEqual([]);
+  });
+
+  test("starts a main background agent without blocking the current session", async () => {
+    const requests: any[] = [];
+    const mainPrompts: string[] = [];
+    const order: string[] = [];
+    let resolveSpawn!: (value: SubagentSnapshot) => void;
+    const spawnPending = new Promise<SubagentSnapshot>((resolve) => {
+      resolveSpawn = resolve;
+    });
+    const { setup } = await renderCacheApp({
+      onMainPrompt: (prompt) => mainPrompts.push(prompt),
+      onBindMainSession: () => { order.push("bind"); },
+      onBackgroundSpawn: (request) => {
+        order.push("spawn");
+        requests.push(request);
+        return spawnPending;
+      },
+    });
+
+    await setup.mockInput.typeText("/background inspect the retry path");
+    setup.mockInput.pressEnter();
+    await settleUntil(setup, () => requests.length === 1);
+
+    expect(requests).toEqual([{
+      task: "inspect the retry path",
+      requesterAgentId: null,
+      modelId: "mock/mock-model",
+      thinkingLevel: "off",
+    }]);
+    expect(order.slice(-2)).toEqual(["bind", "spawn"]);
+
+    await setup.mockInput.typeText("Keep coordinating from main.");
+    setup.mockInput.pressEnter();
+    await settleUntil(setup, () => mainPrompts.length === 1);
+    expect(mainPrompts).toEqual(["Keep coordinating from main."]);
+
+    resolveSpawn({ ...snapshot, id: "background-1", name: "background-one", task: requests[0].task });
+    await settle(setup);
+  });
+
+  test("uses the selected agent as the direct background spawner", async () => {
+    const requests: any[] = [];
+    const childMessages: string[] = [];
+    const agentLines: any[] = [];
+    const { setup } = await renderCacheApp({
+      onBackgroundSpawn: (request) => { requests.push(request); },
+      onSubagentMessage: (_id, prompt) => childMessages.push(prompt),
+      onAgentLine: (_id, line) => agentLines.push(line),
+    });
+
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    await setup.mockInput.typeText("/back");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("/background");
+    setup.mockInput.pressTab();
+    await settle(setup);
+    expect(textarea(setup.renderer.root)?.plainText).toBe("/background");
+    await setup.mockInput.typeText(" inspect child ownership");
+    setup.mockInput.pressEnter();
+    await settleUntil(setup, () => requests.length === 1);
+
+    expect(requests).toEqual([{
+      task: "inspect child ownership",
+      requesterAgentId: "agent-1",
+    }]);
+    expect(childMessages).toEqual([]);
+    expect(agentLines.some((line) => line.role === "system"
+      && line.text.includes("background agent started"))).toBe(true);
+    expect(setup.captureCharFrame()).toContain("Message worker-one…");
+  });
+
+  test("keeps a missing background prompt in the selected-agent draft", async () => {
+    const requests: any[] = [];
+    const childMessages: string[] = [];
+    const agentLines: any[] = [];
+    const { setup } = await renderCacheApp({
+      onBackgroundSpawn: (request) => { requests.push(request); },
+      onSubagentMessage: (_id, prompt) => childMessages.push(prompt),
+      onAgentLine: (_id, line) => agentLines.push(line),
+    });
+
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    await setup.mockInput.typeText("/background");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(textarea(setup.renderer.root)?.plainText).toBe("/background");
+    expect(requests).toEqual([]);
+    expect(childMessages).toEqual([]);
+    expect(agentLines.some((line) => line.role === "error"
+      && line.text.includes("/background needs a prompt"))).toBe(true);
   });
 
   test("does not route empty or main-transcript prompts to a subagent", async () => {

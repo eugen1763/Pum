@@ -284,6 +284,18 @@ type OpenReminderResources = {
 
 const TERMINAL_SUBAGENT_STATUSES: readonly SubagentStatus[] = ["completed", "failed", "stopped"];
 
+export type BackgroundSpawnRequest =
+  | {
+    task: string;
+    requesterAgentId: null;
+    modelId: string;
+    thinkingLevel: string;
+  }
+  | {
+    task: string;
+    requesterAgentId: string;
+  };
+
 type ManagerOptions = {
   modelRuntime: ModelRuntime;
   agentDir: string;
@@ -488,7 +500,14 @@ export class SubagentManager {
     cwd: string,
   ): Promise<void> {
     const sessionId = sessionManager.getSessionId();
-    if (this.mainApi === pi && this.parentSessionId === sessionId && this.mainSessionManager) return;
+    if (this.mainApi === pi && this.parentSessionId === sessionId && this.mainSessionManager) {
+      // A relocated session keeps its identity while its authoritative project
+      // root changes. Fresh worktrees must be based on the active directory,
+      // and direct UI commands must persist through the current manager object.
+      this.mainSessionManager = sessionManager;
+      this.mainCwd = cwd;
+      return;
+    }
     if (this.parentSessionId !== "detached") {
       this.spawnPreviewManager?.cancelRequester(this.parentSessionId);
       await this.shellManager?.invalidateSession(this.parentSessionId);
@@ -1768,6 +1787,49 @@ export class SubagentManager {
   ) {
     if (!this.spawnPreviewManager) throw new Error("The PUM spawn preview UI is unavailable");
     return this.spawnPreviewManager.request(requester, options, signal);
+  }
+
+  /**
+   * Start a user-requested managed agent with only its task as conversation
+   * context. A selected mutable agent owns the descendant and supplies its
+   * model settings; otherwise the main session owns it.
+   */
+  async spawnBackground(request: BackgroundSpawnRequest): Promise<SubagentSnapshot> {
+    if (!request.task.trim()) throw new Error("A background agent needs a prompt");
+    if (request.requesterAgentId === null) {
+      return this.spawn({
+        task: request.task,
+        modelId: request.modelId,
+        thinkingLevel: request.thinkingLevel,
+        parentAgentId: null,
+        context: "fresh",
+        createWorktree: true,
+        role: "worker",
+      });
+    }
+
+    const parent = this.records.get(request.requesterAgentId);
+    if (!parent) throw new Error("Spawner subagent no longer exists");
+    if (isInternalRole(parent.snapshot.role)) {
+      throw new Error("Internal agents cannot own background agents");
+    }
+    if (parent.snapshot.readonly) {
+      throw new Error("Readonly subagents cannot spawn child agents");
+    }
+    if (!["starting", "running", "idle"].includes(parent.snapshot.status)) {
+      throw new Error(
+        `Subagent ${parent.snapshot.name} cannot spawn while ${parent.snapshot.status}`,
+      );
+    }
+    return this.spawn({
+      task: request.task,
+      modelId: parent.snapshot.modelId,
+      thinkingLevel: parent.snapshot.thinkingLevel,
+      parentAgentId: parent.snapshot.id,
+      context: "fresh",
+      createWorktree: true,
+      role: "worker",
+    });
   }
 
   /** A descriptive record for an agent that runs in the launch project itself. */
