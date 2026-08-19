@@ -203,6 +203,49 @@ describe("prompt input layout", () => {
     expect(setup.captureCharFrame()).not.toContain("/compress");
   });
 
+  test("a multiline goal closes command suggestions and keeps Up and Down in the editor", async () => {
+    const setup = await renderApp(70, 20);
+    await setup.mockInput.typeText("/goal");
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("/goalf");
+
+    setup.mockInput.pressEnter({ shift: true });
+    await settle(setup);
+
+    const input = textarea(setup.renderer.root);
+    expect(input?.plainText).toBe("/goal\n");
+    expect(setup.captureCharFrame()).not.toContain("/goalf");
+    expect(input?.cursorOffset).toBe(6);
+
+    setup.mockInput.pressArrow("up");
+    await settle(setup);
+    expect(input?.cursorOffset).toBe(0);
+
+    setup.mockInput.pressArrow("down");
+    await settle(setup);
+    expect(input?.cursorOffset).toBe(6);
+  });
+
+  test("a wrapped goal argument does not leave a command suggestion that captures Up and Down", async () => {
+    const setup = await renderApp(40, 20);
+    const goal = "/goal write a detailed goal that wraps onto another displayed prompt row";
+    await setup.mockInput.typeText(goal);
+    await settle(setup);
+
+    const input = textarea(setup.renderer.root);
+    expect(input?.editorView.getTotalVirtualLineCount()).toBeGreaterThan(1);
+    expect(setup.captureCharFrame()).not.toContain("/goal  —");
+    expect(input?.cursorOffset).toBe(goal.length);
+
+    setup.mockInput.pressArrow("up");
+    await settle(setup);
+    expect(input?.cursorOffset).toBeLessThan(goal.length);
+
+    setup.mockInput.pressArrow("down");
+    await settle(setup);
+    expect(input?.cursorOffset).toBe(goal.length);
+  });
+
   test("checks out a cached prompt after the cache-close commit", async () => {
     const setup = await renderApp(70, 20, [{ text: "cached draft", executed: false }]);
     // Terminals can deliver this short key burst before React commits the open

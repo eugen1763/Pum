@@ -39,8 +39,8 @@ describe("command suggestions", () => {
     expect(COMMANDS.find((command) => command.name === "/afk")?.description)
       .toBe("Toggle away mode, or start it with instructions");
     expect(matchingCommands("/af").map((command) => command.name)).toContain("/afk");
-    expect(matchingCommands("/afk stop asking about tests").map((command) => command.name))
-      .toEqual(["/afk"]);
+    expect(matchingCommands("/afk stop asking about tests"))
+      .toEqual([]);
   });
 
   test("does not replace multiline input with command navigation", () => {
@@ -58,9 +58,9 @@ describe("absolute paths are not commands", () => {
     expect(matchingCommands("/etc/hosts")).toEqual([]);
   });
 
-  test("a separator after the command name still matches the command", () => {
-    // The rule looks at the first token only, so an argument may hold a path.
-    expect(matchingCommands("/check-path /usr/lib").map((command) => command.name))
-      .toEqual(["/check-path"]);
+  test("an argument closes command suggestions", () => {
+    expect(matchingCommands("/goal write a detailed goal")).toEqual([]);
+    expect(matchingCommands("/check-path /usr/lib"))
+      .toEqual([]);
   });
 });
