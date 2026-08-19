@@ -73,15 +73,14 @@ export function isCommandInput(input: string): boolean {
 }
 
 export function matchingCommands(input: string): Command[] {
-  if (!isCommandInput(input) || input.includes("\n")) return [];
-  const name = input.split(/\s/, 1)[0]!;
+  // Suggestions complete only the command name. Once an argument starts, the
+  // prompt belongs to the editor and Up/Down must navigate wrapped input.
+  if (!isCommandInput(input) || /\s/.test(input)) return [];
   // No command name holds a second separator, so one means the user is typing
   // an absolute path. Leaving it to prefix matching would let Tab on /u turn
   // /usr/lib into /new.
-  if (/[/\\]/.test(name.slice(1))) return [];
-  return COMMANDS.filter((command) =>
-    /\s/.test(input) ? command.name === name : command.name.startsWith(input),
-  );
+  if (/[/\\]/.test(input.slice(1))) return [];
+  return COMMANDS.filter((command) => command.name.startsWith(input));
 }
 
 export function moveCommandSelection(current: number, count: number, step: -1 | 1): number {
