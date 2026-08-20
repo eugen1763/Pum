@@ -52,10 +52,12 @@ import {
   needsTranscriptGap,
   topAnchorScrollTop,
   PendingMessageLine,
+  flushStream,
   rawToolText,
   resolveGoalReview,
   resolvePendingDelivery,
   settleTranscriptMessage,
+  streamedDelta,
   StreamLine,
   TextLine,
   ToolLine,
@@ -737,11 +739,7 @@ const DEFAULT_PROMPT_STASH_STORE: PromptStashStore = {
 
 /** Move any buffered stream into the transcript so later lines land in order. */
 function flushed(t: Transcript): Transcript {
-  if (t.stream && t.stream.text.trim()) {
-    const line: Line = { kind: "text", role: t.stream.kind, text: t.stream.text.trim() };
-    return { lines: [...t.lines, line], stream: null, pending: t.pending };
-  }
-  return { ...t, stream: null };
+  return flushStream(t);
 }
 
 export function App({
@@ -1888,10 +1886,7 @@ export function App({
   }, [activeAgentId, agents.map((agent) => agent.id).join(":")]);
 
   const delta = (kind: "assistant" | "thinking", text: string) =>
-    setTx((t) => {
-      if (t.stream?.kind === kind) return { ...t, stream: { kind, text: t.stream.text + text } };
-      return { ...flushed(t), stream: { kind, text } };
-    });
+    setTx((t) => streamedDelta(t, kind, text));
 
   const patchTool = (id: string, patch: Partial<ToolCall>) =>
     setTx((t) => ({

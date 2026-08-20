@@ -68,8 +68,10 @@ import type { SandboxMode } from "../sandbox/types";
 import { readBranch } from "../git-branch";
 import { GOAL_VERDICT_TOOL_NAME, goalVerdictParameters } from "../goal-judge";
 import {
+  flushStream,
   resolvePendingDelivery,
   settleTranscriptMessage,
+  streamedDelta,
   type Line,
   type PendingLine,
 } from "../transcript";
@@ -314,15 +316,7 @@ type ManagerOptions = {
 const emptyTranscript = (): AgentTranscript => ({ lines: [], stream: null, pending: [] });
 
 function flushTranscript(transcript: AgentTranscript): AgentTranscript {
-  if (!transcript.stream?.text.trim()) return { ...transcript, stream: null };
-  return {
-    lines: [
-      ...transcript.lines,
-      { kind: "text", role: transcript.stream.kind, text: transcript.stream.text.trim() },
-    ],
-    stream: null,
-    pending: transcript.pending,
-  };
+  return flushStream(transcript);
 }
 
 function snapshotMetadata(snapshot: SubagentSnapshot): Omit<SubagentSnapshot, "transcript"> {
@@ -981,13 +975,7 @@ export class SubagentManager {
         if (kind === "assistant" && record.completionMessageIds?.size) {
           record.completionResponse = (record.completionResponse ?? "") + update.delta;
         }
-        this.updateTranscript(record, (value) => {
-          if (value.stream?.kind === kind) {
-            return { ...value, stream: { kind, text: value.stream.text + update.delta } };
-          }
-          const flushed = flushTranscript(value);
-          return { ...flushed, stream: { kind, text: update.delta } };
-        });
+        this.updateTranscript(record, (value) => streamedDelta(value, kind, update.delta));
         break;
       }
       case "tool_execution_start":
