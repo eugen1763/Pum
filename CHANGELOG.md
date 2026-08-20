@@ -4,6 +4,19 @@ All notable changes to PUM are documented in this file.
 
 ## Unreleased
 
+## [0.2.26-beta.1] - 2026-08-21
+
+### Added
+- Added `/providers`. It opens a list of every provider with its state, and takes `add`, `edit`, and `delete` with a provider name. Deletion removes the credential from `auth.json` for every provider, and for a custom provider it also removes the definition from `models.json`. When the deleted provider owned the active model, the session moves to another model. `/login` keeps working unchanged.
+- Added `/settings`, a text front end for the same state the `Ctrl+P` panel owns. `/settings` lists every `pum.json` key with its value and its scope, `/settings <name>` shows one key with the values it accepts, and `/settings <name> <value>` changes it for this session. `--global` also writes that one key to `pum.json` and leaves the rest of the file alone. A name matches the `pum.json` key or the panel label, and case, spaces, hyphens, and underscores do not distinguish two settings. Advanced keys the panel does not show are reachable with their dotted names, such as `/settings bashOutput.maxBytes 8192`. `Tab` completes the setting name and then the accepted value.
+- The prompt placeholder now says what the agent does while it works: `Working... (send to steer)` while a tool runs, and `Forming a thought... (send to steer)` while the model composes an answer. A bright crest crosses the phrase once every few seconds and raises the letter at the top of the crest. `Animations off` returns the placeholder to plain dim text.
+
+### Changed
+- The prompt now scrolls its command and path suggestions instead of dropping them. The list capped at five entries, so any match past the fifth could not be reached. Every match now stays selectable, and a five-row window follows the selection.
+
+### Fixed
+- `/settings` no longer completes a value that is already whole. A finished token kept its own row on screen, so `Enter` re-inserted the text that was already there instead of running the command. The list now stops once the token under the cursor is a whole setting name, a whole value, or the `--global` flag. A name that another name extends stops too, so `Enter` cannot turn `checkMode` into `checkModel`.
+
 ## [0.2.25-beta.1] - 2026-08-20
 
 ### Changed
