@@ -310,8 +310,14 @@ const QUIT_WINDOW_MS = 2000;
 const MAX_INPUT_ROWS = 8;
 /** How long a scroll to a row waits between tries for React to draw it. */
 const ROW_DRAW_RETRY_MS = 30;
-/** How many of those tries it makes before it gives up. */
-const ROW_DRAW_TRIES = 12;
+/**
+ * How many of those tries it makes before it gives up.
+ *
+ * A busy machine with a long session can take most of a second to draw a row
+ * that had to be mounted first, and a jump that gives up before then looks to
+ * the reader exactly like a dead key.
+ */
+const ROW_DRAW_TRIES = 30;
 /** Frames a scroll correction waits for its rows before it gives up. */
 const ANCHOR_FRAME_BUDGET = 30;
 /** Keys that move around without changing the text. */

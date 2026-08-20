@@ -59,6 +59,24 @@ function newsItem(id: string, text: string, at: number, read = false, answered =
 
 const T0 = 1_700_000_000_000;
 
+/**
+ * Settle until the frame shows something, or give up.
+ *
+ * A session this size takes several frames to mount, and the jump it is asked
+ * for takes a render and then a layout on top of that. One settle covers
+ * neither, and a key pressed before the app is listening is simply lost.
+ */
+async function until(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  shown: (frame: string) => boolean,
+  attempts = 20,
+) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (shown(setup.captureCharFrame())) return;
+    await settle(setup);
+  }
+}
+
 async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.renderOnce();
   await setup.flush();
@@ -509,10 +527,15 @@ describe("news keyboard shortcuts", () => {
     const setup = await renderApp(session);
     const transcript = setup.renderer.root.findDescendantById("transcript-scrollbox") as ScrollBoxRenderable;
 
+    await until(setup, (frame) => frame.includes("Tail answer 9"));
     setup.mockInput.pressKey("n", { ctrl: true });
-    await settle(setup);
+    await until(setup, (frame) => frame.includes("1 / 1"));
+    expect(setup.captureCharFrame()).toContain("1 / 1");
+
     await setup.mockInput.typeText("n");
-    await settle(setup);
+    // The popup shows the answer too, so the wait is for the popup to close
+    // with the answer on the transcript behind it.
+    await until(setup, (frame) => !frame.includes("1 / 1") && frame.includes(answer));
 
     expect(setup.captureCharFrame()).not.toContain("1 / 1");
     expect(setup.captureCharFrame()).toContain(answer);

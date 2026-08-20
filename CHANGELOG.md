@@ -4,6 +4,9 @@ All notable changes to PUM are documented in this file.
 
 ## Unreleased
 
+### Fixed
+- A jump to a transcript row now waits longer for the row to be drawn. A busy machine with a long session can take most of a second to draw a row that had to be mounted first, and giving up before then looked exactly like a dead key.
+
 ## [0.2.23-beta.1] - 2026-08-20
 
 ### Added
