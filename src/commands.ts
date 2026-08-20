@@ -101,3 +101,21 @@ export function moveCommandSelection(current: number, count: number, step: -1 | 
   if (count <= 0) return 0;
   return (current + step + count) % count;
 }
+
+/** Suggestion rows the prompt shows at one time. Longer lists scroll. */
+export const SUGGESTION_ROWS = 5;
+
+/**
+ * First visible index of a suggestion list. The window follows the selection
+ * and holds it near the middle, so a long list scrolls before the selection
+ * reaches an edge of the window.
+ */
+export function suggestionWindowStart(
+  cursor: number,
+  count: number,
+  rows: number = SUGGESTION_ROWS,
+): number {
+  if (count <= rows) return 0;
+  const selected = Math.max(0, Math.min(cursor, count - 1));
+  return Math.max(0, Math.min(selected - Math.floor((rows - 1) / 2), count - rows));
+}

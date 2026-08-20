@@ -94,6 +94,8 @@ import {
   isCommandInput,
   matchingCommandsForTarget,
   moveCommandSelection,
+  SUGGESTION_ROWS,
+  suggestionWindowStart,
 } from "./commands";
 import { truncateStatusText } from "./status-metadata";
 import { modeLineLabels } from "./mode-line";
@@ -1204,7 +1206,7 @@ export function App({
     : matchingCommandsForTarget(
       commandInput,
       activeAgentId ? "subagent" : "main",
-    ).slice(0, 5);
+    );
   const pathSuggestions = (!shellMode && activeAgentId) || stashOpen || commandSuggestionsDismissed
     || isCommandInput(commandInput)
     || !shouldAutoShowPathCompletions(commandInput, inputCursorOffset)
@@ -1213,8 +1215,12 @@ export function App({
       commandInput,
       inputCursorOffset,
       shellMode && activeAgent ? activeAgent.worktree.path : cwd,
-    ).slice(0, 5);
+    );
   const suggestionCount = commandSuggestions.length || pathSuggestions.length;
+  // Every match stays selectable. Only SUGGESTION_ROWS of them are on screen,
+  // and the window scrolls with the selection.
+  const suggestionIndex = Math.min(commandCursor, Math.max(0, suggestionCount - 1));
+  const suggestionStart = suggestionWindowStart(suggestionIndex, suggestionCount);
   const visibleSettingRows = filterSettingsRows(settingsQuery);
   const visibleModels = useMemo(() => filterModels(
     modelRuntime.getAvailableSnapshot(),
@@ -5114,7 +5120,7 @@ export function App({
         : matchingCommandsForTarget(
           inputValue,
           activeAgentIdRef.current ? "subagent" : "main",
-        ).slice(0, 5);
+        );
     const inputCursor = inputRef.current?.cursorOffset ?? inputValue.length;
     const pathMatches =
       (!shellModeRef.current && activeAgentIdRef.current)
@@ -5130,7 +5136,7 @@ export function App({
               (agent) => agent.id === activeAgentIdRef.current,
             )?.worktree.path ?? cwd
             : cwd,
-        ).slice(0, 5);
+        );
     const visiblePathMatches = shouldAutoShowPathCompletions(inputValue, inputCursor)
       ? pathMatches
       : [];
@@ -5646,7 +5652,7 @@ export function App({
         {suggestionCount > 0 ? (
           <box
             style={{
-              height: suggestionCount,
+              height: Math.min(suggestionCount, SUGGESTION_ROWS),
               flexShrink: 0,
               flexDirection: "column",
             }}
@@ -5659,22 +5665,24 @@ export function App({
               : pathSuggestions.map((completion) => ({
                 key: `${completion.start}:${completion.end}:${completion.replacement}`,
                 text: completion.replacement,
-              }))).map((suggestion, index) => {
-              const highlighted = index === Math.min(commandCursor, suggestionCount - 1);
-              return (
-                <box key={suggestion.key} style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
-                  <box style={{ width: 2, flexShrink: 0 }}>
-                    {highlighted ? <text content="❯ " fg={theme.accent} /> : null}
+              })))
+              .slice(suggestionStart, suggestionStart + SUGGESTION_ROWS)
+              .map((suggestion, index) => {
+                const highlighted = suggestionStart + index === suggestionIndex;
+                return (
+                  <box key={suggestion.key} style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
+                    <box style={{ width: 2, flexShrink: 0 }}>
+                      {highlighted ? <text content="❯ " fg={theme.accent} /> : null}
+                    </box>
+                    <text
+                      content={suggestion.text}
+                      fg={highlighted ? theme.fg : theme.dim}
+                      wrapMode="none"
+                      style={{ flexGrow: 1, minWidth: 0 }}
+                    />
                   </box>
-                  <text
-                    content={suggestion.text}
-                    fg={highlighted ? theme.fg : theme.dim}
-                    wrapMode="none"
-                    style={{ flexGrow: 1, minWidth: 0 }}
-                  />
-                </box>
-              );
-            })}
+                );
+              })}
           </box>
         ) : null}
         <box

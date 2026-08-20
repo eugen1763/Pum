@@ -3,6 +3,11 @@ import { TextareaRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App, promptPlaceholder } from "../src/app";
+import {
+  matchingCommandsForTarget,
+  SUGGESTION_ROWS,
+  suggestionWindowStart,
+} from "../src/commands";
 
 let destroy: (() => void) | undefined;
 afterEach(() => destroy?.());
@@ -188,6 +193,44 @@ describe("prompt input layout", () => {
 
     expect(frame).toContain("❯ / ");
     expect(frame.match(/❯/gu)).toHaveLength(1);
+  });
+
+  test("shows five suggestion rows and scrolls the rest into view", async () => {
+    const commands = matchingCommandsForTarget("/", "main");
+    expect(commands.length).toBeGreaterThan(SUGGESTION_ROWS);
+    const setup = await renderApp(80, 24);
+    const visibleNames = () => {
+      const frame = setup.captureCharFrame();
+      return commands
+        .filter((command) => frame.includes(`${command.name}  \u2014`))
+        .map((command) => command.name);
+    };
+    const windowNames = (cursor: number) => {
+      const start = suggestionWindowStart(cursor, commands.length);
+      return commands.slice(start, start + SUGGESTION_ROWS).map((command) => command.name);
+    };
+
+    await setup.mockInput.typeText("/");
+    await settle(setup);
+    expect(visibleNames()).toEqual(windowNames(0));
+
+    // The window stays put until the selection passes the middle row.
+    for (let press = 0; press < 3; press += 1) {
+      setup.mockInput.pressArrow("down");
+      await settle(setup);
+    }
+    expect(visibleNames()).toEqual(windowNames(3));
+    expect(setup.captureCharFrame()).toContain(`\u276f ${commands[3]!.name}`);
+
+    // The last command is reachable, and it is not visible from the top.
+    const last = commands.length - 1;
+    for (let press = 3; press < last; press += 1) {
+      setup.mockInput.pressArrow("down");
+      await settle(setup);
+    }
+    expect(visibleNames()).toEqual(windowNames(last));
+    expect(setup.captureCharFrame()).toContain(`\u276f ${commands[last]!.name}`);
+    expect(visibleNames()).not.toContain(commands[0]!.name);
   });
 
   test("Escape dismisses slash suggestions without deleting the draft", async () => {
