@@ -487,6 +487,20 @@ These were chosen deliberately. Change them only on purpose.
   has always worked. Dropping it at capture or at load instead would let the
   setting reveal a resumed subagent's reasoning but never the main agent's, and
   would make turning it on show nothing until the next turn.
+- **The two streamed kinds interleave, so one buffer is not enough.** A
+  reasoning provider does not always finish the reasoning before the answer
+  starts: the last of it can arrive after the first words of the answer.
+  Committing the buffered answer to make room for that late delta cut the answer
+  into two rows, which reads as a line break in the middle of a sentence — a
+  live `ds4-ops` turn produced the rows `Hi! I` and `am ready to help with your
+  project.` So `streamedDelta` keeps the answer streaming and appends late
+  reasoning to the row it came from. Two rules follow. Every path that takes a
+  delta uses `streamedDelta`, the main session and the subagent manager alike;
+  and a committed reasoning row keeps its text exactly as it arrived, because
+  more of it may still be appended and a trimmed space at the join would glue
+  two words together. Only the answer is trimmed, because it is markdown, where
+  leading whitespace opens a code block.
+  `tests/interleaved-stream-ui.test.tsx` covers both rows.
 - **Inter-agent messages answer to their own setting.** `showAgentMessages` is
   independent of the output mode: what one agent said to another is a different
   question from how much tool detail to show, so Verbose can hide them and Quiet

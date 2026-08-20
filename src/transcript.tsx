@@ -160,10 +160,65 @@ export function resolveGoalReview<T extends PendingTranscriptState>(
 }
 
 /** Finish the stream, then insert messages that arrived while it was active. */
+/**
+ * The line a buffered stream becomes, or nothing when it holds no text.
+ *
+ * Reasoning keeps its text as it arrived. The rest of it can still turn up
+ * after the answer has started, and it is appended to this line, so a space at
+ * the join has to survive; the row normalizes what it shows anyway. An answer
+ * is markdown, where leading whitespace would open a code block, so it is
+ * trimmed.
+ */
+export function streamedLine(stream: PendingTranscriptState["stream"]): Line | null {
+  if (!stream?.text.trim()) return null;
+  const text = stream.kind === "thinking" ? stream.text : stream.text.trim();
+  return { kind: "text", role: stream.kind, text };
+}
+
+/** Move any buffered stream into the transcript, and close the stream. */
+export function flushStream<T extends PendingTranscriptState>(value: T): T {
+  const line = streamedLine(value.stream);
+  if (!line) return { ...value, stream: null };
+  return { ...value, lines: [...value.lines, line], stream: null };
+}
+
+/**
+ * Take one streamed delta of `kind` into the transcript.
+ *
+ * A reasoning provider does not always finish one stream before it starts the
+ * other: the last of the reasoning can arrive after the first words of the
+ * answer. Committing the answer to make room for it would cut the answer in
+ * two, which reads as a line break in the middle of a sentence. So the answer
+ * keeps the stream, and the late reasoning rejoins the row it belongs to.
+ */
+export function streamedDelta<T extends PendingTranscriptState>(
+  value: T,
+  kind: "assistant" | "thinking",
+  text: string,
+): T {
+  if (value.stream?.kind === kind) {
+    return { ...value, stream: { kind, text: value.stream.text + text } };
+  }
+  if (kind === "thinking" && value.stream?.kind === "assistant") {
+    return { ...value, lines: withThinkingAppended(value.lines, text) };
+  }
+  return { ...flushStream(value), stream: { kind, text } };
+}
+
+/** Add reasoning to the row it came from, or start one if there is none. */
+function withThinkingAppended(lines: readonly Line[], text: string): Line[] {
+  const last = lines[lines.length - 1];
+  if (last?.kind === "text" && last.role === "thinking") {
+    return [...lines.slice(0, -1), { ...last, text: last.text + text }];
+  }
+  return [...lines, { kind: "text", role: "thinking", text }];
+}
+
 export function settleTranscriptMessage<T extends PendingTranscriptState>(value: T): T {
   const lines = [...value.lines];
-  if (value.stream?.text.trim()) {
-    lines.push({ kind: "text", role: value.stream.kind, text: value.stream.text.trim() });
+  const streamed = streamedLine(value.stream);
+  if (streamed) {
+    lines.push(streamed);
   }
   const delivered = value.pending.filter((item) => item.delivered);
   return {
