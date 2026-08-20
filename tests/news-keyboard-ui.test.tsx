@@ -463,6 +463,81 @@ describe("news keyboard shortcuts", () => {
     await settle(setup);
     expect(copied).toEqual(["Copy the first answer.", "Copy the second answer."]);
   });
+
+  // Successful tool calls fold into one activity row, so a row sits at a very
+  // different index than its line does in the session. The jump has to use the
+  // index of the row on screen, not the index of the line in the transcript.
+  test("jumps to an answer that sits behind folded tool rows", async () => {
+    const answer = "Target assistant answer";
+    const prompt = "Target user prompt";
+    const entries: any[] = [];
+    for (let turn = 0; turn < 30; turn++) {
+      entries.push({ type: "message", message: { role: "user", content: `Later prompt ${turn}` } });
+      for (let call = 0; call < 4; call++) {
+        const id = `t${turn}-${call}`;
+        entries.push({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", id, name: "read", arguments: { path: `file-${id}.ts` } }],
+          },
+        });
+        entries.push({ type: "message", message: { role: "toolResult", toolCallId: id, output: "ok" } });
+      }
+      entries.push({
+        type: "message",
+        message: { role: "assistant", content: [{ type: "text", text: `Later answer ${turn}` }] },
+      });
+    }
+    entries.push({ type: "message", message: { role: "user", content: prompt } });
+    entries.push({
+      type: "message",
+      message: { role: "assistant", content: [{ type: "text", text: answer }] },
+    });
+    for (let turn = 0; turn < 10; turn++) {
+      entries.push({ type: "message", message: { role: "user", content: `Tail prompt ${turn}` } });
+      entries.push({
+        type: "message",
+        message: { role: "assistant", content: [{ type: "text", text: `Tail answer ${turn}` }] },
+      });
+    }
+    const session = fakeSession(undefined, entries);
+    saveNewsItems(session.sessionFile, [{
+      ...newsItem("a1", answer, T0),
+      prompts: [{ text: prompt, steer: false }],
+    }]);
+    const setup = await renderApp(session);
+    const transcript = setup.renderer.root.findDescendantById("transcript-scrollbox") as ScrollBoxRenderable;
+
+    setup.mockInput.pressKey("n", { ctrl: true });
+    await settle(setup);
+    await setup.mockInput.typeText("n");
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).not.toContain("1 / 1");
+    expect(setup.captureCharFrame()).toContain(answer);
+  });
+
+  test("says so when the stored answer has no row to jump to", async () => {
+    const session = fakeSession(undefined, [
+      { type: "message", message: { role: "user", content: "A question" } },
+      {
+        type: "message",
+        message: { role: "assistant", content: [{ type: "text", text: "A different answer" }] },
+      },
+    ]);
+    saveNewsItems(session.sessionFile, [newsItem("a1", "An answer that was compacted away", T0)]);
+    const setup = await renderApp(session);
+
+    setup.mockInput.pressKey("n", { ctrl: true });
+    await settle(setup);
+    await setup.mockInput.typeText("n");
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).not.toContain("1 / 1");
+    expect(frame).toContain("not in the transcript any more");
+  });
 });
 
 function expectSetupInput(setup: Awaited<ReturnType<typeof createTestRenderer>>, text: string) {

@@ -27,6 +27,7 @@ bun run start    # open the TUI in the current directory
 | `src/transcript.tsx` | Row rendering per role |
 | `src/output-minimal.ts` | Grouping successful tool runs into one activity row |
 | `src/transcript-dwell.ts` | How long a row must stay put before it may change |
+| `src/transcript-window.ts` | Which rows are mounted, and when older ones join them |
 | `src/tool-row.ts` | One spelling of a tool row, for live events and for replay |
 | `src/tool-preview.ts` | Diff, write, and Bash previews, and inline diff trimming |
 | `src/syntax-grammars.ts` | Registers the tree-sitter grammars vendored under `assets/` |
@@ -857,6 +858,42 @@ Each of these cost real debugging. They are not obvious from the docs.
   runs off a single `renderer.setFrameCallback` instead, writing `content`
   straight onto renderables so React never re-renders per frame. The clock
   holds `requestLive()` only while something animates, so idle costs nothing.
+- **A context value built inline re-renders the whole transcript.** React
+  answers a changed provider value by walking every fiber under the provider to
+  find consumers, so a fresh object in `AnimationProvider` made one keystroke
+  cost time proportional to the length of the session. Measured on a 1600-row
+  transcript: 70 ms a keystroke and 43 ms an answer delta, against 24 ms and
+  10 ms once the value, the rows, and the row list all keep their identity.
+  Three rules hold that together, and dropping any one of them brings the cost
+  back: the clock context value is memoized (`animation.tsx`); `TranscriptRow`
+  is `memo` and every prop it takes is identity-stable, so the disclosure
+  handler is one shared function taking the row index rather than a closure per
+  row; and the row list is one memoized element, whose dependency array must
+  name every value a row reads. `tests/animation-clock-context.test.tsx` guards
+  the first of the three.
+- **OpenTUI paints only the viewport but lays out every mounted row.** Its
+  scroll box culls what it draws, so a long transcript looks cheap and is not:
+  the layout pass and the render list still walk every node, on every frame that
+  anything changes. 1600 rows are 23,000 renderables, which cost 70 ms a
+  keystroke; at 4000 rows the tree could not be built at all. The transcript
+  therefore mounts only a run of rows reaching the end (`transcript-window.ts`),
+  which holds the tree near 1,200 renderables however long the session is, and
+  the cost of a keystroke near 9 ms. Four rules come with it, and each one cost
+  a bug to learn. Anything that scrolls to a row goes through
+  `scrollToTranscriptRow`: the row is probably not in the tree, asking for it
+  only schedules a render, and the frame in between is free to decide the
+  reader is at the end and take the row away again, so the request has to be
+  repeated until the row is drawn and the window has to be held while it waits.
+  Mounting history above the viewport must be paired with the scroll correction
+  that holds the reader's row still, or the screen jumps under them. That
+  correction must not run when the reader has dragged the view against the top
+  of the mounted rows: they are asking for the history above, and holding their
+  place there shows no movement at all, which is what made the first message of
+  a long session unreachable. And a row index is not a line index: successful
+  tool calls fold into one activity row and hidden kinds drop out, so anything
+  looking for a row matches the line against `visibleLinesRef`, never against
+  the transcript. `tests/transcript-window-ui.test.tsx` and
+  `tests/news-keyboard-ui.test.tsx` cover all four.
 - **Windows path spelling is not identity.** A single directory can appear as a
   long path, an 8.3 short path, or with different case. Additional Check mode
   roots and mutation targets must use the shared canonical identity and

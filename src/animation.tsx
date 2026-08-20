@@ -285,13 +285,16 @@ export function AnimationProvider({
   );
   const workingRuleCycleWidth = useCallback(() => workingCycleWidth.current, []);
 
-  return (
-    <ClockContext.Provider
-      value={{ subscribe, workingElapsed, workingRuleCycleWidth, enabled }}
-    >
-      {children}
-    </ClockContext.Provider>
+  // A fresh object here would be a changed context value on every render of the
+  // app, and React answers that by walking the whole tree below the provider to
+  // find consumers. With a long transcript that walk is the largest part of the
+  // cost of one keystroke, so the value keeps its identity while its parts do.
+  const clock = useMemo(
+    () => ({ subscribe, workingElapsed, workingRuleCycleWidth, enabled }),
+    [subscribe, workingElapsed, workingRuleCycleWidth, enabled],
   );
+
+  return <ClockContext.Provider value={clock}>{children}</ClockContext.Provider>;
 }
 
 /** Exported for the test that guards the run-coalescing loop below. */
