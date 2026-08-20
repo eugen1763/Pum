@@ -48,6 +48,35 @@ support empty-prompt queued-message recall.
 | `/compress`, `/clear`, `/new` | Compact the context, or start fresh |
 | `/stats` | Usage and cost for the session |
 | `/login` | Add or update a provider |
+| `/providers` | Manage providers: `/providers [add\|edit\|delete] [name]` |
+
+## Providers
+
+`/providers` opens a list of every provider PUM knows, with its state: logged
+in, not logged in, and whether it is custom. Use the subcommands to skip the
+list.
+
+| Command | Effect |
+| --- | --- |
+| `/providers` | Open the list |
+| `/providers add` | Open the login picker, the same as `/login` |
+| `/providers add <name>` | Log in to one provider |
+| `/providers edit <name>` | Re-authenticate a provider, or change a custom endpoint |
+| `/providers delete <name>` | Remove a provider, after a confirmation |
+
+In the list, `↑↓` move, `Enter` adds or re-authenticates, `d` deletes, `/`
+focuses the filter, and `Esc` closes. The subcommand and the provider name both
+complete with `Tab`.
+
+Deletion removes different things for the two kinds of provider:
+
+- A built-in provider loses its stored credential only. It stays in the list,
+  and you can add it again.
+- A custom provider also loses its definition from `models.json`, so it leaves
+  the list.
+
+Deletion always asks first. A provider that holds no credential and has no
+custom definition cannot be deleted, and PUM says so.
 
 ## Shell command mode
 

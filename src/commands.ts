@@ -42,6 +42,10 @@ export const COMMANDS: Command[] = [
     description: "Add or update a provider login",
   },
   {
+    name: "/providers",
+    description: "Manage providers: /providers [add|edit|delete] [name]",
+  },
+  {
     name: "/news",
     description: "Open recent answers (News)",
   },

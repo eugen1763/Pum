@@ -195,6 +195,16 @@ import { AgentSelectorPopup, buildAgentTree, moveAgentSelection } from "./agent-
 import { LoginPopup, type LoginPage } from "./login-popup";
 import { LoginController } from "./login-controller";
 import { providerLoginMethods } from "./login-flow";
+import { ProvidersPopup, type ProvidersPage } from "./providers-popup";
+import { ProvidersController } from "./providers-controller";
+import { parseProvidersCommand, type ProviderEntry } from "./providers-command";
+import { providersCompletions } from "./providers-autocomplete";
+import {
+  deleteProvider,
+  modelAfterRemoval,
+  providerEntries,
+  readCustomProviderIds,
+} from "./providers-flow";
 import { questionnaireDetail, QuestionnaireManager } from "./questionnaire";
 import { QuestionnairePopup } from "./questionnaire-popup";
 import {
@@ -958,6 +968,13 @@ export function App({
   const [agentSelectorCursor, setAgentSelectorCursor] = useState(0);
   const [agentElapsedSec, setAgentElapsedSec] = useState(0);
   const [loginOpen, setLoginOpen] = useState(loginRequired);
+  const [providersOpen, setProvidersOpen] = useState(false);
+  const [providersPage, setProvidersPage] = useState<ProvidersPage>({
+    kind: "working",
+    message: "Loading providers…",
+  });
+  // Kept beside the popup so /providers can complete names before it opens.
+  const [managedProviders, setManagedProviders] = useState<ProviderEntry[]>([]);
   const [, setQuestionnaireRevision] = useState(0);
   const [, setSpawnPreviewRevision] = useState(0);
   const [loginPage, setLoginPage] = useState<LoginPage>(() => ({
@@ -1043,7 +1060,7 @@ export function App({
   // it from each opener means a popup added later cannot forget a line here.
   const todoVisible = todoOpen
     && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen
-    && !triggersOpen && !loginOpen && !newsOpen && !visibleQuestionnaire && !spawnPreview;
+    && !triggersOpen && !loginOpen && !providersOpen && !newsOpen && !visibleQuestionnaire && !spawnPreview;
   // Memoized because the filtered result is a new object every call whenever
   // the transcript holds reasoning. That new identity would re-run the dwell
   // and projection passes below on every render, keystrokes included.
@@ -1207,6 +1224,11 @@ export function App({
       commandInput,
       activeAgentId ? "subagent" : "main",
     );
+  // /providers is the one command whose arguments come from a closed set, so it
+  // completes them. Every other command still stops at its name.
+  const providersSuggestions = shellMode || stashOpen || commandSuggestionsDismissed || activeAgentId
+    ? []
+    : providersCompletions(commandInput, inputCursorOffset, managedProviders);
   const pathSuggestions = (!shellMode && activeAgentId) || stashOpen || commandSuggestionsDismissed
     || isCommandInput(commandInput)
     || !shouldAutoShowPathCompletions(commandInput, inputCursorOffset)
@@ -1216,7 +1238,9 @@ export function App({
       inputCursorOffset,
       shellMode && activeAgent ? activeAgent.worktree.path : cwd,
     );
-  const suggestionCount = commandSuggestions.length || pathSuggestions.length;
+  const suggestionCount = commandSuggestions.length
+    || providersSuggestions.length
+    || pathSuggestions.length;
   // Every match stays selectable. Only SUGGESTION_ROWS of them are on screen,
   // and the window scrolls with the selection.
   const suggestionIndex = Math.min(commandCursor, Math.max(0, suggestionCount - 1));
@@ -1398,6 +1422,11 @@ export function App({
   if (!loginControllerRef.current) {
     loginControllerRef.current = new LoginController(modelRuntime, () => sessionRef.current, setLoginPage, (id) => id && setModelId(id), () => setLoginOpen(false));
   }
+  // Built on first use, because its dependencies close over helpers that this
+  // component defines further down.
+  const providersControllerRef = useRef<ProvidersController | null>(null);
+  // The key handler runs outside render, so it reads the providers from a ref.
+  const managedProvidersRef = useRef<ProviderEntry[]>([]);
 
   const setSelectedStashRange = (indices: Set<number>, anchor: number | null) => {
     stashSelectionRef.current = indices;
@@ -2683,6 +2712,73 @@ export function App({
     loginControllerRef.current?.open();
   };
 
+  /** Read every provider the runtime knows, with its credential state. */
+  const loadManagedProviders = async (): Promise<ProviderEntry[]> => {
+    const runtime = modelRuntime as any;
+    const custom = await readCustomProviderIds();
+    const entries = providerEntries(runtime.getProviders?.() ?? [], {
+      configured: (id) => Boolean(runtime.hasConfiguredAuth?.(id)),
+      custom,
+    });
+    managedProvidersRef.current = entries;
+    setManagedProviders(entries);
+    return entries;
+  };
+
+  const providersController = () => {
+    if (!providersControllerRef.current) {
+      providersControllerRef.current = new ProvidersController({
+        loadEntries: loadManagedProviders,
+        show: setProvidersPage,
+        close: () => setProvidersOpen(false),
+        startLogin: (entry) => {
+          openLogin();
+          // The login list holds one row per auth method, so filtering to the
+          // provider is as far as PUM can go without choosing a method.
+          if (entry) loginControllerRef.current?.setProviderQuery(entry.name);
+        },
+        remove: async (entry) => {
+          await deleteProvider(modelRuntime as any, entry);
+          // The active model may have belonged to the provider just removed.
+          // Move to another one rather than keep a model PUM cannot authenticate.
+          const runtime = modelRuntime as any;
+          const replacement = modelAfterRemoval(
+            sessionRef.current.agent.state.model,
+            runtime.getAvailableSnapshot?.() ?? [],
+            entry.id,
+          );
+          if (!replacement) return;
+          await sessionRef.current.setModel(replacement);
+          setModelId(sessionRef.current.agent.state.model.id);
+        },
+      });
+    }
+    return providersControllerRef.current;
+  };
+
+  const openProviders = (request: ReturnType<typeof parseProvidersCommand>) => {
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setTriggerPopup(false, false);
+    setNewsOpen(false);
+    newsOpenRef.current = false;
+    setStatsOpen(false);
+    statsOpenRef.current = false;
+    setProvidersOpen(true);
+    void providersController().open(request ?? { action: "list" });
+  };
+
+  // Load the provider list the first time /providers is typed, so name
+  // completion works before the popup has ever opened.
+  useEffect(() => {
+    if (managedProviders.length > 0) return;
+    if (!/^\/providers\s/.test(commandInput)) return;
+    void loadManagedProviders();
+  }, [commandInput, managedProviders.length]);
+
   const selectModel = (model: Model<any>) => {
     settingsPageRef.current = "main";
     setPage("main");
@@ -3320,6 +3416,7 @@ export function App({
     const clear = /^\/(?:clear|new)$/.test(trimmed);
     const historyCommand = trimmed === "/history";
     const loginCommand = trimmed === "/login";
+    const providersCommand = parseProvidersCommand(trimmed);
     const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
     const processesCommand = trimmed === "/processes";
@@ -3327,7 +3424,7 @@ export function App({
     const todoCommand = trimmed === "/todo";
     const statsCommand = trimmed === "/stats";
     const worktreeCommand = parseWorktreeCommand(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !providersCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
     setEditingStash(null);
 
     if (historyCommand) {
@@ -3338,6 +3435,11 @@ export function App({
     if (loginCommand) {
       setEditorText("");
       openLogin();
+      return true;
+    }
+    if (providersCommand) {
+      setEditorText("");
+      openProviders(providersCommand);
       return true;
     }
     if (triggersCommand) {
@@ -4792,6 +4894,11 @@ export function App({
       return;
     }
 
+    if (providersOpen) {
+      if (providersControllerRef.current?.handleKey(key)) key.stopPropagation();
+      return;
+    }
+
     if (key.ctrl && key.name === "y") {
       key.stopPropagation();
       setTranscriptFocus(!transcriptFocusedRef.current);
@@ -5140,7 +5247,21 @@ export function App({
     const visiblePathMatches = shouldAutoShowPathCompletions(inputValue, inputCursor)
       ? pathMatches
       : [];
-    const inputSuggestionCount = commandMatches.length || visiblePathMatches.length;
+    const providersMatches =
+      shellModeRef.current
+      || stashOpenRef.current
+      || commandSuggestionsDismissedRef.current
+      || activeAgentIdRef.current
+        ? []
+        : providersCompletions(inputValue, inputCursor, managedProvidersRef.current);
+    // Both sources carry path-completion offsets, so one insert path serves both.
+    const argumentMatches = providersMatches.length > 0 ? providersMatches : pathMatches;
+    const visibleArgumentMatches = providersMatches.length > 0
+      ? providersMatches
+      : visiblePathMatches;
+    const inputSuggestionCount = commandMatches.length
+      || providersMatches.length
+      || visiblePathMatches.length;
     const isContinuationReturn =
       isPlainReturn &&
       inputValue.endsWith("\\") &&
@@ -5261,7 +5382,7 @@ export function App({
         && previousCycle.currentCursor === inputCursor;
       const completions = continuing
         ? previousCycle!.completions
-        : pathMatches;
+        : argumentMatches;
       if (completions.length > 0) {
         key.stopPropagation();
         const index = continuing
@@ -5313,14 +5434,14 @@ export function App({
       return;
     }
 
-    if (isPlainReturn && visiblePathMatches.length > 0) {
+    if (isPlainReturn && visibleArgumentMatches.length > 0) {
       key.stopPropagation();
-      const index = Math.min(commandCursorRef.current, visiblePathMatches.length - 1);
-      const completed = applyPathCompletion(inputValue, visiblePathMatches[index]!);
+      const index = Math.min(commandCursorRef.current, visibleArgumentMatches.length - 1);
+      const completed = applyPathCompletion(inputValue, visibleArgumentMatches[index]!);
       setEditorText(completed.value, completed.cursorOffset, true);
       pathCompletionCycle.current = {
         sourceValue: inputValue,
-        completions: visiblePathMatches,
+        completions: visibleArgumentMatches,
         index,
         currentValue: completed.value,
         currentCursor: completed.cursorOffset,
@@ -5662,10 +5783,11 @@ export function App({
                 key: command.name,
                 text: `${command.name}  —  ${command.description}`,
               }))
-              : pathSuggestions.map((completion) => ({
-                key: `${completion.start}:${completion.end}:${completion.replacement}`,
-                text: completion.replacement,
-              })))
+              : (providersSuggestions.length > 0 ? providersSuggestions : pathSuggestions)
+                .map((completion) => ({
+                  key: `${completion.start}:${completion.end}:${completion.replacement}`,
+                  text: completion.replacement,
+                })))
               .slice(suggestionStart, suggestionStart + SUGGESTION_ROWS)
               .map((suggestion, index) => {
                 const highlighted = suggestionStart + index === suggestionIndex;
@@ -5723,7 +5845,7 @@ export function App({
             wrapMode="word"
             keyBindings={PROMPT_TEXTAREA_KEY_BINDINGS}
             scrollMargin={1}
-            focused={!transcriptFocused && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible}
+            focused={!transcriptFocused && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !providersOpen && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => shellModeRef.current ? submitShellCommand() : submitPrompt()}
@@ -5751,6 +5873,15 @@ export function App({
               terminalWidth={width}
               terminalHeight={height}
               onProviderSearchChange={(value) => loginControllerRef.current?.setProviderQuery(value)}
+            />
+          ) : null}
+          {providersOpen ? (
+            <ProvidersPopup
+              theme={theme}
+              page={providersPage}
+              terminalWidth={width}
+              terminalHeight={height}
+              onSearchChange={(value) => providersControllerRef.current?.setQuery(value)}
             />
           ) : null}
           {spawnPreview ? (

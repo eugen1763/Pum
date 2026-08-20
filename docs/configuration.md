@@ -23,6 +23,10 @@ from pi's own configuration directory.
 | `sessions/` | Main conversation sessions |
 | `subagents/` | Persistent subagent sessions |
 
+`/providers delete` writes to both credential stores. It removes the credential
+from `auth.json` for every provider. For a custom provider it also removes the
+definition from `models.json`. See [controls](controls.md) for the command.
+
 ## Session settings
 
 Changes in `Ctrl+P` apply to the current session and persist beside it, leaving
