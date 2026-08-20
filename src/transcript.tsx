@@ -2,13 +2,14 @@ import {
   StyledText,
   TextAttributes,
   fg,
+  type BoxRenderable,
   type MarkdownRenderable,
   type MouseEvent as OpenTuiMouseEvent,
   type SyntaxStyle,
   type TextChunk,
   type TextRenderable,
 } from "@opentui/core";
-import type { MarkdownProps } from "@opentui/react";
+import { useRenderer, type MarkdownProps } from "@opentui/react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   useBlinkingText,
@@ -22,6 +23,7 @@ import {
   goalReviewHeadline,
   type GoalReviewStatus,
 } from "./goal-review";
+import { wrapAtSpaces } from "./text-wrap";
 import type { Theme } from "./theme";
 import { bashOutputWindow, type BashOutputWindow, type ToolCall } from "./tool-line";
 import type { TranscriptOutputMode } from "./transcript-output";
@@ -237,6 +239,40 @@ export function normalizeThinkingText(text: string): string {
     .replace(/\n[ \t]*\n+/g, "\n");
 }
 
+/**
+ * Columns the message body of a row occupies, or 0 before it is measured.
+ *
+ * The row is pre-wrapped at this width, so the renderer's own word wrap finds
+ * nothing to break. Layout runs before effects, so the first measurement is
+ * already the real one; the terminal's resize event covers every later one,
+ * because a resized row re-lays out without React rendering it again.
+ */
+function useBodyColumns(ref: RefObject<BoxRenderable | null>, active: boolean): number {
+  const renderer = useRenderer();
+  const [columns, setColumns] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const measure = () => {
+      const width = ref.current?.width ?? 0;
+      if (width > 0) setColumns((current) => (current === width ? current : width));
+    };
+    measure();
+    renderer.on("resize", measure);
+    return () => { renderer.off("resize", measure); };
+  }, [active, ref, renderer]);
+  return active ? columns : 0;
+}
+
+/**
+ * Reasoning text as the row shows it: wrapped at spaces only.
+ *
+ * A caret rides the last character, so it needs a column of its own. Without
+ * one, the last word jumps to the next row the moment the caret appears.
+ */
+function thinkingDisplayText(text: string, columns: number, caret: boolean): string {
+  return wrapAtSpaces(normalizeThinkingText(text), caret ? columns - 1 : columns);
+}
+
 export function roleColor(theme: Theme, role: Role): string {
   switch (role) {
     case "user":
@@ -262,6 +298,7 @@ function Row({
   glyph,
   glyphColor,
   glyphRef,
+  bodyRef,
   background,
   onGlyphClick,
   children,
@@ -270,6 +307,8 @@ function Row({
   glyphColor: string;
   /** An animated gutter glyph writes its own content through this ref. */
   glyphRef?: RefObject<TextRenderable | null>;
+  /** A row that wraps its own text measures the message column through this. */
+  bodyRef?: RefObject<BoxRenderable | null>;
   background?: string;
   onGlyphClick?: (event: OpenTuiMouseEvent) => void;
   children: React.ReactNode;
@@ -299,7 +338,7 @@ function Row({
       </box>
       {/* The nested flex item gives every transcript type the same measured
           remaining-width column as the tool-row body. */}
-      <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
+      <box ref={bodyRef} style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
         {children}
       </box>
     </box>
@@ -353,7 +392,12 @@ export function TextLine({
   const color = roleColor(theme, role);
   const isUser = role === "user";
   const isAssistant = role === "assistant";
-  const displayText = role === "thinking" ? normalizeThinkingText(text) : text;
+  const isThinking = role === "thinking";
+  const bodyRef = useRef<BoxRenderable>(null);
+  const columns = useBodyColumns(bodyRef, isThinking);
+  const displayText = isThinking
+    ? thinkingDisplayText(text, columns, workingCaret)
+    : text;
   const textCaret = useBlinkingText({
     chunks: [fg(color)(displayText)],
     contentKey: `${role}:${displayText}`,
@@ -395,7 +439,7 @@ export function TextLine({
   }
 
   return (
-    <Row glyph={GUTTER} glyphColor={color}>
+    <Row glyph={GUTTER} glyphColor={color} bodyRef={isThinking ? bodyRef : undefined}>
       <text
         ref={workingCaret ? textCaret : undefined}
         // The caret hook repaints this imperatively on the frame clock. Passing
@@ -424,7 +468,11 @@ export function StreamLine({
   text: string;
 }) {
   const color = roleColor(theme, role);
-  const displayText = role === "thinking" ? normalizeThinkingText(text) : text;
+  const isThinking = role === "thinking";
+  const bodyRef = useRef<BoxRenderable>(null);
+  const columns = useBodyColumns(bodyRef, isThinking);
+  // The shimmer always carries a caret, so the row always reserves its column.
+  const displayText = isThinking ? thinkingDisplayText(text, columns, true) : text;
   const shimmer = useShimmerText({
     text: displayText,
     color,
@@ -436,7 +484,7 @@ export function StreamLine({
   const markdown = useMarkdownCaret(text, role === "assistant");
 
   return (
-    <Row glyph={GUTTER} glyphColor={color}>
+    <Row glyph={GUTTER} glyphColor={color} bodyRef={isThinking ? bodyRef : undefined}>
       {role === "assistant" ? (
         <SelectableMarkdown
           ref={markdown.ref}
