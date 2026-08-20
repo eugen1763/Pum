@@ -83,12 +83,32 @@ async function renderApp(width = 72, height = 20) {
   return setup;
 }
 
+// The first mount of the app pays for the whole render tree, so a fixed settle
+// can assert against an empty frame on a slow runner. Poll the frame instead.
+async function waitForFrame(
+  setup: Awaited<ReturnType<typeof createTestRenderer>>,
+  expected: string,
+  timeoutMs = 2000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    await setup.renderOnce();
+    await setup.flush();
+    if (setup.captureCharFrame().includes(expected)) return;
+    if (Date.now() > deadline) {
+      expect(setup.captureCharFrame()).toContain(expected);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 async function openProviders(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.mockInput.typeText("/providers");
   await settle(setup);
   setup.mockInput.pressEnter();
   await settle(setup);
-  await settle(setup);
+  await waitForFrame(setup, "Providers");
 }
 
 describe("the /providers command", () => {
