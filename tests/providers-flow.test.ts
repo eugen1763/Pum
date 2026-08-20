@@ -76,7 +76,9 @@ describe("removeCustomProvider", () => {
     expect(await readdir(directory)).toEqual([]);
   });
 
-  test("keeps the file readable by its owner only", async () => {
+  // Windows has no POSIX permission bits, so the mode a write asks for is not
+  // the mode the file comes back with. The guarantee only exists on POSIX.
+  test.skipIf(process.platform === "win32")("keeps the file readable by its owner only", async () => {
     const path = await modelsFile(twoProviders);
 
     await removeCustomProvider("custom-a", path);
