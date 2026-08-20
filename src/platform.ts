@@ -19,11 +19,9 @@ export function defaultAgentDir(
 ): string {
   const paths = pathApi(platform);
   if (env.PUM_DIR) return paths.resolve(env.PUM_DIR);
-  if (platform === "win32") {
-    const base = env.LOCALAPPDATA ?? env.APPDATA ?? paths.join(home, "AppData", "Local");
-    return paths.join(base, "pum");
-  }
   if (platform === "darwin") return paths.join(home, "Library", "Application Support", "pum");
+  // Windows shares the Linux layout on purpose: one path to document, and a
+  // config directory the user can find and back up next to their other tools.
   return paths.join(env.XDG_CONFIG_HOME ?? paths.join(home, ".config"), "pum");
 }
 

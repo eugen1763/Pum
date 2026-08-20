@@ -229,8 +229,8 @@ session history, Ctrl+T for triggers, and Ctrl+C twice on an empty prompt to qui
 Configuration:
   PUM stores credentials, settings, and sessions in its own configuration
   directory. Set PUM_DIR to override the complete directory. Defaults are
-  $XDG_CONFIG_HOME/pum or ~/.config/pum on Linux, ~/Library/Application Support/pum
-  on macOS, and %LOCALAPPDATA%\\pum on Windows.
+  $XDG_CONFIG_HOME/pum or ~/.config/pum on Linux and Windows, and
+  ~/Library/Application Support/pum on macOS.
 
 Package: ${metadata.name}
 Executable: pum

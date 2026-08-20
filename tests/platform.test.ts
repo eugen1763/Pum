@@ -13,9 +13,11 @@ import {
 } from "../src/platform";
 
 describe("Windows platform paths", () => {
-  test("uses LOCALAPPDATA by default and honors PUM_DIR", () => {
+  test("uses the home config directory by default and honors PUM_DIR", () => {
     expect(defaultAgentDir("win32", { LOCALAPPDATA: "C:\\Users\\Ada\\AppData\\Local" }, "C:\\Users\\Ada"))
-      .toBe("C:\\Users\\Ada\\AppData\\Local\\pum");
+      .toBe("C:\\Users\\Ada\\.config\\pum");
+    expect(defaultAgentDir("win32", { XDG_CONFIG_HOME: "D:\\config" }, "C:\\Users\\Ada"))
+      .toBe("D:\\config\\pum");
     expect(defaultAgentDir("win32", { PUM_DIR: "D:\\PumData" }, "C:\\Users\\Ada"))
       .toBe("D:\\PumData");
   });

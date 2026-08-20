@@ -464,11 +464,8 @@ function agentSessionDir(agent: string, runDir: string): string | null {
       agentDir = resolve(process.env.PUM_DIR);
     } else if (process.platform === "darwin") {
       agentDir = join(homedir(), "Library", "Application Support", "pum");
-    } else if (process.platform !== "win32") {
-      agentDir = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "pum");
     } else {
-      const base = process.env.LOCALAPPDATA ?? process.env.APPDATA ?? join(homedir(), "AppData", "Local");
-      agentDir = join(base, "pum");
+      agentDir = join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "pum");
     }
     return join(agentDir, "sessions", pumSessionDirName(runDir));
   }

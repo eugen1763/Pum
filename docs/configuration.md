@@ -9,7 +9,7 @@ from pi's own configuration directory.
 |---|---|
 | Linux | `$XDG_CONFIG_HOME/pum` or `~/.config/pum` |
 | macOS | `~/Library/Application Support/pum` |
-| Windows | `%LOCALAPPDATA%\pum`, with `%APPDATA%\pum` as fallback |
+| Windows | `%XDG_CONFIG_HOME%\pum` or `~\.config\pum` |
 
 | Path | Purpose |
 |---|---|
