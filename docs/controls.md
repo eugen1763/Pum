@@ -44,6 +44,7 @@ support empty-prompt queued-message recall.
 | `/history` | Session history |
 | `/processes`, `/triggers` | Supervised processes; `/triggers` opens that tab |
 | `/worktree` | Move the running session into a worktree and back |
+| `/settings [name] [value]` | Show or change any `pum.json` setting. See [Configuration](configuration.md) |
 | `/check-path` | Manage additional Check mode roots |
 | `/compress`, `/clear`, `/new` | Compact the context, or start fresh |
 | `/stats` | Usage and cost for the session |

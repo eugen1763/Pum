@@ -33,6 +33,34 @@ Changes in `Ctrl+P` apply to the current session and persist beside it, leaving
 the global `pum.json` alone. Press `s` in the panel to promote the current
 settings to the global defaults.
 
+## The `/settings` command
+
+`/settings` is the text front end for the same state the panel owns.
+
+| Input | Result |
+|---|---|
+| `/settings` | Lists every `pum.json` key, its value, and its scope |
+| `/settings <name>` | Shows one value, its scope, and the accepted values |
+| `/settings <name> <value>` | Changes it for this session |
+| `/settings <name> <value> --global` | Also writes that one key to `pum.json` |
+| `/settings checkPaths add\|remove\|clear` | Runs the `/check-path` action |
+
+A name matches the `pum.json` key or the panel label. Case, spaces, hyphens, and
+underscores do not distinguish two settings, so `checkMode`, `check-mode`, and
+`"check mode"` are the same name. Values match without case. An unknown name
+lists the near matches, and a rejected value lists the accepted ones.
+
+`--global` writes only the one key. The rest of `pum.json`, and this session's
+other overrides, stay as they were. `s` in the panel remains the way to promote
+every setting at once.
+
+Advanced keys the panel does not show are reachable here with their dotted
+names, such as `/settings bashOutput.maxBytes 8192`. Model, thinking level, and
+provider logins are not `pum.json`, so they keep their own panels.
+
+`Tab` completes the setting name and then the accepted value. `Enter` accepts
+the highlighted suggestion.
+
 ## Companion files
 
 Small pieces of state live beside a session's JSONL rather than inside it, named

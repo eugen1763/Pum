@@ -67,12 +67,15 @@ describe("Help popup layout", () => {
   });
 
   test("uses readable grouped columns with exact outer content gaps", async () => {
+    // Every group title, at a height the wide layout does not clip. At 28 rows
+    // the columns scroll instead, which the next test covers.
+    const full = await renderHelp(140, 40, 0);
+    for (const group of HELP_GROUPS) expect(full).toContain(group.title);
+
     const frame = await renderHelp(140, 28, 0);
     const lines = frame.split("\n");
     expect(frame).toContain("Prompt");
-    expect(frame).toContain("History and sessions");
     expect(frame).toContain("Commands");
-    expect(frame).toContain("Application");
     expect(frame).toContain("esc or ? close");
 
     const summaryEnd = lines.findIndex((line) => line.includes("switch transcripts"));

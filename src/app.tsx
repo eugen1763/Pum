@@ -13,6 +13,7 @@ import type { AgentSession, BashOperations, ModelRuntime } from "@earendil-works
 import { Component, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AnimationProvider,
+  PlaceholderWave,
   supportsTrueColor,
   useWorkingRule,
   type WorkingRuleLabel,
@@ -148,6 +149,14 @@ import {
   shouldAutoShowPathCompletions,
   type PathCompletion,
 } from "./path-autocomplete";
+import { setBashOutputSettingsIfPresent } from "./bash-output";
+import { settingsCompletions } from "./settings-autocomplete";
+import {
+  applySettingChange,
+  listSettingsMessage,
+  parseSettingsCommand,
+  showSettingMessage,
+} from "./settings-command";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
 import type { SessionHistoryItem } from "./session-history-metadata";
@@ -419,16 +428,55 @@ export function historyOpenBlockReason(options: {
   return null;
 }
 
+/** The steer note the wave leaves alone. Kept flat so it reads as a fixed hint. */
+export const PLACEHOLDER_STEER_HINT = " (send to steer)";
+const PLACEHOLDER_TOOL = "Working...";
+const PLACEHOLDER_THINKING = "Forming a thought...";
+
 export function promptPlaceholder(options: {
   activeAgentName?: string;
   busy: boolean;
   stashOpen: boolean;
+  /** A tool call is running, rather than the model composing an answer. */
+  toolRunning?: boolean;
 }): string {
+  // A busy prompt says what the agent is doing, in every transcript. The agent
+  // name is already on the rule above the prompt, so repeating it here would
+  // cost the room the state needs.
+  const busy = `${options.toolRunning ? PLACEHOLDER_TOOL : PLACEHOLDER_THINKING}${PLACEHOLDER_STEER_HINT}`;
   if (options.activeAgentName) {
-    return options.busy ? `Steer ${options.activeAgentName}…` : `Message ${options.activeAgentName}…`;
+    return options.busy ? busy : `Message ${options.activeAgentName}…`;
   }
   if (options.stashOpen) return "Cache…";
-  return options.busy ? "Steer…" : "Ask something…";
+  return options.busy ? busy : "Ask something…";
+}
+
+/** Rows scanned back from the end for a running tool call. */
+const TOOL_SCAN_DEPTH = 30;
+
+/**
+ * Is a tool running right now?
+ *
+ * The canonical rows answer this, not the projected ones: Quiet and Normal
+ * aggregate routine calls into one activity row, and how much detail the
+ * transcript shows must not change what the prompt says the agent is doing.
+ */
+export function hasRunningToolCall(
+  lines: readonly { kind: string; call?: { state?: string } }[],
+): boolean {
+  const stop = Math.max(0, lines.length - TOOL_SCAN_DEPTH);
+  for (let index = lines.length - 1; index >= stop; index--) {
+    const line = lines[index]!;
+    if (line.kind === "tool" && line.call?.state === "running") return true;
+  }
+  return false;
+}
+
+/** How much of a placeholder the wave crosses: the phrase, never the hint. */
+export function placeholderCrestEnd(text: string): number {
+  return text.endsWith(PLACEHOLDER_STEER_HINT)
+    ? text.length - PLACEHOLDER_STEER_HINT.length
+    : text.length;
 }
 
 /** A blank row. An empty <text> measures to nothing, so this needs a height. */
@@ -1180,6 +1228,15 @@ export function App({
   const visibleBusy = activeAgent
     ? activeAgent.status === "starting" || activeAgent.status === "running"
     : busy;
+  // A running tool sits at the end of the transcript, so the scan stops well
+  // short of walking a long session on every render.
+  const toolRunning = useMemo(() => hasRunningToolCall(held.lines), [held]);
+  const placeholderText = promptPlaceholder({
+    activeAgentName: activeAgent?.name,
+    busy: visibleBusy,
+    stashOpen,
+    toolRunning,
+  });
   const visibleModelId = activeAgent?.modelId.split("/").slice(1).join("/") || modelId;
   const visibleThinkingLevel = activeAgent?.thinkingLevel ?? thinkingLevel;
   const visibleBranch = activeAgent?.worktree.branch ?? branch;
@@ -1224,11 +1281,16 @@ export function App({
       commandInput,
       activeAgentId ? "subagent" : "main",
     );
-  // /providers is the one command whose arguments come from a closed set, so it
-  // completes them. Every other command still stops at its name.
-  const providersSuggestions = shellMode || stashOpen || commandSuggestionsDismissed || activeAgentId
+  // /providers and /settings are the commands whose arguments come from closed
+  // sets, so they complete them. Every other command still stops at its name.
+  const argumentSuggestionsOff = shellMode || stashOpen || commandSuggestionsDismissed
+    || Boolean(activeAgentId);
+  const providersSuggestions = argumentSuggestionsOff
     ? []
     : providersCompletions(commandInput, inputCursorOffset, managedProviders);
+  const settingsSuggestions = argumentSuggestionsOff
+    ? []
+    : settingsCompletions(commandInput, inputCursorOffset, cwd);
   const pathSuggestions = (!shellMode && activeAgentId) || stashOpen || commandSuggestionsDismissed
     || isCommandInput(commandInput)
     || !shouldAutoShowPathCompletions(commandInput, inputCursorOffset)
@@ -1240,6 +1302,7 @@ export function App({
     );
   const suggestionCount = commandSuggestions.length
     || providersSuggestions.length
+    || settingsSuggestions.length
     || pathSuggestions.length;
   // Every match stays selectable. Only SUGGESTION_ROWS of them are on screen,
   // and the window scrolls with the selection.
@@ -2634,6 +2697,9 @@ export function App({
     if (patch.maxActiveSubagents !== undefined) {
       subagentManager.setMaxActiveSubagents(patch.maxActiveSubagents);
     }
+    // main.tsx applies this at startup. /settings can change it mid-session, so
+    // the running bash tool has to see the new policy on the next call.
+    if (patch.bashOutput !== undefined) setBashOutputSettingsIfPresent(patch.bashOutput);
     // Session-scoped: the popup never writes the global config, which the
     // sandboxes keep read-only. `s` in the popup is the one way to promote.
     const overrides = sessionSettingsDiff(globalSettingsRef.current, next);
@@ -3409,6 +3475,75 @@ export function App({
     setSelectedStashRange(selectedRange(anchor, next), anchor);
   };
 
+  /**
+   * Session scope by default, exactly like the popup. `--global` also rewrites
+   * that one key in pum.json, so the rest of the global file and this session's
+   * other overrides are left alone — only `s` in the popup promotes everything.
+   */
+  const applySettingsPatch = (patch: Partial<PumSettings>, global: boolean) => {
+    if (global) {
+      const nextGlobal = { ...globalSettingsRef.current, ...patch };
+      globalSettingsRef.current = nextGlobal;
+      saveSettings(nextGlobal);
+    }
+    update(patch);
+  };
+
+  /** `/settings` — the text front end for the state the popup owns. */
+  const runSettingsCommand = async (input: string): Promise<void> => {
+    const command = parseSettingsCommand(input);
+    if (!command) throw new Error("invalid /settings command");
+
+    if (command.action === "list") {
+      append({
+        kind: "text",
+        role: "system",
+        text: listSettingsMessage(
+          settingsRef.current,
+          sessionOverridesRef.current,
+          checkPathsForProject(settingsRef.current, cwd).length,
+        ),
+      });
+      return;
+    }
+
+    if (command.action === "show") {
+      append({
+        kind: "text",
+        role: "system",
+        text: showSettingMessage(
+          command.spec,
+          settingsRef.current,
+          sessionOverridesRef.current,
+          checkPathsForProject(settingsRef.current, cwd),
+        ),
+      });
+      return;
+    }
+
+    // Paths keep one owner: /check-path's canonicalization and its boundary
+    // rules run here too, so no route into checkPaths skips them.
+    if (command.action === "checkPaths") {
+      const result = await applyCheckPathCommand(settingsRef.current, cwd, command.command);
+      if (command.command.action !== "list") {
+        applySettingsPatch({ checkPaths: result.settings.checkPaths }, command.global);
+      }
+      append({ kind: "text", role: "system", text: result.message });
+      return;
+    }
+
+    const result = applySettingChange(settingsRef.current, command.spec, command.value);
+    applySettingsPatch(
+      { [command.spec.topKey]: result.settings[command.spec.topKey] } as Partial<PumSettings>,
+      command.global,
+    );
+    append({
+      kind: "text",
+      role: "system",
+      text: `${result.message}${command.global ? " (global)" : ""}`,
+    });
+  };
+
   const runCommand = (text: string): boolean => {
     const trimmed = text.trim();
     if (runGoalCommand(trimmed)) return true;
@@ -3418,13 +3553,14 @@ export function App({
     const loginCommand = trimmed === "/login";
     const providersCommand = parseProvidersCommand(trimmed);
     const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
+    const settingsCommand = /^\/settings(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
     const processesCommand = trimmed === "/processes";
     const newsCommand = trimmed === "/news";
     const todoCommand = trimmed === "/todo";
     const statsCommand = trimmed === "/stats";
     const worktreeCommand = parseWorktreeCommand(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !providersCommand && !checkPathCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !providersCommand && !checkPathCommand && !settingsCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
     setEditingStash(null);
 
     if (historyCommand) {
@@ -3500,6 +3636,10 @@ export function App({
           update({ checkPaths: result.settings.checkPaths });
           append({ kind: "text", role: "system", text: result.message });
         })
+        .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
+        .finally(() => setWorking(streamingRef.current));
+    } else if (settingsCommand) {
+      runSettingsCommand(trimmed)
         .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
         .finally(() => setWorking(streamingRef.current));
     } else if (worktreeCommand) {
@@ -5247,20 +5387,24 @@ export function App({
     const visiblePathMatches = shouldAutoShowPathCompletions(inputValue, inputCursor)
       ? pathMatches
       : [];
-    const providersMatches =
-      shellModeRef.current
+    const argumentMatchesOff = shellModeRef.current
       || stashOpenRef.current
       || commandSuggestionsDismissedRef.current
-      || activeAgentIdRef.current
-        ? []
-        : providersCompletions(inputValue, inputCursor, managedProvidersRef.current);
-    // Both sources carry path-completion offsets, so one insert path serves both.
-    const argumentMatches = providersMatches.length > 0 ? providersMatches : pathMatches;
-    const visibleArgumentMatches = providersMatches.length > 0
-      ? providersMatches
+      || Boolean(activeAgentIdRef.current);
+    const providersMatches = argumentMatchesOff
+      ? []
+      : providersCompletions(inputValue, inputCursor, managedProvidersRef.current);
+    const settingsMatches = argumentMatchesOff
+      ? []
+      : settingsCompletions(inputValue, inputCursor, cwd);
+    // Every source carries path-completion offsets, so one insert path serves all.
+    const closedSetMatches = providersMatches.length > 0 ? providersMatches : settingsMatches;
+    const argumentMatches = closedSetMatches.length > 0 ? closedSetMatches : pathMatches;
+    const visibleArgumentMatches = closedSetMatches.length > 0
+      ? closedSetMatches
       : visiblePathMatches;
     const inputSuggestionCount = commandMatches.length
-      || providersMatches.length
+      || closedSetMatches.length
       || visiblePathMatches.length;
     const isContinuationReturn =
       isPlainReturn &&
@@ -5783,10 +5927,16 @@ export function App({
                 key: command.name,
                 text: `${command.name}  —  ${command.description}`,
               }))
-              : (providersSuggestions.length > 0 ? providersSuggestions : pathSuggestions)
+              : (providersSuggestions.length > 0
+                ? providersSuggestions
+                : settingsSuggestions.length > 0
+                ? settingsSuggestions
+                : pathSuggestions)
                 .map((completion) => ({
                   key: `${completion.start}:${completion.end}:${completion.replacement}`,
-                  text: completion.replacement,
+                  text: "description" in completion && completion.description
+                    ? `${completion.replacement}  —  ${completion.description}`
+                    : completion.replacement,
                 })))
               .slice(suggestionStart, suggestionStart + SUGGESTION_ROWS)
               .map((suggestion, index) => {
@@ -5831,13 +5981,17 @@ export function App({
               </box>
             ))}
           </box>
+          <PlaceholderWave
+            inputRef={inputRef}
+            text={placeholderText}
+            crestEnd={placeholderCrestEnd(placeholderText)}
+            color={theme.dim}
+            highlight={theme.fg}
+            active={visibleBusy}
+          />
           <textarea
             ref={inputRef}
-            placeholder={promptPlaceholder({
-              activeAgentName: activeAgent?.name,
-              busy: visibleBusy,
-              stashOpen,
-            })}
+            placeholder={placeholderText}
             placeholderColor={theme.dim}
             textColor={theme.fg}
             cursorColor={theme.accent}

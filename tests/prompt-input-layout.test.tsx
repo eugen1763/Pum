@@ -160,8 +160,8 @@ describe("prompt input layout", () => {
     expect(placeholders).toEqual([
       "Ask something…",
       "Message worker…",
-      "Steer worker…",
-      "Steer…",
+      "Forming a thought... (send to steer)",
+      "Forming a thought... (send to steer)",
       "Cache…",
     ]);
     expect(placeholders.every((placeholder) => !placeholder.includes("[") && !placeholder.includes("Ctrl")))

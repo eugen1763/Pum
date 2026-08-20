@@ -58,6 +58,10 @@ export const COMMANDS: Command[] = [
     description: "Show session statistics",
   },
   {
+    name: "/settings",
+    description: "Show or change a setting: /settings <name> <value> [--global]",
+  },
+  {
     name: "/check-path",
     description: "Manage additional Check mode directory roots",
   },
