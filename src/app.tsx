@@ -3,13 +3,14 @@ import {
   stripAnsiSequences,
   type PasteEvent,
   type ScrollBoxRenderable,
+  type SyntaxStyle,
   type TextareaRenderable,
 } from "@opentui/core";
 import { randomUUID } from "node:crypto";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, BashOperations, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AnimationProvider,
   supportsTrueColor,
@@ -267,9 +268,20 @@ import {
   projectPendingTranscriptLines,
   projectTranscriptLines,
   transcriptOutputMode,
+  type TranscriptOutputMode,
 } from "./transcript-output";
 import type { MinimalTranscriptLine } from "./output-minimal";
 import { heldTranscriptLines, type DwellMemory } from "./transcript-dwell";
+import {
+  atWindowBottom,
+  atWindowTop,
+  clampWindowStart,
+  extendedWindowStart,
+  nearWindowTop,
+  tailWindowStart,
+  transcriptWindowRows,
+  windowStartForRow,
+} from "./transcript-window";
 
 type Stream = { kind: "assistant" | "thinking"; text: string } | null;
 type Transcript = { lines: Line[]; stream: Stream; pending: PendingLine[] };
@@ -296,6 +308,12 @@ function projectedLineRawText(line: MinimalTranscriptLine): string {
 
 const QUIT_WINDOW_MS = 2000;
 const MAX_INPUT_ROWS = 8;
+/** How long a scroll to a row waits between tries for React to draw it. */
+const ROW_DRAW_RETRY_MS = 30;
+/** How many of those tries it makes before it gives up. */
+const ROW_DRAW_TRIES = 12;
+/** Frames a scroll correction waits for its rows before it gives up. */
+const ANCHOR_FRAME_BUDGET = 30;
 /** Keys that move around without changing the text. */
 const NAV_KEYS = new Set(["up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
 
@@ -395,6 +413,91 @@ export function promptPlaceholder(options: {
 
 /** A blank row. An empty <text> measures to nothing, so this needs a height. */
 const Gap = () => <box style={{ height: 1, flexShrink: 0 }} />;
+
+/**
+ * One rendered transcript row.
+ *
+ * Memoized on purpose. The transcript is a child of the same component that
+ * holds the prompt draft, so without this every keystroke re-rendered every
+ * row, and the cost of a keypress grew with the length of the session. Each
+ * prop here must therefore stay identity-stable while the row is unchanged:
+ * pass the row index and one shared handler rather than a fresh closure.
+ */
+const TranscriptRow = memo(function TranscriptRow({
+  theme,
+  syntaxStyle,
+  line,
+  index,
+  selected,
+  expanded,
+  outputMode,
+  workingCaret,
+  gapBefore,
+  news,
+  onDisclosure,
+}: {
+  theme: Theme;
+  syntaxStyle: SyntaxStyle;
+  line: MinimalTranscriptLine;
+  index: number;
+  selected: boolean;
+  expanded: boolean;
+  outputMode: TranscriptOutputMode;
+  workingCaret: boolean;
+  gapBefore: boolean;
+  news?: "seen" | "unseen";
+  onDisclosure: (index: number) => void;
+}) {
+  const onDisclosureClick = () => onDisclosure(index);
+  const row =
+    line.kind === "tool-summary" ? (
+      <ActivitySummaryLine
+        theme={theme}
+        syntaxStyle={syntaxStyle}
+        summary={line}
+        expanded={expanded}
+        outputMode={outputMode}
+        onDisclosureClick={onDisclosureClick}
+      />
+    ) : line.kind === "tool" ? (
+      <ToolLine
+        theme={theme}
+        syntaxStyle={syntaxStyle}
+        call={line.call}
+        workingCaret={workingCaret}
+        outputMode={outputMode}
+        expanded={expanded}
+        onDisclosureClick={onDisclosureClick}
+      />
+    ) : line.kind === "agent-message" ? (
+      <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
+    ) : line.kind === "goal-review" ? (
+      <GoalReviewLine theme={theme} line={line} />
+    ) : (
+      <TextLine
+        theme={theme}
+        syntaxStyle={syntaxStyle}
+        role={line.role as Role}
+        text={line.text}
+        workingCaret={workingCaret}
+        news={news}
+      />
+    );
+  return (
+    <box
+      id={`transcript-line-${index}`}
+      style={{
+        flexDirection: "column",
+        width: "100%",
+        flexShrink: 0,
+        backgroundColor: selected ? theme.selectionBg : "transparent",
+      }}
+    >
+      {gapBefore ? <Gap /> : null}
+      {row}
+    </box>
+  );
+});
 
 type RenderErrorBoundaryProps = {
   theme: Theme;
@@ -813,6 +916,12 @@ export function App({
   const transcriptCursorRef = useRef(0);
   const [detailOverrides, setDetailOverrides] = useState<Map<string, boolean>>(() => new Map());
   const detailOverridesRef = useRef(detailOverrides);
+  // Disclosure clicks reach the memoized rows through one stable function, so a
+  // re-render of the app cannot invalidate every row by handing it a new one.
+  const clickTranscriptDisclosureRef = useRef<(index: number) => void>(() => {});
+  const onTranscriptDisclosure = useRef(
+    (index: number) => clickTranscriptDisclosureRef.current(index),
+  ).current;
   // Mirrors settings for update(): a keypress or an async .then can fire a
   // second update before React commits the first, so update() must build the
   // next value from the latest pending settings, not the render closure.
@@ -929,9 +1038,13 @@ export function App({
   const todoVisible = todoOpen
     && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen
     && !triggersOpen && !loginOpen && !newsOpen && !visibleQuestionnaire && !spawnPreview;
-  const visibleTx = transcriptForThinkingVisibility(
-    activeAgent?.transcript ?? tx,
-    settings.showThinking,
+  // Memoized because the filtered result is a new object every call whenever
+  // the transcript holds reasoning. That new identity would re-run the dwell
+  // and projection passes below on every render, keystrokes included.
+  const sourceTx = activeAgent?.transcript ?? tx;
+  const visibleTx = useMemo(
+    () => transcriptForThinkingVisibility(sourceTx, settings.showThinking),
+    [sourceTx, settings.showThinking],
   );
   const outputMode = transcriptOutputMode(settings);
   const showAgentMessages = settings.showAgentMessages !== false;
@@ -963,10 +1076,79 @@ export function App({
     () => projectTranscriptLines(held.lines, outputMode, showAgentMessages),
     [held, outputMode, showAgentMessages],
   );
+  // The rows as they are drawn. A callback that has to find a row needs these,
+  // not the transcript lines: folding and hidden kinds mean the two lists have
+  // different lengths, so a line index is not a row index.
+  const visibleLinesRef = useRef(visibleLines);
+  visibleLinesRef.current = visibleLines;
   const visiblePending = useMemo(
     () => projectPendingTranscriptLines(visibleTx.pending, showAgentMessages),
     [visibleTx.pending, showAgentMessages],
   );
+
+  // Which rows are mounted. See `transcript-window.ts` for the rules; these
+  // three refs are the state they run on.
+  //
+  // The start is derived during render rather than stored in state, so a
+  // resumed session mounts its tail on the first render instead of mounting
+  // everything and then trimming. Both derivations are idempotent, so a
+  // repeated render cannot walk the window anywhere.
+  const transcriptWindowStartRef = useRef(0);
+  /** True while the last row is on screen. Only then may the window advance. */
+  const transcriptAtBottomRef = useRef(true);
+  /** Lowest start the reader has asked for. Released on returning to the end. */
+  const transcriptWindowFloorRef = useRef(Number.POSITIVE_INFINITY);
+  /**
+   * The row to hold still while history is mounted above it.
+   *
+   * Rows appearing above the viewport would otherwise push the reader's place
+   * down the screen. `contentOffset` is where the row sat before the mount, so
+   * the restore can tell a laid-out frame from one that still shows the old
+   * tree, and `viewportOffset` is the screen position to put it back at.
+   */
+  const transcriptWindowAnchorRef = useRef<
+    { index: number; viewportOffset: number; contentOffset: number; frames: number } | null
+  >(null);
+  /**
+   * Did the reader just finish dragging the transcript somewhere?
+   *
+   * Only a drag raises this: every scroll the app makes is a property
+   * assignment, which raises no mouse event, and a wheel raises a different
+   * event. The window needs the difference. A drag that ends against the top
+   * of the mounted rows is a reader asking for the history above them, while a
+   * reveal that lands a row in the same place is asking for nothing.
+   */
+  /** Reveals still waiting for React to draw the row they asked for. */
+  const transcriptRevealsRef = useRef(0);
+  const transcriptReaderDragRef = useRef(false);
+  const onTranscriptReaderDrag = useRef(() => {
+    transcriptReaderDragRef.current = true;
+  }).current;
+  const transcriptWindowRowCount = transcriptWindowRows(height);
+  const transcriptWindowRowsRef = useRef(transcriptWindowRowCount);
+  transcriptWindowRowsRef.current = transcriptWindowRowCount;
+  // Another agent's transcript is another conversation, shown from its end. Its
+  // scrollbox is a new one, so none of the positions collected for the previous
+  // view mean anything against it.
+  const transcriptWindowAgentRef = useRef(activeAgentId);
+  if (transcriptWindowAgentRef.current !== activeAgentId) {
+    transcriptWindowAgentRef.current = activeAgentId;
+    transcriptAtBottomRef.current = true;
+    transcriptWindowFloorRef.current = Number.POSITIVE_INFINITY;
+    transcriptWindowAnchorRef.current = null;
+  }
+  const transcriptWindowStart = clampWindowStart(
+    Math.min(
+      transcriptAtBottomRef.current
+        ? tailWindowStart(visibleLines.length, transcriptWindowRowCount)
+        : transcriptWindowStartRef.current,
+      transcriptWindowFloorRef.current,
+    ),
+    visibleLines.length,
+  );
+  transcriptWindowStartRef.current = transcriptWindowStart;
+  /** Bumped to re-render when the reader changes the window from a callback. */
+  const [, setTranscriptWindowTick] = useState(0);
   useLayoutEffect(() => {
     const next = Math.max(0, Math.min(transcriptCursorRef.current, visibleLines.length - 1));
     transcriptCursorRef.current = next;
@@ -2004,6 +2186,96 @@ export function App({
     };
   }, [renderer]);
 
+  // Drive the mounted window off the scroll position. The frame is the only
+  // place both the position and the laid-out rows are known, and nothing
+  // renders while the app is idle, so this costs nothing then. Everything it
+  // reads is a ref, so the handler installed on mount stays correct.
+  useEffect(() => {
+    const onFrame = () => {
+      const scroll = transcriptScrollRef.current;
+      if (!scroll || scroll.isDestroyed) return;
+      const viewportHeight = scroll.viewport.height;
+
+      // A drag that ends against the top of the mounted rows asks for the
+      // history above them. One window per gesture never reaches the start of a
+      // long session, and every step holds the reader’s place, so the view
+      // does not move and the first message stays out of reach. Mount the rest
+      // instead, and leave the reader on it. This runs before the correction
+      // below and drops it: the place to hold is the place they just left.
+      if (!atWindowTop(scroll.scrollTop)) transcriptReaderDragRef.current = false;
+      else if (transcriptReaderDragRef.current && transcriptWindowStartRef.current > 0) {
+        transcriptReaderDragRef.current = false;
+        transcriptWindowAnchorRef.current = null;
+        ensureTranscriptRowMounted(0);
+        return;
+      }
+
+      // Put the reader's row back under the rows that just mounted above it.
+      const anchor = transcriptWindowAnchorRef.current;
+      if (anchor) {
+        const row = scroll.findDescendantById(`transcript-line-${anchor.index}`);
+        const contentOffset = row ? row.y - scroll.content.y : anchor.contentOffset;
+        if (row && contentOffset !== anchor.contentOffset) {
+          const target = topAnchorScrollTop(
+            contentOffset - anchor.viewportOffset,
+            scroll.scrollHeight,
+            viewportHeight,
+          );
+          // scrollBy, not scrollTop: it is the path that marks the scroll as
+          // manual, and without that sticky-to-bottom drags the reader back to
+          // the end of a transcript they are reading the middle of.
+          if (target !== scroll.scrollTop) scroll.scrollBy({ x: 0, y: target - scroll.scrollTop });
+          transcriptWindowAnchorRef.current = null;
+        } else if (anchor.frames++ > ANCHOR_FRAME_BUDGET) {
+          // The rows never arrived. Drop the anchor rather than hold a scroll
+          // correction that would fire against some later, unrelated layout.
+          transcriptWindowAnchorRef.current = null;
+        }
+      }
+
+      const atBottom = atWindowBottom(scroll.scrollTop, scroll.scrollHeight, viewportHeight);
+      transcriptAtBottomRef.current = atBottom;
+      if (atBottom) {
+        // A reveal that is still waiting for its row holds the window. The view
+        // does not leave the end until it scrolls, so releasing here would
+        // unmount the very row it just asked for, every frame until it gave up.
+        if (transcriptRevealsRef.current > 0) return;
+        // Back at the end: the window may shrink to its tail again. Releasing
+        // the floor only changes a ref, so the render that acts on it has to be
+        // asked for. Once per return to the end, never on every frame.
+        if (transcriptWindowFloorRef.current !== Number.POSITIVE_INFINITY) {
+          transcriptWindowFloorRef.current = Number.POSITIVE_INFINITY;
+          setTranscriptWindowTick((tick) => tick + 1);
+        }
+        return;
+      }
+      if (transcriptWindowStartRef.current <= 0) return;
+      if (!nearWindowTop(scroll.scrollTop, viewportHeight)) return;
+      // One mount at a time. The anchor clears once the rows are laid out.
+      if (transcriptWindowAnchorRef.current) return;
+
+      const current = transcriptWindowStartRef.current;
+      const next = extendedWindowStart(current, transcriptWindowRowsRef.current);
+      if (next === current) return;
+      const row = scroll.findDescendantById(`transcript-line-${current}`);
+      transcriptWindowAnchorRef.current = row
+        ? {
+          index: current,
+          viewportOffset: row.y - scroll.viewport.y,
+          contentOffset: row.y - scroll.content.y,
+          frames: 0,
+        }
+        : null;
+      transcriptWindowStartRef.current = next;
+      transcriptWindowFloorRef.current = Math.min(transcriptWindowFloorRef.current, next);
+      setTranscriptWindowTick((tick) => tick + 1);
+    };
+    renderer.on("frame", onFrame);
+    return () => {
+      renderer.off("frame", onFrame);
+    };
+  }, [renderer]);
+
   // Hosted web searches are not pi tool calls, so they arrive out of band.
   useEffect(() => {
     return observeSearchCalls(session.sessionId, (call) => {
@@ -2762,19 +3034,36 @@ export function App({
         }
       }
     }
-    if (targetIndex < 0) return;
+    const targetLine = lines[targetIndex];
+    if (!targetLine) {
+      // A stored answer whose text no longer appears in the session, after a
+      // compaction for example, has no row to jump to, and neither has the
+      // prompt that asked for it. Say so: leaving the popup open makes the key
+      // look broken.
+      newsOpenRef.current = false;
+      setNewsOpen(false);
+      append({
+        kind: "text",
+        role: "error",
+        text: "news: that message is not in the transcript any more",
+      });
+      queueMicrotask(() => inputRef.current?.focus());
+      return;
+    }
 
     if (activeAgentIdRef.current !== requesterAgentId && !selectAgentView(requesterAgentId)) return;
     newsOpenRef.current = false;
     setNewsOpen(false);
-    const scrollToTarget = () => {
-      const transcript = transcriptScrollRef.current;
-      if (!transcript) return;
-      transcript.scrollTop = 0;
-      transcript.scrollChildIntoView(`transcript-line-${targetIndex}`);
-    };
-    queueMicrotask(scrollToTarget);
-    setTimeout(scrollToTarget, 30);
+    // Rows are the projected lines: successful tool calls fold into one
+    // activity row and hidden kinds drop out, so the line has to be matched to
+    // the row that draws it. The match runs at scroll time, which is also
+    // after a switch to another agent has drawn that agent’s rows.
+    // The answer can be anywhere in the session, including far above the rows
+    // that are mounted, so this asks for the row and waits for it.
+    scrollToTranscriptRow(
+      () => visibleLinesRef.current.indexOf(targetLine as MinimalTranscriptLine),
+      { fromTop: true },
+    );
   };
 
   const toggleCurrentNewsRead = () => {
@@ -4185,8 +4474,65 @@ export function App({
     } else queueMicrotask(() => inputRef.current?.focus());
   };
 
+  /**
+   * Put a row in the tree so it can be scrolled to.
+   *
+   * Only rows near the end are mounted, so anything that scrolls to a row has
+   * to ask for it first. The floor keeps it mounted: without one, the very next
+   * frame could decide the reader is still at the end and drop it again before
+   * React had rendered it.
+   */
+  const ensureTranscriptRowMounted = (index: number) => {
+    const next = windowStartForRow(transcriptWindowStartRef.current, index);
+    if (next >= transcriptWindowStartRef.current) return;
+    transcriptWindowStartRef.current = next;
+    transcriptWindowFloorRef.current = Math.min(transcriptWindowFloorRef.current, next);
+    setTranscriptWindowTick((tick) => tick + 1);
+  };
+
+  /**
+   * Scroll to a row once React has drawn it.
+   *
+   * A row that had to be mounted first is not in the tree at microtask time,
+   * and a long transcript can take several frames to draw it, so keep asking
+   * rather than asking once. `wanted` stops a walk that has moved on: the
+   * reader holding a key starts one of these per row, and the older ones must
+   * not drag the view back to where the walk began.
+   */
+  const scrollToTranscriptRow = (
+    resolve: () => number,
+    options: { fromTop?: boolean; wanted?: () => boolean } = {},
+  ) => {
+    transcriptRevealsRef.current++;
+    let tries = 0;
+    const done = () => {
+      transcriptRevealsRef.current = Math.max(0, transcriptRevealsRef.current - 1);
+    };
+    const reveal = () => {
+      if (options.wanted && !options.wanted()) return done();
+      const index = resolve();
+      const scroll = transcriptScrollRef.current;
+      if (scroll && index >= 0) {
+        // Asked for again on every try: the row is only held by the window
+        // while something wants it, and the frame that runs in between is free
+        // to decide the reader is at the end of the transcript.
+        ensureTranscriptRowMounted(index);
+        if (scroll.findDescendantById(`transcript-line-${index}`)) {
+          // From the top, the row lands on the first screen row instead of the
+          // last: `scrollChildIntoView` moves as little as it can.
+          if (options.fromTop) scroll.scrollTop = 0;
+          scroll.scrollChildIntoView(`transcript-line-${index}`);
+          return done();
+        }
+      }
+      if (tries++ < ROW_DRAW_TRIES) setTimeout(reveal, ROW_DRAW_RETRY_MS);
+      else done();
+    };
+    queueMicrotask(reveal);
+  };
+
   const revealTranscriptCursor = (index: number) => {
-    queueMicrotask(() => transcriptScrollRef.current?.scrollChildIntoView(`transcript-line-${index}`));
+    scrollToTranscriptRow(() => index, { wanted: () => transcriptCursorRef.current === index });
   };
 
   /**
@@ -4198,6 +4544,7 @@ export function App({
    * The layout runs after React commits, hence the second, later attempt.
    */
   const anchorTranscriptRow = (index: number) => {
+    ensureTranscriptRowMounted(index);
     const apply = () => {
       const scroll = transcriptScrollRef.current;
       const row = scroll?.findDescendantById(`transcript-line-${index}`);
@@ -4247,6 +4594,9 @@ export function App({
     selectTranscriptRow(index);
     toggleTranscriptDetail(index);
   };
+  // Rows are memoized, so the handler they receive has to keep one identity for
+  // the life of the app. The ref carries the current closure behind it.
+  clickTranscriptDisclosureRef.current = clickTranscriptDisclosure;
 
   const copyTranscriptRow = () => {
     const line = visibleLines[transcriptCursorRef.current];
@@ -5137,6 +5487,59 @@ export function App({
     ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
     : false;
 
+  // One element for the whole transcript, rebuilt only when what it shows
+  // changes. React walks a child list of this size on every render of the app,
+  // and an answer arriving mid-turn re-renders the app many times a second, so
+  // handing back the identical element lets React skip the list entirely.
+  // Every value a row reads is a dependency below. Add the dependency when a
+  // row starts reading something new, or the rows go stale.
+  // The stream is reduced to a flag on purpose: only the caret on the last row
+  // depends on it, so a delta must not rebuild the settled rows.
+  const streaming = visibleTx.stream !== null;
+  const transcriptRows = useMemo(
+    () => <>{visibleLines.slice(transcriptWindowStart).map((line, offset) => {
+      // The absolute index, not the offset in the window: the row ids, the
+      // transcript cursor, and the gap rule are all in terms of the whole
+      // transcript, and they must not change when older rows mount.
+      const i = transcriptWindowStart + offset;
+      const projectedKey = projectedLineKey(line, i);
+      return (
+        <TranscriptRow
+          key={projectedKey}
+          theme={theme}
+          syntaxStyle={syntaxStyle}
+          line={line}
+          index={i}
+          selected={transcriptFocused && transcriptCursor === i}
+          expanded={detailOverrides.get(projectedKey) ?? outputMode === "verbose"}
+          outputMode={outputMode}
+          workingCaret={visibleBusy && !streaming && i === visibleLines.length - 1}
+          gapBefore={needsTranscriptGap(visibleLines[i - 1], line)}
+          news={
+            line.kind === "text" && line.role === "assistant" && line.newsId
+              ? (newsReadById.get(line.newsId) ? "seen" : "unseen")
+              : undefined
+          }
+          onDisclosure={onTranscriptDisclosure}
+        />
+      );
+    })}</>,
+    [
+      visibleLines,
+      transcriptWindowStart,
+      theme,
+      syntaxStyle,
+      outputMode,
+      detailOverrides,
+      transcriptFocused,
+      transcriptCursor,
+      visibleBusy,
+      streaming,
+      newsReadById,
+      onTranscriptDisclosure,
+    ],
+  );
+
   return (
     <AnimationProvider
       enabled={animations}
@@ -5184,69 +5587,12 @@ export function App({
           style={{ flexGrow: 1, paddingLeft: 1, paddingRight: 1 }}
           stickyScroll
           stickyStart="bottom"
+          onMouseDragEnd={onTranscriptReaderDrag}
+          onMouseDrop={onTranscriptReaderDrag}
           verticalScrollbarOptions={{ visible: true }}
         >
           <RenderErrorBoundary theme={theme} label="transcript" resetKey={transcriptResetKey}>
-            {visibleLines.map((line, i) => {
-              const workingCaret = visibleBusy && !visibleTx.stream && i === visibleLines.length - 1;
-              const projectedKey = projectedLineKey(line, i);
-              const selected = transcriptFocused && transcriptCursor === i;
-              const expanded = detailOverrides.get(projectedKey) ?? outputMode === "verbose";
-              const row =
-                line.kind === "tool-summary" ? (
-                  <ActivitySummaryLine
-                    theme={theme}
-                    syntaxStyle={syntaxStyle}
-                    summary={line}
-                    expanded={expanded}
-                    outputMode={outputMode}
-                    onDisclosureClick={() => clickTranscriptDisclosure(i)}
-                  />
-                ) : line.kind === "tool" ? (
-                  <ToolLine
-                    theme={theme}
-                    syntaxStyle={syntaxStyle}
-                    call={line.call}
-                    workingCaret={workingCaret}
-                    outputMode={outputMode}
-                    expanded={expanded}
-                    onDisclosureClick={() => clickTranscriptDisclosure(i)}
-                  />
-                ) : line.kind === "agent-message" ? (
-                  <AgentMessageLine theme={theme} syntaxStyle={syntaxStyle} line={line} />
-                ) : line.kind === "goal-review" ? (
-                  <GoalReviewLine theme={theme} line={line} />
-                ) : (
-                  <TextLine
-                    theme={theme}
-                    syntaxStyle={syntaxStyle}
-                    role={line.role as Role}
-                    text={line.text}
-                    workingCaret={workingCaret}
-                    news={
-                      line.kind === "text" && line.role === "assistant" && line.newsId
-                        ? (newsReadById.get(line.newsId) ? "seen" : "unseen")
-                        : undefined
-                    }
-                  />
-                );
-              const gapBefore = needsTranscriptGap(visibleLines[i - 1], line);
-              return (
-                <box
-                  id={`transcript-line-${i}`}
-                  key={projectedKey}
-                  style={{
-                    flexDirection: "column",
-                    width: "100%",
-                    flexShrink: 0,
-                    backgroundColor: selected ? theme.selectionBg : "transparent",
-                  }}
-                >
-                  {gapBefore ? <Gap /> : null}
-                  {row}
-                </box>
-              );
-            })}
+            {transcriptRows}
             {visibleTx.stream ? (
               <>
                 {/* Same gap while the answer is still arriving, so it does not
