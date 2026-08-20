@@ -4,6 +4,15 @@ All notable changes to PUM are documented in this file.
 
 ## Unreleased
 
+## [0.2.25-beta.1] - 2026-08-20
+
+### Changed
+- Windows now keeps its configuration in `~/.config/pum`, the same place as every other platform.
+
+### Fixed
+- An answer is no longer cut in two when the reasoning stream interleaves with it. A reasoning provider does not always finish the reasoning before the answer starts, and the late part of it used to commit the buffered answer as a finished row, which read as a line break in the middle of a sentence. The answer now keeps streaming and the late reasoning rejoins the row it came from. The same rule now covers subagent transcripts.
+- Reasoning rows no longer break a word. OpenTUI's word wrap also breaks after `.`, `,`, `:`, `-`, `/` and `(`, which put `auth.` and `json` on two rows in text dense with file names and paths. Reasoning is pre-wrapped at spaces, so the renderer finds nothing to break.
+
 ## [0.2.24-beta.1] - 2026-08-20
 
 ### Fixed
