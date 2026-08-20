@@ -97,6 +97,23 @@ describe("/settings completion", () => {
     expect(completion).toMatchObject({ start: 21, end: 22, replacement: "quiet" });
   });
 
+  test("stops once the token under the cursor is whole", () => {
+    // Enter runs the command instead of re-inserting the value it already reads.
+    expect(complete("/settings theme tokyonight")).toEqual([]);
+    expect(complete("/settings theme TOKYONIGHT")).toEqual([]);
+    expect(complete("/settings showThinking on")).toEqual([]);
+    expect(complete("/settings checkPaths list")).toEqual([]);
+    expect(complete("/settings outputMode quiet --global")).toEqual([]);
+    // A whole name that another name extends still stops, so Enter cannot turn
+    // `checkMode` into `checkModel`.
+    expect(complete("/settings checkMode")).toEqual([]);
+    expect(complete("/settings bashOutput.strategy head")).toEqual([]);
+    // A part of a value still completes.
+    expect(complete("/settings theme tokyo")).toEqual(["tokyonight"]);
+    expect(complete("/settings bashOutput.strategy hea")).toEqual(["headTail", "head"]);
+    expect(complete("/settings checkMode ")).toEqual(["off", "on"]);
+  });
+
   test("offers nothing for the command name or a free-text value", () => {
     expect(complete("/settings")).toEqual([]);
     expect(complete("/check-path add")).toEqual([]);

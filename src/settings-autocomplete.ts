@@ -36,6 +36,11 @@ function matches(candidate: string, fragment: string): boolean {
   return candidate.toLocaleLowerCase().startsWith(fragment.toLocaleLowerCase());
 }
 
+/** Case is free in a value, so `TOKYONIGHT` is as finished as `tokyonight`. */
+function isSame(candidate: string, fragment: string): boolean {
+  return candidate.toLocaleLowerCase() === fragment.toLocaleLowerCase();
+}
+
 /**
  * Completions for the token under the cursor, or [] when the input is not a
  * `/settings` command or the cursor sits on the command name itself.
@@ -60,7 +65,11 @@ export function settingsCompletions(
   const position = inToken ? tokens.length - 1 : tokens.length;
   if (position < 1) return [];
 
+  // A token that is already a whole name or value is finished. Leaving its own
+  // row on screen means Enter re-inserts what is there instead of running the
+  // command, and with `checkMode` typed the row behind it is `checkModel`.
   if (position === 1) {
+    if (fragment !== "" && findSettingSpec(fragment)) return [];
     const named = SETTING_SPECS
       .filter((spec) => matches(spec.key, fragment)
         || (spec.label !== "" && matches(spec.label, fragment)))
@@ -84,13 +93,19 @@ export function settingsCompletions(
     return pathCompletions(input, cursor, cwd);
   }
 
-  const flag = GLOBAL_FLAG.startsWith(fragment) && fragment.startsWith("-")
+  const flag = fragment !== GLOBAL_FLAG
+    && GLOBAL_FLAG.startsWith(fragment) && fragment.startsWith("-")
     ? [{ start, end, replacement: GLOBAL_FLAG, description: "write pum.json" }]
     : [];
   if (position > 2 && spec.kind !== "paths") return flag;
 
+  const candidates = valueCandidates(spec);
+  if (fragment !== "" && candidates.some((candidate) => isSame(candidate.value, fragment))) {
+    return flag;
+  }
+
   return [
-    ...valueCandidates(spec)
+    ...candidates
       .filter((candidate) => matches(candidate.value, fragment))
       .map((candidate) => ({
         start,
