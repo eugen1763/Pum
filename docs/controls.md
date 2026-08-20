@@ -13,6 +13,7 @@ Press `?` on an empty prompt to see every control inside PUM.
 | `Ctrl+Enter` / `Shift+Enter` | Insert a new line |
 | `Alt+Enter` / `Ctrl+Alt+Enter` | Cache without sending; the Ctrl alias works around terminals that reserve Alt+Enter |
 | `Tab` | Open the prompt cache on an empty input; complete commands or paths otherwise |
+| `↑` / `↓` on suggestions | Move through every match; the list shows five rows and scrolls |
 | `Shift+↑` / `Shift+↓` | Select a range of cached tasks |
 | `Alt+V` | Attach an image from the graphical clipboard |
 | `Ctrl+L` | Open the agent transcript selector |
@@ -43,6 +44,7 @@ support empty-prompt queued-message recall.
 | `/history` | Session history |
 | `/processes`, `/triggers` | Supervised processes; `/triggers` opens that tab |
 | `/worktree` | Move the running session into a worktree and back |
+| `/settings [name] [value]` | Show or change any `pum.json` setting. See [Configuration](configuration.md) |
 | `/check-path` | Manage additional Check mode roots |
 | `/compress`, `/clear`, `/new` | Compact the context, or start fresh |
 | `/stats` | Usage and cost for the session |

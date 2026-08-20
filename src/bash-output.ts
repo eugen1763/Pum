@@ -23,7 +23,8 @@ import {
 import { Type } from "typebox";
 import { registerSandboxTempReadRoot, unregisterSandboxTempReadRoot } from "./filesystem-sandbox";
 
-export type BashCutStrategy = "headTail" | "sample" | "tail" | "head" | "summary";
+export const BASH_CUT_STRATEGIES = ["headTail", "sample", "tail", "head", "summary"] as const;
+export type BashCutStrategy = (typeof BASH_CUT_STRATEGIES)[number];
 
 export type BashOutputSettings = {
   enabled: boolean;
@@ -67,7 +68,7 @@ export function normalizeBashOutput(value: unknown): BashOutputSettings {
   const d = DEFAULT_BASH_OUTPUT;
   if (!value || typeof value !== "object" || Array.isArray(value)) return { ...d };
   const s = value as Partial<BashOutputSettings>;
-  const strategies = new Set<BashCutStrategy>(["headTail", "sample", "tail", "head", "summary"]);
+  const strategies = new Set<BashCutStrategy>(BASH_CUT_STRATEGIES);
   return {
     enabled: typeof s.enabled === "boolean" ? s.enabled : d.enabled,
     strategy: s.strategy && strategies.has(s.strategy) ? s.strategy : d.strategy,
@@ -647,7 +648,7 @@ export function withBashOutput(
       const patterns = parsePatterns(params?.patterns);
       const perCall = { ...settings };
       if (typeof params?.strategy === "string") {
-        const strategies = new Set<BashCutStrategy>(["headTail", "sample", "tail", "head", "summary"]);
+        const strategies = new Set<BashCutStrategy>(BASH_CUT_STRATEGIES);
         if (strategies.has(params.strategy as BashCutStrategy)) perCall.strategy = params.strategy as BashCutStrategy;
       }
       if (typeof params?.max_bytes === "number" && Number.isFinite(params.max_bytes)) {

@@ -65,6 +65,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/news", "Open recent answers (News)"],
       ["/todo", "Show the agent's todo list"],
       ["/stats", "Show session statistics"],
+      ["/settings", "Show or change a setting"],
       ["/check-path", "Manage extra Check mode paths"],
       ["/processes", "Open Processes on last tab"],
       ["/triggers", "Open Processes on Triggers"],

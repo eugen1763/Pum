@@ -5,6 +5,7 @@ import {
   type MarkdownRenderable,
   type RGBA,
   type TextChunk,
+  type TextareaRenderable,
   type TextRenderable,
 } from "@opentui/core";
 import { useRenderer } from "@opentui/react";
@@ -322,6 +323,140 @@ export function shimmer(text: string, base: RGBA, hi: RGBA, elapsedMs: number): 
   }
   if (runColor && runText) chunks.push(fg(runColor)(runText));
   return new StyledText(chunks);
+}
+
+/**
+ * True raised forms, and only those.
+ *
+ * A terminal cell grid has no half-row offset, so a letter cannot be drawn
+ * between two rows. These modifier letters are the same letter cut higher in
+ * the cell, which is as close as the grid allows. The map holds no lookalike
+ * substitutes: a letter with no raised form of its own — uppercase F, digits,
+ * punctuation — is left exactly as it is rather than replaced by a glyph that
+ * reads as a different character.
+ */
+const RAISED_LETTERS: Record<string, string> = {
+  a: "ᵃ", b: "ᵇ", c: "ᶜ", d: "ᵈ", e: "ᵉ", f: "ᶠ", g: "ᵍ", h: "ʰ", i: "ⁱ", j: "ʲ",
+  k: "ᵏ", l: "ˡ", m: "ᵐ", n: "ⁿ", o: "ᵒ", p: "ᵖ", r: "ʳ", s: "ˢ", t: "ᵗ", u: "ᵘ",
+  v: "ᵛ", w: "ʷ", x: "ˣ", y: "ʸ", z: "ᶻ",
+  A: "ᴬ", B: "ᴮ", D: "ᴰ", E: "ᴱ", G: "ᴳ", H: "ᴴ", I: "ᴵ", J: "ᴶ", K: "ᴷ", L: "ᴸ",
+  M: "ᴹ", N: "ᴺ", O: "ᴼ", P: "ᴾ", R: "ᴿ", T: "ᵀ", U: "ᵁ", V: "ⱽ", W: "ᵂ",
+};
+
+/** How long one crest takes to cross the phrase, and the rest between sweeps. */
+const WAVE_CHARS_PER_MS = 0.022;
+const WAVE_WIDTH = 5;
+const WAVE_REST_CHARS = 90;
+
+/**
+ * One bright crest travelling across the first `crestEnd` characters, with a
+ * long rest between sweeps. The remainder — the steer hint — never moves, so
+ * it keeps reading as a fixed note rather than as part of the motion.
+ */
+export function placeholderWave(
+  text: string,
+  crestEnd: number,
+  base: RGBA,
+  hi: RGBA,
+  elapsedMs: number,
+  lift = true,
+): StyledText {
+  const characters = Array.from(text);
+  const crest = Math.max(0, Math.min(crestEnd, characters.length));
+  const bloom = bloomColor(hi);
+  const period = crest + WAVE_REST_CHARS;
+  const head = ((elapsedMs * WAVE_CHARS_PER_MS) % period) - WAVE_WIDTH;
+  // Exactly one letter rides the top of the crest. A strength threshold would
+  // lift two or three at once, or none at all between cells.
+  const peak = Math.round(head);
+  const chunks: TextChunk[] = [];
+  let runColor: RGBA | null = null;
+  let runText = "";
+  const flush = () => {
+    if (runColor && runText) chunks.push(fg(runColor)(runText));
+    runText = "";
+  };
+
+  for (let index = 0; index < crest; index++) {
+    const strength = glowFalloff(index - head, WAVE_WIDTH);
+    const color = glowColor(base, hi, bloom, strength);
+    const raised = lift && index === peak ? RAISED_LETTERS[characters[index]!] : undefined;
+    const glyph = raised ?? characters[index]!;
+    if (runColor && sameColor(runColor, color) && !raised) {
+      runText += glyph;
+      continue;
+    }
+    flush();
+    runColor = color;
+    runText = glyph;
+    // A raised cell is one cell wide and never merges with its neighbours.
+    if (raised) {
+      flush();
+      runColor = null;
+    }
+  }
+  flush();
+  if (crest < characters.length) {
+    chunks.push(fg(base)(characters.slice(crest).join("")));
+  }
+  return new StyledText(chunks);
+}
+
+/**
+ * Animates a textarea placeholder in place.
+ *
+ * The textarea accepts StyledText for its placeholder, so the wave needs no
+ * overlay element. React keeps passing the plain string, which is what shows
+ * whenever the wave is inactive — with animations off, or without true colour,
+ * the placeholder is exactly the one PUM has always drawn.
+ */
+export function usePlaceholderWave(opts: {
+  inputRef: RefObject<TextareaRenderable | null>;
+  text: string;
+  crestEnd: number;
+  color: string;
+  highlight: string;
+  active: boolean;
+  lift?: boolean;
+}) {
+  const { inputRef, text, crestEnd, color, highlight, active, lift = true } = opts;
+  const { subscribe, enabled } = useClock();
+  const latest = useRef({ text, crestEnd });
+  latest.current = { text, crestEnd };
+
+  useEffect(() => {
+    if (!active || !enabled) {
+      if (inputRef.current) inputRef.current.placeholder = text;
+      return;
+    }
+    const base = rgba(color);
+    const hi = rgba(highlight);
+    const stop = subscribe((elapsedMs) => {
+      if (!inputRef.current) return;
+      inputRef.current.placeholder = placeholderWave(
+        latest.current.text,
+        latest.current.crestEnd,
+        base,
+        hi,
+        elapsedMs,
+        lift,
+      );
+    });
+    return () => {
+      stop();
+      // Hand the plain string back, or the last frame would stay frozen on it.
+      if (inputRef.current) inputRef.current.placeholder = latest.current.text;
+    };
+  }, [inputRef, text, active, enabled, color, highlight, lift, subscribe]);
+}
+
+/**
+ * The clock provider sits below App, so the wave runs from a child that draws
+ * nothing and only owns the placeholder of the textarea it is given.
+ */
+export function PlaceholderWave(props: Parameters<typeof usePlaceholderWave>[0]): null {
+  usePlaceholderWave(props);
+  return null;
 }
 
 /**

@@ -60,6 +60,14 @@ transcript move while an agent works: `off`, `input-only`, `coordinated`,
 `comet-pair`, `electric-spark`, `constellation`, `random-constellation`, or
 `energy-transfer`. PUM disables motion when true colour is unavailable.
 
+**The prompt placeholder** says what the agent does while it works:
+`Working... (send to steer)` while a tool runs, and
+`Forming a thought... (send to steer)` while the model composes an answer. A
+bright crest crosses the phrase once every few seconds, and the letter at the
+top of the crest is raised while it passes. A letter with no raised form, such
+as the `F` of `Forming`, brightens without moving. The steer note never moves.
+`Animations off` returns the placeholder to plain dim text.
+
 ## Terminal title
 
 PUM sets a compact title such as `Pum · working · 2 subagents`, counting only

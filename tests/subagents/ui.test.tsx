@@ -865,7 +865,10 @@ describe("subagent transcript UI", () => {
     await settle(setup);
 
     await press(setup, () => setup.mockInput.pressTab({ shift: true }));
-    expect(setup.captureCharFrame()).toContain("Steer worker-one…");
+    // The busy prompt names the work, not the agent; the header names the agent.
+    const selectedFrame = setup.captureCharFrame();
+    expect(selectedFrame).toContain("main → worker-one");
+    expect(selectedFrame).toContain("Forming a thought... (send to steer)");
 
     await press(setup, () => setup.mockInput.pressEscape());
     const armedFrame = setup.captureCharFrame();
