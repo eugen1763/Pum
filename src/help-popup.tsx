@@ -61,7 +61,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/goalf", "Work out a goal, then start it"],
       ["/background", "Start a managed agent for the selected transcript"],
       ["/history", "Browse saved sessions"],
-      ["/login", "Add or update a provider"],
+      ["/providers", "Add, edit, or delete a provider; /login adds"],
       ["/news", "Open recent answers (News)"],
       ["/todo", "Show the agent's todo list"],
       ["/stats", "Show session statistics"],
