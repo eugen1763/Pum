@@ -246,9 +246,13 @@ describe("bash output capture and the filesystem sandbox", () => {
 describe("cleanupBashOutputCaptures", () => {
   test("removes the capture directory, withdraws the read root, and repeats safely", async () => {
     const project = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-bash-cleanup-project-")));
+    // The capture owns an open file handle. Removing the directory does not
+    // close it, and a handle that reaches garbage collection still open throws
+    // into whichever test happens to be running, so close it here.
+    let capture: Awaited<ReturnType<typeof createBashOutputCapture>> | undefined;
     try {
       cleanupBashOutputCaptures(); // Nothing was ever created.
-      const capture = await createBashOutputCapture({
+      capture = await createBashOutputCapture({
         exec: async () => ({ exitCode: 0 }),
       });
       const captureDir = dirname(capture.path);
@@ -261,6 +265,7 @@ describe("cleanupBashOutputCaptures", () => {
       await expect(validateSandboxPath(project, capture.path, [], "read"))
         .rejects.toThrow("outside the sandbox");
     } finally {
+      await capture?.remove();
       rmSync(project, { recursive: true, force: true });
     }
   });

@@ -4,7 +4,7 @@ All notable changes to PUM are documented in this file.
 
 ## Unreleased
 
-## [0.2.26-beta.2] - 2026-08-21
+## [0.2.26-beta.3] - 2026-08-21
 
 ### Added
 - Added `/providers`. It opens a list of every provider with its state, and takes `add`, `edit`, and `delete` with a provider name. Deletion removes the credential from `auth.json` for every provider, and for a custom provider it also removes the definition from `models.json`. When the deleted provider owned the active model, the session moves to another model. `/login` keeps working unchanged.
