@@ -4,6 +4,22 @@ All notable changes to PUM are documented in this file.
 
 ## Unreleased
 
+## [0.2.23-beta.1] - 2026-08-20
+
+### Added
+- Added `/background <prompt>`. It starts one managed agent immediately and leaves the current transcript usable. The selected transcript owns the new child, so the command creates a descendant from a subagent and a top-level agent from main. The child receives only the supplied prompt as fresh task context.
+
+### Changed
+- The transcript now mounts only the rows near its end, and older rows join the tree as you scroll back to them. OpenTUI paints just the viewport but lays out every mounted row, so a resumed session made every keystroke cost more than the last one. A 1600-row session cost 70 ms a keystroke and held 23,000 renderables; it now costs about 9 ms and holds about 1,200, whatever the length of the session. A 4000-row session could not build its render tree at all before.
+- Keystrokes no longer re-render the transcript. The animation clock keeps one context value, each row is memoized on identity-stable props, and the row list is one memoized element. A changed provider value makes React walk every fiber below it, which is why a fresh object cost time proportional to the length of the session.
+
+### Fixed
+- Dragging the scrollbar to the top of a long session now reaches the first message. Every gesture used to mount one window of history and then restore the reading position, so the view did not move and an 800-row session needed fourteen drags.
+- The News jump now finds its row. It used the index of the line in the transcript, but the rows on screen are the projected lines, where successful tool calls fold into one activity row, so in a session with tool calls the jump went nowhere.
+- The News jump now reports an answer it cannot reach. A compaction removes the entries it summarizes, so a stored answer from before one has no row; the key returned without closing the popup and looked broken.
+- Scrolling to a row can no longer be undone by the next frame. Asking for a row only schedules a render, and while the view was still at the end the next frame took the row away again, so a fast transcript-cursor walk could leave the cursor off screen.
+- Goal suggestion navigation now handles a multiline prompt.
+
 ## [0.2.22-beta.1] - 2026-08-18
 
 ### Removed
