@@ -432,9 +432,10 @@ These were chosen deliberately. Change them only on purpose.
   preset rather than swapping call sites, so `theme.json` keeps one knob each.
 - **The three output modes differ in what they group, not in what they keep.**
   `projectTranscriptLines` is pure and reprojects the whole transcript without
-  rewriting a session entry. Quiet folds every successful call into one activity
-  row, commands and mutations included. Normal exempts bash and the mutating
-  tools, and shows an editing tool's diff inline without being asked, capped at
+  rewriting a session entry. Quiet folds every settled call into one activity
+  row, including failed calls, rejected calls, commands, and mutations. Normal
+  exempts bash and the mutating tools. Normal shows an editing tool's diff
+  inline without being asked, capped at
   `INLINE_DIFF_CHANGED_LINES` changed lines. Verbose is the raw view: every
   call listed, every row expanded, complete retained input and result, and no
   rendered diff at all.

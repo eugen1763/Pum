@@ -4,6 +4,12 @@ All notable changes to PUM are documented in this file.
 
 ## Unreleased
 
+## [0.2.27-beta.1] - 2026-08-21
+
+### Changed
+- Quiet transcript detail now groups failed and rejected tool calls with adjacent successful calls. Running calls remain visible until they settle, and expanding the activity row still shows each retained result.
+- The prompt placeholder wave and input-rule sweep now move at half their previous speed. Prompt drag auto-scroll also uses half the OpenTUI default rate, and the prompt cursor uses a controlled 1.8-second blink cycle.
+
 ## [0.2.26-beta.3] - 2026-08-21
 
 ### Added

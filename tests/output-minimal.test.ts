@@ -110,19 +110,38 @@ describe("minimal transcript transformation", () => {
     expect(result[0].text).not.toContain("private argument");
   });
 
-  test("a failure still breaks a Quiet run in two", () => {
+  test("Quiet groups failed and rejected calls with successful calls", () => {
     const lines: Line[] = [
       tool(call("b1", "bash")),
       tool(call("b2", "bash", "error", "exit 1")),
-      tool(call("b3", "bash")),
+      tool(call("b3", "bash", "rejected", "hard block")),
+      tool(call("b4", "bash")),
     ];
 
-    expect(minimalTranscriptLines(lines, true).map((line) => line.kind === "tool-summary"
-      ? line.text
-      : line.kind === "tool" ? line.call.id : line.kind)).toEqual([
-      "Ran 1 command.",
-      "b2",
-      "Ran 1 command.",
+    const result = minimalTranscriptLines(lines, true);
+    expect(result).toHaveLength(1);
+    if (result[0]?.kind !== "tool-summary") throw new Error("Expected one summary");
+    expect(result[0].text).toBe("Ran 4 commands.");
+    expect(result[0].calls.map((item) => [item.id, item.state])).toEqual([
+      ["b1", "ok"],
+      ["b2", "error"],
+      ["b3", "rejected"],
+      ["b4", "ok"],
+    ]);
+  });
+
+  test("Quiet keeps a running call visible until it settles", () => {
+    const running = tool(call("b2", "bash", "running", "live output"));
+    const result = minimalTranscriptLines([
+      tool(call("b1", "bash")),
+      running,
+      tool(call("b3", "bash", "error", "exit 1")),
+    ], true);
+
+    expect(result).toEqual([
+      expect.objectContaining({ kind: "tool-summary", text: "Ran 1 command." }),
+      running,
+      expect.objectContaining({ kind: "tool-summary", text: "Ran 1 command." }),
     ]);
   });
 

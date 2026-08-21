@@ -11,6 +11,7 @@ import {
   decayTrail,
   glowColor,
   glowFalloff,
+  inputCursorVisible,
   markdownCaretContent,
   pulseGlyph,
   randomConstellationCenters,
@@ -28,7 +29,7 @@ import { createGoal } from "../src/goal";
 
 describe("coordinated working rules", () => {
   test("keeps both rules in the active pair synchronized", () => {
-    const elapsedMs = 50;
+    const elapsedMs = 100;
     const inputTop = workingRuleFrameState("coordinated", "inputTop", 10, elapsedMs);
     const inputBottom = workingRuleFrameState("coordinated", "inputBottom", 10, elapsedMs);
 
@@ -40,12 +41,12 @@ describe("coordinated working rules", () => {
 
   test("starts at the input left edge and moves the input pair left-to-right", () => {
     expect(coordinatedRuleState(10, 0)).toEqual({ head: 0, direction: 1, pair: "input" });
-    expect(coordinatedRuleState(10, 50)).toEqual({ head: 4, direction: 1, pair: "input" });
-    expect(coordinatedRuleState(10, 100)).toEqual({ head: 8, direction: 1, pair: "input" });
+    expect(coordinatedRuleState(10, 100)).toEqual({ head: 4, direction: 1, pair: "input" });
+    expect(coordinatedRuleState(10, 200)).toEqual({ head: 8, direction: 1, pair: "input" });
   });
 
   test("jumps from the input right edge to the header right edge", () => {
-    const headerStartMs = 112.5;
+    const headerStartMs = 225;
 
     expect(workingRuleFrameState("coordinated", "inputTop", 10, headerStartMs)).toBeNull();
     expect(workingRuleFrameState("coordinated", "headerTop", 10, headerStartMs)).toEqual({
@@ -59,7 +60,7 @@ describe("coordinated working rules", () => {
   });
 
   test("moves the header pair right-to-left while the input pair stays static", () => {
-    const elapsedMs = 162.5;
+    const elapsedMs = 325;
 
     expect(workingRuleFrameState("coordinated", "headerTop", 10, elapsedMs)).toEqual({
       head: 5,
@@ -74,8 +75,8 @@ describe("coordinated working rules", () => {
   });
 
   test("resets to the input pair's left edge after the header reaches the left", () => {
-    expect(coordinatedRuleState(10, 225)).toEqual({ head: 0, direction: 1, pair: "input" });
-    expect(workingRuleFrameState("coordinated", "inputTop", 1, 25)).toEqual({
+    expect(coordinatedRuleState(10, 450)).toEqual({ head: 0, direction: 1, pair: "input" });
+    expect(workingRuleFrameState("coordinated", "inputTop", 1, 50)).toEqual({
       head: 0,
       direction: 1,
       pair: "input",
@@ -89,20 +90,20 @@ describe("coordinated working rules", () => {
   });
 
   test("keeps input-only and off compatibility for all four roles", () => {
-    expect(workingRuleFrameState("input-only", "headerTop", 10, 50)).toBeNull();
-    expect(workingRuleFrameState("input-only", "headerBottom", 10, 50)).toBeNull();
-    expect(workingRuleFrameState("input-only", "inputTop", 10, 50)).toEqual({
+    expect(workingRuleFrameState("input-only", "headerTop", 10, 100)).toBeNull();
+    expect(workingRuleFrameState("input-only", "headerBottom", 10, 100)).toBeNull();
+    expect(workingRuleFrameState("input-only", "inputTop", 10, 100)).toEqual({
       head: 4,
       direction: 1,
       pair: "input",
     });
-    expect(workingRuleFrameState("input-only", "inputBottom", 10, 50)).toEqual({
+    expect(workingRuleFrameState("input-only", "inputBottom", 10, 100)).toEqual({
       head: 4,
       direction: 1,
       pair: "input",
     });
     for (const role of ["headerTop", "headerBottom", "inputTop", "inputBottom"] as const) {
-      expect(workingRuleFrameState("off", role, 10, 50)).toBeNull();
+      expect(workingRuleFrameState("off", role, 10, 100)).toBeNull();
     }
   });
 });
@@ -433,6 +434,14 @@ describe("glow rendering", () => {
     );
     expect(painted.chunks.reduce((total, chunk) => total + Bun.stringWidth(chunk.text ?? ""), 0))
       .toBe(40);
+  });
+
+  test("the prompt cursor uses the slower shared blink period", () => {
+    expect(CARET_PERIOD_MS).toBe(1_800);
+    expect(inputCursorVisible(0)).toBe(true);
+    expect(inputCursorVisible(CARET_PERIOD_MS * 0.64)).toBe(true);
+    expect(inputCursorVisible(CARET_PERIOD_MS * 0.66)).toBe(false);
+    expect(inputCursorVisible(CARET_PERIOD_MS)).toBe(true);
   });
 
   test("the caret ramps in and out instead of snapping", () => {

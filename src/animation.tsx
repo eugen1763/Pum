@@ -50,7 +50,7 @@ const SHIMMER_WIDTH = 7;
 const SHIMMER_TAIL = 120;
 
 const CARET = "▊";
-export const CARET_PERIOD_MS = 900;
+export const CARET_PERIOD_MS = 1_800;
 /** Ramp length at each end of the caret's cycle, as a share of the period. */
 const CARET_RAMP = 0.12;
 /** Quantised fade steps, so one ramp costs a bounded number of repaints. */
@@ -139,7 +139,7 @@ export function weightedGlyph(glyph: string, strength: number): string {
   return glyph === "\u2500" && strength >= HEAVY_RULE_STRENGTH ? "\u2501" : glyph;
 }
 
-const RULE_CHARS_PER_MS = 0.08;
+const RULE_CHARS_PER_MS = 0.04;
 const RULE_HIGHLIGHT_WIDTH = 10;
 const COMET_CHARS_PER_MS = 0.035;
 const ELECTRIC_FRAME_MS = 140;
@@ -221,6 +221,48 @@ const ClockContext = createContext<Clock>({
 });
 
 export const useClock = () => useContext(ClockContext);
+
+/** The prompt cursor stays visible for most of each slow blink cycle. */
+export function inputCursorVisible(elapsedMs: number): boolean {
+  const phase = ((elapsedMs % CARET_PERIOD_MS) + CARET_PERIOD_MS) % CARET_PERIOD_MS;
+  return phase < CARET_PERIOD_MS * 0.65;
+}
+
+/** Replace the terminal-defined fast cursor blink with the shared slow clock. */
+export function PromptCursorBlink({
+  inputRef,
+  active,
+}: {
+  inputRef: RefObject<TextareaRenderable | null>;
+  active: boolean;
+}) {
+  const { subscribe, enabled } = useClock();
+
+  useEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.cursorStyle = { style: "block", blinking: false };
+    if (!active) {
+      input.showCursor = false;
+      return;
+    }
+
+    input.showCursor = true;
+    if (!enabled) return;
+
+    let startedAt: number | undefined;
+    let visible = true;
+    return subscribe((elapsedMs) => {
+      startedAt ??= elapsedMs;
+      const next = inputCursorVisible(elapsedMs - startedAt);
+      if (next === visible) return;
+      visible = next;
+      if (inputRef.current) inputRef.current.showCursor = next;
+    });
+  }, [active, enabled, inputRef, subscribe]);
+
+  return null;
+}
 
 /**
  * One frame callback for the whole app. Animated components write straight to
@@ -344,7 +386,7 @@ const RAISED_LETTERS: Record<string, string> = {
 };
 
 /** How long one crest takes to cross the phrase, and the rest between sweeps. */
-const WAVE_CHARS_PER_MS = 0.022;
+const WAVE_CHARS_PER_MS = 0.011;
 const WAVE_WIDTH = 5;
 const WAVE_REST_CHARS = 90;
 

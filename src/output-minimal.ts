@@ -98,15 +98,12 @@ function joinPhrases(phrases: readonly string[]): string {
 }
 
 /**
- * Summarize one consecutive run of successful tool calls.
+ * Summarize one consecutive run without exposing arguments or outcomes.
  *
  * Tool types stay in first-occurrence order. Repeated types combine even when
- * another successful tool type occurs between them.
+ * another tool type occurs between them.
  */
-export function summarizeSuccessfulToolCalls(calls: readonly ToolCall[]): MinimalToolSummaryLine {
-  if (calls.length === 0 || calls.some((call) => call.state !== "ok")) {
-    throw new Error("A minimal tool summary requires one or more successful calls");
-  }
+function summarizeToolCalls(calls: readonly ToolCall[]): MinimalToolSummaryLine {
   const counts = new Map<string, number>();
   for (const call of calls) counts.set(call.name, (counts.get(call.name) ?? 0) + 1);
   const phrases = [...counts].map(([name, count]) => minimalToolPhrase(name, count));
@@ -117,32 +114,42 @@ export function summarizeSuccessfulToolCalls(calls: readonly ToolCall[]): Minima
   };
 }
 
+/** Validate and summarize a direct list of successful calls. */
+export function summarizeSuccessfulToolCalls(calls: readonly ToolCall[]): MinimalToolSummaryLine {
+  if (calls.length === 0 || calls.some((call) => call.state !== "ok")) {
+    throw new Error("A minimal tool summary requires one or more successful calls");
+  }
+  return summarizeToolCalls(calls);
+}
+
 /**
  * Convert transcript lines for a grouped output mode.
  *
- * Every non-tool line and every non-successful tool call ends a success run.
- * Running, failed, and rejected calls remain unchanged with their details.
- * `groupEverySuccess` folds commands and mutations in too, which is what makes
- * Quiet minimal; Normal leaves them as their own rows.
+ * Every non-tool line ends a grouped run. Normal also ends a run at commands,
+ * mutations, running calls, failed calls, and rejected calls. Quiet groups all
+ * settled calls, including failed and rejected calls, but keeps running calls
+ * visible until they settle.
  */
 export function minimalTranscriptLines(
   lines: readonly Line[],
-  groupEverySuccess = false,
+  groupEverySettled = false,
 ): MinimalTranscriptLine[] {
   const result: MinimalTranscriptLine[] = [];
-  let successful: ToolCall[] = [];
+  let grouped: ToolCall[] = [];
   const groups = (call: ToolCall) =>
-    groupEverySuccess ? call.state === "ok" : isRoutineSuccessfulTool(call);
+    groupEverySettled ? call.state !== "running" : isRoutineSuccessfulTool(call);
 
   const flush = () => {
-    if (successful.length === 0) return;
-    result.push(summarizeSuccessfulToolCalls(successful));
-    successful = [];
+    if (grouped.length === 0) return;
+    result.push(groupEverySettled
+      ? summarizeToolCalls(grouped)
+      : summarizeSuccessfulToolCalls(grouped));
+    grouped = [];
   };
 
   for (const line of lines) {
     if (line.kind === "tool" && groups(line.call)) {
-      successful.push(line.call);
+      grouped.push(line.call);
       continue;
     }
     flush();

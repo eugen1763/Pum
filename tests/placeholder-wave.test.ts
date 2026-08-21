@@ -64,6 +64,11 @@ describe("placeholder wave", () => {
     }
   });
 
+  test("takes twice as long to reach the same early letter", () => {
+    expect(frame(text, 400)).toBe(text);
+    expect(frame(text, 800)).not.toBe(text);
+  });
+
   test("moves the crest forward, then rests before the next sweep", () => {
     const positions = frames(text)
       .map((line) => [...line].findIndex((character) => RAISED.test(character)))

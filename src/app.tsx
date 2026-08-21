@@ -14,6 +14,7 @@ import { Component, memo, useEffect, useLayoutEffect, useMemo, useRef, useState,
 import {
   AnimationProvider,
   PlaceholderWave,
+  PromptCursorBlink,
   supportsTrueColor,
   useWorkingRule,
   type WorkingRuleLabel,
@@ -355,6 +356,9 @@ type PromptTextareaAction =
   | "select-visual-line-end"
   | "select-buffer-home"
   | "select-buffer-end";
+
+/** Half of OpenTUI's default drag auto-scroll rate. */
+export const PROMPT_SCROLL_SPEED = 8;
 
 /** Standard editor navigation, with wrapped rows treated as visible lines. */
 export const PROMPT_TEXTAREA_KEY_BINDINGS: Array<{
@@ -5758,6 +5762,9 @@ export function App({
   const streamGap = visibleTx.stream
     ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
     : false;
+  const promptFocused = !transcriptFocused && !settingsOpen && !helpOpen && !historyOpen
+    && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !providersOpen
+    && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible;
 
   // One element for the whole transcript, rebuilt only when what it shows
   // changes. React walks a child list of this size on every render of the app,
@@ -5999,12 +6006,15 @@ export function App({
             wrapMode="word"
             keyBindings={PROMPT_TEXTAREA_KEY_BINDINGS}
             scrollMargin={1}
-            focused={!transcriptFocused && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !providersOpen && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible}
+            scrollSpeed={PROMPT_SCROLL_SPEED}
+            cursorStyle={{ style: "block", blinking: false }}
+            focused={promptFocused}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => shellModeRef.current ? submitShellCommand() : submitPrompt()}
             style={{ width: promptInputColumns, flexShrink: 0, minWidth: 0, height: inputRows }}
           />
+          <PromptCursorBlink inputRef={inputRef} active={promptFocused} />
           {/* Reserve six columns on normal terminals. This forces wrapping
               before cursor movement can briefly overdraw the terminal edge. */}
           <box style={{ width: promptRightColumns, height: inputRows, flexShrink: 0 }} />

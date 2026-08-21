@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { TextareaRenderable, type BaseRenderable } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { App, promptPlaceholder } from "../src/app";
+import { App, PROMPT_SCROLL_SPEED, promptPlaceholder } from "../src/app";
 import {
   matchingCommandsForTarget,
   SUGGESTION_ROWS,
@@ -166,6 +166,16 @@ describe("prompt input layout", () => {
     ]);
     expect(placeholders.every((placeholder) => !placeholder.includes("[") && !placeholder.includes("Ctrl")))
       .toBe(true);
+  });
+
+  test("uses the slower prompt scroll and a steady cursor for manual blinking", async () => {
+    const setup = await renderApp(70, 16);
+    const input = textarea(setup.renderer.root);
+
+    expect(PROMPT_SCROLL_SPEED).toBe(8);
+    expect(input?.scrollSpeed).toBe(PROMPT_SCROLL_SPEED);
+    expect(input?.cursorStyle).toEqual({ style: "block", blinking: false });
+    expect(input?.showCursor).toBe(true);
   });
 
   test("moves the only prompt glyph through command suggestions", async () => {
