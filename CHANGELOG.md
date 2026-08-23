@@ -4,6 +4,11 @@ All notable changes to PUM are documented in this file.
 
 ## Unreleased
 
+## [0.2.27-beta.2] - 2026-08-23
+
+### Fixed
+- Prompt blinking now stays terminal-native instead of repeatedly hiding and restoring the hardware cursor on PUM's animation clock. This prevents smooth cursor trails from jumping between the input and animated screen regions, and lets an idle screen stop rendering continuously.
+
 ## [0.2.27-beta.1] - 2026-08-21
 
 ### Changed

@@ -409,6 +409,12 @@ These were chosen deliberately. Change them only on purpose.
   to the prompt boundaries. Ctrl+Left and Ctrl+Right move by words. Ctrl+Up and
   Ctrl+Down move to the prompt boundaries. Ctrl+End scrolls the transcript only
   when the prompt is empty.
+- **The prompt cursor uses terminal-native blinking.** Keep OpenTUI's cursor
+  logically visible while the prompt is focused; never toggle `showCursor` from
+  PUM's animation clock. A manually hidden cursor lets animated frame writes
+  become its last terminal position, so smooth cursor trails jump between the
+  animation and the input when it is shown again. Native blinking also avoids
+  keeping the renderer live on an otherwise idle screen.
 - **Long text pastes become attachments early.** A paste over 16 KiB or over
   three logical lines becomes a `[Pasted text #n]` marker backed by a private
   temporary file. Stack traces therefore stay compact before they fill the

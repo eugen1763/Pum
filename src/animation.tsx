@@ -222,48 +222,6 @@ const ClockContext = createContext<Clock>({
 
 export const useClock = () => useContext(ClockContext);
 
-/** The prompt cursor stays visible for most of each slow blink cycle. */
-export function inputCursorVisible(elapsedMs: number): boolean {
-  const phase = ((elapsedMs % CARET_PERIOD_MS) + CARET_PERIOD_MS) % CARET_PERIOD_MS;
-  return phase < CARET_PERIOD_MS * 0.65;
-}
-
-/** Replace the terminal-defined fast cursor blink with the shared slow clock. */
-export function PromptCursorBlink({
-  inputRef,
-  active,
-}: {
-  inputRef: RefObject<TextareaRenderable | null>;
-  active: boolean;
-}) {
-  const { subscribe, enabled } = useClock();
-
-  useEffect(() => {
-    const input = inputRef.current;
-    if (!input) return;
-    input.cursorStyle = { style: "block", blinking: false };
-    if (!active) {
-      input.showCursor = false;
-      return;
-    }
-
-    input.showCursor = true;
-    if (!enabled) return;
-
-    let startedAt: number | undefined;
-    let visible = true;
-    return subscribe((elapsedMs) => {
-      startedAt ??= elapsedMs;
-      const next = inputCursorVisible(elapsedMs - startedAt);
-      if (next === visible) return;
-      visible = next;
-      if (inputRef.current) inputRef.current.showCursor = next;
-    });
-  }, [active, enabled, inputRef, subscribe]);
-
-  return null;
-}
-
 /**
  * One frame callback for the whole app. Animated components write straight to
  * their own renderable, so no React render happens per frame. The renderer is

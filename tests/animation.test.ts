@@ -11,7 +11,6 @@ import {
   decayTrail,
   glowColor,
   glowFalloff,
-  inputCursorVisible,
   markdownCaretContent,
   pulseGlyph,
   randomConstellationCenters,
@@ -434,14 +433,6 @@ describe("glow rendering", () => {
     );
     expect(painted.chunks.reduce((total, chunk) => total + Bun.stringWidth(chunk.text ?? ""), 0))
       .toBe(40);
-  });
-
-  test("the prompt cursor uses the slower shared blink period", () => {
-    expect(CARET_PERIOD_MS).toBe(1_800);
-    expect(inputCursorVisible(0)).toBe(true);
-    expect(inputCursorVisible(CARET_PERIOD_MS * 0.64)).toBe(true);
-    expect(inputCursorVisible(CARET_PERIOD_MS * 0.66)).toBe(false);
-    expect(inputCursorVisible(CARET_PERIOD_MS)).toBe(true);
   });
 
   test("the caret ramps in and out instead of snapping", () => {

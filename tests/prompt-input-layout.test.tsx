@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { TextareaRenderable, type BaseRenderable } from "@opentui/core";
-import { createTestRenderer } from "@opentui/core/testing";
+import { createTestRenderer, ManualClock } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App, PROMPT_SCROLL_SPEED, promptPlaceholder } from "../src/app";
+import { CARET_PERIOD_MS } from "../src/animation";
 import {
   matchingCommandsForTarget,
   SUGGESTION_ROWS,
@@ -42,8 +43,14 @@ async function renderApp(
   width: number,
   height: number,
   cachedPrompts: Array<{ text: string; executed: boolean }> = [],
+  options: { animations?: boolean; clock?: ManualClock } = {},
 ) {
-  const setup = await createTestRenderer({ width, height, kittyKeyboard: true });
+  const setup = await createTestRenderer({
+    width,
+    height,
+    kittyKeyboard: true,
+    clock: options.clock,
+  });
   destroy = () => setup.renderer.destroy();
   const session = fakeSession();
   const history: string[] = [];
@@ -64,7 +71,7 @@ async function renderApp(
       settings={{
         showThinking: false,
         theme: "tokyonight",
-        animations: false,
+        animations: options.animations ?? false,
         workingRuleAnimation: "off",
         webSearch: false,
         writingStyle: "none",
@@ -168,14 +175,40 @@ describe("prompt input layout", () => {
       .toBe(true);
   });
 
-  test("uses the slower prompt scroll and a steady cursor for manual blinking", async () => {
+  test("uses the slower prompt scroll and leaves cursor blinking to the terminal", async () => {
     const setup = await renderApp(70, 16);
     const input = textarea(setup.renderer.root);
 
     expect(PROMPT_SCROLL_SPEED).toBe(8);
     expect(input?.scrollSpeed).toBe(PROMPT_SCROLL_SPEED);
-    expect(input?.cursorStyle).toEqual({ style: "block", blinking: false });
+    expect(input?.cursorStyle).toEqual({ style: "block", blinking: true });
     expect(input?.showCursor).toBe(true);
+  });
+
+  test("does not animate the hardware cursor or keep an idle renderer live", async () => {
+    const previousColorTerm = process.env.COLORTERM;
+    process.env.COLORTERM = "truecolor";
+
+    try {
+      const clock = new ManualClock();
+      const setup = await renderApp(70, 16, [], { animations: true, clock });
+      const input = textarea(setup.renderer.root);
+
+      expect(setup.renderer.liveRequestCount).toBe(0);
+      expect(input?.showCursor).toBe(true);
+
+      // The removed manual blink hid the cursor after 65% of this period. Even
+      // after crossing that boundary, terminal-native blinking leaves the
+      // textarea's logical cursor visible for every animated repaint.
+      clock.advance(CARET_PERIOD_MS * 0.7);
+      await setup.renderOnce();
+
+      expect(input?.showCursor).toBe(true);
+      expect(setup.renderer.liveRequestCount).toBe(0);
+    } finally {
+      if (previousColorTerm === undefined) delete process.env.COLORTERM;
+      else process.env.COLORTERM = previousColorTerm;
+    }
   });
 
   test("moves the only prompt glyph through command suggestions", async () => {

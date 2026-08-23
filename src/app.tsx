@@ -14,7 +14,6 @@ import { Component, memo, useEffect, useLayoutEffect, useMemo, useRef, useState,
 import {
   AnimationProvider,
   PlaceholderWave,
-  PromptCursorBlink,
   supportsTrueColor,
   useWorkingRule,
   type WorkingRuleLabel,
@@ -6007,14 +6006,12 @@ export function App({
             keyBindings={PROMPT_TEXTAREA_KEY_BINDINGS}
             scrollMargin={1}
             scrollSpeed={PROMPT_SCROLL_SPEED}
-            cursorStyle={{ style: "block", blinking: false }}
             focused={promptFocused}
             onContentChange={handleTextareaChange}
             onCursorChange={scheduleInputMetrics}
             onSubmit={() => shellModeRef.current ? submitShellCommand() : submitPrompt()}
             style={{ width: promptInputColumns, flexShrink: 0, minWidth: 0, height: inputRows }}
           />
-          <PromptCursorBlink inputRef={inputRef} active={promptFocused} />
           {/* Reserve six columns on normal terminals. This forces wrapping
               before cursor movement can briefly overdraw the terminal edge. */}
           <box style={{ width: promptRightColumns, height: inputRows, flexShrink: 0 }} />
