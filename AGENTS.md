@@ -87,6 +87,7 @@ bun run start    # open the TUI in the current directory
 | `src/identity.ts` | PUM identity in the system prompt and pi-docs section removal, with no-op guards |
 | `src/platform.ts` | Cross-platform path identities, containment, config paths, and signals |
 | `src/terminal-title.ts` | Pure title formatting and best-effort deduplicated terminal updates |
+| `src/orca-status.ts` | Orca-only OSC 9999 activity status formatting and deduplicated delivery |
 | `src/config.ts` | Where the config dir lives |
 
 ## Keys
