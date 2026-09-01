@@ -76,4 +76,5 @@ authoritative queue before restoring the text, and never recalls inter-agent,
 trigger, lifecycle, cache, delivered, or image-bearing messages.
 
 Inter-agent messages have their own setting, independent of transcript detail:
-turn **Agent messages** off in `Ctrl+P` to keep them out of the transcript.
+turn **Agent messages** off in `Ctrl+P` to hide conversation. Completion notices
+remain visible because they report managed lifecycle results.

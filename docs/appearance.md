@@ -26,7 +26,7 @@ closes two seconds later, once, however often you switch between agents.
 
 **Agent messages** is a separate toggle: what one agent said to another is a
 different question from how much tool detail you want, so Verbose can hide them
-and Quiet can keep them.
+and Quiet can keep them. A subagent completion notice always remains visible.
 
 ## Themes
 

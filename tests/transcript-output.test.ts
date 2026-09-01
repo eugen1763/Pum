@@ -124,19 +124,27 @@ describe("transcript output projection", () => {
     ]);
   });
 
-  test("agent messages answer to their own setting, not to the mode", () => {
+  test("the agent-message setting hides conversation but keeps completion notices", () => {
     const canonical = [
       { kind: "text", role: "assistant", text: "Before" },
       { kind: "agent-message", sender: "worker", recipient: "main", text: "Update", messageId: "m1" },
+      {
+        kind: "agent-message",
+        sender: "worker",
+        recipient: "main",
+        text: "Subagent worker completed.",
+        messageId: "m2",
+        agentMessageKind: "completion",
+      },
       { kind: "text", role: "assistant", text: "After" },
     ] as const;
 
     for (const mode of ["quiet", "normal", "verbose"] as const) {
       expect(projectTranscriptLines(canonical, mode, true).map((line) => line.kind)).toEqual([
-        "text", "agent-message", "text",
+        "text", "agent-message", "agent-message", "text",
       ]);
       expect(projectTranscriptLines(canonical, mode, false).map((line) => line.kind)).toEqual([
-        "text", "text",
+        "text", "agent-message", "text",
       ]);
     }
     expect(canonical[1].kind).toBe("agent-message");
@@ -154,10 +162,21 @@ describe("transcript output projection", () => {
         line: { kind: "text", role: "user", text: "queued prompt" },
         delivered: false,
       },
+      {
+        id: "completion",
+        line: {
+          kind: "agent-message",
+          sender: "worker",
+          recipient: "main",
+          text: "Subagent worker completed.",
+          agentMessageKind: "completion",
+        },
+        delivered: false,
+      },
     ] as const;
 
-    expect(projectPendingTranscriptLines(pending, false).map((item) => item.id)).toEqual(["user"]);
-    expect(projectPendingTranscriptLines(pending, true).map((item) => item.id)).toEqual(["agent", "user"]);
+    expect(projectPendingTranscriptLines(pending, false).map((item) => item.id)).toEqual(["user", "completion"]);
+    expect(projectPendingTranscriptLines(pending, true).map((item) => item.id)).toEqual(["agent", "user", "completion"]);
     expect(pending[0].delivered).toBe(false);
   });
 });

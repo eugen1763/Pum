@@ -23,9 +23,9 @@ export function transcriptOutputMode(settings: unknown): TranscriptOutputMode {
  * call, including failed and rejected calls. Verbose keeps every canonical
  * tool row and changes ToolLine presentation only.
  *
- * Inter-agent messages answer to their own setting, not to the mode. What one
- * agent said to another is a different question from how much tool detail to
- * show, so Verbose can hide them and Quiet can keep them.
+ * Inter-agent messages answer to their own setting, not to the mode. Completion
+ * notices remain visible because they report a managed subagent lifecycle
+ * result, not optional conversation between agents.
  */
 export function projectTranscriptLines(
   lines: readonly Line[],
@@ -34,17 +34,21 @@ export function projectTranscriptLines(
 ): MinimalTranscriptLine[] {
   const visible = showAgentMessages
     ? lines
-    : lines.filter((line) => line.kind !== "agent-message");
+    : lines.filter((line) =>
+        line.kind !== "agent-message" || line.agentMessageKind === "completion"
+      );
   if (mode === "verbose") return [...visible];
   return minimalTranscriptLines(visible, mode === "quiet");
 }
 
-/** Hide queued agent-message display rows without changing delivery state. */
+/** Hide queued conversation rows without hiding subagent completion notices. */
 export function projectPendingTranscriptLines(
   pending: readonly PendingLine[],
   showAgentMessages = true,
 ): PendingLine[] {
   return showAgentMessages
     ? [...pending]
-    : pending.filter((item) => item.line.kind !== "agent-message");
+    : pending.filter((item) =>
+        item.line.kind !== "agent-message" || item.line.agentMessageKind === "completion"
+      );
 }

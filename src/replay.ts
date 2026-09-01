@@ -1,4 +1,4 @@
-import type { Line } from "./transcript";
+import type { AgentMessageKind, Line } from "./transcript";
 import { type ToolCall } from "./tool-line";
 import { interruptedToolCall, settledToolCall, startedToolCall } from "./tool-row";
 import {
@@ -45,12 +45,22 @@ function agentMessageOf(entry: any): AgentMessageData | undefined {
   const data = isDisplay ? entry.data : entry.details;
   if (!data || typeof data !== "object") return undefined;
   if (typeof data.sender !== "string" || typeof data.recipient !== "string") return undefined;
+  const kind = typeof data.kind === "string" && [
+    "message",
+    "acknowledgement",
+    "idle",
+    "completion",
+    "status",
+    "user-instruction",
+    "reminder",
+  ].includes(data.kind) ? data.kind as AgentMessageKind : undefined;
   return {
     id: typeof data.id === "string" ? data.id : `${entry.id ?? "message"}`,
     sender: data.sender,
     recipient: data.recipient,
     text: typeof data.text === "string" ? data.text : textOf(entry.content),
     at: typeof data.at === "number" ? data.at : 0,
+    ...(kind ? { kind } : {}),
   };
 }
 
@@ -202,6 +212,7 @@ export function replayEntries(
           recipient: agentMessage.recipient,
           text: agentMessage.text,
           messageId: agentMessage.id,
+          ...(agentMessage.kind ? { agentMessageKind: agentMessage.kind } : {}),
         });
       }
       continue;

@@ -70,6 +70,9 @@ const LOCK_TIMEOUT_MS = 10_000;
 /** Consecutive create failures with no lock file before locking counts as unavailable. */
 const UNLOCKABLE_ATTEMPTS = 3;
 const LOCK_RETRY_MS = 5;
+const RENAME_RETRY_ATTEMPTS = 10;
+const RENAME_RETRY_MS = 20;
+const TRANSIENT_RENAME_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
 function sleepSync(ms: number): void {
   try {
@@ -289,6 +292,22 @@ function serialized(value: JsonFile): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+function renameWithRetry(source: string, target: string, ops: PromptCacheFileOps): void {
+  let retries = 0;
+  for (;;) {
+    try {
+      ops.rename(source, target);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (!TRANSIENT_RENAME_CODES.has(code ?? "") || retries++ >= RENAME_RETRY_ATTEMPTS) {
+        throw error;
+      }
+      sleepSync(RENAME_RETRY_MS);
+    }
+  }
+}
+
 /** Commit both cache files as one rollback-capable transaction. */
 function atomicWriteMany(changes: Array<{ path: string; value: JsonFile }>, ops: PromptCacheFileOps): void {
   if (changes.length === 0) return;
@@ -308,13 +327,13 @@ function atomicWriteMany(changes: Array<{ path: string; value: JsonFile }>, ops:
       if (item.existed) ops.copy(item.path, item.backup);
     }
     for (const item of staged) {
-      ops.rename(item.temporary, item.path);
+      renameWithRetry(item.temporary, item.path, ops);
       committed.push(item);
     }
   } catch (error) {
     for (const item of [...committed].reverse()) {
       ops.remove(item.path, { force: true });
-      if (item.existed && ops.exists(item.backup)) ops.rename(item.backup, item.path);
+      if (item.existed && ops.exists(item.backup)) renameWithRetry(item.backup, item.path, ops);
     }
     throw error;
   } finally {

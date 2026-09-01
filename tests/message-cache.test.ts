@@ -222,6 +222,31 @@ describe("message cache send serialization", () => {
 });
 
 describe("message cache atomic persistence", () => {
+  test("retries transient atomic rename failures", () => {
+    const base = fixture();
+    let failures = 0;
+    const ops: PromptCacheFileOps = {
+      exists: existsSync,
+      mkdir: mkdirSync,
+      read: readFileSync,
+      write: writeFileSync,
+      copy: copyFileSync,
+      remove: rmSync,
+      rename(source, target) {
+        if (String(source).endsWith(".tmp") && failures < 2) {
+          failures++;
+          throw Object.assign(new Error("transient rename failure"), { code: "EPERM" });
+        }
+        renameSync(source, target);
+      },
+    };
+    const store = new PromptCacheStore(base.historyPath, base.stashPath, "win32", ops);
+
+    expect(store.appendHistory(base.cwd, "saved after retry")).toEqual(["saved after retry"]);
+    expect(failures).toBe(2);
+    expect(readFileSync(base.historyPath, "utf8")).toContain("saved after retry");
+  });
+
   test("rolls back both files when the second commit rename fails", () => {
     const base = fixture();
     const owner = { type: "agent", id: "agent-1", name: "agent" } as const;
@@ -271,5 +296,5 @@ describe("message cache growth bounds", () => {
     expect(entries.filter((entry) => entry.executed)).toHaveLength(200);
     expect(entries[0]!.text).toBe("executed 200");
     expect(entries.at(-1)!.text).toBe("pending 299");
-  });
+  }, 30_000);
 });

@@ -4,14 +4,13 @@ PUM uses the npm package name `pum-agent`. The installed executable remains `pum
 
 ## npm authentication
 
-The Release workflow publishes through **trusted publishing**: GitHub Actions
-presents this job's OIDC identity, npm checks it against the trusted publisher
-registered on the package, and grants a credential for that one publish. No
-token is stored, so there is nothing to rotate and nothing that works from a
-laptop.
+The Release workflow reads `NPM_TOKEN` from the GitHub `npm` environment. The
+token is granular, limited to `pum-agent`, read/write, configured with Bypass
+2FA, and given the shortest practical expiration. It authenticates package
+publication and the exact prerelease dist-tag update. Never print its value.
 
-The identity npm verifies is the repository, the workflow file, and the
-environment, so all three have to match the registration:
+GitHub OIDC supplies npm provenance. The identity npm verifies for provenance
+is the repository, the workflow file, and the environment:
 
 | Field | Value |
 |---|---|
@@ -19,13 +18,9 @@ environment, so all three have to match the registration:
 | Workflow | `release.yml` |
 | Environment | `npm` |
 
-Provenance is attached automatically under OIDC. The workflow still passes
-`--provenance` so a build that somehow loses it fails rather than publishing
-quietly without one.
-
-Prerelease versions publish only under the npm `beta` tag. Stable versions
-publish under `latest`. The workflow does not promote prereleases to `latest`
-and does not require an npm token.
+The workflow passes `--provenance` as an explicit requirement. Prerelease
+versions publish under `beta`, then assign the same exact version to `latest`.
+Stable versions publish directly under `latest`.
 
 ## Release checklist
 
@@ -53,4 +48,4 @@ retired, because nothing was published under it.
 
 Do not move or reuse a published tag. If a tagged candidate needs changes, prepare a newer version.
 
-Versions with a hyphen publish under the npm `beta` tag. Other versions publish directly under `latest`.
+Versions with a hyphen publish under npm `beta` and `latest`. Other versions publish directly under `latest`.

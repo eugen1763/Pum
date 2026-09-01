@@ -528,7 +528,8 @@ These were chosen deliberately. Change them only on purpose.
 - **Inter-agent messages answer to their own setting.** `showAgentMessages` is
   independent of the output mode: what one agent said to another is a different
   question from how much tool detail to show, so Verbose can hide them and Quiet
-  can keep them.
+  can keep them. A completed `finish_subagent` notice remains visible when the
+  setting is off because it reports a managed lifecycle result, not conversation.
 - **A written file is a diff of nothing but additions.** One shape for every
   mutation, so a new file and an edited one read alike. `inlineDiffLines()`
   drops the patch envelope — `*** Begin Patch`, `@@`, `--- a/file` — because
@@ -735,10 +736,12 @@ These were chosen deliberately. Change them only on purpose.
   session JSONL (the same pattern as the news companion file) so they survive
   resume and never enter LLM context. There is no News group because PUM has
   no news model tool; groups with zero tools are dropped.
-- **Release publication uses npm trusted publishing.** GitHub OIDC publishes
-  prereleases under `beta` and stable versions under `latest`, with npm
-  provenance. The workflow does not promote prereleases to `latest` and does
-  not use an `NPM_TOKEN`. Never print, persist, or expose registry credentials.
+- **Release publication uses one package-scoped token and OIDC provenance.**
+  The GitHub `npm` environment supplies `NPM_TOKEN` for `npm publish` and exact
+  dist-tag changes. GitHub OIDC supplies npm provenance. Prereleases publish
+  under `beta` and then assign the same exact version to `latest`; stable
+  versions publish directly under `latest`. Never print, persist, or expose
+  registry credentials.
 - **Check mode on has deterministic hard blocks and advisory verifier review.**
   On blocks only hard-rule, explicitly suspicious, clearly dangerous, obfuscated,
   malformed, or incompletely analyzed calls. On permits ordinary complete
@@ -957,6 +960,9 @@ Each of these cost real debugging. They are not obvious from the docs.
   apart by whether the lock file exists is not enough on its own: a holder
   releasing between the failed create and the check looks identical. Only a
   failure that repeats means locking is unavailable.
+- **An atomic rename can fail briefly on Windows.** Antivirus and file indexing
+  can return `EPERM`, `EACCES`, or `EBUSY` while a cache file is replaced. Retry
+  only these codes for a bounded period, including during rollback.
 - **Bubblewrap mount order is part of the security policy.** Add system and
   read-only mounts first, writable project roots next, and private temporary and
   denied-path masks last. Reordering these arguments can expose credentials

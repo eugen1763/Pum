@@ -2,10 +2,20 @@
 
 All notable changes to PUM are documented in this file.
 
-## Unreleased
+## [0.2.28-beta.1] - 2026-09-01
+
+### Added
+- Added agent-managed project memory. The main agent stores bounded private Markdown facts outside the repository, shares them across linked Git worktrees, and injects them before model calls without adding them to the session transcript. Managed workers can read this memory but cannot change it.
+- Added Orca activity status output through OSC 9999. PUM reports user-input, working, and completed states only when it detects an Orca terminal.
 
 ### Changed
-- The `constellation` working animation now animates each star on its own. The stars sat on a fixed grid of one star every thirteen columns and only changed brightness. Each star now has its own period, its own peak brightness, and a fresh column for every appearance. A star moves only while it is dark, so the field looks random and no star jumps in view.
+- Managed subagents now share the project directory by default. `spawn_subagent` accepts `worktree: true` when isolation or conflict avoidance requires a separate branch.
+- The `constellation` working animation now gives each star an independent period, peak brightness, and position for each appearance.
+- Prerelease publication now assigns the exact package version to both npm `beta` and `latest` with the package-scoped release token.
+
+### Fixed
+- A completed subagent now leaves a transcript row when **Agent messages** is off. Ordinary inter-agent conversation remains hidden.
+- Prompt-cache atomic replacement now retries transient Windows file access errors for a bounded period, including during rollback.
 
 ## [0.2.27-beta.2] - 2026-08-23
 
@@ -497,6 +507,7 @@ workflow, so the candidate was replaced rather than retagged.
 - Added deterministic blocks for project escape, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion.
 - Added sanitized trigger environments, inert templates, strict argument-boundary checks, private bounded output files, and non-overridable hard-block or explicit `UNSAFE` decisions.
 
+[0.2.28-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.27-beta.2...v0.2.28-beta.1
 [0.2.2-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.1-beta.1...v0.2.2-beta.1
 [0.2.1-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.4...v0.2.1-beta.1
 [0.2.0-beta.4]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.3...v0.2.0-beta.4

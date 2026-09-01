@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { goalFileFor } from "../src/goal";
 
 /**
@@ -20,7 +21,7 @@ let directory: string | undefined;
 
 afterEach(async () => {
   if (tmux) await Bun.spawn([tmux, "kill-session", "-t", `=${SESSION}`]).exited.catch(() => {});
-  if (directory) rmSync(directory, { recursive: true, force: true });
+  if (directory) rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   directory = undefined;
 });
 
@@ -34,7 +35,7 @@ async function run(args: string[]): Promise<string> {
 const HARNESS = `
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { App } from "${join(import.meta.dir, "..", "src", "app")}";
+import { App } from "${pathToFileURL(join(import.meta.dir, "..", "src", "app")).href}";
 
 const sessionFile = process.argv[2];
 const session = {
@@ -53,7 +54,7 @@ const session = {
 };
 const subagentManager = {
   getAgents: () => [], subscribe: () => () => {}, bindMainSession: async () => {},
-  abortAgent: async () => {}, persistToolEvent() {},
+  abortAgent: async () => {}, persistToolEvent() {}, setMaxActiveSubagents() {},
 };
 const settings = {
   showThinking: false, theme: "tokyonight", animations: false,
@@ -109,6 +110,9 @@ describe.skipIf(!tmux)("goal rule in a real terminal", () => {
     }
 
     const labelled = rows.filter((row) => row.includes("GOAL · active"));
+    if (labelled.length === 0) {
+      throw new Error(`Goal label did not render.\n${readFileSync(join(directory, "err.log"), "utf8")}`);
+    }
     expect(labelled).toHaveLength(1);
 
     const ruleRow = rows.findIndex((row) => row.includes("GOAL · active"));

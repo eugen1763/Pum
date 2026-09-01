@@ -39,10 +39,26 @@ import {
 
 export type Role = "user" | "assistant" | "thinking" | "system" | "error";
 
+export type AgentMessageKind =
+  | "message"
+  | "acknowledgement"
+  | "idle"
+  | "completion"
+  | "status"
+  | "user-instruction"
+  | "reminder";
+
 export type Line =
   | { kind: "text"; role: Role; text: string; newsId?: string }
   | { kind: "tool"; call: ToolCall }
-  | { kind: "agent-message"; sender: string; recipient: string; text: string; messageId?: string }
+  | {
+      kind: "agent-message";
+      sender: string;
+      recipient: string;
+      text: string;
+      messageId?: string;
+      agentMessageKind?: AgentMessageKind;
+    }
   | GoalReviewRow;
 
 /** One goal review: appended while the judge runs, rewritten with its outcome. */

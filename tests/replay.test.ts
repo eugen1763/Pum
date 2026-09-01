@@ -160,6 +160,34 @@ describe("subagent transcript replay", () => {
       recipient: "main",
       text: reminder.text,
       messageId: reminder.id,
+      agentMessageKind: "reminder",
+    }]);
+  });
+
+  test("restores the completion category for transcript visibility", () => {
+    const completion = {
+      id: "settlement-worker-1",
+      sender: "worker",
+      recipient: "main",
+      text: "Subagent worker completed.",
+      at: 1,
+      kind: "completion",
+    };
+    const lines = replayEntries([{
+      type: "custom_message",
+      customType: AGENT_MESSAGE_CUSTOM_TYPE,
+      content: completion.text,
+      display: true,
+      details: completion,
+    }], process.cwd(), true);
+
+    expect(lines).toEqual([{
+      kind: "agent-message",
+      sender: "worker",
+      recipient: "main",
+      text: completion.text,
+      messageId: completion.id,
+      agentMessageKind: "completion",
     }]);
   });
 

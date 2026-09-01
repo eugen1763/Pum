@@ -52,6 +52,20 @@ const entries = [
   },
 ];
 
+const completionEntry = {
+  type: "custom_message",
+  customType: AGENT_MESSAGE_CUSTOM_TYPE,
+  content: "Subagent finisher completed.",
+  details: {
+    id: "settlement-finisher-1",
+    sender: "finisher",
+    recipient: "main",
+    text: "Subagent finisher completed.",
+    at: 2,
+    kind: "completion",
+  },
+};
+
 function fakeSession(source: unknown[] = entries) {
   return {
     agent: {
@@ -165,10 +179,14 @@ describe("output-level transcript UI", () => {
     expect(shown.captureCharFrame()).toContain("weighing the options");
   });
 
-  test("the agent-message setting hides them in every mode", async () => {
+  test("the agent-message setting hides conversation but keeps completion notices", async () => {
     for (const mode of ["quiet", "normal", "verbose"] as const) {
-      const setup = await renderMode(mode, undefined, { showAgentMessages: false });
+      const setup = await renderMode(mode, undefined, {
+        entries: [...entries, completionEntry],
+        showAgentMessages: false,
+      });
       expect(setup.captureCharFrame()).not.toContain("worker → main");
+      expect(setup.captureCharFrame()).toContain("finisher → main");
       destroy?.();
       destroy = undefined;
     }

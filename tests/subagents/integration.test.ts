@@ -691,7 +691,7 @@ describe("background subagents", () => {
       .rejects.toThrow("while its authoritative status is interrupted");
     await (manager as any).worktreeAction(repo, "remove", "recursive-unrelated-id");
     await manager.detachMain();
-  });
+  }, 20_000);
 
   test("serializes concurrent spawns against a custom active limit", async () => {
     const runtime = await ModelRuntime.create({

@@ -1,5 +1,5 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { Line, PendingLine } from "../transcript";
+import type { AgentMessageKind, Line, PendingLine } from "../transcript";
 import type { WorktreeRecord } from "../worktree";
 import type { AgentUsage } from "../agent-usage";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
@@ -126,7 +126,7 @@ export type AgentMessageData = {
   recipient: string;
   text: string;
   at: number;
-  kind?: "message" | "acknowledgement" | "idle" | "completion" | "status" | "user-instruction" | "reminder";
+  kind?: AgentMessageKind;
 };
 
 export type TriggerEventData = ExternalTriggerEventData & {

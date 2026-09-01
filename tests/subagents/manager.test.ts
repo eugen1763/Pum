@@ -879,7 +879,11 @@ describe("SubagentManager extension", () => {
     expect(deliveries[0].message.content).toContain("Subagent child completed.");
     expect(deliveries[0].message.content).toContain("summary: Child work passed.");
     expect(deliveries[0].message.details.recipient).toBe("main");
-    expect(events.filter((event) => event.type === "main-line")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "main-line")).toEqual([
+      expect.objectContaining({
+        line: expect.objectContaining({ agentMessageKind: "completion" }),
+      }),
+    ]);
 
     (manager as any).recordSettlementResponse(
       deliveries[0].message.details.id,

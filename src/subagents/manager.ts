@@ -2549,6 +2549,7 @@ export class SubagentManager {
       recipient: data.recipient,
       text: data.text,
       messageId: data.id,
+      ...(data.kind ? { agentMessageKind: data.kind } : {}),
     };
   }
 
