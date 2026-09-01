@@ -54,7 +54,7 @@ async function gitPath(cwd: string, args: string[]): Promise<string> {
   return result.stdout.replace(/\r?\n$/, "");
 }
 
-function safeName(value: string): string {
+export function normalizeWorktreeName(value: string): string {
   const normalized = value
     .trim()
     .toLowerCase()
@@ -116,7 +116,7 @@ export async function createWorktree(cwd: string, requestedName?: string): Promi
   const baseBranch = await git(root, ["branch", "--show-current"]);
   if (!baseBranch) throw new Error("Cannot create a PUM worktree from a detached HEAD");
   const baseCommit = await git(root, ["rev-parse", "HEAD"]);
-  const name = safeName(requestedName || randomWorktreeName());
+  const name = normalizeWorktreeName(requestedName || randomWorktreeName());
   const branch = `pum/${name}`;
   const directory = resolve(root, ".pum", "worktrees", name);
 

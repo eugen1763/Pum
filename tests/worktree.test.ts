@@ -11,6 +11,7 @@ import {
   mergeWorktree,
   parseWorktreePorcelain,
   randomWorktreeName,
+  normalizeWorktreeName,
   removeWorktree,
   worktreeStatus,
 } from "../src/worktree";
@@ -221,6 +222,11 @@ describe("PUM worktree merge target", () => {
 });
 
 describe("random worktree names", () => {
+  test("normalizes explicit names for worktrees and shared agents", () => {
+    expect(normalizeWorktreeName(" Review API / Retry ")).toBe("review-api-retry");
+    expect(() => normalizeWorktreeName("---")).toThrow("must contain a letter or number");
+  });
+
   test("draws the suffix from bytes that do not pick the adjective or noun", () => {
     // The old suffix was the hex of the same two bytes the words came from, so
     // every adjective carried one fixed suffix digit and every noun another.

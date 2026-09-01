@@ -297,6 +297,8 @@ describe("SubagentManager extension", () => {
     expect(result.systemPrompt).toContain("call enable_tools with Subagents first");
     expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
     expect(definitions.get("spawn_subagent").parameters.properties.preview).toBeDefined();
+    expect(definitions.get("spawn_subagent").parameters.properties.worktree.description)
+      .toContain("Defaults to false");
     expect(definitions.get("spawn_subagent").parameters.properties.context.anyOf.map((item: any) => item.const))
       .toEqual(["fresh", "fork"]);
     expect(definitions.get("spawn_subagent").parameters.properties.readonly).toBeUndefined();
@@ -381,7 +383,7 @@ describe("SubagentManager extension", () => {
         thinkingLevel: "medium",
         parentAgentId: null,
         context: "fresh",
-        createWorktree: true,
+        createWorktree: false,
         role: "worker",
       },
       {
@@ -390,7 +392,7 @@ describe("SubagentManager extension", () => {
         thinkingLevel: "high",
         parentAgentId: "parent",
         context: "fresh",
-        createWorktree: true,
+        createWorktree: false,
         role: "worker",
       },
     ]);
@@ -548,6 +550,7 @@ describe("SubagentManager extension", () => {
     await mainRun;
     expect(spawned[0].task).toBe("Main preview task");
     expect(spawned[0].context).toBe("fork");
+    expect(spawned[0].createWorktree).toBe(false);
     expect(spawned[0].forkSource.origin).toEqual({
       sourceSessionId: "main-session",
       cutoffEntryId: "main-cutoff",
@@ -561,11 +564,13 @@ describe("SubagentManager extension", () => {
     const childRun = childTools.get("spawn_subagent").execute("tool", {
       task: "Nested preview task",
       preview: true,
+      worktree: true,
     }, undefined, undefined, {
       sessionManager: { getSessionId: () => "child-session" },
     });
     await Promise.resolve();
     expect(previewManager.current()?.requester).toEqual({ sessionId: "child-session", agentId: "parent", name: "parent" });
+    expect(previewManager.current()?.options.createWorktree).toBe(true);
     previewManager.cancel();
     const cancelled = await childRun;
     expect(cancelled.content[0].text).toContain("Spawn cancelled");
@@ -1664,6 +1669,22 @@ describe("SubagentManager extension", () => {
     await expect((manager as any).worktreeAction("/tmp", "remove", "failed-child", undefined, true))
       .rejects.toThrow("retry the remove without force");
     expect(manager.getAgent("failed-child")).toBeDefined();
+  });
+
+  test("closes a shared-directory agent without a merge or filesystem removal", async () => {
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+    addTestAgent(manager, "shared-child", "completed");
+    const record = (manager as any).records.get("shared-child");
+    record.snapshot.usesWorktree = false;
+    record.snapshot.worktree.path = "/repo";
+    record.snapshot.worktree.branch = "main";
+
+    await expect((manager as any).worktreeAction("/repo", "merge", "shared-child"))
+      .rejects.toThrow("uses the shared project directory and has no branch to merge");
+    const result = await (manager as any).worktreeAction("/repo", "remove", "shared-child");
+
+    expect(result.content[0].text).toContain("shared project directory was not changed");
+    expect(manager.getAgent("shared-child")).toBeUndefined();
   });
 
   test("changes follow-up guidance at the configured capacity", () => {

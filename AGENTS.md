@@ -105,7 +105,7 @@ bun run start    # open the TUI in the current directory
 | Ctrl+End on an empty prompt | Scroll to the end of the selected transcript |
 | Tab | Open/close the prompt stash on empty input; complete commands or local paths otherwise |
 | Shift+Up / Shift+Down | Extend a prompt-stash selection |
-| Enter on a stash selection | Ask the main agent to coordinate and merge worktree subagents |
+| Enter on a stash selection | Ask the main agent to coordinate subagents and merge optional worktrees |
 | Shift+Tab / Ctrl+Shift+Tab | Cycle agent transcripts forward/backward |
 | Ctrl+L | Open the agent transcript tree; use Up/Down and Right/Enter to select |
 | Esc | Once warns, twice within 2s cancels the selected agent's running turn |
@@ -576,8 +576,9 @@ These were chosen deliberately. Change them only on purpose.
 - **Cache range execution is main-agent orchestration.** Shift+Up and Shift+Down
   select a contiguous stash range. Enter sends a generated coordination prompt
   to the main agent. The main agent can group related tasks and spawns independent
-  worktree agents in parallel. Merge each successful agent after its completion
-  notice arrives and its status is `completed`, unless a concrete dependency,
+  agents in parallel. Shared project directories are the default. Close each
+  agent after its completion notice arrives and its status is `completed`. Merge
+  a worktree agent, or remove a shared-directory agent, unless a concrete dependency,
   conflict risk, or integration order requires waiting. Idle settlement is not
   completion. The generated prompt is authoritative execution after
   `message_cache_send`; reuse agents already assigned to its tasks and never
@@ -585,28 +586,32 @@ These were chosen deliberately. Change them only on purpose.
 - **Follow-up implementation work uses available parallel capacity.** Count only
   `starting` and `running` subagents toward the configured active limit. The PUM
   setting defaults to 10 and accepts values from 1 through 25. When a slot is
-  available, prefer another managed worktree subagent. At capacity, use
+  available, prefer another managed subagent. Use a worktree only when isolation
+  or conflict avoidance requires it. At capacity, use
   `message_agent` to queue related work for an appropriate running subagent. This
   uses the durable recipient-side message and steering queue. Never create shell
   polling or hidden queues. Never route unrelated work to an arbitrary agent. If
   no appropriate recipient is clear, state the capacity issue and keep the task
   pending for deliberate routing.
-- **Subagents are persistent background AgentSessions.** Each subagent gets a
-  managed Git worktree and an independent session file. Spawn tools return after
+- **Subagents are persistent background AgentSessions.** Each subagent gets an
+  independent session file and shares the launch project by default. The
+  `spawn_subagent` tool accepts `worktree: true` when isolated changes or conflict
+  avoidance require a managed Git worktree. Spawn tools return after
   setup, not after the task. Completion becomes a custom message to the main
   agent. Shift+Tab changes only the visible transcript and input target. Ctrl+L
   opens a tree that groups each retained subagent under its spawner. The selected
   transcript owns its draft, input target, cancellation state, timer, usage
   totals, and status-bar context. Finished agents remain reusable until merge or
-  removal. A successful managed merge closes the agent, removes the worktree and
-  branch, and removes its view.
+  removal. A successful worktree merge closes the agent, removes the worktree and
+  branch, and removes its view. `worktree remove` closes a shared-directory agent
+  without changing the project directory.
   Resume restores retained agents. Previously running agents become interrupted.
 - **Managed parent closure is recursive and deepest-first.** A managed parent
   cannot finish, merge, or be removed while any retained descendant remains at
   any depth. Every retained status blocks closure, including completed, failed,
   stopped, interrupted, idle, starting, and running. A descendant closes only
-  after a successful managed merge or valid non-force removal removes both its
-  registry record and managed worktree. Managed agents cannot use force removal
+  after a successful worktree merge or valid non-force removal removes the
+  registry record and any managed worktree. Managed agents cannot use force removal
   to discard failed or unmerged work. Spawn and closure checks share the
   worktree mutation queue, so a nested spawn cannot race parent closure.
 - **The main agent never polls background agents.** After spawning all available
@@ -615,8 +620,9 @@ These were chosen deliberately. Change them only on purpose.
 - **`finish_subagent` sends the sole completion notice.** Subagents use
   `message_agent` only for questions, blockers, coordination, or actionable
   intermediate information. Never send a final summary through `message_agent`.
-  The main agent must not merge after a normal `Message from <agent>` row. Merge
-  only after the completion notice arrives and the agent status is `completed`.
+  The main agent must not merge or remove after a normal `Message from <agent>`
+  row. Close the agent only after the completion notice arrives and the agent
+  status is `completed`.
   Delivery acceptance is not acknowledgement. PUM acknowledges the stable
   settlement only after `message_start` or session inspection confirms that the
   completion notice is persisted. Managed merge authorization requires that

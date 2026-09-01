@@ -4,14 +4,14 @@ import { PopupFrame } from "./popup-frame";
 type HelpGroup = { title: string; controls: [string, string][] };
 
 export const HELP_SUMMARY_WIDE = [
-  "PUM workflow — prompt or steer · cache prompts · attach images · run managed worktree agents in parallel",
-  "switch transcripts · merge successful agents · persist sessions · use Settings and safety checks",
+  "PUM workflow — prompt or steer · cache prompts · attach images · run managed agents in parallel",
+  "switch transcripts · close successful agents · optional worktrees · persistent sessions · safety settings",
 ] as const;
 
 export const HELP_SUMMARY = [
   "Prompt or steer. Cache prompts. Attach images.",
-  "Run managed worktree agents in parallel.",
-  "Switch transcripts and merge successful agents.",
+  "Run agents in parallel. Use worktrees for isolation.",
+  "Switch transcripts and close successful agents.",
   "Sessions persist. Settings include safety checks.",
 ] as const;
 
@@ -59,7 +59,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/clear", "Start a fresh session"],
       ["/goal", "Set or control a goal"],
       ["/goalf", "Work out a goal, then start it"],
-      ["/background", "Start a managed agent for the selected transcript"],
+      ["/background", "Start a shared-project agent for the selected transcript"],
       ["/history", "Browse saved sessions"],
       ["/providers", "Add, edit, or delete a provider; /login adds"],
       ["/news", "Open recent answers (News)"],

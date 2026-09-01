@@ -68,6 +68,8 @@ export type SubagentSnapshot = {
   task: string;
   status: SubagentStatus;
   worktree: WorktreeRecord;
+  /** True when PUM created an isolated worktree. Missing legacy values mean true for workers. */
+  usesWorktree?: boolean;
   sessionFile?: string;
   /** The retained agent that spawned this agent. Missing legacy values mean main. */
   parentAgentId: string | null;
@@ -153,7 +155,7 @@ export type SpawnSubagentOptions = {
   modelId: string;
   thinkingLevel: string;
   readonly?: boolean;
-  /** False runs the agent in the launch project instead of a managed worktree. */
+  /** True creates an isolated worktree. The default runs the agent in the launch project. */
   createWorktree?: boolean;
   role?: SubagentRole;
   parentAgentId?: string | null;

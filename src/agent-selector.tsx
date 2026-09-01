@@ -18,6 +18,7 @@ export type AgentTreeRow = {
   name: string;
   status?: SubagentSnapshot["status"];
   readonly?: boolean;
+  shared?: boolean;
   depth: number;
   metadata?: StatusMetadataValues;
 };
@@ -38,7 +39,7 @@ export function agentSelectorRowLayout(
   // One column remains clear for the pinned scrollbar.
   const contentColumns = Math.max(1, popupColumns - indent - 1);
   const label = row.status
-    ? `${row.name}${row.readonly ? " · readonly" : ""} · ${row.status}`
+    ? `${row.name}${row.readonly ? " · readonly" : ""}${row.shared ? " · shared" : ""} · ${row.status}`
     : row.name;
   const minimumLabelWidth = Math.min(
     label.length,
@@ -77,9 +78,10 @@ export function buildAgentTree(agents: readonly SubagentSnapshot[]): AgentTreeRo
         name: agent.name,
         status: agent.status,
         readonly: agent.readonly === true,
+        shared: agent.usesWorktree === false,
         depth,
         metadata: {
-          branch: agent.worktree.branch ?? null,
+          branch: agent.usesWorktree === false ? null : agent.worktree.branch ?? null,
           outgoingTokens: usage.outgoing,
           incomingTokens: usage.incoming,
           cacheReadTokens: usage.cacheRead,
@@ -100,9 +102,10 @@ export function buildAgentTree(agents: readonly SubagentSnapshot[]): AgentTreeRo
       name: agent.name,
       status: agent.status,
       readonly: agent.readonly === true,
+      shared: agent.usesWorktree === false,
       depth: 1,
       metadata: {
-        branch: agent.worktree.branch ?? null,
+        branch: agent.usesWorktree === false ? null : agent.worktree.branch ?? null,
         outgoingTokens: usage.outgoing,
         incomingTokens: usage.incoming,
         cacheReadTokens: usage.cacheRead,

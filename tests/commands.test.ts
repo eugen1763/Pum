@@ -78,7 +78,7 @@ describe("command suggestions", () => {
 
   test("offers /background to main and selected subagents without exposing main-only commands", () => {
     expect(COMMANDS.find((command) => command.name === "/background")?.description)
-      .toBe("Start a managed worktree agent for the selected transcript");
+      .toBe("Start a shared-project agent for the selected transcript");
     expect(matchingCommandsForTarget("/back", "main").map((command) => command.name))
       .toEqual(["/background"]);
     expect(matchingCommandsForTarget("/back", "subagent").map((command) => command.name))

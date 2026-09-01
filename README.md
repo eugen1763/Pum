@@ -4,7 +4,7 @@
 
 **A compact coding agent for the terminal.**
 
-Plan, edit, run commands, review Markdown, and coordinate parallel Git worktrees without leaving the TUI.
+Plan, edit, run commands, review Markdown, and coordinate parallel subagents without leaving the TUI.
 
 [![CI](https://github.com/eugen1763/Pum/actions/workflows/ci.yml/badge.svg)](https://github.com/eugen1763/Pum/actions/workflows/ci.yml)
 [![npm beta](https://img.shields.io/npm/v/pum-agent/beta?label=npm%20beta)](https://www.npmjs.com/package/pum-agent)
@@ -51,7 +51,7 @@ drives the actual TUI and converts the captured cells to SVG.
 ## What it does
 
 - **A full coding loop** — `read`, `write`, `edit`, and `bash`, with streaming Markdown, syntax highlighting, usage, cost, and Git status.
-- **Parallel subagents** — persistent agents in isolated Git worktrees that message each other durably and report to their spawner. See [Subagents](docs/subagents.md).
+- **Parallel subagents** — persistent agents that share the project by default, with optional isolated Git worktrees. They message each other durably and report to their spawner. See [Subagents](docs/subagents.md).
 - **Goals that outlive a turn** — `/goal` keeps working, reviewed after each turn by a judge that reads but never writes. See [Goals](docs/goals.md).
 - **Supervised processes** — background shells and external triggers such as `gh run watch`, which wake the exact agent that was waiting. See [Tools](docs/tools.md).
 - **Layered safeguards** — a path guard on the file tools, deterministic Check mode, and a native OS sandbox for the processes the model starts. See [Safety](docs/security.md).

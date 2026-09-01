@@ -1242,7 +1242,9 @@ export function App({
   });
   const visibleModelId = activeAgent?.modelId.split("/").slice(1).join("/") || modelId;
   const visibleThinkingLevel = activeAgent?.thinkingLevel ?? thinkingLevel;
-  const visibleBranch = activeAgent?.worktree.branch ?? branch;
+  const visibleBranch = activeAgent?.usesWorktree === false
+    ? branch
+    : activeAgent?.worktree.branch ?? branch;
   const visibleElapsedSec = activeAgent ? agentElapsedSec : elapsedSec;
   const visibleUsage = activeAgent?.usage ?? usage;
   const agentTreeRows = buildAgentTree(agents);
@@ -4180,7 +4182,10 @@ export function App({
       appendRequesterLine(requesterAgentId, {
         kind: "text",
         role: "system",
-        text: `background agent started: ${spawned.name} (${spawned.id})\n${spawned.worktree.branch}\n${spawned.worktree.path}`,
+        text: `background agent started: ${spawned.name} (${spawned.id})\n`
+          + (spawned.usesWorktree
+            ? `${spawned.worktree.branch}\n${spawned.worktree.path}`
+            : `shared directory\n${spawned.worktree.path}`),
       });
     })().catch((error) => {
       appendRequesterLine(requesterAgentId, {
@@ -4442,7 +4447,7 @@ export function App({
   };
 
   const cachedBatchDisplay = (prompts: readonly string[]): string => [
-    `Run ${prompts.length} cached tasks with worktree subagents:`,
+    `Run ${prompts.length} cached tasks with subagents:`,
     ...prompts.map((prompt, index) => `${index + 1}. ${prompt}`),
   ].join("\n");
 

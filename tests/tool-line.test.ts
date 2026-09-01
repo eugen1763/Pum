@@ -89,6 +89,11 @@ describe("other tool metadata", () => {
       .toEqual(["readonly", "reviewer", "Inspect"]);
   });
 
+  test("marks explicit worktree subagent spawns", () => {
+    expect(toolArgs("spawn_subagent", { task: "Implement", worktree: true }, "/repo"))
+      .toEqual(["worktree", "Implement"]);
+  });
+
   test("summarizes message cache actions without exposing cached text", () => {
     expect(toolArgs("message_cache_list", {}, "/repo"))
       .toEqual(["list"]);

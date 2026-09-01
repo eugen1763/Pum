@@ -229,12 +229,16 @@ describe("background subagents", () => {
       questionnaireManager,
     });
     await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const worktreesBeforeSpawn = await listWorktrees(repo);
     const child = await manager.spawn({
       task: "Wait for questionnaire availability inspection.",
       name: "questionnaire-child",
       modelId: "mock/mock-model",
       thinkingLevel: "off",
     });
+    expect(child.usesWorktree).toBe(false);
+    expect(child.worktree.path).toBe(repo);
+    expect(await listWorktrees(repo)).toEqual(worktreesBeforeSpawn);
     const childSession = (manager as any).records.get(child.id).session;
     const childTool = childSession.agent.state.tools.find((tool: any) => tool.name === "questionnaire");
     expect(childTool).toBeDefined();
@@ -416,6 +420,7 @@ describe("background subagents", () => {
       name: "integration-agent",
       modelId: "mock/mock-model",
       thinkingLevel: "off",
+      createWorktree: true,
     });
     expect(Date.now() - started).toBeLessThan(1_000);
     expect(["starting", "running", "idle"]).toContain(spawned.status);
@@ -520,6 +525,7 @@ describe("background subagents", () => {
       name: "restart-idle-child",
       modelId: "mock/mock-model",
       thinkingLevel: "off",
+      createWorktree: true,
     });
     await waitUntil(() => firstManager.getAgent(child.id)?.status === "idle");
     const settlementBeforeRestart = parent.getEntries()
@@ -573,6 +579,7 @@ describe("background subagents", () => {
       name: "restart-completion-child",
       modelId: "mock/mock-model",
       thinkingLevel: "off",
+      createWorktree: true,
     });
     await finishAgent(firstManager, child.id, "Crash-window completion summary.");
     await waitUntil(() => firstManager.getAgent(child.id)?.status === "completed");
@@ -696,8 +703,8 @@ describe("background subagents", () => {
     const mainBridge = createMainBridge(manager, parent);
     await manager.attachMain(mainBridge.api as any, parent, repo);
     const attempts = await Promise.allSettled([
-      manager.spawn({ task: "First race task.", name: "capacity-race-first", modelId: "mock/mock-model", thinkingLevel: "off" }),
-      manager.spawn({ task: "Second race task.", name: "capacity-race-second", modelId: "mock/mock-model", thinkingLevel: "off" }),
+      manager.spawn({ task: "First race task.", name: "capacity-race-first", modelId: "mock/mock-model", thinkingLevel: "off", createWorktree: true }),
+      manager.spawn({ task: "Second race task.", name: "capacity-race-second", modelId: "mock/mock-model", thinkingLevel: "off", createWorktree: true }),
     ]);
 
     expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
@@ -825,6 +832,7 @@ describe("background subagents", () => {
       modelId: "mock/mock-model",
       thinkingLevel: "off",
       context: "fork",
+      createWorktree: true,
       forkSource: {
         origin: { sourceSessionId: "source", cutoffEntryId: "missing", sourceAgentId: null },
         entries: [],

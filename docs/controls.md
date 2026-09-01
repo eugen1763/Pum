@@ -38,7 +38,7 @@ support empty-prompt queued-message recall.
 |---|---|
 | `/goal <text>`, `/goalf <draft>` | Set an autonomous goal, or work one out first. See [Goals](goals.md) |
 | `/afk [instructions]` | Answer questionnaires while you are away |
-| `/background <prompt>` | Start a managed worktree agent owned by the selected transcript |
+| `/background <prompt>` | Start a shared-project agent owned by the selected transcript |
 | `/todo` | Open the selected agent's todo list |
 | `/news` | Recent answers |
 | `/history` | Session history |

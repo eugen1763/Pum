@@ -119,7 +119,11 @@ export function toolArgs(name: string, args: any, cwd: string): string[] {
   }
   if (name === "spawn_subagent" && typeof args.task === "string") {
     const parts = typeof args.name === "string" ? [args.name, args.task] : [args.task];
-    return args.readonly === true ? ["readonly", ...parts] : parts;
+    const modes = [
+      ...(args.readonly === true ? ["readonly"] : []),
+      ...(args.worktree === true ? ["worktree"] : []),
+    ];
+    return [...modes, ...parts];
   }
   if (name === "message_agent" && typeof args.target === "string") {
     return typeof args.message === "string" ? [args.target, args.message] : [args.target];

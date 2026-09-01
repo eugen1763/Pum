@@ -38,11 +38,12 @@ export function SpawnPreviewPopup({
   const geometry = spawnPreviewPopupGeometry(terminalWidth, terminalHeight);
   const scrollRef = useRef<ScrollBoxRenderable>(null);
   const noteHeight = geometry.compact ? 1 : Math.min(4, Math.max(1, terminalHeight - 8));
-  const taskAreaHeight = Math.max(1, geometry.height - noteHeight - (geometry.compact ? 1 : 8));
+  const taskAreaHeight = Math.max(1, geometry.height - noteHeight - (geometry.compact ? 1 : 9));
   const contextMode = request.options.context ?? "fresh";
   const source = contextMode === "fork"
     ? `${request.requester.name} · session ${request.requester.sessionId}`
     : "none";
+  const directoryMode = request.options.createWorktree ? "separate worktree" : "shared project";
 
   useEffect(() => {
     inputRef.current?.setText("");
@@ -68,13 +69,14 @@ export function SpawnPreviewPopup({
       padding={geometry.compact ? 0 : 1}
     >
       {!geometry.compact ? (
-        <box style={{ flexDirection: "column", height: 3, flexShrink: 0 }}>
+        <box style={{ flexDirection: "column", height: 4, flexShrink: 0 }}>
           <text
             content={request.options.readonly ? "Child task · readonly" : "Child task"}
             fg={theme.accent}
             bg={theme.popupBg}
           />
           <text content={`Context · ${contextMode}`} fg={theme.dim} bg={theme.popupBg} />
+          <text content={`Directory · ${directoryMode}`} fg={theme.dim} bg={theme.popupBg} />
           <text content={`Source · ${source}`} fg={theme.dim} bg={theme.popupBg} />
         </box>
       ) : null}

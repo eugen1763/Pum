@@ -79,6 +79,8 @@ import {
   createWorktree,
   listWorktrees,
   mergeWorktree,
+  normalizeWorktreeName,
+  randomWorktreeName,
   removeWorktree,
   worktreeStatus,
   type WorktreeRecord,
@@ -141,7 +143,7 @@ export const MANAGED_AGENT_COMPLETION_GUIDANCE =
 export const MANAGED_AGENT_DESCENDANT_GUIDANCE =
   "Before a managed merge, removal, or finish, recursively close every retained descendant. Close the deepest descendants first.";
 export const MANAGED_AGENT_CLOSE_GUIDANCE =
-  "A successful managed merge closes the subagent and removes its worktree and branch. If a completed branch adds no commits, close it with worktree remove without force.";
+  "For a worktree subagent, a successful merge closes the subagent and removes its worktree and branch. For a shared-directory subagent, worktree merge is invalid; close it with worktree remove after completion.";
 export const WORKTREE_MOVE_GUIDANCE =
   "Only the main agent can use start or return. The move occurs after the requesting turn settles, so end that turn immediately after the worktree call.";
 
@@ -150,7 +152,8 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - spawn_subagent, message_agent, and list_subagents live in the hidden Subagents tool group. When they are not in the tool list, call enable_tools with Subagents first.
 - spawn_subagent returns after setup. The subagent continues in the background.
 - Count only starting and running subagents as active. The capacity line below reports whether a slot is available.
-- For follow-up implementation work, prefer a new managed worktree subagent while capacity is available.
+- For follow-up implementation work, prefer a new subagent while capacity is available.
+- Subagents share the launch project by default. Set worktree to true only when isolated changes or conflict avoidance require a separate branch.
 - At capacity, use message_agent to queue follow-up work for an appropriate related running subagent.
 - message_agent uses the durable recipient-side message and steering queue. Do not create a shell queue or another hidden queue.
 - Do not send unrelated work to an arbitrary subagent. If no appropriate recipient is clear, state the capacity issue and keep the work pending for deliberate routing.
@@ -166,7 +169,7 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 - Every retained descendant blocks its parent regardless of status. Completion does not close a descendant.
 - ${MANAGED_AGENT_CLOSE_GUIDANCE}
 - Never use force removal on a managed agent; it is always rejected.
-- stop_subagent stops execution but does not close the retained agent or remove its worktree.
+- stop_subagent stops execution but does not close the retained agent or remove an optional worktree.
 - ${WORKTREE_MOVE_GUIDANCE}
 - Wait to merge only when another unfinished task has a concrete dependency, a known conflict risk, or a required integration order. State that reason explicitly.
 - If a notification does not arrive, report the notification fault instead of creating a sleep loop.`;
@@ -342,6 +345,19 @@ function cloneSnapshot(record: RuntimeRecord): SubagentSnapshot {
   };
 }
 
+/** Legacy worker snapshots always owned worktrees. Internal agents never did. */
+export function subagentUsesWorktree(
+  snapshot: Pick<SubagentSnapshot, "usesWorktree" | "role">,
+): boolean {
+  return snapshot.usesWorktree ?? !isInternalRole(snapshot.role);
+}
+
+function subagentLocationText(snapshot: SubagentSnapshot): string {
+  return subagentUsesWorktree(snapshot)
+    ? `branch: ${snapshot.worktree.branch}\nworktree: ${snapshot.worktree.path}`
+    : `directory: ${snapshot.worktree.path} (shared)`;
+}
+
 function textResult(text: string, details: unknown = {}) {
   return { content: [{ type: "text" as const, text }], details };
 }
@@ -355,7 +371,10 @@ function readonlySpawnParameter() {
 export function spawnSubagentParameters(readonlyAvailable: boolean) {
   return Type.Object({
     task: Type.String({ description: "Complete task for the subagent" }),
-    name: Type.Optional(Type.String({ description: "Optional worktree and agent name" })),
+    name: Type.Optional(Type.String({ description: "Optional agent name, and worktree name when worktree is true" })),
+    worktree: Type.Optional(Type.Boolean({
+      description: "Create an isolated Git worktree. Defaults to false, which shares the launch project.",
+    })),
     preview: Type.Optional(Type.Boolean({ description: "Ask the user to approve before spawning" })),
     context: Type.Optional(Type.Union([
       Type.Literal("fresh"),
@@ -1170,8 +1189,10 @@ export class SubagentManager {
                 + `Report once with ${GOAL_VERDICT_TOOL_NAME} and stop.`,
             };
           }
-          const identity = `${event.systemPrompt}\n\nYou are subagent ${record.snapshot.name} (${agentId}). `
-            + `Work only in ${record.snapshot.worktree.path} on branch ${record.snapshot.worktree.branch}. `;
+          const location = subagentUsesWorktree(record.snapshot)
+            ? `Work only in ${record.snapshot.worktree.path} on branch ${record.snapshot.worktree.branch}. `
+            : `Work in the shared project directory ${record.snapshot.worktree.path}. Other agents can change the same files. `;
+          const identity = `${event.systemPrompt}\n\nYou are subagent ${record.snapshot.name} (${agentId}). ${location}`;
           if (record.snapshot.readonly) {
             return {
               systemPrompt: identity
@@ -1180,10 +1201,12 @@ export class SubagentManager {
             };
           }
           return {
-            // Identity and worktree boundary only. The finish_subagent and
+            // Identity and directory boundary only. The finish_subagent and
             // message_agent rules live once, in the communication block below.
             systemPrompt: identity
-              + "Commit completed changes before finishing.\n\n"
+              + (subagentUsesWorktree(record.snapshot)
+                ? "Commit completed changes before finishing.\n\n"
+                : "Do not commit unless the task or spawner explicitly requires a commit.\n\n")
               + SUBAGENT_COMMUNICATION_SYSTEM_PROMPT + "\n\n"
               + SUBAGENT_COORDINATION_SYSTEM_PROMPT + "\n\n"
               + buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
@@ -1287,8 +1310,8 @@ export class SubagentManager {
         pi.registerTool({
           name: "spawn_subagent",
           label: "Spawn Subagent",
-          description: "Start a nonblocking child subagent in a new Git worktree.",
-          promptSnippet: "Start a child subagent in an isolated Git worktree",
+          description: "Start a nonblocking child subagent in the shared project by default. Set worktree only when isolation is needed.",
+          promptSnippet: "Start a child subagent, with an optional isolated Git worktree",
           parameters: this.trackedSpawnSubagentParameters(agentId),
           execute: async (_id, params, signal, _update, ctx) => {
             const parent = this.records.get(agentId);
@@ -1306,6 +1329,7 @@ export class SubagentManager {
               modelId: parent.snapshot.modelId,
               thinkingLevel: parent.snapshot.thinkingLevel,
               readonly: readonlyRequested,
+              createWorktree: params.worktree === true,
               parentAgentId: agentId,
               context: params.context ?? "fresh",
             };
@@ -1324,10 +1348,16 @@ export class SubagentManager {
               if (!preview.approved) return textResult(`Spawn cancelled (${preview.reason ?? "cancelled"}).`, preview);
               const snapshot = await this.spawn(options);
               if (preview.note) await this.sendUserMessage(snapshot.id, preview.note);
-              return textResult(`Spawned ${snapshot.name}\nid: ${snapshot.id}`, snapshot);
+              return textResult(
+                `Spawned ${snapshot.name}\nid: ${snapshot.id}\n${subagentLocationText(snapshot)}`,
+                snapshot,
+              );
             }
             const snapshot = await this.spawn(options);
-            return textResult(`Spawned ${snapshot.name}\nid: ${snapshot.id}`, snapshot);
+            return textResult(
+              `Spawned ${snapshot.name}\nid: ${snapshot.id}\n${subagentLocationText(snapshot)}`,
+              snapshot,
+            );
           },
         });
 
@@ -1352,7 +1382,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "list_subagents",
           label: "List Subagents",
-          description: "List retained subagents with authoritative status, parent, branch, and worktree. Use status completed, not idle, to decide merge readiness.",
+          description: "List retained subagents with authoritative status, parent, and directory mode. Use status completed, not idle, to decide closure readiness.",
           parameters: Type.Object({}),
           execute: async () => textResult(this.formatAgentList()),
         });
@@ -1360,7 +1390,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "stop_subagent",
           label: "Stop Subagent",
-          description: "Abort a subagent this agent spawned and set status stopped. This does not close the retained agent or remove its worktree. A descendant that cannot finish has to be stopped before this agent can finish.",
+          description: "Abort a subagent this agent spawned and set status stopped. This does not close the retained agent or remove an optional worktree. A descendant that cannot finish has to be stopped before this agent can finish.",
           parameters: Type.Object({ target: Type.String({ description: "Subagent id or name" }) }),
           execute: async (_id, params) => {
             const record = this.findRecord(params.target);
@@ -1554,11 +1584,12 @@ export class SubagentManager {
         pi.registerTool({
           name: "spawn_subagent",
           label: "Spawn Subagent",
-          description: "Start a nonblocking subagent in a new Git worktree. The configured limit counts starting and running subagents.",
-          promptSnippet: "Start a parallel subagent in an isolated Git worktree",
+          description: "Start a nonblocking subagent in the shared project by default. Set worktree only when isolation is needed. The configured limit counts starting and running subagents.",
+          promptSnippet: "Start a parallel subagent, with an optional isolated Git worktree",
           promptGuidelines: [
             "Use spawn_subagent for independent tasks that can run in parallel.",
             "For follow-up implementation work, prefer spawn_subagent while configured capacity is available.",
+            "Use the shared project by default. Set worktree to true only when isolated changes or conflict avoidance require a separate branch.",
             "At configured capacity, queue related follow-up work through message_agent instead of spawning another agent.",
             "Do not route unrelated work to an arbitrary subagent. Keep it pending when no appropriate recipient is clear.",
             "Give each spawn_subagent call a complete, self-contained task.",
@@ -1581,6 +1612,7 @@ export class SubagentManager {
               modelId: `${ctx.model.provider}/${ctx.model.id}`,
               thinkingLevel: ctx.thinkingLevel ?? "off",
               readonly: readonlyRequested,
+              createWorktree: params.worktree === true,
               context: params.context ?? "fresh",
             };
             if (options.context === "fork") {
@@ -1597,14 +1629,14 @@ export class SubagentManager {
               if (preview.note) await this.sendUserMessage(snapshot.id, preview.note);
               return textResult(
                 `Spawned ${snapshot.name}\n` +
-                  `id: ${snapshot.id}\nbranch: ${snapshot.worktree.branch}\nworktree: ${snapshot.worktree.path}`,
+                  `id: ${snapshot.id}\n${subagentLocationText(snapshot)}`,
                 snapshot,
               );
             }
             const snapshot = await this.spawn(options);
             return textResult(
               `Spawned ${snapshot.name}\n` +
-                `id: ${snapshot.id}\nbranch: ${snapshot.worktree.branch}\nworktree: ${snapshot.worktree.path}`,
+                `id: ${snapshot.id}\n${subagentLocationText(snapshot)}`,
               snapshot,
             );
           },
@@ -1629,7 +1661,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "list_subagents",
           label: "List Subagents",
-          description: "List retained subagents with authoritative status, parent, branch, and worktree. Use status completed, not idle, to decide merge readiness.",
+          description: "List retained subagents with authoritative status, parent, and directory mode. Use status completed, not idle, to decide closure readiness.",
           parameters: Type.Object({}),
           execute: async (_id, _params, _signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
@@ -1640,7 +1672,7 @@ export class SubagentManager {
         pi.registerTool({
           name: "stop_subagent",
           label: "Stop Subagent",
-          description: "Abort a subagent and set status stopped. This does not close the retained agent or remove its worktree.",
+          description: "Abort a subagent and set status stopped. This does not close the retained agent or remove an optional worktree.",
           parameters: Type.Object({ target: Type.String({ description: "Subagent id or name" }) }),
           execute: async (_id, params, _signal, _update, ctx) => {
             await this.attachMain(pi, ctx.sessionManager, ctx.cwd);
@@ -1791,7 +1823,7 @@ export class SubagentManager {
         thinkingLevel: request.thinkingLevel,
         parentAgentId: null,
         context: "fresh",
-        createWorktree: true,
+        createWorktree: false,
         role: "worker",
       });
     }
@@ -1815,7 +1847,7 @@ export class SubagentManager {
       thinkingLevel: parent.snapshot.thinkingLevel,
       parentAgentId: parent.snapshot.id,
       context: "fresh",
-      createWorktree: true,
+      createWorktree: false,
       role: "worker",
     });
   }
@@ -1930,13 +1962,18 @@ export class SubagentManager {
       }
 
       const id = randomUUID().slice(0, 8);
-      // An internal agent works against the launch project itself, so it gets
-      // no worktree and no branch. Nothing has to be merged or removed when it
-      // is cleaned up.
-      const managed = options.createWorktree !== false;
+      const name = normalizeWorktreeName(
+        options.name || (isInternalRole(options.role) ? `${options.role}-${id}` : randomWorktreeName()),
+      );
+      if ([...this.records.values()].some((existing) => existing.snapshot.name === name)) {
+        throw new Error(`Subagent name already exists: ${name}`);
+      }
+      // Shared-directory agents use a descriptive record for the existing
+      // project. Only an explicit request creates filesystem and Git state.
+      const managed = options.createWorktree === true;
       const worktree = managed
-        ? await createWorktree(this.mainCwd, options.name)
-        : this.projectWorktreeRecord(options.name ?? `${options.role ?? "internal"}-${id}`);
+        ? await createWorktree(this.mainCwd, name)
+        : this.projectWorktreeRecord(name);
       try {
         const now = Date.now();
         const snapshot: SubagentSnapshot = {
@@ -1945,6 +1982,7 @@ export class SubagentManager {
           task: options.task,
           status: "starting",
           worktree,
+          usesWorktree: managed,
           parentAgentId: options.parentAgentId ?? null,
           modelId: options.modelId,
           thinkingLevel: options.thinkingLevel,
@@ -2010,7 +2048,9 @@ export class SubagentManager {
         await record.dispose?.();
         this.records.delete(record.snapshot.id);
         if (record.snapshot.sessionFile) rmSync(record.snapshot.sessionFile, { force: true });
-        await this.withWorktreeLock(() => removeWorktree(this.mainCwd, record.snapshot.worktree)).catch(() => {});
+        if (subagentUsesWorktree(record.snapshot)) {
+          await this.withWorktreeLock(() => removeWorktree(this.mainCwd, record.snapshot.worktree)).catch(() => {});
+        }
         this.persist({ event: "removed", id: record.snapshot.id, at: Date.now() });
         this.emit();
       } else if (record.snapshot.role === "judge") {
@@ -2253,7 +2293,8 @@ export class SubagentManager {
     // reach the destructive git calls directly.
     return this.records.get(target)
       ?? [...this.records.values()].find((record) =>
-        record.snapshot.name === target || record.snapshot.worktree.branch === target);
+        record.snapshot.name === target
+          || (subagentUsesWorktree(record.snapshot) && record.snapshot.worktree.branch === target));
   }
 
   private retainedDescendants(parentId: string): RetainedDescendant[] {
@@ -2294,7 +2335,7 @@ export class SubagentManager {
     ).join("\n");
     throw new Error(
       `Cannot ${action} ${record.snapshot.name} while retained descendants remain:\n${blockers}\n` +
-        "Merge or resolve the deepest descendants first. A descendant closes only after its record and managed worktree are removed through a successful merge or valid removal.",
+        "Resolve the deepest descendants first. A worktree descendant closes after a successful merge or valid removal. A shared-directory descendant closes after valid removal.",
     );
   }
 
@@ -2839,8 +2880,7 @@ export class SubagentManager {
       const content = [
         `Subagent ${record.snapshot.name} ${status}.`,
         `id: ${record.snapshot.id}`,
-        `branch: ${record.snapshot.worktree.branch}`,
-        `worktree: ${record.snapshot.worktree.path}`,
+        subagentLocationText(record.snapshot),
         summary ? `summary: ${summary}` : "",
       ].filter(Boolean).join("\n");
       const requester = record.snapshot.parentAgentId
@@ -3039,7 +3079,9 @@ export class SubagentManager {
         ? this.records.get(origin.sourceAgentId)?.snapshot.name ?? origin.sourceAgentId
         : "main";
       return `${agent.id}  ${agent.name}  ${agent.status}${agent.readonly ? "  readonly" : ""}`
-        + `\n  ${agent.worktree.branch}\n  ${agent.worktree.path}`
+        + (subagentUsesWorktree(agent)
+          ? `\n  worktree  ${agent.worktree.branch}\n  ${agent.worktree.path}`
+          : `\n  shared  ${agent.worktree.path}`)
         + (origin
           ? `\n  fork source: ${source} · session ${origin.sourceSessionId} · cutoff ${origin.cutoffEntryId ?? "root"}`
           : "");
@@ -3116,6 +3158,12 @@ export class SubagentManager {
     if (!target) throw new Error(`worktree ${action} requires target`);
     if (action === "status") {
       const managedAgent = this.findRecord(target);
+      if (managedAgent && !subagentUsesWorktree(managedAgent.snapshot)) {
+        return textResult(
+          `${managedAgent.snapshot.name} uses the shared project directory.\npath: ${managedAgent.snapshot.worktree.path}`,
+          managedAgent.snapshot,
+        );
+      }
       const record = managedAgent?.snapshot.worktree
         ?? (await listWorktrees(cwd)).find((item) => item.name === target || item.branch === target);
       if (!record) throw new Error(`Unknown worktree: ${target}`);
@@ -3126,6 +3174,12 @@ export class SubagentManager {
         const managedAgent = this.findRecord(target);
         if (isInternalRole(managedAgent?.snapshot.role)) {
           throw new Error(`A ${managedAgent!.snapshot.role} agent holds no worktree and nothing to merge.`);
+        }
+        if (managedAgent && !subagentUsesWorktree(managedAgent.snapshot)) {
+          throw new Error(
+            `${managedAgent.snapshot.name} uses the shared project directory and has no branch to merge. `
+              + `Close it with worktree remove after its work is complete.`,
+          );
         }
         if (managedAgent) {
           this.assertNoRetainedDescendants(managedAgent, "merge");
@@ -3173,6 +3227,14 @@ export class SubagentManager {
               `Cannot force-remove managed subagent ${managedAgent.snapshot.name}. ` +
                 "Failed or unmerged managed subagents must remain retained until a valid merge or removal flow closes them. " +
                 "When the agent is completed and its branch adds no new commits, retry the remove without force.",
+            );
+          }
+          if (!subagentUsesWorktree(managedAgent.snapshot)) {
+            await this.stop(managedAgent.snapshot.id, "stopped");
+            this.forgetManagedAgent(managedAgent);
+            return textResult(
+              `Closed ${managedAgent.snapshot.name}. The shared project directory was not changed.`,
+              managedAgent.snapshot,
             );
           }
         }

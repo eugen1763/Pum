@@ -66,6 +66,7 @@ describe("spawn preview popup", () => {
     expect(markdownContent(setup.renderer.root)).toContain(request.options.task);
     expect(frame).toContain("Optional note");
     expect(frame).toContain("Context · fresh");
+    expect(frame).toContain("Directory · shared project");
     expect(frame).toContain("Source · none");
     expect(frame).toContain("Enter approve");
     expect(inputRef.current?.focused).toBe(true);
@@ -78,6 +79,13 @@ describe("spawn preview popup", () => {
     expect(frame).toContain("Context · fork");
     expect(frame).toContain("Source · worker · session child-session");
     delete request.options.context;
+  });
+
+  test("shows an explicit worktree directory mode", async () => {
+    request.options.createWorktree = true;
+    const { setup } = await render(72, 18);
+    expect(setup.captureCharFrame()).toContain("Directory · separate worktree");
+    delete request.options.createWorktree;
   });
 
   test("remains usable without a frame in a short terminal", async () => {

@@ -31,7 +31,7 @@ export const COMMANDS: Command[] = [
   },
   {
     name: "/background",
-    description: "Start a managed worktree agent for the selected transcript",
+    description: "Start a shared-project agent for the selected transcript",
   },
   {
     name: "/history",

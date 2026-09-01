@@ -49,7 +49,7 @@ describe("Help popup layout", () => {
     expect(controls).toContainEqual(["/triggers", "Open Processes on Triggers"]);
     expect(controls).toContainEqual([
       "/background",
-      "Start a managed agent for the selected transcript",
+      "Start a shared-project agent for the selected transcript",
     ]);
     expect(controls.some(([key]) => key === "Ctrl+P")).toBe(true);
     expect(controls.some(([key]) => key === "/ in Settings")).toBe(true);
