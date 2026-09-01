@@ -4,6 +4,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App } from "../src/app";
 import { settleSyntaxHighlighting } from "../src/syntax";
+import { OrcaStatusController } from "../src/orca-status";
 import { TerminalTitleController } from "../src/terminal-title";
 
 let destroy: (() => Promise<void>) | undefined;
@@ -14,6 +15,9 @@ afterEach(async () => {
 });
 
 async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
+  await setup.renderOnce();
+  await setup.flush();
+  await new Promise((resolve) => setTimeout(resolve, 10));
   await setup.renderOnce();
   await setup.flush();
   await new Promise((resolve) => setTimeout(resolve, 10));
@@ -44,6 +48,8 @@ describe("App terminal title lifecycle", () => {
     });
     const writes: string[] = [];
     const terminalTitle = new TerminalTitleController((title) => writes.push(title));
+    const orcaWrites: string[] = [];
+    const orcaStatus = new OrcaStatusController(true, (sequence) => orcaWrites.push(sequence));
     const session = {
       sessionId: "main",
       agent: {
@@ -96,6 +102,7 @@ describe("App terminal title lifecycle", () => {
         searchProviders={[]}
         subagentManager={manager}
         terminalTitle={terminalTitle}
+        orcaStatus={orcaStatus}
       />,
     );
     destroy = async () => {
@@ -109,10 +116,14 @@ describe("App terminal title lifecycle", () => {
 
     await settle(setup);
     expect(writes).toEqual(["Pum · idle"]);
+    expect(orcaWrites).toHaveLength(1);
+    expect(orcaWrites[0]).toContain('"state":"done"');
+    expect(orcaWrites[0]).toContain('"sessionBoundary":true');
 
     sessionListener?.({ type: "agent_start" });
     await settle(setup);
     expect(writes.at(-1)).toBe("Pum · working");
+    expect(orcaWrites.at(-1)).toContain('"state":"working"');
 
     agents = [subagent("starting")];
     managerListener?.({ type: "changed" });
@@ -122,11 +133,14 @@ describe("App terminal title lifecycle", () => {
     sessionListener?.({ type: "agent_settled" });
     await settle(setup);
     expect(writes.filter((title) => title === "Pum · working · 1 subagent")).toHaveLength(1);
+    expect(orcaWrites.filter((sequence) => sequence.includes('"state":"working"'))).toHaveLength(1);
 
     agents = [subagent("completed")];
     managerListener?.({ type: "changed" });
     await settle(setup);
     expect(writes.at(-1)).toBe("Pum · idle");
+    expect(orcaWrites.at(-1)).toContain('"state":"done"');
+    expect(orcaWrites.at(-1)).not.toContain("sessionBoundary");
 
     await destroy();
     destroy = undefined;

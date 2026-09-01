@@ -232,6 +232,7 @@ import {
   type ShellManagerLike,
 } from "./processes-popup";
 import type { TerminalTitleController } from "./terminal-title";
+import { resolveOrcaStatusState, type OrcaStatusController } from "./orca-status";
 import { readClipboardText } from "./text-paste";
 import { copyTextToClipboard } from "./clipboard";
 import { NewsPopup } from "./news-popup";
@@ -831,6 +832,7 @@ export function App({
   shellManager,
   messageCacheController,
   terminalTitle,
+  orcaStatus,
   startupWarnings = [],
   onSandboxModeChange,
   sandboxWarningSource,
@@ -870,6 +872,7 @@ export function App({
   shellManager?: ShellManagerLike;
   messageCacheController?: MessageCacheController;
   terminalTitle?: TerminalTitleController;
+  orcaStatus?: OrcaStatusController;
   /** Visible process-local warnings. These lines never enter pi session context. */
   startupWarnings?: readonly string[];
   onSandboxModeChange?: (mode: NonNullable<PumSettings["sandboxMode"]>) => void;
@@ -1951,11 +1954,28 @@ export function App({
   useEffect(() => {
     // A delegate answering counts as work even though it is not a managed
     // agent, or the terminal reads as idle while AFK decides something.
+    orcaStatus?.update({
+      state: resolveOrcaStatusState({
+        working: busy || activeSubagentCount > 0 || afkAnswering,
+        waitingForUser: Boolean(visibleQuestionnaire),
+      }),
+      model: session.agent.state.model?.id,
+      sessionKey: session.sessionId,
+    });
     terminalTitle?.update({
       working: busy || activeSubagentCount > 0 || afkAnswering,
       activeSubagentCount,
     });
-  }, [terminalTitle, busy, activeSubagentCount, afkAnswering]);
+  }, [
+    terminalTitle,
+    orcaStatus,
+    busy,
+    activeSubagentCount,
+    afkAnswering,
+    visibleQuestionnaire,
+    session.sessionId,
+    session.agent.state.model?.id,
+  ]);
 
   useEffect(() => spawnPreviewManager?.subscribe(() => {
     setSpawnPreviewRevision((revision) => revision + 1);

@@ -7,7 +7,7 @@ import {
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
@@ -49,6 +49,7 @@ import type { StartupOptions } from "./cli";
 import { TodoToolsController } from "./todo-tools";
 import { installSelectionClipboard } from "./clipboard";
 import { TerminalTitleController } from "./terminal-title";
+import { isOrcaTerminal, OrcaStatusController } from "./orca-status";
 import { SandboxController } from "./sandbox";
 import {
   createFilesystemSandboxExtension,
@@ -342,6 +343,11 @@ export async function start(
 
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
   const terminalTitle = new TerminalTitleController((title) => renderer.setTerminalTitle(title));
+  const orcaStatus = new OrcaStatusController(
+    isOrcaTerminal(process.env),
+    // Keep the control message outside OpenTUI's external-output path.
+    (sequence) => { writeSync(process.stdout.fd, sequence); },
+  );
   const selectionClipboard = installSelectionClipboard(renderer);
   const root = createRoot(renderer);
   // Reported on the restored terminal by the exit action below, so the message
@@ -445,6 +451,7 @@ export async function start(
       spawnPreviewManager={spawnPreviewManager}
       messageCacheController={messageCacheController}
       terminalTitle={terminalTitle}
+      orcaStatus={orcaStatus}
       startupWarnings={[
         ...(sandboxWarning ? [sandboxWarning] : []),
         ...(outerSandbox ? [
