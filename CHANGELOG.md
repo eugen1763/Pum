@@ -2,6 +2,11 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.29-beta.1] - 2026-09-01
+
+### Fixed
+- Bash transcript rows now show every line of a multiline command. Live main-agent calls, managed child calls, user shell commands, and resumed sessions use the same complete command display.
+
 ## [0.2.28-beta.1] - 2026-09-01
 
 ### Added
@@ -507,6 +512,7 @@ workflow, so the candidate was replaced rather than retagged.
 - Added deterministic blocks for project escape, credential access, privilege escalation, persistence, remote-script execution, destructive Git operations, and broad deletion.
 - Added sanitized trigger environments, inert templates, strict argument-boundary checks, private bounded output files, and non-overridable hard-block or explicit `UNSAFE` decisions.
 
+[0.2.29-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.28-beta.1...v0.2.29-beta.1
 [0.2.28-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.27-beta.2...v0.2.28-beta.1
 [0.2.2-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.1-beta.1...v0.2.2-beta.1
 [0.2.1-beta.1]: https://github.com/eugen1763/Pum/compare/v0.2.0-beta.4...v0.2.1-beta.1

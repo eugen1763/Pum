@@ -2376,7 +2376,7 @@ export class SubagentManager {
     const call: ToolCall = {
       id: callId,
       name: "bash",
-      args: [command.split("\n")[0]!.trim()],
+      args: toolArgs("bash", { command }, record.snapshot.worktree.path),
       state: "running",
       startedAt: Date.now(),
       input: { command },

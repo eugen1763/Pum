@@ -4428,7 +4428,7 @@ export function App({
     const call: ToolCall = {
       id,
       name: "bash",
-      args: [command.split("\n")[0]!.trim()],
+      args: toolArgs("bash", { command }, cwd),
       state: "running",
       startedAt: Date.now(),
       input: { command },

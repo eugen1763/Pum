@@ -99,7 +99,7 @@ export function toolArgs(name: string, args: any, cwd: string): string[] {
   if (!args || typeof args !== "object") return [];
 
   if (name === "bash" && typeof args.command === "string") {
-    return [args.command.split("\n")[0]!.trim()];
+    return [args.command.replaceAll("\r\n", "\n").replaceAll("\r", "\n")];
   }
   if (name === "web_search") {
     // web-search.ts owns which fields are safe to show and joins them; this
@@ -177,7 +177,9 @@ export function toolArgs(name: string, args: any, cwd: string): string[] {
 
 /** One flat line for logs, persistence, and anywhere without styled chunks. */
 export function toolArgText(name: string, args: any, cwd: string): string {
-  return toolArgs(name, args, cwd).join(", ");
+  return toolArgs(name, args, cwd)
+    .map((arg) => arg.replaceAll("\n", "\\n"))
+    .join(", ");
 }
 
 /** Count changed lines from a tool result's unified patch details. */

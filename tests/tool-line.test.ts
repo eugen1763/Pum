@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { displayToolPath, editCounts, toolArgs } from "../src/tool-line";
+import { displayToolPath, editCounts, toolArgs, toolArgText } from "../src/tool-line";
 
 describe("read tool metadata", () => {
   test("shows the path and only supplied range arguments", () => {
@@ -52,6 +52,13 @@ describe("read tool metadata", () => {
 });
 
 describe("other tool metadata", () => {
+  test("preserves every Bash command line for the transcript", () => {
+    expect(toolArgs("bash", { command: "printf one \\\r\n  && printf two" }, "/repo"))
+      .toEqual(["printf one \\\n  && printf two"]);
+    expect(toolArgText("bash", { command: "printf one \\\n  && printf two" }, "/repo"))
+      .toBe("printf one \\\\n  && printf two");
+  });
+
   test("summarizes questionnaire arguments without exposing every option", () => {
     expect(toolArgs("questionnaire", {
       questions: [

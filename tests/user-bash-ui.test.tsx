@@ -129,7 +129,8 @@ describe("user shell command mode", () => {
     expect(commands).toEqual([command]);
     expect(customMessages).toHaveLength(1);
     expect(customMessages[0]!.options).toEqual({ triggerTurn: true });
-    expect(setup.captureCharFrame()).toContain("bash(printf one \\)");
+    expect(setup.captureCharFrame()).toContain("bash(printf one \\");
+    expect(setup.captureCharFrame()).toContain("&& printf two)");
 
     setup.mockInput.pressBackspace();
     await settle(setup);

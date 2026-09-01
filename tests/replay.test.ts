@@ -18,7 +18,7 @@ describe("subagent transcript replay", () => {
       type: "message",
       message: {
         role: "bashExecution",
-        command: "printf replay",
+        command: "printf replay \\\n  && printf second",
         output: "replay",
         exitCode: 0,
         cancelled: false,
@@ -29,7 +29,12 @@ describe("subagent transcript replay", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatchObject({
       kind: "tool",
-      call: { name: "bash", args: ["printf replay"], state: "ok", output: "replay" },
+      call: {
+        name: "bash",
+        args: ["printf replay \\\n  && printf second"],
+        state: "ok",
+        output: "replay",
+      },
     });
   });
 

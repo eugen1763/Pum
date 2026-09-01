@@ -251,6 +251,29 @@ describe("tool line state", () => {
     ]);
   });
 
+  test("renders every line of a multiline Bash command", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 6 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+
+    createRoot(setup.renderer).render(
+      <ToolLine
+        theme={theme}
+        call={{
+          id: "multiline-bash",
+          name: "bash",
+          args: ["printf one \\\n  && printf two"],
+          state: "ok",
+        }}
+      />,
+    );
+    await settle(setup);
+
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("bash(printf one \\");
+    expect(frame).toContain("&& printf two)");
+  });
+
   test("shows the newest four running Bash output lines below and aligned with the command", async () => {
     const setup = await createTestRenderer({ width: 34, height: 12 });
     destroy = () => setup.renderer.destroy();

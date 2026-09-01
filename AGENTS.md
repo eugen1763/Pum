@@ -500,6 +500,10 @@ These were chosen deliberately. Change them only on purpose.
   agreement, previews included: replay derives them the same way, so a mutation
   keeps its inline diff through a session load. A replayed row carries no
   `startedAt`, having no live clock to measure against.
+- **Bash transcript rows keep the complete command.** `toolArgs` normalizes
+  line endings and retains every command line. Main, child, and replayed user
+  shell commands use the same formatter. Headless progress escapes line breaks
+  so each tool notice stays on one terminal row.
 - **A call whose turn ended without a result is interrupted, not running.**
   Replay has always shown it that way; both live paths now settle any row still
   spinning when the turn ends, so cancelling a turn leaves the same transcript a

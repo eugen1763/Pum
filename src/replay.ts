@@ -1,5 +1,5 @@
 import type { AgentMessageKind, Line } from "./transcript";
-import { type ToolCall } from "./tool-line";
+import { toolArgs, type ToolCall } from "./tool-line";
 import { interruptedToolCall, settledToolCall, startedToolCall } from "./tool-row";
 import {
   WEB_SEARCH_CUSTOM_TYPE,
@@ -274,7 +274,7 @@ export function replayEntries(
       const call: ToolCall = {
         id: `user-bash:${entry?.id ?? lines.length}`,
         name: "bash",
-        args: [message.command.split("\n")[0]!.trim()],
+        args: toolArgs("bash", { command: message.command }, cwd),
         state: "running",
         input: { command: message.command },
         userInitiated: true,
