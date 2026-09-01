@@ -143,7 +143,12 @@ const RULE_CHARS_PER_MS = 0.04;
 const RULE_HIGHLIGHT_WIDTH = 10;
 const COMET_CHARS_PER_MS = 0.035;
 const ELECTRIC_FRAME_MS = 140;
-const CONSTELLATION_SPACING = 13;
+/** Average columns per star. Each slot places its own star inside this span. */
+const CONSTELLATION_SPACING = 11;
+/** Base period of one star. A hashed factor spreads the real periods around it. */
+const CONSTELLATION_TWINKLE_MS = 2600;
+/** How much of its period a star burns for. It is dark and moves in the rest. */
+const CONSTELLATION_LIFETIME = 0.72;
 const RANDOM_CONSTELLATION_CYCLE_MS = 2000;
 /** How much of one cycle a single sparkle burns for, start to finish. */
 const RANDOM_CONSTELLATION_LIFETIME = 0.5;
@@ -658,6 +663,44 @@ const hashPosition = (frame: number, seed: number, width: number) => {
   return Math.abs(value) % width;
 };
 
+export type ConstellationStar = { column: number; strength: number };
+
+/**
+ * One star of the constellation field, for the slot of columns it belongs to.
+ *
+ * The field used to be a fixed grid: a star every `CONSTELLATION_SPACING`
+ * columns, in the same place for the whole run. Each slot now holds a star with
+ * its own period, its own start, its own peak brightness, and a column that is
+ * re-drawn for every life. A star is dark between two lives, so it never moves
+ * while it is visible. Returns `null` while the slot is empty.
+ */
+export function constellationStar(
+  slot: number,
+  elapsedMs: number,
+  role: WorkingRuleRole,
+): ConstellationStar | null {
+  if (slot < 0) return null;
+  const seed = roleSeed(role);
+  const period = CONSTELLATION_TWINKLE_MS *
+    (0.55 + (hashPosition(slot * 13 + 7, seed + 3, 100) / 100) * 1.05);
+  const offset = (hashPosition(slot * 29 + 5, seed + 11, 1000) / 1000) * period;
+  const time = elapsedMs + offset;
+  const life = (time % period) / period;
+  if (life >= CONSTELLATION_LIFETIME) return null;
+
+  const epoch = Math.floor(time / period);
+  // Two columns of margin on each side keep the halo of one star clear of the
+  // next slot, so no two stars ever touch.
+  const span = CONSTELLATION_SPACING - 4;
+  const column = slot * CONSTELLATION_SPACING + 2 +
+    hashPosition(epoch * 31 + slot, seed * 7 + slot, span);
+  const amplitude = 0.5 + (hashPosition(epoch * 17 + slot, seed + 23, 100) / 100) * 0.5;
+  const strength = clampStrength(
+    Math.sin((life / CONSTELLATION_LIFETIME) * Math.PI) ** 1.2 * amplitude,
+  );
+  return { column, strength };
+}
+
 /** Choose stable, random-looking sparkle centers for one two-second cycle. */
 export function randomConstellationCenters(
   width: number,
@@ -754,20 +797,24 @@ export function workingRuleCell(
   }
 
   if (mode === "constellation") {
-    const seed = roleSeed(role);
-    const spacing = (offset: number) => (column + offset + seed * 3) % CONSTELLATION_SPACING === 0;
-    // A star ends at its own cell unless it carries a halo, which is what
-    // makes it bloom on the rule rather than switch on and off in place.
-    const halo = spacing(1) || spacing(-1);
-    if (!spacing(0) && !halo) return { strength: 0, glyph: "─" };
-    const star = spacing(0) ? column : spacing(1) ? column + 1 : column - 1;
-    // Stars sit thirteen columns apart, so any fixed phase step per column put
-    // them all within a fifth of a radian of each other and they blinked in
-    // unison. A hashed offset gives each one its own place in the cycle.
-    const phase = elapsedMs / 620 + hashPosition(star, seed, 628) / 100;
-    const peak = 0.12 + ((Math.sin(phase) + 1) / 2) * 0.88;
-    if (!spacing(0)) return { strength: peak * CONSTELLATION_HALO, glyph: "·" };
-    return { strength: peak, glyph: peak > 0.82 ? "✦" : peak > 0.48 ? "✧" : "·" };
+    const slot = Math.floor(column / CONSTELLATION_SPACING);
+    let strength = 0;
+    let glyph = "─";
+    // A star can sit in the neighbouring slot and still reach this column with
+    // its halo, which is what makes it bloom instead of switching on in place.
+    for (let index = slot - 1; index <= slot + 1; index++) {
+      const star = constellationStar(index, elapsedMs, role);
+      if (!star || star.column >= width) continue;
+      const distance = Math.abs(column - star.column);
+      if (distance > 1) continue;
+      const lit = distance === 0 ? star.strength : star.strength * CONSTELLATION_HALO;
+      if (lit <= strength) continue;
+      strength = lit;
+      glyph = distance > 0 ? "·"
+        : star.strength > 0.82 ? "✦"
+          : star.strength > 0.48 ? "✧" : "·";
+    }
+    return { strength, glyph };
   }
 
   if (mode === "random-constellation") {

@@ -4,6 +4,9 @@ All notable changes to PUM are documented in this file.
 
 ## Unreleased
 
+### Changed
+- The `constellation` working animation now animates each star on its own. The stars sat on a fixed grid of one star every thirteen columns and only changed brightness. Each star now has its own period, its own peak brightness, and a fresh column for every appearance. A star moves only while it is dark, so the field looks random and no star jumps in view.
+
 ## [0.2.27-beta.2] - 2026-08-23
 
 ### Fixed

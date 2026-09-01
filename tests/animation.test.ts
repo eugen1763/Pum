@@ -7,6 +7,7 @@ import {
   TRAIL_HALF_LIFE_MS,
   bloomColor,
   caretAlpha,
+  constellationStar,
   coordinatedRuleState,
   decayTrail,
   glowColor,
@@ -128,16 +129,44 @@ describe("additional working-rule animations", () => {
       .every((cell) => cell.strength === 0)).toBe(true);
   });
 
-  test("constellation keeps fixed star positions while brightness changes", () => {
-    const early = Array.from({ length: 60 }, (_, column) =>
-      workingRuleCell("constellation", "inputBottom", 60, 0, column));
-    const later = Array.from({ length: 60 }, (_, column) =>
-      workingRuleCell("constellation", "inputBottom", 60, 700, column));
-    const starPositions = (cells: typeof early) => cells
+  test("constellation moves its stars instead of holding a fixed grid", () => {
+    const width = 120;
+    const stars = (elapsedMs: number) => Array.from({ length: width }, (_, column) =>
+      workingRuleCell("constellation", "inputBottom", width, elapsedMs, column))
       .map((cell, column) => cell.glyph === "─" ? -1 : column)
       .filter((column) => column >= 0);
-    expect(starPositions(early)).toEqual(starPositions(later));
-    expect(early.map((cell) => cell.strength)).not.toEqual(later.map((cell) => cell.strength));
+
+    const frames = Array.from({ length: 24 }, (_, step) => stars(step * 400));
+    const shapes = new Set(frames.map((frame) => frame.join(",")));
+    expect(shapes.size).toBeGreaterThan(20);
+
+    // No frame repeats the old thirteen-column grid: the gaps stay uneven.
+    const gaps = frames.flatMap((frame) => frame
+      .slice(1)
+      .map((column, index) => column - frame[index]!)
+      .filter((gap) => gap > 2));
+    expect(new Set(gaps).size).toBeGreaterThan(3);
+  });
+
+  test("constellation fades one star up, down, and out on its own beat", () => {
+    const slot = 4;
+    const life = Array.from({ length: 200 }, (_, step) =>
+      constellationStar(slot, step * 40, "inputTop"));
+    const lit = life.filter((star) => star !== null);
+    const dark = life.filter((star) => star === null);
+
+    expect(lit.length).toBeGreaterThan(0);
+    expect(dark.length).toBeGreaterThan(0);
+    expect(Math.max(...lit.map((star) => star.strength))).toBeGreaterThan(0.45);
+    expect(Math.min(...lit.map((star) => star.strength))).toBeLessThan(0.2);
+    // The star is dark while it moves, so it never jumps in view.
+    expect(new Set(lit.map((star) => star.column)).size).toBeGreaterThan(1);
+
+    // Neighbouring slots keep their own beat rather than blinking together.
+    const together = Array.from({ length: 200 }, (_, step) =>
+      [slot, slot + 1, slot + 2].map((index) => constellationStar(index, step * 40, "inputTop")));
+    expect(together.some((row) => row.some((star) => star && star.strength > 0.5) &&
+      row.some((star) => star === null))).toBe(true);
   });
 
   test("energy transfers from the input pair to the header pair", () => {
