@@ -26,8 +26,8 @@ const TOOL_GROUPS_SUFFIX = "tool-groups.json";
 /**
  * Tools that are always sent in every session.
  *
- * The pi built-ins (read, write, edit, bash) must never be
- * filtered. Questionnaire is PUM's always-present model tool.
+ * The pi built-ins (read, write, edit, bash) must never be filtered.
+ * Questionnaire and project-memory reads are always present too.
  */
 export const CORE_TOOL_NAMES = [
   "read",
@@ -35,7 +35,11 @@ export const CORE_TOOL_NAMES = [
   "edit",
   "bash",
   "questionnaire",
+  "memory_read",
 ] as const;
+
+/** Extra always-sent tool that only the authoritative main agent may use. */
+export const MAIN_EXTRA_TOOL_NAMES = ["memory_edit"] as const;
 
 /** Extra always-sent tools that exist only in child (subagent) sessions. */
 export const CHILD_EXTRA_TOOL_NAMES = ["finish_subagent"] as const;
@@ -149,7 +153,7 @@ export const ALL_GROUP_TOOL_NAMES: readonly string[] = [
 
 /** The tool names a session of an audience may expose (the allowlist). */
 export function mainAllowedToolNames(): string[] {
-  return [...CORE_TOOL_NAMES, ENABLE_TOOLS, ...ALL_GROUP_TOOL_NAMES];
+  return [...CORE_TOOL_NAMES, ...MAIN_EXTRA_TOOL_NAMES, ENABLE_TOOLS, ...ALL_GROUP_TOOL_NAMES];
 }
 
 /** The complete tool list of a goal judge session. */
@@ -200,6 +204,9 @@ export function activeToolNames(
   readonly = false,
 ): string[] {
   const active = new Set<string>([...CORE_TOOL_NAMES, ENABLE_TOOLS]);
+  if (audience === "main") {
+    for (const name of MAIN_EXTRA_TOOL_NAMES) active.add(name);
+  }
   if (audience === "subagent") {
     for (const name of CHILD_EXTRA_TOOL_NAMES) active.add(name);
   }

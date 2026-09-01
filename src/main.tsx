@@ -11,6 +11,7 @@ import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { App } from "./app";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
+import { createMemoryExtension } from "./memory";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { installWebSearch, webSearch } from "./web-search";
@@ -260,6 +261,9 @@ export async function start(
       (_agentId, isReadonly) => sandboxController.extension({ readonly: isReadonly }),
       (_agentId, isReadonly) => createFilesystemSandboxExtension({ readonly: isReadonly }),
     ],
+    childWorkerExtensionFactories: [
+      () => createMemoryExtension({ agentDir: AGENT_DIR, audience: "subagent" }),
+    ],
     sandboxModeSource: () => sandboxController.mode,
   });
   const subagentExtension = subagentManager.mainExtension();
@@ -295,6 +299,7 @@ export async function start(
             filesystemSandboxExtension,
             mainCheckModeExtension,
             sandboxExtension,
+            createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
             questionnaireManager.extension({ id: "main", name: "main" }),
             mainToolGroups.extension(),
             mainTodoTools.extension(),

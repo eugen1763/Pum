@@ -53,6 +53,7 @@ drives the actual TUI and converts the captured cells to SVG.
 - **A full coding loop** — `read`, `write`, `edit`, and `bash`, with streaming Markdown, syntax highlighting, usage, cost, and Git status.
 - **Parallel subagents** — persistent agents that share the project by default, with optional isolated Git worktrees. They message each other durably and report to their spawner. See [Subagents](docs/subagents.md).
 - **Goals that outlive a turn** — `/goal` keeps working, reviewed after each turn by a judge that reads but never writes. See [Goals](docs/goals.md).
+- **Project memory across sessions** — the main agent maintains private Markdown facts that follow linked Git worktrees. See [Tools](docs/tools.md#project-memory).
 - **Supervised processes** — background shells and external triggers such as `gh run watch`, which wake the exact agent that was waiting. See [Tools](docs/tools.md).
 - **Layered safeguards** — a path guard on the file tools, deterministic Check mode, and a native OS sandbox for the processes the model starts. See [Safety](docs/security.md).
 - **A terminal-first look** — nine themes, semantic colour overrides, and optional animation. See [Appearance](docs/appearance.md).

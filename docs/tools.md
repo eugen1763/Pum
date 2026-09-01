@@ -2,12 +2,27 @@
 
 [← Back to the README](../README.md)
 
-Every session always has `read`, `write`, `edit`, `bash`, and the questionnaire.
+Every session always has `read`, `write`, `edit`, `bash`, `memory_read`, and the questionnaire.
+The main agent also has `memory_edit`.
 Everything else lives in a hidden group that the model reveals
 with `enable_tools` when it needs it, so a schema the turn will not use never
 costs context: **Admin** (triggers and the message cache), **Subagents**,
 **Worktree**, **Shells**, and **Todo**. Revealing is one-way for the rest of the
 session.
+
+## Project memory
+
+PUM injects private project memory before each model call. The main agent uses
+`memory_read` and `memory_edit` to maintain durable facts without user action.
+Worker agents can read memory, but they cannot change it. Goal judges and AFK
+delegates receive no memory.
+
+PUM stores one bounded `MEMORY.md` outside the repository. Linked Git worktrees
+share the file through Git's common-directory identity. Non-Git directories use
+separate files. A revision check and a cross-process lock prevent lost updates.
+
+The file holds at most 200 lines or 25 KiB. PUM rejects credential-like content.
+Current user instructions and repository files always take priority over memory.
 
 ## Interactive questionnaires
 

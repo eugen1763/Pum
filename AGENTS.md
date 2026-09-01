@@ -40,6 +40,8 @@ bun run start    # open the TUI in the current directory
 | `src/history.ts` | Prompt-history adapter for the shared prompt cache |
 | `src/prompt-stash.ts` | Prompt-stash adapter for the shared prompt cache |
 | `src/prompt-cache.ts` | Reconciliation, retention, migration, and atomic persistence |
+| `src/memory-identity.ts` | Stable Git common-directory or non-Git directory identity for project memory |
+| `src/memory.ts` | Bounded Markdown memory, atomic revision edits, context injection, and model tools |
 | `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/text-paste.ts` | Bounded local clipboard text capture for secure login fields |
@@ -121,7 +123,7 @@ These were chosen deliberately. Change them only on purpose.
 
 - **Bun** as the runtime. OpenTUI's renderer needs it.
 - **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for direct TUI startup (or `src/headless.ts` for `-p`). Unknown options and commands exit with code 2, but `-h`/`--help` and `-v`/`--version` print and exit 0 even when a later argument is invalid. `--` ends option parsing, so an operand may start with `-`. In `pum s`/`pum sr` the `login` keyword must come before any mount directory, so a directory genuinely named `login` stays mountable after `--`. Startup accepts `login`, `-r`/`--resume`, and `-p`/`--prompt <text>`. `pum s` and `pum sr` launch the TUI through the outer sandbox. `pum ss` probes the runtime without starting the TUI.
-- **`-p` is headless.** `pum -p "<text>"` runs one prompt in `src/headless.ts` with only read, write, edit, and bash. It keeps the configured Check mode (on/off), sandbox, writing style, and explanation strength. Interactive tools (questionnaire, enable_tools, subagents, triggers, message cache) are not registered. The session persists to the normal per-directory store, so `-r` and the TUI can continue it. Headless mode does not combine with `pum s` or `pum sr` in the current launcher protocol.
+- **`-p` is headless.** `pum -p "<text>"` runs one prompt in `src/headless.ts` with read, write, edit, bash, memory_read, and memory_edit. It keeps the configured Check mode (on/off), sandbox, writing style, and explanation strength. Interactive tools (questionnaire, enable_tools, subagents, triggers, message cache) are not registered. The session persists to the normal per-directory store, so `-r` and the TUI can continue it. Headless mode does not combine with `pum s` or `pum sr` in the current launcher protocol.
 - **`@earendil-works/pi-coding-agent`**, not `pi-ai` on its own. It brings the
   agent loop, session files, and the `read`/`write`/`edit`/`bash` tools. Using
   `pi-ai` alone would mean writing all of that here.
@@ -214,7 +216,7 @@ These were chosen deliberately. Change them only on purpose.
   blocks external
   location changes, writes, execution operands, ambiguous access, credential
   access, escaping links or junctions, broad deletion, and other hard rules.
-- **No agent writes the PUM config directory.** Settings changed in the popup
+- **Generic agent tools do not write the PUM config directory.** Settings changed in the popup
   belong to the session, not to `pum.json`, and `s` in the Settings popup is the
   one deliberate promotion to global - performed by PUM itself, never through a
   tool. The deterministic layer still supports an exact-file allowance, but
@@ -222,6 +224,20 @@ These were chosen deliberately. Change them only on purpose.
   blocked for the main agent and for every subagent. `auth.json`, `models.json`
   key material and session content keep their existing hard blocks, and the
   native sandbox still denies the whole config root.
+- **Project memory is agent-managed private state.** PUM stores one `MEMORY.md`
+  under `<config dir>/memory/projects/<sha256>/`, outside the repository. Git
+  repositories use the canonical absolute Git common directory as their identity,
+  so the primary checkout and every linked worktree share one file even when the
+  checkout paths differ. Non-Git directories use their canonical directory
+  identity. The main agent and headless main agent can call `memory_read` and
+  `memory_edit` without user approval. Worker agents can call only `memory_read`;
+  goal judges and AFK delegates get neither memory context nor memory tools.
+  PUM injects valid non-empty memory before every model call without adding it to
+  the session transcript. Current user instructions and repository evidence take
+  priority. Memory holds at most 200 lines or 25 KiB, rejects credential-like
+  content, uses exact revision-checked replacements, a cross-process lock, and an
+  atomic rename. This controlled writer is the sole model-driven exception to the
+  generic config-directory write block.
 - **A session can move between directories without forking.** `/worktree start`
   creates an auto-named worktree and switches the session to its own file with
   a new `cwd`, so the session id, transcript and companion state stay put and
@@ -705,7 +721,7 @@ These were chosen deliberately. Change them only on purpose.
   web search, check mode, and writing style.
 - **Optional tools live in hidden per-session groups.** PUM does not send
   every custom tool schema on every request. Core tools (read, write, edit,
-  bash, questionnaire; finish_subagent for children) are always
+  bash, memory_read, questionnaire; memory_edit for main and finish_subagent for children) are always
   sent. The Admin (trigger + message-cache), Subagents, and Worktree groups
   are hidden until the model reveals them. One always-present `enable_tools`
   tool (registered per session) accepts group names; its execute calls

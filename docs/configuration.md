@@ -22,6 +22,7 @@ from pi's own configuration directory.
 | `prompt-stash.json` | Cached prompts by working directory (legacy filename) |
 | `sessions/` | Main conversation sessions |
 | `subagents/` | Persistent subagent sessions |
+| `memory/projects/<hash>/MEMORY.md` | Agent-managed Markdown memory for one Git repository or non-Git directory |
 
 `/providers delete` writes to both credential stores. It removes the credential
 from `auth.json` for every provider. For a custom provider it also removes the

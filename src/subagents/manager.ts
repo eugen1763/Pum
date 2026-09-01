@@ -307,6 +307,7 @@ type ManagerOptions = {
   maxActiveSubagents?: number;
   childExtensionFactories?: InlineExtension[];
   childExtensionFactoriesForAgent?: Array<(agentId: string, readonly: boolean) => InlineExtension>;
+  childWorkerExtensionFactories?: Array<(agentId: string, readonly: boolean) => InlineExtension>;
   sandboxModeSource?: () => SandboxMode;
   questionnaireManager?: QuestionnaireManager;
   spawnPreviewManager?: SpawnPreviewManager;
@@ -426,6 +427,7 @@ export class SubagentManager {
   private readonly agentDir: string;
   private readonly childExtensionFactories: InlineExtension[];
   private readonly childExtensionFactoriesForAgent: Array<(agentId: string, readonly: boolean) => InlineExtension>;
+  private readonly childWorkerExtensionFactories: Array<(agentId: string, readonly: boolean) => InlineExtension>;
   private readonly sandboxModeSource: () => SandboxMode;
   private readonly questionnaireManager?: QuestionnaireManager;
   private readonly spawnPreviewManager?: SpawnPreviewManager;
@@ -463,6 +465,7 @@ export class SubagentManager {
     this.maxActiveSubagents = normalizeMaxActiveSubagents(options.maxActiveSubagents);
     this.childExtensionFactories = [...(options.childExtensionFactories ?? [])];
     this.childExtensionFactoriesForAgent = options.childExtensionFactoriesForAgent ?? [];
+    this.childWorkerExtensionFactories = options.childWorkerExtensionFactories ?? [];
     this.sandboxModeSource = options.sandboxModeSource ?? (() => "off");
     this.questionnaireManager = options.questionnaireManager;
     this.spawnPreviewManager = options.spawnPreviewManager;
@@ -2121,6 +2124,10 @@ export class SubagentManager {
             record.snapshot.id,
             record.snapshot.readonly === true,
           )),
+          ...(!internal ? this.childWorkerExtensionFactories.map((factory) => factory(
+            record.snapshot.id,
+            record.snapshot.readonly === true,
+          )) : []),
           this.childExtension(record.snapshot.id),
         ],
       },

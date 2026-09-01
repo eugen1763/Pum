@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { mkdirSync } from "node:fs";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
+import { createMemoryExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
@@ -34,7 +35,14 @@ import { prepareHeadlessStatsOutput, type HeadlessStatsOutput } from "./headless
  * are not constructed here, and subagent, trigger, and message-cache tools
  * need the running TUI for routing and notifications.
  */
-const HEADLESS_TOOL_NAMES = ["read", "write", "edit", "bash"];
+const HEADLESS_TOOL_NAMES = [
+  "read",
+  "write",
+  "edit",
+  "bash",
+  MEMORY_READ_TOOL_NAME,
+  MEMORY_EDIT_TOOL_NAME,
+];
 
 /**
  * Handle one hosted web-search call from a headless run.
@@ -188,6 +196,7 @@ async function runPromptSession(
             checkModePromptExtension,
             checkModeExtension,
             sandboxController.extension(),
+            createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
           ],
         },
       });

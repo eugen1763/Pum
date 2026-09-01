@@ -23,6 +23,7 @@ import {
   CHILD_EXTRA_TOOL_NAMES,
   CORE_TOOL_NAMES,
   ENABLE_TOOLS,
+  MAIN_EXTRA_TOOL_NAMES,
   SHELLS_GROUP_TOOL_NAMES,
   ToolGroupsController,
   TOOL_GROUP_NAMES,
@@ -94,7 +95,7 @@ const groupToolStubExtension = {
 describe("tool group membership", () => {
   test("main sessions expose only core tools plus enable_tools by default", () => {
     const active = activeToolNames([], "main");
-    for (const core of [...CORE_TOOL_NAMES, ENABLE_TOOLS]) {
+    for (const core of [...CORE_TOOL_NAMES, ...MAIN_EXTRA_TOOL_NAMES, ENABLE_TOOLS]) {
       expect(active).toContain(core);
     }
     for (const group of TOOL_GROUP_NAMES) {
@@ -114,6 +115,7 @@ describe("tool group membership", () => {
         expect(active).not.toContain(tool);
       }
     }
+    for (const mainOnly of MAIN_EXTRA_TOOL_NAMES) expect(active).not.toContain(mainOnly);
   });
 
   test("readonly children omit mutation tools from core, allowlist, and enabled groups", () => {
@@ -163,7 +165,7 @@ describe("tool group membership", () => {
   test("core tools and enable_tools are present in every group combination", () => {
     for (const enabled of [[], ["Admin"], ["Subagents", "Worktree"], ["Admin", "Subagents", "Worktree", "Shells"]]) {
       const active = activeToolNames(enabled, "main");
-      for (const core of [...CORE_TOOL_NAMES, ENABLE_TOOLS]) {
+      for (const core of [...CORE_TOOL_NAMES, ...MAIN_EXTRA_TOOL_NAMES, ENABLE_TOOLS]) {
         expect(active).toContain(core);
       }
     }
@@ -177,7 +179,7 @@ describe("tool group membership", () => {
   });
 
   test("the allowlists cover core, enable_tools, and every group tool", () => {
-    for (const tool of [...CORE_TOOL_NAMES, ENABLE_TOOLS, ...ALL_GROUP_TOOL_NAMES]) {
+    for (const tool of [...CORE_TOOL_NAMES, ...MAIN_EXTRA_TOOL_NAMES, ENABLE_TOOLS, ...ALL_GROUP_TOOL_NAMES]) {
       expect(mainAllowedToolNames()).toContain(tool);
     }
     for (const tool of [...CHILD_EXTRA_TOOL_NAMES]) {

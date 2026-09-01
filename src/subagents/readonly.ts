@@ -6,6 +6,7 @@ const SAFE_TOOLS = new Set([
   "read",
   "bash",
   "questionnaire",
+  "memory_read",
   "finish_subagent",
   "enable_tools",
   "list_subagents",
