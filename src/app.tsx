@@ -1041,6 +1041,8 @@ export function App({
   }));
   const [modelQuery, setModelQuery] = useState("");
   const [modelSearchFocused, setModelSearchFocused] = useState(false);
+  const [modelRefreshing, setModelRefreshing] = useState(false);
+  const [modelRevision, setModelRevision] = useState(0);
   const [, setAgentRevision] = useState(0);
   const [triggersOpen, setTriggersOpen] = useState(false);
   const [processTab, setProcessTab] = useState<ProcessTab>("triggers");
@@ -1321,7 +1323,7 @@ export function App({
     modelRuntime.getAvailableSnapshot(),
     modelQuery,
     (providerId) => (modelRuntime as any).getProvider?.(providerId)?.name ?? "",
-  ), [modelRuntime, modelId, modelQuery, loginPage]);
+  ), [modelRuntime, modelId, modelQuery, loginPage, modelRevision]);
 
   const inputRef = useRef<TextareaRenderable>(null);
   const inputModeRef = useRef(false);
@@ -1334,6 +1336,7 @@ export function App({
   const processTabRef = useRef<ProcessTab>("triggers");
   const settingsPageRef = useRef(page);
   const settingsSearchFocusedRef = useRef(settingsSearchFocused);
+  const modelRefreshInFlightRef = useRef(false);
   const focusInputAfterSwitch = useRef(false);
   const activeAgentIdRef = useRef<string | null>(null);
   const agentSelectorCursorRef = useRef(0);
@@ -2869,6 +2872,25 @@ export function App({
     if (!/^\/providers\s/.test(commandInput)) return;
     void loadManagedProviders();
   }, [commandInput, managedProviders.length]);
+
+  const refreshModels = async () => {
+    if (modelRefreshInFlightRef.current) return;
+    modelRefreshInFlightRef.current = true;
+    setModelRefreshing(true);
+    try {
+      const result = await modelRuntime.refresh({ allowNetwork: true, force: true });
+      if (result.errors.size > 0) {
+        const details = [...result.errors].map(([provider, error]) => `${provider}: ${error.message}`).join("; ");
+        append({ kind: "text", role: "error", text: `model refresh completed with errors: ${details}` });
+      }
+    } catch (error) {
+      append({ kind: "text", role: "error", text: `model refresh failed: ${String(error)}` });
+    } finally {
+      modelRefreshInFlightRef.current = false;
+      setModelRefreshing(false);
+      setModelRevision((revision) => revision + 1);
+    }
+  };
 
   const selectModel = (model: Model<any>) => {
     settingsPageRef.current = "main";
@@ -5284,6 +5306,11 @@ export function App({
           }
           return;
         }
+        if (!key.ctrl && !key.meta && !key.option && printableKey === "r") {
+          key.stopPropagation();
+          void refreshModels();
+          return;
+        }
         if (isModelSearchShortcut(key, modelSearchFocused)) {
           key.stopPropagation();
           setModelSearchFocused(true);
@@ -6170,6 +6197,7 @@ export function App({
               models={visibleModels}
               modelQuery={modelQuery}
               modelSearchFocused={modelSearchFocused}
+              modelRefreshing={modelRefreshing}
               onSearchChange={updateSettingsQuery}
               onModelSearchChange={setModelQuery}
               onSelectModel={selectModel}

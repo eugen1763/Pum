@@ -23,6 +23,10 @@ pum
 PUM opens the login panel automatically on the first start. Press `?` on an
 empty prompt to see every control.
 
+Select a model in `Ctrl+P`. GPT-6 Astra is listed for OpenAI and Codex;
+using it requires access on your provider account. Press `r` in the model
+list to refresh providers that support catalog discovery.
+
 > [!WARNING]
 > PUM can read, write, and delete files. Check mode adds deterministic policy
 > checks, and supported hosts can enforce native Bash isolation, but the

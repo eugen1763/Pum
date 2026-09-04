@@ -4,13 +4,12 @@ PUM uses the npm package name `pum-agent`. The installed executable remains `pum
 
 ## npm authentication
 
-The Release workflow reads `NPM_TOKEN` from the GitHub `npm` environment. The
-token is granular, limited to `pum-agent`, read/write, configured with Bypass
-2FA, and given the shortest practical expiration. It authenticates package
-publication and the exact prerelease dist-tag update. Never print its value.
+The Release workflow uses npm trusted publishing. GitHub Actions presents its
+OIDC identity and npm grants a short-lived credential for publication. No
+`NPM_TOKEN` is required or read by the workflow.
 
-GitHub OIDC supplies npm provenance. The identity npm verifies for provenance
-is the repository, the workflow file, and the environment:
+GitHub OIDC also supplies npm provenance. The trusted publisher registration
+must match the repository, workflow file, and environment:
 
 | Field | Value |
 |---|---|
@@ -19,8 +18,8 @@ is the repository, the workflow file, and the environment:
 | Environment | `npm` |
 
 The workflow passes `--provenance` as an explicit requirement. Prerelease
-versions publish under `beta`, then assign the same exact version to `latest`.
-Stable versions publish directly under `latest`.
+versions publish only under `beta`. Stable versions publish under `latest`.
+Do not promote a beta to `latest` as part of this workflow.
 
 ## Release checklist
 
@@ -48,4 +47,4 @@ retired, because nothing was published under it.
 
 Do not move or reuse a published tag. If a tagged candidate needs changes, prepare a newer version.
 
-Versions with a hyphen publish under npm `beta` and `latest`. Other versions publish directly under `latest`.
+Versions with a hyphen publish under npm `beta`. Other versions publish directly under `latest`.

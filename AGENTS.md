@@ -18,6 +18,7 @@ bun run start    # open the TUI in the current directory
 | `src/outer-sandbox-launch.ts` | PUM child command, runtime/state mounts, and outer child context |
 | `src/outer-sandbox-process.ts` | Protocol probe and shell-free claudebox process execution |
 | `src/main.tsx` | Boot: config dir, login hand-off, credential check, session, render |
+| `src/model-catalog.ts` | Missing-model fallbacks that preserve provider methods and prefer upstream entries |
 | `src/headless.ts` | Non-interactive `-p` one-shot: core coding tools, Check mode, no UI surfaces |
 | `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
 | `src/theme.ts` | Semantic colour tokens, nine presets, `theme.json` merge |
@@ -131,6 +132,16 @@ These were chosen deliberately. Change them only on purpose.
 - **There is no custom patch model tool.** Use pi's `edit` tool for targeted
   file mutations. Do not register or advertise `apply_patch` as a session tool.
 - **OpenTUI with React** for the UI.
+- **Model fallbacks are process-local and additive.** TUI and headless startup
+  install the GPT-6 Astra fallback for OpenAI and Codex before selecting models.
+  Provider authentication and transport remain pi's; an existing upstream entry
+  always wins. Nothing writes these fallbacks to user configuration. The Codex
+  fallback keeps pi's conservative 272K context budget. The model and Check model
+  pickers refresh on `r` only outside their search field, with one refresh in
+  flight. Static provider catalogs cannot discover missing entries by refresh.
+- **pi 0.85.0 needs an explicit server dependency.** Its SDK imports
+  `@earendil-works/pi-server` without declaring it. Keep the matching dependency
+  until upstream fixes its package manifest.
 - **PUM keeps its own config dir**, `~/.config/pum` (override with `PUM_DIR`).
   It does not share pi's `~/.pi/agent`, so it needs its own login. pi stores
   auth, settings, and sessions together under one directory, so this is all or
@@ -740,12 +751,10 @@ These were chosen deliberately. Change them only on purpose.
   session JSONL (the same pattern as the news companion file) so they survive
   resume and never enter LLM context. There is no News group because PUM has
   no news model tool; groups with zero tools are dropped.
-- **Release publication uses one package-scoped token and OIDC provenance.**
-  The GitHub `npm` environment supplies `NPM_TOKEN` for `npm publish` and exact
-  dist-tag changes. GitHub OIDC supplies npm provenance. Prereleases publish
-  under `beta` and then assign the same exact version to `latest`; stable
-  versions publish directly under `latest`. Never print, persist, or expose
-  registry credentials.
+- **Release publication uses npm trusted publishing.** GitHub OIDC publishes
+  prereleases under `beta` and stable versions under `latest`, with npm
+  provenance. The workflow does not promote prereleases to `latest` and does
+  not use an `NPM_TOKEN`. Never print, persist, or expose registry credentials.
 - **Check mode on has deterministic hard blocks and advisory verifier review.**
   On blocks only hard-rule, explicitly suspicious, clearly dangerous, obfuscated,
   malformed, or incompletely analyzed calls. On permits ordinary complete

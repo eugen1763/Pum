@@ -226,6 +226,7 @@ describe("settings popup layout", () => {
 
       expect(selectedSpan?.bg.equals(parseColor(theme.selectionBg))).toBe(true);
       expect(normalSpan?.bg.equals(parseColor(theme.popupBg))).toBe(true);
+      expect(setup.captureCharFrame()).toContain("r refresh");
       setup.renderer.destroy();
       destroy = undefined;
     }

@@ -203,6 +203,7 @@ export type PopupProps = {
   models: readonly Model<any>[];
   modelQuery?: string;
   modelSearchFocused?: boolean;
+  modelRefreshing?: boolean;
   onSearchChange: (value: string) => void;
   onModelSearchChange?: (value: string) => void;
   onSelectModel: (model: Model<any>) => void;
@@ -226,6 +227,7 @@ export function SettingsPopup({
   models,
   modelQuery = "",
   modelSearchFocused = false,
+  modelRefreshing = false,
   onSearchChange,
   onModelSearchChange = () => {},
   onSelectModel,
@@ -378,7 +380,11 @@ export function SettingsPopup({
             />}
           </box> : null}
           {layout.footerHeight ? <text
-            content="/ search   ↑↓ move   enter select   esc back"
+            content={modelRefreshing
+              ? layout.narrow ? "Refreshing models…  esc" : "Refreshing models…   esc back"
+              : layout.narrow
+                ? "/ search  ↑↓  enter select  r refresh  esc"
+                : "/ search   ↑↓ move   enter select   r refresh   esc back"}
             fg={theme.dim}
             bg={theme.popupBg}
             wrapMode="none"

@@ -2,6 +2,18 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.30-beta.1] - 2026-09-04
+
+### Added
+- Added GPT-6 Astra to the OpenAI and Codex model lists, including headless sessions. The fallback preserves provider authentication and transport and defers to upstream model metadata when available. Account access is still required.
+- Added `r` in the model and Check model pickers to refresh available provider catalogs, with visible progress and refresh errors.
+
+### Changed
+- Updated pi packages to 0.85.0 and included the server dependency required by the published SDK.
+
+### Fixed
+- Restored beta-only npm trusted publishing. The previous workflow published the package but failed authenticating the subsequent `latest` promotion, preventing GitHub Release creation.
+
 ## [0.2.29-beta.1] - 2026-09-01
 
 ### Fixed

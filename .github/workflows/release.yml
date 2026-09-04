@@ -40,16 +40,13 @@ jobs:
             echo "Tag $GITHUB_REF_NAME does not match package version $version." >&2
             exit 1
           }
-      # The package-scoped environment token authenticates publication and
-      # dist-tag changes. GitHub OIDC supplies provenance for the publish.
+      # Trusted publishing exchanges this workflow's OIDC identity for a
+      # short-lived publish credential. Prereleases remain on beta.
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version="$(bun -e 'console.log((await Bun.file("package.json").json()).version)')"
           if [[ "$version" == *-* ]]; then
             npm publish --provenance --tag beta
-            npm dist-tag add "pum-agent@$version" latest
           else
             npm publish --provenance --tag latest
           fi

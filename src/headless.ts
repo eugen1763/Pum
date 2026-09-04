@@ -6,6 +6,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { mkdirSync } from "node:fs";
+import { installModelCatalogFallbacks } from "./model-catalog";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
 import { createMemoryExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
 import { checkPathsForProject, loadSettings } from "./settings";
@@ -148,6 +149,7 @@ async function runPromptSession(
     authPath: AUTH_PATH,
     modelsPath: MODELS_PATH,
   });
+  installModelCatalogFallbacks(modelRuntime);
   if ((await modelRuntime.getAvailable()).length === 0) {
     process.stderr.write("pum: no provider is available. Run 'pum login' first.\n");
     return 1;

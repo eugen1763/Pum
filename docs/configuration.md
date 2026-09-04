@@ -30,6 +30,13 @@ definition from `models.json`. See [controls](controls.md) for the command.
 
 ## Session settings
 
+The model and Check model pickers accept `r` to refresh available provider
+catalogs while the search field is unfocused. Static catalogs still come from
+the installed pi package. PUM includes a GPT-6 Astra fallback for OpenAI and
+Codex until pi supplies its own entry; provider account access is still required.
+The API entry advertises a 1.05M context window; the Codex fallback keeps pi's
+conservative 272K context budget.
+
 Changes in `Ctrl+P` apply to the current session and persist beside it, leaving
 the global `pum.json` alone. Press `s` in the panel to promote the current
 settings to the global defaults.

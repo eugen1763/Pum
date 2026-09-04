@@ -68,7 +68,7 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.flush();
 }
 
-async function renderApp(width = 80, height = 24) {
+async function renderApp(width = 80, height = 24, modelRuntime?: any) {
   const setup = await createTestRenderer({ width, height, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const session = fakeSession();
@@ -80,7 +80,7 @@ async function renderApp(width = 80, height = 24) {
   createRoot(setup.renderer).render(
     <App
       session={session}
-      modelRuntime={{
+      modelRuntime={modelRuntime ?? {
         getAvailableSnapshot: () => models,
         getProviders: () => [],
         getProvider: (id: string) => ({ id, name: "Mock Provider" }),
@@ -238,6 +238,35 @@ describe("Settings keyboard flow", () => {
     await settle(setup);
     expectSettingsClosed(setup.captureCharFrame());
     await expectPromptFocus(setup, "after model pages");
+  });
+
+  test("refreshes available models from model selection", async () => {
+    let available = [models[0]];
+    let refreshOptions: unknown;
+    const runtime = {
+      getAvailableSnapshot: () => available,
+      getProviders: () => [],
+      getProvider: (id: string) => ({ id, name: "Mock Provider" }),
+      refresh: async (options: unknown) => {
+        refreshOptions = options;
+        available = models;
+        return { aborted: false, errors: new Map() };
+      },
+    };
+    const setup = await renderApp(80, 24, runtime);
+    await openSettings(setup);
+    await openFilteredRow(setup, "active search");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(setup.captureCharFrame()).toContain("r refresh");
+    expect(setup.captureCharFrame()).not.toContain("check-model");
+
+    setup.mockInput.pressKey("r");
+    await settle(setup);
+
+    expect(refreshOptions).toEqual({ allowNetwork: true, force: true });
+    expect(setup.captureCharFrame()).toContain("check-model");
   });
 
   test("handles rapid open-close without a stale keyboard closure", async () => {
