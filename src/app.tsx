@@ -5686,6 +5686,10 @@ export function App({
       key.stopPropagation();
       const index = Math.min(commandCursorRef.current, visibleArgumentMatches.length - 1);
       const completed = applyPathCompletion(inputValue, visibleArgumentMatches[index]!);
+      if (closedSetMatches.length > 0) {
+        submitPrompt(completed.value);
+        return;
+      }
       setEditorText(completed.value, completed.cursorOffset, true);
       pathCompletionCycle.current = {
         sourceValue: inputValue,

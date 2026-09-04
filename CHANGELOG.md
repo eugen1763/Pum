@@ -2,6 +2,11 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.33-beta.1] - 2026-09-04
+
+### Fixed
+- Enter now executes the selected command argument completion immediately, including themes. Tab still inserts without executing, and file-path completion remains unchanged.
+
 ## [0.2.32-beta.1] - 2026-09-04
 
 ### Added

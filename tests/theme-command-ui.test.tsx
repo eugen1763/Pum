@@ -84,7 +84,7 @@ async function type(setup: Setup, text: string) {
 
 describe("theme autocomplete previews", () => {
   for (const command of ["/theme", "/settings theme"]) {
-    test(`${command} previews keyboard selection, restores on insertion, and commits on execution`, async () => {
+    test(`${command} previews keyboard selection and commits with one Enter`, async () => {
       const { setup, file, prompts } = await renderApp();
       await type(setup, `${command} `);
       expectTheme(setup, "tokyonight");
@@ -95,11 +95,7 @@ describe("theme autocomplete previews", () => {
       expect(existsSync(file)).toBe(false);
       setup.mockInput.pressEnter();
       await settle(setup);
-      expect(setup.captureCharFrame()).toContain(`${command} gruvbox`);
-      expectTheme(setup, "tokyonight");
-      expect(existsSync(file)).toBe(false);
-      setup.mockInput.pressEnter();
-      await settle(setup);
+      expect(textarea(setup.renderer.root)!.plainText).toBe("");
       expectTheme(setup, "gruvbox");
       expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ theme: "gruvbox" });
       expect(prompts()).toBe(0);
@@ -141,8 +137,7 @@ describe("theme autocomplete previews", () => {
     expectTheme(setup, "nord");
     setup.mockInput.pressEnter();
     await settle(setup);
-    setup.mockInput.pressEnter();
-    await settle(setup);
+    expect(textarea(setup.renderer.root)!.plainText).toBe("");
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ theme: "nord" });
   });
 
