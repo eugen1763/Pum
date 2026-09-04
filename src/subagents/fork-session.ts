@@ -5,6 +5,7 @@ import {
   type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import type { ForkOrigin, ForkSource } from "./types";
+import { SessionLockOwner } from "../session-lock";
 
 type ForkSessionSource = Pick<
   SessionManager,
@@ -35,6 +36,7 @@ export function createForkedSession(
   source: ForkSource,
   targetCwd: string,
   sessionDir: string,
+  reserve?: (path: string) => void,
 ): SessionManager {
   const cutoff = source.origin.cutoffEntryId;
   if ((cutoff === null && source.entries.length !== 0)
@@ -58,13 +60,15 @@ export function createForkedSession(
   const content = [forkHeader, ...source.entries]
     .map((entry) => JSON.stringify(entry))
     .join("\n") + "\n";
+  // The caller can retain the reservation through child-runtime setup.
+  const release = reserve ? (reserve(sessionFile), () => {}) : new SessionLockOwner().acquire(sessionFile);
   try {
     writeFileSync(sessionFile, content, { flag: "wx" });
     return SessionManager.open(sessionFile, sessionDir, targetCwd);
   } catch (error) {
     rmSync(sessionFile, { force: true });
     throw error;
-  }
+  } finally { release(); }
 }
 
 export function entriesAfterForkCutoff(

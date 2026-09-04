@@ -26,6 +26,7 @@ bun run start    # open the TUI in the current directory
 | `src/animation.tsx` | One frame clock; the glow core; shimmer, spinner, caret |
 | `src/status-bar.tsx` | Top bar; always one measured row with responsive field priorities |
 | `src/transcript.tsx` | Row rendering per role |
+| `src/bash-tail-text.ts` | Native wrapped Bash tail viewport that leaves wheel input to the transcript |
 | `src/output-minimal.ts` | Grouping successful tool runs into one activity row |
 | `src/transcript-dwell.ts` | How long a row must stay put before it may change |
 | `src/transcript-window.ts` | Which rows are mounted, and when older ones join them |
@@ -46,7 +47,7 @@ bun run start    # open the TUI in the current directory
 | `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/text-paste.ts` | Bounded local clipboard text capture for secure login fields |
-| `src/pasted-text.ts` | Large or multiline prompt pastes become a `[Pasted text #n]` marker backed by a system-temp file |
+| `src/pasted-text.ts` | In-memory pasted-text payloads, editor markers, and literal expansion on send |
 | `src/clipboard.ts` | Completed text selection copy routes for native clipboards and OSC 52 |
 | `src/worktree.ts` | Create, inspect, merge, and remove managed Git worktrees |
 | `src/subagents/manager.ts` | Parallel agent sessions, routing, persistence, and tools |
@@ -57,8 +58,11 @@ bun run start    # open the TUI in the current directory
 | `src/queue-recall.ts` | Atomic newest-first recall of queued user messages |
 | `src/session-resume-alias.ts` | Trusted source/worktree pointers to one canonical relocated session JSONL |
 | `src/session-history-metadata.ts` | Bounded session JSONL metadata and usage index |
+| `src/session-lock.ts` | Cross-process canonical session ownership and crash recovery |
+| `src/session-lock-runtime.ts` | Locked startup, runtime replacement, and disposal |
 | `src/session-history-popup.tsx` | Responsive session history list and metadata rows |
 | `src/settings-popup.tsx` | The Ctrl+P panel. Presentational; owns no keyboard logic |
+| `src/model-command.ts` | Exact model matching, supported effort validation, and slash argument completion |
 | `src/login-popup.tsx` | Presentational provider login and custom-provider popup |
 | `src/login-controller.ts` | Provider auth state machine and popup keyboard actions |
 | `src/login-flow.ts` | Provider registry, custom discovery, redaction, and atomic config writes |
@@ -229,8 +233,8 @@ These were chosen deliberately. Change them only on purpose.
   location changes, writes, execution operands, ambiguous access, credential
   access, escaping links or junctions, broad deletion, and other hard rules.
 - **Generic agent tools do not write the PUM config directory.** Settings changed in the popup
-  belong to the session, not to `pum.json`, and `s` in the Settings popup is the
-  one deliberate promotion to global - performed by PUM itself, never through a
+  belong to the session, not to `pum.json`, and `s` in the Settings popup or
+  `/store` (`/s`) deliberately promotes them to global - performed by PUM itself, never through a
   tool. The deterministic layer still supports an exact-file allowance, but
   nothing grants one, so `settings.json`, `pum.json` and `theme.json` are
   blocked for the main agent and for every subagent. `auth.json`, `models.json`
@@ -300,8 +304,8 @@ These were chosen deliberately. Change them only on purpose.
   checking the literal string would approve one path while the tool opened
   another. For a read, the sandbox resolves the same candidate in the same order
   and runs every check on that candidate.
-- **PUM's own staged temp directories are readable, never writable.** Large
-  pasted text and captured bash output live in per-process directories that PUM
+- **PUM's own staged temp directories are readable, never writable.** Captured
+  bash output lives in per-process directories that PUM
   registers explicitly. Reads inside a registered root are allowed so the model
   can retrieve what it was told to read; writes there are still refused, and the
   credential rules still apply. A model-supplied temp path never matches.
@@ -389,6 +393,21 @@ These were chosen deliberately. Change them only on purpose.
   working-rule animation sweeps the whole row, label included, and the static
   behavior is unchanged when animation is off.
 - **Sessions persist** to `<config dir>/sessions`.
+- **Mutable sessions have one process owner.** TUI, headless, and managed-child
+  runtimes acquire a canonical JSONL ownership lock before opening existing
+  sessions, because pi can migrate a file during `SessionManager.open`.
+  History metadata remains readable. A locked history target fails before the
+  current runtime is changed. Source and worktree aliases share the canonical
+  lock. Same-file relocation reserves ownership across teardown and rebuild;
+  independent owners conflict even inside one process. New sessions acquire
+  ownership before service setup, and disposal releases it after work stops.
+  The lock publishes a populated directory atomically. Unique owner files let
+  competing stale recoveries remove only the owner they inspected. Never use
+  recursive deletion, elapsed time, or heartbeat expiry to reclaim ownership.
+  Recovery requires a demonstrably dead PID on the same host and Linux PID
+  namespace. Live or reused PIDs, permission errors, foreign namespaces, and
+  malformed owners fail closed. This is cooperative local-filesystem ownership,
+  not a boundary against older PUM versions or arbitrary file writers.
 - **Prompt cleanup preserves every stash occurrence.** Corresponding directories
   in linked Git worktrees use the primary worktree's normalized cache identity;
   non-Git directories stay isolated. For each cache identity, history also
@@ -437,16 +456,29 @@ These were chosen deliberately. Change them only on purpose.
   to the prompt boundaries. Ctrl+Left and Ctrl+Right move by words. Ctrl+Up and
   Ctrl+Down move to the prompt boundaries. Ctrl+End scrolls the transcript only
   when the prompt is empty.
+- **Printable typing restores prompt focus.** With no popup open, a printable
+  key returns from transcript focus or native blur to the selected agent's draft
+  and inserts its exact text once at the existing cursor. This includes `/`,
+  punctuation, and Unicode. Ctrl, Alt, navigation, and control keys retain their
+  handlers. Transcript navigation uses arrows and Enter, not j/k/c. Popup fields
+  keep typing ownership, including login secrets. Empty `?` still opens controls;
+  empty `!` still enters shell command mode. Focus recovery stops propagation
+  before focusing and inserts explicitly to prevent duplicate key delivery.
 - **The prompt cursor uses terminal-native blinking.** Keep OpenTUI's cursor
   logically visible while the prompt is focused; never toggle `showCursor` from
   PUM's animation clock. A manually hidden cursor lets animated frame writes
   become its last terminal position, so smooth cursor trails jump between the
   animation and the input when it is shown again. Native blinking also avoids
   keeping the renderer live on an otherwise idle screen.
-- **Long text pastes become attachments early.** A paste over 16 KiB or over
-  three logical lines becomes a `[Pasted text #n]` marker backed by a private
-  temporary file. Stack traces therefore stay compact before they fill the
-  prompt. Three lines or fewer stay inline when the byte limit also permits it.
+- **Long text pastes stay in memory.** A paste over 16 KiB or over three logical
+  lines becomes a `[Pasted text #n]` editor marker with an in-memory payload.
+  Sending expands the original marker spans once into literal full text for the
+  transcript, model context, and history. Payloads never become temp files or
+  read instructions. Marker-like text and replacement tokens inside a payload
+  stay literal. Edited markers release their payloads. Failed delivery restores
+  the draft when the selected input is still empty. Pending pasted attachments
+  still block agent/session switching and stash insertion. No post-turn payload
+  registry is needed. Three lines or fewer stay inline within the byte limit.
 - **An empty `!` enters user shell command mode.** PUM removes the `!` from the
   command, shows `!` in the gutter, and paints both input rules with `accent`.
   Backspace or Esc exits when the command is empty. Alt+I does nothing in this
@@ -461,14 +493,18 @@ These were chosen deliberately. Change them only on purpose.
   success and added lines, orange is blocked. Everything else decorates: a tool
   row is `tool(first, second)` with the name, brackets and commas in `tool`
   (the preset's dim) and the arguments in `toolArg` (its accent), so the only
-  signal on a settled row is the state marker at its right edge. Truncation
+  signal on a settled row is the leading state marker in its two-column gutter. Truncation
   notices are `dim`; they report, they do not warn. Retarget the two tokens per
   preset rather than swapping call sites, so `theme.json` keeps one knob each.
 - **The three output modes differ in what they group, not in what they keep.**
   `projectTranscriptLines` is pure and reprojects the whole transcript without
   rewriting a session entry. Quiet folds every settled call into one activity
   row, including failed calls, rejected calls, commands, and mutations. Normal
-  exempts bash and the mutating tools. Normal shows an editing tool's diff
+  exempts bash and the mutating tools. Normal automatically shows the Bash
+  output tail in at most five visual terminal rows, using native wrapping and
+  updating the tail after resize. Settled calls use retained results; running
+  calls keep the dwell layer's live-output gate. Opening a row replaces this
+  automatic tail with the existing expanded details. Normal shows an editing tool's diff
   inline without being asked, capped at
   `INLINE_DIFF_CHANGED_LINES` changed lines. Verbose is the raw view: every
   call listed, every row expanded, complete retained input and result, and no
@@ -680,8 +716,10 @@ These were chosen deliberately. Change them only on purpose.
   status-only messages, or completion notices unless they contain new work or a
   question. Stop any acknowledgement echo loop immediately.
 - **Inter-agent messages are durable.** The recipient gets a custom context
-  message. The sender gets a display-only custom entry. Both render with the
-  `agentMessage` and `agentMessageBg` theme tokens.
+  message. The sender gets a display-only custom entry. Both use the normal
+  transcript background and the `agentMessage` foreground; queued messages keep
+  the dim foreground. The `agentMessageBg` token remains for configuration
+  compatibility but does not fill transcript rows.
 - **Direct `/worktree` operations persist synthetic tool events.** Normal agent
   tool calls already persist through pi's assistant and tool-result entries.
 - **`?` on an empty prompt opens the controls** instead of typing. With any
@@ -728,9 +766,21 @@ These were chosen deliberately. Change them only on purpose.
     would drop its methods.
   - This is unsupported by pi and could break on upgrade. If requests start
     failing with a tool error, that is the first thing to switch off.
+- **Interface icons lead their associated text.** Tool state markers and running
+  spinners occupy the existing left gutter, without moving the tool text or its
+  details. Settings navigation chevrons precede their values. Keep existing
+  leading icons, meaningful syntax, diff signs, carets, scrollbars, and field
+  order unchanged.
 - **Glyphs stay plain Unicode.** Dingbats, block, box-drawing, and
   Miscellaneous Symbols only — no Nerd Font. Do not reach for a private-use
   codepoint.
+- **`/model` and `/effort` use the main session's Settings APIs.** `/model`
+  opens the existing model picker. `/model <name or provider/id> [effort]`
+  matches exact case-insensitive identities or names, refuses ambiguous names,
+  and validates effort before changing the model. `/effort [level]` sets or
+  reports effort using the installed pi capability list. Both commands complete
+  available values. Selected children are refused, never silently retargeted.
+  `/store` and `/s` call the same global promotion as Settings `s`.
 - **Model and thinking level are pi's to persist.** `setModel()` and
   `setThinkingLevel()` write to `<config dir>/settings.json`, and
   `createAgentSession` reads them back at startup. Do not duplicate that here.
@@ -862,7 +912,7 @@ Each of these cost real debugging. They are not obvious from the docs.
   live in the one handler in `app.tsx`.
 - **Raw Ctrl+H and Backspace can both be `^H`.** OpenTUI reports that byte as
   plain Backspace. PUM keeps Backspace behavior for the ambiguous byte. Use
-  `/history` when the terminal does not report Ctrl+H distinctly.
+  `/history` or its alias `/resume` when the terminal does not report Ctrl+H distinctly.
 - **Two fast Ctrl+C presses arrive in one React batch**, so state read inside the
   handler is still stale on the second. The quit check compares timestamps held
   in a ref. Any keyboard rule that depends on "did this just happen" needs the
@@ -964,8 +1014,8 @@ Each of these cost real debugging. They are not obvious from the docs.
   registered through one then never matches a path resolved through the other,
   and only Windows sees it, because only Windows has short names. Go through
   `canonicalRealpathSync` / `canonicalRealpath` in `platform.ts`, which ask the
-  OS. This hid two real bugs: staged pasted text and captured bash output were
-  handed to the agent under a spelling PUM's own sandbox refused.
+  OS. This previously affected staged pasted text, and it also affected captured
+  bash output handed to the agent under a spelling PUM's own sandbox refused.
 - **Windows strips a trailing space from a path component.** `repo dir ` is
   created as `repo dir`, so a case built on one cannot be reproduced there.
 - **A contended exclusive create is `EPERM` on Windows, not `EEXIST`** - the

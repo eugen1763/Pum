@@ -1,13 +1,14 @@
 import {
   createAgentSessionFromServices,
-  createAgentSessionRuntime,
   createAgentSessionServices,
   ModelRuntime,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { mkdirSync } from "node:fs";
+import { SessionLockOwner } from "./session-lock";
+import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
 import { installModelCatalogFallbacks } from "./model-catalog";
-import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
+import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { identityExtension } from "./identity";
@@ -184,7 +185,9 @@ async function runPromptSession(
   installWebSearch(modelRuntime);
 
   const cwd = process.cwd();
-  const sessionRuntime = await createAgentSessionRuntime(
+  const sessionLockOwner = new SessionLockOwner();
+  const startup = await lockedProjectSession(cwd, options.resume === true, sessionLockOwner);
+  const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
       const services = await createAgentSessionServices({
         cwd,
@@ -213,11 +216,11 @@ async function runPromptSession(
     {
       cwd,
       agentDir: AGENT_DIR,
-      sessionManager: options.resume
-        ? SessionManager.continueRecent(cwd, sessionDir(cwd))
-        : SessionManager.create(cwd, sessionDir(cwd)),
+      sessionManager: startup.sessionManager,
     },
-  );
+    sessionLockOwner,
+  ).finally(startup.release);
+  try {
   if (sessionRuntime.modelFallbackMessage) {
     process.stderr.write(`pum: ${sessionRuntime.modelFallbackMessage}\n`);
   }
@@ -301,4 +304,7 @@ async function runPromptSession(
     await dispose();
   }
   return exitCode;
+  } finally {
+    await sessionRuntime.dispose();
+  }
 }

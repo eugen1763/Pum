@@ -207,7 +207,7 @@ describe("output-level transcript UI", () => {
     expect(frame).toContain('"path": "src/a.ts"');
   });
 
-  test("uses Vim-style transcript focus to expand and copy raw row data", async () => {
+  test("uses arrows for transcript details and returns printable letters to the prompt", async () => {
     let copied = "";
     const setup = await renderMode("quiet", async (text: string) => {
       copied = text;
@@ -216,7 +216,7 @@ describe("output-level transcript UI", () => {
 
     setup.mockInput.pressKey("y", { ctrl: true });
     await settle(setup);
-    expect(setup.captureCharFrame()).toContain("transcript  j/k move");
+    expect(setup.captureCharFrame()).toContain("transcript  ↑/↓ move");
 
     setup.mockInput.pressArrow("up");
     setup.mockInput.pressEnter();
@@ -225,8 +225,8 @@ describe("output-level transcript UI", () => {
 
     setup.mockInput.pressKey("c");
     await settle(setup);
-    expect(copied).toContain('"path": "src/a.ts"');
-    expect(copied).toContain("file contents");
+    expect(copied).toBe("");
+    expect(setup.captureCharFrame()).not.toContain("transcript  ↑/↓ move");
 
     setup.mockInput.pressEscape();
     await settle(setup);
@@ -251,11 +251,15 @@ describe("output-level transcript UI", () => {
     await setup.mockMouse.click(row!.screenX, row!.screenY);
     await settle(setup);
     expect(setup.captureCharFrame()).toContain("read(src/a.ts)");
-    expect(setup.captureCharFrame()).toContain("transcript  j/k move");
+    expect(setup.captureCharFrame()).toContain("transcript  ↑/↓ move");
 
-    setup.mockInput.pressKey("c");
+    // Mouse selections do not reserve printable transcript shortcuts.
+    // Selection copying above remains separate from row-key handling.
+    copied = "";
+    await setup.mockInput.typeText("jkc/");
     await settle(setup);
-    expect(copied).toContain('\"path\": \"src/a.ts\"');
-    expect(copied).toContain("file contents");
+    expect(copied).toBe("");
+    expect(setup.captureCharFrame()).toContain("jkc/");
+    expect(setup.captureCharFrame()).not.toContain("transcript  ↑/↓ move");
   });
 });

@@ -231,7 +231,7 @@ describe("transcript window", () => {
     expect(start).toBe(140);
 
     setup.mockInput.pressKey("y", { ctrl: true });
-    for (let step = 0; step < 70; step++) setup.mockInput.pressKey("k");
+    for (let step = 0; step < 70; step++) setup.mockInput.pressArrow("up");
     await settle(setup);
 
     expect(mountedRowIndices(setup.renderer.root)).toContain(129);

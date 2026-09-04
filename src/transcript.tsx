@@ -24,8 +24,10 @@ import {
   type GoalReviewStatus,
 } from "./goal-review";
 import { wrapAtSpaces } from "./text-wrap";
+import "./bash-tail-text";
+import type { BashTailTextRenderable } from "./bash-tail-text";
 import type { Theme } from "./theme";
-import { bashOutputWindow, type BashOutputWindow, type ToolCall } from "./tool-line";
+import { bashOutput, bashOutputWindow, type BashOutputWindow, type ToolCall } from "./tool-line";
 import type { TranscriptOutputMode } from "./transcript-output";
 import type { MinimalToolSummaryLine } from "./output-minimal";
 import {
@@ -397,8 +399,9 @@ function Row({
       <box style={{ width: 2, flexShrink: 0 }}>
         {/* A blank gutter still renders when it can be clicked, so a row with
             no disclosure glyph keeps its mouse target. */}
-        {glyphRef ? <text ref={glyphRef} fg={glyphColor} /> : glyph.trim() || onGlyphClick ? <text
-          content={glyph}
+        {glyphRef || glyph.trim() || onGlyphClick ? <text
+          ref={glyphRef}
+          content={glyphRef ? "" : glyph}
           fg={glyphColor}
           onMouseDown={onGlyphClick ? (event) => {
             if (event.button !== 0) return;
@@ -590,7 +593,7 @@ export function PendingMessageLine({
   const line = pending.line;
   if (line.kind === "agent-message") {
     return (
-      <Row glyph="◇ " glyphColor={theme.dim} background={theme.agentMessageBg}>
+      <Row glyph="◇ " glyphColor={theme.dim}>
         <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
           <text
             content={`${line.sender} → ${line.recipient} · queued`}
@@ -690,7 +693,7 @@ export function AgentMessageLine({
   line: Extract<Line, { kind: "agent-message" }>;
 }) {
   return (
-    <Row glyph="◇ " glyphColor={theme.agentMessage} background={theme.agentMessageBg}>
+    <Row glyph="◇ " glyphColor={theme.agentMessage}>
       <box style={{ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
         <text
           content={`${line.sender} → ${line.recipient}`}
@@ -860,6 +863,48 @@ function CompactToolDetails({ theme, call }: { theme: Theme; call: ToolCall }) {
   );
 }
 
+/** Normal Bash output occupies at most five native wrapped terminal rows. */
+export const NORMAL_BASH_OUTPUT_ROWS = 5;
+
+function NormalBashOutput({ theme, call }: { theme: Theme; call: ToolCall }) {
+  const ref = useRef<BashTailTextRenderable>(null);
+  // Running output has already passed the dwell layer's one-time display gate.
+  // Settled output comes from the retained result, not the ephemeral live buffer.
+  const retained = call.result && typeof call.result === "object" && "content" in call.result
+    && Array.isArray(call.result.content)
+    ? bashOutput(call.result) ?? ""
+    : resultText(call.result);
+  const source = call.state === "running" ? call.output ?? ""
+    : call.result === undefined ? call.output ?? "" : retained;
+  const content = source.replaceAll("\r\n", "\n").replaceAll("\r", "\n").replace(/\n$/, "");
+  const followTail = () => {
+    const text = ref.current;
+    if (text) text.scrollY = text.maxScrollY;
+  };
+  useEffect(() => {
+    const text = ref.current;
+    if (!text) return;
+    // This event follows native rewrapping. onSizeChange runs before it and
+    // would scroll using the previous width's visual row count.
+    text.on("line-info-change", followTail);
+    followTail();
+    return () => { text.off("line-info-change", followTail); };
+  }, [content]);
+  if (!content) return null;
+  return (
+    <DetailRow theme={theme} color={theme.bashOutput}>
+      <bash_tail_text
+        ref={ref}
+        content={content}
+        fg={call.state === "error" ? theme.error : theme.bashOutput}
+        selectable
+        wrapMode="word"
+        style={{ width: "100%", minWidth: 0, flexShrink: 0, maxHeight: NORMAL_BASH_OUTPUT_ROWS }}
+      />
+    </DetailRow>
+  );
+}
+
 function rejectedDetail(theme: Theme, detail: string): StyledText {
   if (!detail.startsWith(CHECK_MODE_HARD_BLOCK_PREFIX)) {
     return new StyledText([fg(theme.rejection)(detail)]);
@@ -923,8 +968,8 @@ export function ToolLine({
   // Whether live output may be shown at all is decided once, in the dwell
   // layer, so a remount cannot reopen a period that already closed.
   const output = call.name === "bash" && call.output
-    && outputMode !== "quiet"
-    && (call.state === "running" || outputMode !== "verbose")
+    && outputMode === "verbose"
+    && call.state === "running"
     ? bashOutputWindow(call.output)
     : null;
   const explicitDetails = expanded === true && outputMode !== "verbose";
@@ -944,13 +989,17 @@ export function ToolLine({
     && call.preview?.kind === "bash"
     ? call.preview
     : undefined;
-  // No disclosure arrow on a tool row: every one of them expands, so the glyph
-  // marked nothing and only added noise down the left edge. The gutter stays
-  // clickable, so the mouse still opens a row.
+  // The state marker leads the tool in the existing gutter. It remains clickable
+  // without adding a disclosure arrow or changing the tool and detail indents.
 
   return (
     <box style={{ flexDirection: "column", width: "100%" }}>
-      <Row glyph={GUTTER} glyphColor={toolColor} onGlyphClick={onDisclosureClick ? () => onDisclosureClick() : undefined}>
+      <Row
+        glyph={toolStateGlyph(call.state)}
+        glyphColor={call.state === "running" ? theme.accent : call.state === "ok" ? theme.success : rejected ? theme.rejection : theme.error}
+        {...(call.state === "running" ? { glyphRef: spinner } : {})}
+        onGlyphClick={onDisclosureClick ? () => onDisclosureClick() : undefined}
+      >
         <box style={{ flexDirection: "row", flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
           <text content={prefix} selectable style={{ flexShrink: 0 }} />
           <text
@@ -961,21 +1010,8 @@ export function ToolLine({
             style={{ flexGrow: 1, flexShrink: 1, minWidth: 0 }}
           />
         </box>
-        {/* The transcript scrollbox uses two padding columns and one pinned
-            scrollbar column. The row then uses a two-column gutter and a
-            one-column state marker. Bash reserves one additional column before
-            the marker so commands wrap before the terminal-edge boundary. */}
-        <box style={{ width: call.name === "bash" ? 2 : 1, flexShrink: 0 }} />
-        <box style={{ width: 1, flexShrink: 0 }}>
-          {call.state === "running" ? (
-            <text ref={spinner} fg={theme.accent} />
-          ) : (
-            <text
-              content={toolStateGlyph(call.state)}
-              fg={call.state === "ok" ? theme.success : rejected ? theme.rejection : theme.error}
-            />
-          )}
-        </box>
+        {/* Bash keeps one extra column before the terminal-edge boundary. */}
+        {call.name === "bash" ? <box style={{ width: 1, flexShrink: 0 }} /> : null}
       </Row>
       {rejected && call.detail ? (
         <DetailRow theme={theme} color={theme.rejection}>
@@ -987,6 +1023,9 @@ export function ToolLine({
           />
         </DetailRow>
       ) : null}
+      {call.name === "bash" && outputMode === "normal" && !explicitDetails && !rejected
+        ? <NormalBashOutput theme={theme} call={call} />
+        : null}
       {output && (output.hidden > 0 || output.lines.length > 0) ? (
         <DetailRow theme={theme} color={theme.bashOutput}>
           {output.hidden > 0 ? (

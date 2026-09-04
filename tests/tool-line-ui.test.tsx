@@ -4,7 +4,8 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { rejectedToolDetails } from "../src/check-mode";
 import { replayEntries } from "../src/replay";
-import { ToolLine, TOOL_DETAIL_INDENT, toolStateGlyph } from "../src/transcript";
+import { ActivitySummaryLine, GoalReviewLine, ToolLine, TOOL_DETAIL_INDENT, toolStateGlyph } from "../src/transcript";
+import { summarizeSuccessfulToolCalls } from "../src/output-minimal";
 import { loadTheme } from "../src/theme";
 import { bashOutput, bashOutputWindow, bashResultDisplay, type ToolCall } from "../src/tool-line";
 
@@ -102,6 +103,47 @@ describe("tool line state", () => {
     expect(toolStateGlyph("ok")).toBe("✓");
   });
 
+  test("keeps leading markers in expanded groups and goal reviews", async () => {
+    const setup = await createTestRenderer({ width: 50, height: 10 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    createRoot(setup.renderer).render(
+      <box style={{ flexDirection: "column", width: "100%" }}>
+        <ActivitySummaryLine
+          theme={theme}
+          summary={summarizeSuccessfulToolCalls([{ id: "group-read", name: "read", args: ["file.ts"], state: "ok" }])}
+          expanded
+          outputMode="normal"
+        />
+        <GoalReviewLine theme={theme} line={{ kind: "goal-review", id: "review", status: "completed" }} />
+      </box>,
+    );
+    await settle(setup);
+    const rows = setup.captureCharFrame().split("\n").map((line) => line.trimEnd());
+    expect(rows).toContain("  ✓ read(file.ts)");
+    expect(rows.find((line) => line.includes("Goal review"))).toMatch(/^✓ Goal review/);
+  });
+
+  test("keeps the leading marker clickable while running and after settlement", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 4 });
+    destroy = () => setup.renderer.destroy();
+    const theme = loadTheme("tokyonight");
+    const root = createRoot(setup.renderer);
+    let clicks = 0;
+    for (const state of ["running", "ok", "rejected", "error"] as const) {
+      root.render(<ToolLine
+        theme={theme}
+        call={{ id: "clickable", name: "read", args: ["file.ts"], state }}
+        onDisclosureClick={() => clicks++}
+      />);
+      await settle(setup);
+      expect(setup.captureCharFrame().split("\n")[0]).toMatch(/^\S read\(file.ts\)/);
+      await setup.mockMouse.click(0, 0);
+      await settle(setup);
+    }
+    expect(clicks).toBe(4);
+  });
+
   test("uses orange foreground without a special background for live, settled, wrapped, and replayed rows", async () => {
     const setup = await createTestRenderer({ width: 34, height: 20 });
     destroy = () => setup.renderer.destroy();
@@ -183,6 +225,9 @@ describe("tool line state", () => {
     );
     await settle(setup);
 
+    const rows = setup.captureCharFrame().split("\n").map((line) => line.trimEnd());
+    expect(rows).toContain("✗ bash(failed command)");
+    expect(rows).toContain("✓ bash(successful command)");
     const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
     const failed = spans.find((span) => span.text.includes("failed command"));
     const failedMarker = spans.find((span) => span.text === "✗");
@@ -215,8 +260,16 @@ describe("tool line state", () => {
     );
     await settle(setup);
 
-    expect(setup.captureCharFrame().match(/read\(file name\.ts, offset=2, limit=8\)/g))
-      .toHaveLength(5);
+    const rows = setup.captureCharFrame().split("\n").filter((line) => line.includes("read("));
+    expect(rows).toHaveLength(5);
+    expect(rows.every((line) => line.indexOf("read(") === 2)).toBe(true);
+    expect(rows[0]).toMatch(/^\S read\(file name\.ts, offset=2, limit=8\)/);
+    expect(rows.slice(1).map((line) => line.trimEnd())).toEqual([
+      "✓ read(file name.ts, offset=2, limit=8)",
+      "! read(file name.ts, offset=2, limit=8)",
+      "✗ read(file name.ts, offset=2, limit=8)",
+      "✓ read(file name.ts, offset=2, limit=8)",
+    ]);
   });
 
   test("wraps bash commands one column earlier inside the transcript scrollbox", async () => {
@@ -224,7 +277,7 @@ describe("tool line state", () => {
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
     // Long enough that the extra column bash reserves changes where it breaks.
-    const args = ["abcdefghijklmnopq"];
+    const args = ["abcdefghijklmnopqrs"];
 
     createRoot(setup.renderer).render(
       <scrollbox
@@ -240,13 +293,13 @@ describe("tool line state", () => {
     const frameLines = setup.captureCharFrame().trimEnd().split("\n");
     expect(frameLines.every((line) => line.length === 28)).toBe(true);
     expect(frameLines.every((line) => line.endsWith("█"))).toBe(true);
-    const lines = frameLines.map((line) => line.slice(0, -2).trimEnd()).filter((line) => line.trim());
+    const lines = frameLines.map((line) => line.slice(0, -1).trimEnd()).filter((line) => line.trim());
     // bash breaks one character earlier than read, and both continuations line
     // up under the opening bracket rather than under the tool name.
     expect(lines).toEqual([
-      "   bash(abcdefghijklmnop ✓",
-      "        q)",
-      "   read(abcdefghijklmnopq✓",
+      " ✓ bash(abcdefghijklmnopqr",
+      "        s)",
+      " ✓ read(abcdefghijklmnopqrs",
       "        )",
     ]);
   });
@@ -274,7 +327,7 @@ describe("tool line state", () => {
     expect(frame).toContain("&& printf two)");
   });
 
-  test("shows the newest four running Bash output lines below and aligned with the command", async () => {
+  test("shows the newest five visual running Bash rows below and aligned with the command", async () => {
     const setup = await createTestRenderer({ width: 34, height: 12 });
     destroy = () => setup.renderer.destroy();
     const theme = loadTheme("tokyonight");
@@ -294,7 +347,7 @@ describe("tool line state", () => {
     await settle(setup);
 
     const frameLines = setup.captureCharFrame().split("\n").map((line) => line.trimEnd());
-    expect(frameLines.some((line) => line.includes("... 2 more lines"))).toBe(true);
+    expect(frameLines.some((line) => line.includes("more lines"))).toBe(false);
     expect(frameLines.some((line) => line.includes("old one"))).toBe(false);
     expect(frameLines.some((line) => line.includes("old two"))).toBe(false);
     expect(frameLines.some((line) => line.includes("new three"))).toBe(true);
@@ -303,7 +356,7 @@ describe("tool line state", () => {
     expect(frameLines.some((line) => line.includes("a newest output"))).toBe(true);
 
     // Every tool-related row shares one indent, whatever the tool is called.
-    const commandColumn = frameLines.find((line) => line.includes("bash("))!.search(/\S/);
+    const commandColumn = frameLines.find((line) => line.includes("bash("))!.indexOf("bash(");
     const outputRows = frameLines.filter((line) =>
       line.includes("more lines") || line.includes("new three") || line.includes("that also wraps")
     );

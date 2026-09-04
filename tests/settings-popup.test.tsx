@@ -19,7 +19,7 @@ let destroy: (() => void) | undefined;
 afterEach(() => destroy?.());
 
 const values = Object.fromEntries(
-  SETTINGS_ROWS.map((row) => [row.id, row.id === "workingRuleAnimation" ? "‹ Sparkle trail ›" : "‹ on ›"]),
+  SETTINGS_ROWS.map((row) => [row.id, row.id === "workingRuleAnimation" ? "‹ › Sparkle trail" : "‹ › on"]),
 ) as Record<SettingRowId, string>;
 
 describe("settings search and navigation", () => {

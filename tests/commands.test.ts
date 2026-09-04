@@ -49,6 +49,17 @@ describe("command suggestions", () => {
       .toBe(matches.length - SUGGESTION_ROWS);
   });
 
+  test("completes /resume as a main-only alias for /history", () => {
+    expect(COMMANDS.find((command) => command.name === "/resume")?.description)
+      .toBe("Alias for /history");
+    expect(matchingCommandsForTarget("/res", "main").map((command) => command.name))
+      .toEqual(["/resume"]);
+    expect(matchingCommands("/resume").map((command) => command.name))
+      .toEqual(["/resume"]);
+    expect(matchingCommandsForTarget("/res", "subagent")).toEqual([]);
+    expect(matchingCommands("/resume ")).toEqual([]);
+  });
+
   test("includes /news and matches it for a prefix", () => {
     expect(COMMANDS.some((command) => command.name === "/news")).toBe(true);
     expect(COMMANDS.find((command) => command.name === "/news")?.description).toBe("Open recent answers (News)");

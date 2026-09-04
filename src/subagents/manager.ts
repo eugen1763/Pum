@@ -117,6 +117,7 @@ import {
 } from "../shells/types";
 import { registerShellTools, type ShellTargetSelector } from "../shells/tools";
 import { captureForkSource, createForkedSession, entriesAfterForkCutoff } from "./fork-session";
+import { SessionLockOwner, releaseSessionLockOnDispose } from "../session-lock";
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
@@ -239,6 +240,7 @@ function activeLimitError(maxActive: number): Error {
 
 type RuntimeRecord = {
   snapshot: SubagentSnapshot;
+  lockOwner?: SessionLockOwner;
   session?: AgentSession;
   api?: ExtensionAPI;
   unsubscribe?: () => void;
@@ -604,6 +606,8 @@ export class SubagentManager {
       let transcript = emptyTranscript();
       if (snapshot.sessionFile && existsSync(snapshot.sessionFile)) {
         try {
+          const release = new SessionLockOwner().acquire(snapshot.sessionFile);
+          try {
           const childManager = (await import("@earendil-works/pi-coding-agent")).SessionManager.open(
             snapshot.sessionFile,
           );
@@ -624,6 +628,7 @@ export class SubagentManager {
               this.resolveModel(snapshot.modelId).contextWindow,
             );
           }
+          } finally { release(); }
         } catch {
           // Keep metadata even if an old subagent session cannot be opened.
         }
@@ -1952,6 +1957,8 @@ export class SubagentManager {
       ? options.forkSource ?? this.captureSpawnerForkSource(options.parentAgentId ?? null)
       : undefined;
     let allocatedSessionFile: string | undefined;
+    const lockOwner = new SessionLockOwner();
+    let releaseForkLock = () => {};
     const record = await this.withWorktreeLock(async () => {
       // The judge is not a worker, so the parallel-work limit does not apply.
       if (!isInternalRole(options.role) && this.activeCount() >= this.maxActiveSubagents) {
@@ -2003,11 +2010,13 @@ export class SubagentManager {
             forkSource,
             worktree.path,
             sessionDir,
+            (path) => { releaseForkLock = lockOwner.acquire(path); },
           ).getSessionFile();
           snapshot.sessionFile = allocatedSessionFile;
         }
         const created: RuntimeRecord = {
           snapshot,
+          lockOwner,
           userInstructionNotices: new Map(),
           activityGeneration: 0,
           idleNotifiedGeneration: 0,
@@ -2028,6 +2037,7 @@ export class SubagentManager {
         return created;
       } catch (error) {
         if (allocatedSessionFile) rmSync(allocatedSessionFile, { force: true });
+        releaseForkLock();
         if (managed) await removeWorktree(this.mainCwd, worktree).catch(() => {});
         throw error;
       }
@@ -2062,7 +2072,7 @@ export class SubagentManager {
         this.updateStatus(record, "failed", String(error));
       }
       throw error;
-    }
+    } finally { releaseForkLock(); }
   }
 
   private captureSpawnerForkSource(parentAgentId: string | null): ForkSource {
@@ -2097,9 +2107,17 @@ export class SubagentManager {
     const model = this.resolveModel(record.snapshot.modelId);
     const sessionDir = join(this.agentDir, "subagents", this.parentSessionId);
     const SessionManagerClass = (await import("@earendil-works/pi-coding-agent")).SessionManager;
+    const lockOwner = record.lockOwner ??= new SessionLockOwner();
+    let release = lockOwner.acquire(record.snapshot.sessionFile);
+    let lockAttached = false;
+    try {
     const sessionManager = record.snapshot.sessionFile && existsSync(record.snapshot.sessionFile)
       ? SessionManagerClass.open(record.snapshot.sessionFile, sessionDir)
       : SessionManagerClass.create(record.snapshot.worktree.path, sessionDir);
+    if (sessionManager.getSessionFile() !== record.snapshot.sessionFile) {
+      release();
+      release = lockOwner.acquire(sessionManager.getSessionFile());
+    }
     // Each child tracks its own enabled tool groups, persisted next to its
     // session file. Restore before the child's enable_tools tool registers.
     const internal = isInternalRole(record.snapshot.role);
@@ -2141,6 +2159,8 @@ export class SubagentManager {
         ? afkAllowedToolNames()
         : judge ? judgeAllowedToolNames() : childAllowedToolNames(record.snapshot.readonly),
     });
+    releaseSessionLockOnDispose(result.session, release);
+    lockAttached = true;
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
     this.statsManager?.attach(record.snapshot.id, result.session, record.snapshot.modelId);
@@ -2187,6 +2207,13 @@ export class SubagentManager {
       at: Date.now(),
       snapshot: snapshotMetadata(record.snapshot),
     });
+    } catch (error) {
+      if (lockAttached) {
+        record.session?.dispose();
+        record.session = undefined;
+      } else release();
+      throw error;
+    }
   }
 
   private async authorizeTriggerTarget(

@@ -1,135 +1,36 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { describe, expect, test } from "bun:test";
+import { readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
-import { canonicalRealpathSync } from "../src/platform";
-import {
-  cleanupPendingPastedTexts,
-  MAX_PASTED_TEXT_BYTES,
-  MAX_PASTED_TEXT_LINES,
-  pastedTextReadBlock,
-  removePendingPastedText,
-  shouldStagePastedText,
-  stagePastedText,
-} from "../src/pasted-text";
-import { validateSandboxPath } from "../src/filesystem-sandbox";
+import { expandPastedTexts, MAX_PASTED_TEXT_BYTES, MAX_PASTED_TEXT_LINES, shouldStagePastedText, stagePastedText } from "../src/pasted-text";
 
-afterEach(() => cleanupPendingPastedTexts());
-
-function pastedTextDirs(): string[] {
-  return readdirSync(tmpdir()).filter((name) => name.startsWith("pum-pasted-text-"));
+function item(id: number, text: string, start = 0) {
+  const marker = `[Pasted text #${id}]`;
+  return { id, marker, start, end: start + marker.length, ...stagePastedText(text) };
 }
 
-describe("stagePastedText", () => {
-  test("writes the text to a private temp file under the system temp dir", () => {
-    const text = "x".repeat(17 * 1024);
-    const staged = stagePastedText(text);
-
-    expect(staged.bytes).toBe(text.length);
-    expect(staged.path).toContain("pum-pasted-text-");
-    expect(staged.path.endsWith(".txt")).toBe(true);
-    expect(existsSync(staged.path)).toBe(true);
-    expect(readFileSync(staged.path, "utf8")).toBe(text);
-
-    // Assert on this run's own directory: the system temp dir is shared, so a
-    // count of every `pum-pasted-text-*` directory races other processes.
-    expect(pastedTextDirs()).toContain(basename(dirname(staged.path)));
-  });
-});
-
-describe("staged pasted text and the filesystem sandbox", () => {
-  test("the agent can read a staged path, but not an unrelated temp path", async () => {
-    const project = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-paste-sandbox-project-")));
-    const unrelated = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-paste-sandbox-unrelated-")));
-    try {
-      const staged = stagePastedText("e".repeat(20_000));
-
-      await expect(validateSandboxPath(project, staged.path, [], "read")).resolves.toBeDefined();
-      await expect(validateSandboxPath(project, join(unrelated, "other.txt"), [], "read"))
-        .rejects.toThrow("outside the sandbox");
-      await expect(validateSandboxPath(project, staged.path, [], "write"))
-        .rejects.toThrow("outside the sandbox");
-    } finally {
-      rmSync(project, { recursive: true, force: true });
-      rmSync(unrelated, { recursive: true, force: true });
-    }
+describe("in-memory pasted text", () => {
+  test("keeps exact text and byte size without creating temp files", () => {
+    const before = readdirSync(tmpdir()).filter((name) => name.startsWith("pum-pasted-text-"));
+    const text = "é".repeat(20_000);
+    expect(stagePastedText(text)).toEqual({ text, bytes: 40_000 });
+    expect(readdirSync(tmpdir()).filter((name) => name.startsWith("pum-pasted-text-"))).toEqual(before);
   });
 
-  test("cleanup withdraws the read root", async () => {
-    const project = canonicalRealpathSync(mkdtempSync(join(tmpdir(), "pum-paste-sandbox-project-")));
-    try {
-      const staged = stagePastedText("f".repeat(20_000));
-      cleanupPendingPastedTexts();
-
-      await expect(validateSandboxPath(project, staged.path, [], "read"))
-        .rejects.toThrow("outside the sandbox");
-    } finally {
-      rmSync(project, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("removePendingPastedText", () => {
-  test("deletes only the staged temp file", () => {
-    const first = stagePastedText("a".repeat(20_000));
-    const second = stagePastedText("b".repeat(20_000));
-    const item: Parameters<typeof removePendingPastedText>[0] = {
-      id: 1,
-      marker: "[Pasted text #1]",
-      path: first.path,
-      bytes: first.bytes,
-      start: 0,
-      end: "[Pasted text #1]".length,
-    };
-
-    removePendingPastedText(item);
-
-    expect(existsSync(first.path)).toBe(false);
-    expect(existsSync(second.path)).toBe(true);
+  test("expands original spans once with literal payloads", () => {
+    const first = item(1, "  $& $` $' $$ [Pasted text #2] [Image #1]\n");
+    const second = item(2, "second", first.end + 1);
+    expect(expandPastedTexts(`${first.marker} ${second.marker}`, [second, first]))
+      .toBe(`${first.text} second`);
   });
 
-  test("tolerates a file that is already gone", () => {
-    const staged = stagePastedText("c".repeat(20_000));
-    rmSync(join(tmpdir(), staged.path.split(/[\\/]/).slice(-2).join("/")), { force: true });
-    removePendingPastedText({
-      id: 1,
-      marker: "[Pasted text #1]",
-      path: staged.path,
-      bytes: staged.bytes,
-      start: 0,
-      end: 1,
-    });
+  test("does not replace an untracked matching spelling", () => {
+    const literal = "[Pasted text #1] ";
+    const paste = item(1, "payload", literal.length);
+    expect(expandPastedTexts(literal + paste.marker, [paste])).toBe(literal + "payload");
   });
-});
 
-describe("cleanupPendingPastedTexts", () => {
-  test("removes the whole dedicated temp directory", () => {
-    const staged = stagePastedText("d".repeat(20_000));
-    const stagedDir = dirname(staged.path);
-    expect(existsSync(stagedDir)).toBe(true);
-
-    cleanupPendingPastedTexts();
-
-    expect(existsSync(stagedDir)).toBe(false);
-  });
-});
-
-describe("pastedTextReadBlock", () => {
-  test("keeps the marker and puts the absolute path on its own line", () => {
-    const block = pastedTextReadBlock({
-      id: 3,
-      marker: "[Pasted text #3]",
-      path: "/tmp/pum-pasted-text-abc/pasted-1.txt",
-      bytes: 32 * 1024,
-      start: 0,
-      end: 0,
-    });
-
-    expect(block).toContain("[Pasted text #3]");
-    expect(block).toContain("/tmp/pum-pasted-text-abc/pasted-1.txt");
-    expect(block).toContain("read tool");
-    const lines = block.split("\n");
-    expect(lines.at(-1)).toBe("/tmp/pum-pasted-text-abc/pasted-1.txt");
+  test("ignores missing or edited marker spans", () => {
+    expect(expandPastedTexts("edited draft", [item(1, "payload")])).toBe("edited draft");
   });
 });
 
@@ -138,14 +39,13 @@ describe("threshold", () => {
     expect(MAX_PASTED_TEXT_BYTES).toBe(16 * 1024);
     expect(shouldStagePastedText("x".repeat(MAX_PASTED_TEXT_BYTES))).toBe(false);
     expect(shouldStagePastedText("x".repeat(MAX_PASTED_TEXT_BYTES + 1))).toBe(true);
+    expect(shouldStagePastedText("é".repeat(MAX_PASTED_TEXT_BYTES / 2 + 1))).toBe(true);
   });
-
   test("stages a paste after three logical lines", () => {
     expect(MAX_PASTED_TEXT_LINES).toBe(3);
     expect(shouldStagePastedText("one\ntwo\nthree")).toBe(false);
     expect(shouldStagePastedText("one\ntwo\nthree\nfour")).toBe(true);
   });
-
   test("counts CRLF and bare carriage returns as one line break each", () => {
     expect(shouldStagePastedText("one\r\ntwo\r\nthree")).toBe(false);
     expect(shouldStagePastedText("one\rtwo\rthree\rfour")).toBe(true);

@@ -334,7 +334,9 @@ describe("transcript Markdown rows", () => {
 
     const boxes = descendants(setup.renderer.root, BoxRenderable);
     expect(boxes.some((box) => box.backgroundColor.equals(parseColor(theme.userBg)))).toBe(true);
-    expect(boxes.some((box) => box.backgroundColor.equals(parseColor(theme.agentMessageBg)))).toBe(true);
+    expect(boxes.some((box) => box.backgroundColor.equals(parseColor(theme.agentMessageBg)))).toBe(false);
+    expect(markdownRows[1]!.fg?.equals(parseColor(theme.agentMessage))).toBe(true);
+    expect(markdownRows[3]!.fg?.equals(parseColor(theme.dim))).toBe(true);
   });
 
   test("updates syntax and semantic colors in place after a theme change", async () => {
@@ -377,6 +379,9 @@ describe("transcript Markdown rows", () => {
     expect(markdownRows.every((row) => row.syntaxStyle === nextStyle)).toBe(true);
     expect(markdownRows[0]!.fg?.equals(parseColor(nextTheme.user))).toBe(true);
     expect(markdownRows[1]!.fg?.equals(parseColor(nextTheme.agentMessage))).toBe(true);
+    const boxes = descendants(setup.renderer.root, BoxRenderable);
+    expect(boxes.some((box) => box.backgroundColor.equals(parseColor(firstTheme.agentMessageBg)))).toBe(false);
+    expect(boxes.some((box) => box.backgroundColor.equals(parseColor(nextTheme.agentMessageBg)))).toBe(false);
   });
 
   test("renders replayed user and agent messages through the same Markdown rows", async () => {

@@ -51,12 +51,13 @@ async function renderStatus(
 async function renderStatusSetup(
   width: number,
   overrides: Partial<ComponentProps<typeof StatusBar>> = {},
+  animationEnabled = false,
 ) {
   const setup = await createTestRenderer({ width, height: 8 });
   destroy = () => setup.renderer.destroy();
   const theme = loadTheme("tokyonight");
   createRoot(setup.renderer).render(
-    <AnimationProvider enabled={false}>
+    <AnimationProvider enabled={animationEnabled}>
       <StatusBar
         theme={theme}
         modelId="mock-model"
@@ -138,7 +139,7 @@ function expectAgentCounts(
   expect(visible).toEqual(expected);
   if (expected.idle !== null) expect(frame).toContain(`◇ ${expected.idle}`);
   else expect(frame).not.toContain("◇");
-  if (expected.active !== null) expect(frame).toContain(` ${expected.active}/10`);
+  if (expected.active !== null) expect(frame).toContain(`◆ ${expected.active}/10`);
   else expect(frame).not.toContain("/10");
 }
 
@@ -163,6 +164,27 @@ describe("StatusBar usage and subagent counts", () => {
     expectAgentCounts(frame, 100, 5, 2, { idle: 3, active: 2 });
     expect(frame).not.toContain("◇ 5");
     expectOneMeasuredLine(frame, 100);
+  });
+
+  test.each([false, true])("keeps activity icons static with animation enabled=%s", async (enabled) => {
+    const { setup, theme } = await renderStatusSetup(100, {
+      busy: true,
+      elapsedSec: 65,
+      agentCount: 5,
+      runningAgentCount: 2,
+    }, enabled);
+    const initial = setup.captureCharFrame();
+    expect(initial).toContain("◇ 3 ◆ 2/10");
+    expect(initial).toContain("◆ working 1m 5s");
+    expect(statusTextWidth("◆")).toBe(1);
+    const icons = setup.captureSpans().lines.flatMap((line) => line.spans)
+      .filter((span) => span.text.includes("◆"));
+    expect(icons.length).toBeGreaterThan(0);
+    expect(icons.every((span) => span.fg.equals(parseColor(theme.accent)))).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await setup.renderOnce();
+    expect(setup.captureCharFrame()).toBe(initial);
+    expectOneMeasuredLine(initial, 100);
   });
 
   test("shows the global running-shell count and keeps one row", async () => {
@@ -250,7 +272,7 @@ describe("StatusBar usage and subagent counts", () => {
 
     const tiny = statusBarLayout({ ...input, width: 8 });
     expect(tiny.totalWidth).toBeLessThanOrEqual(8);
-    expect(tiny.workingMode).toBe("pulse");
+    expect(tiny.workingMode).toBe("icon");
     expect(tiny.modelText).toBeNull();
     expect(tiny.activeAgentText).toBeNull();
     expect(tiny.showRunningAgents).toBe(false);
@@ -278,6 +300,8 @@ describe("StatusBar usage and subagent counts", () => {
         activeAgentName: "worker-界面",
       });
       expectOneMeasuredLine(frame, width);
+      expect(frame).toContain("◆");
+      if (width === 1) expect(frame.split("\n")[0]).toBe("◆");
       destroy?.();
       destroy = undefined;
     }

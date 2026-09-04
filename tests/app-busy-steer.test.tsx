@@ -303,7 +303,7 @@ describe("settings steps in one React batch", () => {
     await settle(setup);
     setup.mockInput.pressArrow("down");
     await settle(setup);
-    expect(setup.captureCharFrame()).toContain(`‹ ${PRESET_NAMES[0]} ›`);
+    expect(setup.captureCharFrame()).toContain(`‹ › ${PRESET_NAMES[0]}`);
 
     // Both presses land before React commits the first, so both must step from
     // the latest value rather than from the same render closure.
@@ -311,7 +311,7 @@ describe("settings steps in one React batch", () => {
     setup.mockInput.pressArrow("right");
     await settle(setup);
 
-    expect(setup.captureCharFrame()).toContain(`‹ ${PRESET_NAMES[2]} ›`);
+    expect(setup.captureCharFrame()).toContain(`‹ › ${PRESET_NAMES[2]}`);
   });
 });
 

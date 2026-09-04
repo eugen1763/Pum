@@ -194,7 +194,8 @@ describe("transcript selection", () => {
     await settle(setup);
 
     const textRows = descendants(setup.renderer.root, TextRenderable);
-    const [prefix, body] = textRows;
+    const prefix = textRows.find((row) => row.plainText === "edit(");
+    const body = textRows.find((row) => row.plainText.includes("src/file.ts)  +2 −1"));
     expect(prefix?.selectable).toBe(true);
     expect(body?.selectable).toBe(true);
     expect(prefix?.plainText).toContain("edit(");

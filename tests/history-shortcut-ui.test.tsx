@@ -224,17 +224,54 @@ describe("session history keyboard shortcuts", () => {
     expectInput(setup.captureCharFrame(), "after close");
   });
 
-  test("opens through /history and clears the command input", async () => {
+  test.each(["/history", "/resume"])("opens through %s and clears the command input", async (command) => {
     const { setup, historyLoads } = await renderApp();
 
-    await setup.mockInput.typeText("/history");
+    await setup.mockInput.typeText(command);
     setup.mockInput.pressEnter();
     await settle(setup);
 
     expect(historyLoads()).toBe(1);
     const frame = setup.captureCharFrame();
     expect(frame).toContain("Session history");
-    expect(frame).not.toContain("❯ /history");
+    expect(frame).not.toContain(`❯ ${command}`);
+  });
+
+  test("completes /resume and switches to the selected saved session", async () => {
+    const switchedPaths: string[] = [];
+    const currentPrompts: string[] = [];
+    const resumedPrompts: string[] = [];
+    const { setup } = await renderApp({
+      session: fakeSession({ onPrompt: (text) => currentPrompts.push(text) }),
+      switchSession: async (path) => {
+        switchedPaths.push(path);
+        return fakeSession({
+          id: "older-session",
+          path,
+          onPrompt: (text) => resumedPrompts.push(text),
+        });
+      },
+    });
+
+    await setup.mockInput.typeText("/res");
+    setup.mockInput.pressTab();
+    await settle(setup);
+    expectInput(setup.captureCharFrame(), "/resume");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(setup.captureCharFrame()).toContain("Session history");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+
+    expect(switchedPaths).toEqual(["/tmp/older-session.jsonl"]);
+    expect(setup.captureCharFrame()).not.toContain("Session history");
+    expect(currentPrompts).toEqual([]);
+    expect(resumedPrompts).toEqual([]);
+    await setup.mockInput.typeText("after resume");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(currentPrompts).toEqual([]);
+    expect(resumedPrompts).toEqual(["after resume"]);
   });
 
   test("opens /stats, updates live, scrolls, and restores prompt focus", async () => {

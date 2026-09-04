@@ -1,7 +1,7 @@
 import { StyledText, fg } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import { Fragment } from "react";
-import { useShimmerText, useSpinner } from "./animation";
+import { useShimmerText } from "./animation";
 import {
   statusMetadataChunks,
   statusMetadataItems,
@@ -48,10 +48,11 @@ const REMOVAL_ORDER: readonly (StatusMetadataItem["key"] | "title")[] = [
   "title",
 ];
 
-/** The WorkingPulse spinner occupies exactly one terminal column. */
-const PULSE_GLYPH_WIDTH = 1;
+/** Use the same static activity icon and column measurement in every layout. */
+const ACTIVITY_ICON = "◆";
+const ACTIVITY_ICON_WIDTH = statusTextWidth(ACTIVITY_ICON);
 
-type WorkingMode = "full" | "compact" | "pulse" | null;
+type WorkingMode = "full" | "compact" | "icon" | null;
 type LeftPart = "model" | "thinking" | "agents" | "shells" | "activeAgent";
 
 export type StatusBarLayout = {
@@ -95,12 +96,12 @@ function agentTextWidth(input: StatusBarLayoutInput, layout: StatusBarLayout): n
   let width = 0;
   if (layout.showIdleAgents && idle > 0) width += statusTextWidth(`◇ ${idle}`);
   if (layout.showRunningAgents && input.runningAgentCount > 0) {
-    // One space separates the idle block, not the pulse glyph.
+    // One space separates the idle block, not the activity icon.
     if (width) width += 1;
-    // The running block renders as the pulse glyph (PULSE_GLYPH_WIDTH columns)
+    // The running block renders as the activity icon (ACTIVITY_ICON_WIDTH columns)
     // followed by the " N/M" counter. That leading space is inside the text
     // that statusTextWidth measures.
-    width += PULSE_GLYPH_WIDTH + statusTextWidth(
+    width += ACTIVITY_ICON_WIDTH + statusTextWidth(
       ` ${input.runningAgentCount}/${input.maxActiveAgentCount}`,
     );
   }
@@ -119,9 +120,9 @@ function leftParts(input: StatusBarLayoutInput, layout: StatusBarLayout): LeftPa
 
 function workingWidth(input: StatusBarLayoutInput, mode: WorkingMode): number {
   if (!mode) return 0;
-  if (mode === "pulse") return PULSE_GLYPH_WIDTH;
+  if (mode === "icon") return ACTIVITY_ICON_WIDTH;
   const elapsedWidth = statusTextWidth(fmtElapsed(input.elapsedSec));
-  return mode === "full" ? 12 + elapsedWidth : 4 + elapsedWidth;
+  return ACTIVITY_ICON_WIDTH + (mode === "full" ? 11 : 3) + elapsedWidth;
 }
 
 function measureLayout(input: StatusBarLayoutInput, layout: StatusBarLayout): void {
@@ -227,7 +228,7 @@ export function statusBarLayout(input: StatusBarLayoutInput): StatusBarLayout {
     measureLayout(input, layout);
   }
   if (layout.totalWidth > input.width && layout.workingMode === "compact") {
-    layout.workingMode = "pulse";
+    layout.workingMode = "icon";
     measureLayout(input, layout);
   }
   truncateLayoutField(input, layout, "activeAgentText");
@@ -243,9 +244,8 @@ export function statusBarLayout(input: StatusBarLayoutInput): StatusBarLayout {
   return layout;
 }
 
-function WorkingPulse({ theme }: { theme: Theme }) {
-  const spinner = useSpinner(true);
-  return <text ref={spinner} fg={theme.accent} />;
+function ActivityIcon({ theme }: { theme: Theme }) {
+  return <text content={ACTIVITY_ICON} fg={theme.accent} wrapMode="none" />;
 }
 
 function Working({ theme, elapsedSec, mode }: {
@@ -260,10 +260,10 @@ function Working({ theme, elapsedSec, mode }: {
     background: theme.bg,
     active: mode === "full",
   });
-  if (mode === "pulse") return <WorkingPulse theme={theme} />;
+  if (mode === "icon") return <ActivityIcon theme={theme} />;
   return (
     <box style={{ flexDirection: "row", height: 1, flexShrink: 0 }}>
-      <WorkingPulse theme={theme} />
+      <ActivityIcon theme={theme} />
       {mode === "full" ? <><text content=" " /><text ref={label} /></> : null}
       <text content={` ${fmtElapsed(elapsedSec)}  `} fg={theme.dim} />
     </box>
@@ -299,7 +299,7 @@ export function StatusBar(props: StatusProps) {
                   {layout.showRunningAgents && runningAgentCount > 0 ? (
                     <>
                       {layout.showIdleAgents && idleAgentCount > 0 ? <text content=" " /> : null}
-                      <WorkingPulse theme={theme} />
+                      <ActivityIcon theme={theme} />
                       <text content={` ${runningAgentCount}/${maxActiveAgentCount}`} fg={theme.accent} />
                     </>
                   ) : null}

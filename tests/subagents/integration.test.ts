@@ -974,6 +974,7 @@ describe("background subagents", () => {
   });
 
   test("builds one child runtime for concurrent callers", async () => {
+    const { SessionLockOwner, SessionLockedError } = await import("../../src/session-lock");
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
@@ -994,6 +995,10 @@ describe("background subagents", () => {
     await manager.stop(child.id, "stopped");
     const record = (manager as any).records.get(child.id);
     expect(record.session).toBeUndefined();
+    const release = new SessionLockOwner().acquire(record.snapshot.sessionFile);
+    await expect((manager as any).ensureRuntime(record)).rejects.toBeInstanceOf(SessionLockedError);
+    expect(record.session).toBeUndefined();
+    release();
     const spawnedBefore = parent.getEntries().filter((entry: any) =>
       entry.type === "custom" && entry.customType === "pum.subagent"
         && entry.data?.event === "spawned" && entry.data?.id === child.id).length;
@@ -1008,6 +1013,8 @@ describe("background subagents", () => {
 
     expect(record.session).toBeDefined();
     expect(spawnedAfter - spawnedBefore).toBe(1);
+    expect(() => new SessionLockOwner().acquire(record.snapshot.sessionFile)).toThrow(SessionLockedError);
     await manager.detachMain();
+    new SessionLockOwner().acquire(record.snapshot.sessionFile)();
   });
 });

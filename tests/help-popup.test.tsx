@@ -43,6 +43,7 @@ describe("Help popup layout", () => {
     expect(controls.some(([key]) => key === "Ctrl+Alt+Enter")).toBe(true);
     expect(controls.some(([key, text]) => key === "Main ↑ / ↓" && text.includes("Sent history"))).toBe(true);
     expect(controls.some(([key, text]) => key === "Ctrl+H" && text.includes("/history"))).toBe(true);
+    expect(controls).toContainEqual(["/history /resume", "Browse saved sessions"]);
     // /processes and /triggers are separate commands: /triggers forces the
     // Triggers tab, /processes keeps the last one.
     expect(controls).toContainEqual(["/processes", "Open Processes on last tab"]);
@@ -97,7 +98,7 @@ describe("Help popup layout", () => {
   test("keeps every wide-layout row reachable", async () => {
     // A constant popup height used to hide the last rows of the taller column
     // at every terminal size, and the arrows did nothing in this layout.
-    const tall = await renderHelp(140, 40, 0);
+    const tall = await renderHelp(140, 44, 0);
     expect(tall).toContain("Ctrl+H");
     expect(tall).toContain("pum -r");
     expect(tall).toContain("/ in Settings");

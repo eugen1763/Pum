@@ -142,6 +142,78 @@ function pressNavigation(
 }
 
 describe("prompt input layout", () => {
+  test("typing after blur restores focus and inserts exact text once at the cursor", async () => {
+    const setup = await renderApp(70, 16);
+    await settle(setup);
+    const input = textarea(setup.renderer.root)!;
+    await setup.mockInput.typeText("ab");
+    await settle(setup);
+    pressNavigation(setup, "left");
+    input.blur();
+    expect(input.focused).toBe(false);
+    await setup.mockInput.typeText("/");
+    await settle(setup);
+    expect(input.plainText).toBe("a/b");
+    expect(input.focused).toBe(true);
+    input.blur();
+    await setup.mockInput.typeText("É界.");
+    await settle(setup);
+    expect(input.plainText).toBe("a/É界.b");
+    await setup.mockInput.typeText("X");
+    expect(input.plainText).toBe("a/É界.Xb");
+  });
+
+  test("slash exits transcript focus and opens command suggestions", async () => {
+    const setup = await renderApp(70, 16);
+    await settle(setup);
+    const input = textarea(setup.renderer.root)!;
+    await setup.mockInput.pressKey("y", { ctrl: true });
+    await settle(setup);
+    expect(input.focused).toBe(false);
+    await setup.mockInput.typeText("/");
+    await settle(setup);
+    expect(input.focused).toBe(true);
+    expect(input.plainText).toBe("/");
+    expect(setup.captureCharFrame()).toContain("/clear");
+  });
+
+  test("navigation and Alt commands do not refocus a blurred prompt", async () => {
+    const setup = await renderApp(70, 16);
+    await settle(setup);
+    const input = textarea(setup.renderer.root)!;
+    input.blur();
+    pressNavigation(setup, "left");
+    await setup.mockInput.pressKey("x", { meta: true });
+    expect(input.focused).toBe(false);
+    expect(input.plainText).toBe("");
+    await setup.mockInput.pressKey("p", { ctrl: true });
+    await settle(setup);
+    await setup.mockInput.typeText("/secret");
+    await settle(setup);
+    expect(input.focused).toBe(false);
+    expect(input.plainText).toBe("");
+  });
+
+  test("empty prompt help and shell shortcuts still own typing after blur", async () => {
+    const setup = await renderApp(70, 16);
+    await settle(setup);
+    const input = textarea(setup.renderer.root)!;
+    input.blur();
+    await setup.mockInput.typeText("?");
+    await settle(setup);
+    await setup.mockInput.typeText("/hidden");
+    expect(input.plainText).toBe("");
+    setup.mockInput.pressEscape();
+    await settle(setup);
+    input.blur();
+    await setup.mockInput.typeText("!");
+    await settle(setup);
+    expect(input.plainText).toBe("");
+    expect(input.focused).toBe(true);
+    await setup.mockInput.typeText("pwd");
+    expect(input.plainText).toBe("pwd");
+  });
+
   test("renders the header-bottom rule directly below StatusBar", async () => {
     const setup = await renderApp(70, 16);
     await settle(setup);

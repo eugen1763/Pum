@@ -2,6 +2,23 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.31-beta.1] - 2026-09-04
+
+### Added
+- Added `/model <name or provider/id> [effort]` and `/effort [level]` for main-agent model and reasoning settings, with exact matching, argument completion, and effort validation. `/model` opens the existing picker.
+- Added `/store` and `/s` to save current PUM settings as global defaults.
+- Added canonical session ownership locks for TUI, headless, and managed-child sessions. Worktree aliases share the same lock. Locked history selections leave the current session unchanged, and dead local owners can be recovered safely.
+- Added `/resume` as an alias for the session history browser.
+
+### Changed
+- Large or multiline pasted text now stays in memory. Sending expands its editor marker into the original text for the transcript, model context, and history instead of asking the agent to read a temporary file.
+- Normal output now shows the Bash output tail in at most five wrapped terminal rows and updates the tail after resize. Opening the row shows the existing expanded details.
+- Tool state markers and running spinners now lead the tool text in the existing gutter. Status-bar activity uses a static icon.
+
+### Fixed
+- Printable typing now restores prompt focus after transcript selection or native blur and inserts the character once at the existing cursor. Popup fields keep typing ownership.
+- Ambiguous Ctrl+H terminal bytes now retain Backspace behavior. Use `/history` or `/resume` when the terminal cannot distinguish Ctrl+H.
+
 ## [0.2.30-beta.1] - 2026-09-04
 
 ### Added

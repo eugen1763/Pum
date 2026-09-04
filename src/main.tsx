@@ -2,15 +2,15 @@ import { createCliRenderer, destroyTreeSitterClient } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import {
   createAgentSessionFromServices,
-  createAgentSessionRuntime,
   createAgentSessionServices,
   ModelRuntime,
-  SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { mkdirSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { App } from "./app";
-import { AGENT_DIR, AUTH_PATH, MODELS_PATH, sessionDir } from "./config";
+import { SessionLockOwner } from "./session-lock";
+import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
+import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension } from "./memory";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
@@ -31,7 +31,6 @@ import {
 } from "./check-mode";
 import { SubagentManager } from "./subagents/manager";
 import { cleanupPendingImages } from "./image-paste";
-import { cleanupPendingPastedTexts } from "./pasted-text";
 import { cleanupBashOutputCaptures } from "./bash-output";
 import { shutdownSignals, signalExitCode } from "./platform";
 import { createShutdown } from "./shutdown";
@@ -73,7 +72,6 @@ import {
 } from "./shells/lifecycle";
 import { initializeWorktreeLaunchRelocation, type RelocationRecord } from "./relocation";
 import {
-  continueRecentProjectSession,
   listProjectSessions,
   syncSessionResumeAliases,
 } from "./session-resume-alias";
@@ -279,15 +277,13 @@ export async function start(
   // A CLI worktree launch keeps the canonical session under the source
   // repository. The generated checkout receives a trusted resume alias, so
   // both locations resolve to the same JSONL.
-  const startupSessionManager = context.worktreeStart
-    ? SessionManager.create(
-      context.worktreeStart.sourceRoot,
-      sessionDir(context.worktreeStart.sourceRoot),
-    )
-    : options.resume
-      ? await continueRecentProjectSession(cwd)
-      : SessionManager.create(cwd, sessionDir(cwd));
-  const sessionRuntime = await createAgentSessionRuntime(
+  const sessionLockOwner = new SessionLockOwner();
+  const startup = await lockedProjectSession(
+    context.worktreeStart?.sourceRoot ?? cwd,
+    !context.worktreeStart && options.resume === true,
+    sessionLockOwner,
+  );
+  const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
       const services = await createAgentSessionServices({
         cwd,
@@ -329,10 +325,12 @@ export async function start(
     {
       cwd,
       agentDir: AGENT_DIR,
-      sessionManager: startupSessionManager,
+      sessionManager: startup.sessionManager,
     },
-  );
+    sessionLockOwner,
+  ).finally(startup.release);
 
+  try {
   statsManager.bindMainSession(sessionRuntime.session);
   if (sessionRuntime.modelFallbackMessage) console.error(sessionRuntime.modelFallbackMessage);
 
@@ -370,7 +368,6 @@ export async function start(
       terminalTitle.clear();
       selectionClipboard.dispose();
       cleanupPendingImages();
-      cleanupPendingPastedTexts();
       cleanupBashOutputCaptures();
     },
     shutdownShells: () => shellManager.shutdown(),
@@ -480,4 +477,8 @@ export async function start(
       onExit={() => shutdown(0)}
     />,
   );
+  } catch (error) {
+    await sessionRuntime.dispose();
+    throw error;
+  }
 }

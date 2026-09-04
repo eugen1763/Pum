@@ -27,6 +27,17 @@ Select a model in `Ctrl+P`. GPT-6 Astra is listed for OpenAI and Codex;
 using it requires access on your provider account. Press `r` in the model
 list to refresh providers that support catalog discovery.
 
+Use `/model <name or provider/model-id> [effort]` to change the main-agent model.
+Names and IDs match exactly, without case sensitivity. Display names can contain spaces.
+Use the provider-qualified ID when a name matches more than one model.
+`/model` opens the model picker. `/effort <level>` changes only reasoning effort.
+`/effort` shows the current effort and supported levels.
+Both commands autocomplete available values and reject unsupported efforts before changing the model.
+Model and effort changes use the same authentication and persistence as Settings.
+Run these commands from the main transcript while the agent is idle; child models remain unchanged.
+Use `/store` or `/s` to save current settings as global defaults, exactly like `s` in Settings.
+These aliases promote PUM settings and clear session overrides. Pi already persists model and effort separately.
+
 > [!WARNING]
 > PUM can read, write, and delete files. Check mode adds deterministic policy
 > checks, and supported hosts can enforce native Bash isolation, but the
@@ -107,6 +118,13 @@ bun run start
 
 Use `bun run start -r` to resume the latest session for the current directory,
 and `/login` to add or update a provider later.
+Inside the TUI, `/history` or its alias `/resume` opens the saved-session browser.
+
+Only one PUM instance can own a saved session at a time. Close the owning
+session before resuming it elsewhere. This also applies to headless runs,
+managed agents, and worktree resume aliases. A locked history selection leaves
+the current session unchanged. PUM automatically recovers locks from dead
+processes when it can verify the owner. It never expires a live process lock.
 
 The published package is called `pum-agent` because the bare `pum` name is
 taken; the installed command is still `pum`. `npm i -g pum-agent` copies the

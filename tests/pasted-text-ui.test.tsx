@@ -1,263 +1,189 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "../src/app";
-import { cleanupPendingPastedTexts, MAX_PASTED_TEXT_BYTES } from "../src/pasted-text";
+import { MAX_PASTED_TEXT_BYTES } from "../src/pasted-text";
+import { settleSyntaxHighlighting } from "../src/syntax";
 
-let destroy: (() => void) | undefined;
-afterEach(() => {
-  destroy?.();
-  destroy = undefined;
-  cleanupPendingPastedTexts();
-});
-
+let destroy: (() => Promise<void>) | undefined;
+afterEach(async () => { await destroy?.(); destroy = undefined; });
 const settings = {
-  showThinking: false,
-  theme: "tokyonight" as const,
-  animations: false,
-  workingRuleAnimation: "off" as const,
-  webSearch: false,
-  writingStyle: "none" as const,
-  explanationStrength: "simple" as const,
-  checkMode: "off" as const,
-  checkModel: "mock/check",
-  maxActiveSubagents: 10,
+  showThinking: false, theme: "tokyonight" as const, animations: false,
+  workingRuleAnimation: "off" as const, webSearch: false, writingStyle: "none" as const,
+  explanationStrength: "simple" as const, checkMode: "off" as const,
+  checkModel: "mock/check", maxActiveSubagents: 10,
 };
-
-function fakeSession(path = join(mkdtempSync(join(tmpdir(), "pum-pasted-ui-")), "current-session.jsonl")) {
-  let subscribeHandler: ((event: any) => void) | undefined;
+function fakeSession() {
+  let handler: ((event: any) => void) | undefined;
   return {
-    agent: {
-      state: {
-        model: { id: "mock-model", provider: "mock", input: ["text"], contextWindow: 32_000 },
-        thinkingLevel: "off",
-      },
-    },
+    agent: { state: { model: { id: "mock-model", provider: "mock", input: ["text"], contextWindow: 32_000 }, thinkingLevel: "off" } },
     sessionManager: { buildContextEntries: () => [], getEntries: () => [] },
-    sessionFile: path,
+    sessionFile: join(mkdtempSync(join(tmpdir(), "pum-pasted-ui-")), "current-session.jsonl"),
     sessionId: "current-session",
-    subscribe: (handler: (event: any) => void) => {
-      subscribeHandler = handler;
-      return () => {};
-    },
-    /** Test hook: fire the main session's agent_settled event. */
-    settle: () => subscribeHandler?.({ type: "agent_settled" }),
-    setThinkingLevel() {},
-    setModel: async () => {},
-    clearQueue: () => ({ steering: [], followUp: [] }),
-    abort: async () => {},
-    compact: async () => ({ tokensBefore: 0 }),
-    prompt: async () => {},
-    steer: async () => {},
+    subscribe: (callback: (event: any) => void) => { handler = callback; return () => {}; },
+    settle: () => handler?.({ type: "agent_settled" }),
+    setThinkingLevel() {}, setModel: async () => {},
+    clearQueue: () => ({ steering: [], followUp: [] }), abort: async () => {},
+    compact: async () => ({ tokensBefore: 0 }), prompt: async () => {}, steer: async () => {},
   } as any;
 }
-
 async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
-  await setup.renderOnce();
-  await setup.flush();
+  await setup.renderOnce(); await setup.flush();
   await new Promise((resolve) => setTimeout(resolve, 10));
-  await setup.renderOnce();
-  await setup.flush();
+  await settleSyntaxHighlighting(setup.renderer.root);
+  await setup.renderer.idle();
+  await setup.renderOnce(); await setup.flush();
 }
-
-async function renderApp(session: ReturnType<typeof fakeSession> = fakeSession()) {
+async function renderApp(session = fakeSession(), managerOverrides: Record<string, unknown> = {}) {
   const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
-  destroy = () => setup.renderer.destroy();
+  const root = createRoot(setup.renderer);
+  destroy = async () => {
+    await settleSyntaxHighlighting(setup.renderer.root);
+    root.unmount();
+    await setup.flush();
+    await setup.renderer.idle();
+    setup.renderer.destroy();
+  };
   const manager = {
-    getAgents: () => [],
-    subscribe: () => () => {},
-    bindMainSession: async () => {},
-    abortAgent: async () => {},
-    sendUserMessage: async () => {},
-    persistToolEvent() {},
+    getAgents: () => [], subscribe: () => () => {}, bindMainSession: async () => {},
+    abortAgent: async () => {}, sendUserMessage: async () => {}, persistToolEvent() {},
+    ...managerOverrides,
   } as any;
-  createRoot(setup.renderer).render(
-    <App
-      session={session}
-      modelRuntime={{ getAvailableSnapshot: () => [], getProviders: () => [] } as any}
-      onNewSession={async () => session}
-      loadSessions={async () => []}
-      onSwitchSession={async () => session}
-      settings={settings}
-      searchProviders={[]}
-      subagentManager={manager}
-      promptHistoryStore={{
-        load: () => [],
-        append: () => [],
-        remove: () => [],
-      }}
-      promptStashStore={{
-        load: () => [],
-        append: () => [],
-        markExecuted: () => [],
-        markExecutedMany: () => [],
-        replace: () => [],
-        remove: () => [],
-      }}
+  const history: string[] = [];
+  root.render(
+    <App session={session} modelRuntime={{ getAvailableSnapshot: () => [], getProviders: () => [] } as any}
+      onNewSession={async () => session} loadSessions={async () => []} onSwitchSession={async () => session}
+      settings={settings} searchProviders={[]} subagentManager={manager}
+      promptHistoryStore={{ load: () => [], append: (_cwd, text) => { history.push(text); return [...history]; }, remove: () => [] }}
+      promptStashStore={{ load: () => [], append: () => [], markExecuted: () => [], markExecutedMany: () => [], replace: () => [], remove: () => [] }}
     />,
   );
   await settle(setup);
-  return setup;
+  return Object.assign(setup, { history });
 }
-
-function pastedTextFiles(): string[] {
-  const dirs = readdirSync(tmpdir()).filter((name) => name.startsWith("pum-pasted-text-"));
-  return dirs.flatMap((dir) =>
-    readdirSync(join(tmpdir(), dir)).map((file) => join(tmpdir(), dir, file)),
-  );
-}
-
+const pasteDirs = () => readdirSync(tmpdir()).filter((name) => name.startsWith("pum-pasted-text-"));
 const BIG_PAYLOAD = "y".repeat(MAX_PASTED_TEXT_BYTES + 1024);
+const STACK = "Error: failed\n    at first\n    at second\n    at third";
 
-describe("large text paste placeholder", () => {
-  test("a paste larger than 16 KB becomes a marker instead of raw text", async () => {
+describe("in-memory paste placeholder", () => {
+  for (const payload of [BIG_PAYLOAD, STACK]) {
+    test(`shortens a ${payload.length}-character paste without files`, async () => {
+      const before = pasteDirs();
+      const setup = await renderApp();
+      await setup.mockInput.pasteBracketedText(payload); await settle(setup);
+      expect(setup.captureCharFrame()).toContain("[Pasted text #1]");
+      expect(setup.captureCharFrame()).not.toContain(payload.slice(0, 10));
+      expect(pasteDirs()).toEqual(before);
+    });
+  }
+  test("small and three-line pastes stay inline", async () => {
     const setup = await renderApp();
-
-    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
-    await settle(setup);
-
-    const frame = setup.captureCharFrame();
-    expect(frame).toContain("[Pasted text #1]");
-    expect(frame).not.toContain("yyy");
-    expect(pastedTextFiles().length).toBe(1);
+    await setup.mockInput.pasteBracketedText("one\ntwo\nthree"); await settle(setup);
+    expect(setup.captureCharFrame()).toContain("three");
+    expect(setup.captureCharFrame()).not.toContain("[Pasted text");
   });
-
-  test("a paste at or under 16 KB stays inline", async () => {
-    const setup = await renderApp();
-
-    await setup.mockInput.pasteBracketedText("plain small text");
-    await settle(setup);
-
-    const frame = setup.captureCharFrame();
-    expect(frame).toContain("plain small text");
-    expect(frame).not.toContain("[Pasted text");
-    expect(pastedTextFiles().length).toBe(0);
+  test("sends full literal payload and persists usable history and transcript text", async () => {
+    const before = pasteDirs();
+    const session = fakeSession();
+    const prompts: string[] = [];
+    session.prompt = async (text: string) => { prompts.push(text); };
+    const setup = await renderApp(session);
+    const first = "first $& $` $' $$ [Pasted text #2]\na\nb\nc";
+    await setup.mockInput.pasteBracketedText(first); await settle(setup);
+    await setup.mockInput.typeText(" then ");
+    await setup.mockInput.pasteBracketedText(STACK); await settle(setup);
+    setup.mockInput.pressEnter(); await settle(setup);
+    expect(prompts).toEqual([first + " then " + STACK]);
+    expect(setup.history).toEqual(prompts);
+    expect(setup.captureCharFrame()).toContain("Error: failed");
+    expect(setup.captureCharFrame()).not.toContain("Read this temp file");
+    session.settle(); await settle(setup);
+    expect(pasteDirs()).toEqual(before);
   });
-
-  test("a four-line stack trace becomes a marker even when it is small", async () => {
-    const setup = await renderApp();
-    const stack = [
-      "Error: failed",
-      "    at first (app.ts:1:1)",
-      "    at second (app.ts:2:1)",
-      "    at third (app.ts:3:1)",
-    ].join("\n");
-
-    await setup.mockInput.pasteBracketedText(stack);
-    await settle(setup);
-
-    const frame = setup.captureCharFrame();
-    expect(frame).toContain("[Pasted text #1]");
-    expect(frame).not.toContain("Error: failed");
-    expect(pastedTextFiles().length).toBe(1);
-  });
-
-  test("a three-line paste stays inline", async () => {
-    const setup = await renderApp();
-
-    await setup.mockInput.pasteBracketedText("one\ntwo\nthree");
-    await settle(setup);
-
-    const frame = setup.captureCharFrame();
-    expect(frame).toContain("one");
-    expect(frame).toContain("two");
-    expect(frame).toContain("three");
-    expect(frame).not.toContain("[Pasted text");
-    expect(pastedTextFiles().length).toBe(0);
-  });
-
-  test("the marker uses the [Pasted text #n] form and the temp file holds the payload", async () => {
-    const setup = await renderApp();
-
-    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
-    await settle(setup);
-
-    expect(setup.captureCharFrame()).toContain("[Pasted text #1]");
-    const files = pastedTextFiles();
-    expect(files.length).toBe(1);
-  });
-
-  test("Alt+Enter does not cache a draft with a pasted-text attachment", async () => {
-    const setup = await renderApp();
-    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
-    await settle(setup);
-
-    setup.mockInput.pressEnter({ meta: true });
-    await settle(setup);
-
-    expect(setup.captureCharFrame()).toContain("[Pasted text #1]");
-    expect(setup.captureCharFrame()).toContain("cannot be stored in the cache");
-    expect(pastedTextFiles().length).toBe(1);
-  });
-
-  test("restores a pasted-text draft and attachment after a failed main send", async () => {
+  test("failed main delivery restores the marker and retries the actual payload", async () => {
     const session = fakeSession();
     session.prompt = async () => { throw new Error("send rejected"); };
     const setup = await renderApp(session);
     await setup.mockInput.typeText("before ");
-    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
-    await settle(setup);
-
-    setup.mockInput.pressEnter();
-    await settle(setup);
-
+    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD); await settle(setup);
+    setup.mockInput.pressEnter(); await settle(setup);
     expect(setup.captureCharFrame()).toContain("before [Pasted text #1]");
     expect(setup.captureCharFrame()).toContain("send rejected");
-    expect(pastedTextFiles().length).toBe(1);
+    const prompts: string[] = [];
+    session.prompt = async (text: string) => { prompts.push(text); };
+    setup.mockInput.pressEnter(); await settle(setup);
+    expect(prompts).toEqual(["before " + BIG_PAYLOAD]);
   });
-
-  test("sending removes the temp file after the turn settles", async () => {
+  test("queued steering contains the payload, not an ephemeral marker", async () => {
     const session = fakeSession();
+    const steering: string[] = [];
+    session.steer = async (text: string) => { steering.push(text); };
     const setup = await renderApp(session);
-
-    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
-    await settle(setup);
-    expect(pastedTextFiles().length).toBe(1);
-
-    setup.mockInput.pressEnter();
-    await settle(setup);
-    // The file must survive long enough for the model to read it.
-    expect(pastedTextFiles().length).toBe(1);
-
-    session.settle();
-    await settle(setup);
-    expect(pastedTextFiles().length).toBe(0);
+    await setup.mockInput.typeText("start"); setup.mockInput.pressEnter(); await settle(setup);
+    await setup.mockInput.pasteBracketedText(STACK); await settle(setup);
+    setup.mockInput.pressEnter(); await settle(setup);
+    expect(steering).toEqual([STACK]);
+    expect(setup.captureCharFrame()).toContain("Error: failed");
   });
-
-  test("editing the marker removes the marker and its temp file", async () => {
-    const setup = await renderApp();
-
-    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
-    await settle(setup);
-    expect(pastedTextFiles().length).toBe(1);
-
-    setup.mockInput.pressBackspace();
-    await settle(setup);
-
-    const frame = setup.captureCharFrame();
-    expect(frame).not.toContain("[Pasted text");
-    expect(frame).not.toContain("yyy");
-    expect(frame).toContain("removed 1 pasted-text attachment after its marker was edited");
-    expect(pastedTextFiles().length).toBe(0);
+  test("child delivery uses full text and pending pastes block agent switching", async () => {
+    const sent: unknown[][] = [];
+    const agent = {
+      id: "worker", name: "worker", task: "test", status: "idle", parentAgentId: null,
+      modelId: "mock/mock-model", thinkingLevel: "off",
+      worktree: { name: "worker", path: process.cwd(), branch: "main", baseBranch: "main", baseCommit: "abc" },
+      transcript: { lines: [], stream: null, pending: [] }, startedAt: 1, updatedAt: 1,
+      usage: { outgoing: 0, incoming: 0, cacheRead: 0, cost: 0, contextPct: null },
+    };
+    let fail = true;
+    const setup = await renderApp(fakeSession(), {
+      getAgents: () => [agent],
+      sendUserMessage: async (...args: unknown[]) => {
+        if (fail) throw new Error("child send rejected");
+        sent.push(args);
+      },
+    });
+    setup.mockInput.pressTab({ shift: true }); await settle(setup);
+    await setup.mockInput.pasteBracketedText(STACK); await settle(setup);
+    setup.mockInput.pressTab({ shift: true }); await settle(setup);
+    expect(setup.captureCharFrame()).toContain("[Pasted text #1]");
+    expect(setup.captureCharFrame()).toContain("worker");
+    setup.mockInput.pressEnter(); await settle(setup);
+    expect(setup.captureCharFrame()).toContain("[Pasted text #1]");
+    fail = false;
+    setup.mockInput.pressEnter(); await settle(setup);
+    expect(sent).toEqual([["worker", STACK, [], STACK]]);
   });
-
-  test("deleting the pasted snippet before sending removes its temp file", async () => {
+  test("a paste inside a marker replaces the old payload atomically", async () => {
+    const session = fakeSession();
+    const prompts: string[] = [];
+    session.prompt = async (text: string) => { prompts.push(text); };
+    const setup = await renderApp(session);
+    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD); await settle(setup);
+    setup.mockInput.pressArrow("left"); await settle(setup);
+    await setup.mockInput.pasteBracketedText(STACK); await settle(setup);
+    setup.mockInput.pressEnter(); await settle(setup);
+    expect(prompts).toEqual([STACK]);
+  });
+  test("Alt+Enter keeps the attached draft instead of caching a marker", async () => {
     const setup = await renderApp();
-
-    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD);
-    await settle(setup);
-    const file = pastedTextFiles()[0];
-    expect(existsSync(file)).toBe(true);
-
-    // Select-all then delete removes the whole snippet from the draft.
-    for (let index = 0; index < 40; index++) setup.mockInput.pressBackspace();
-    await settle(setup);
-
-    const frame = setup.captureCharFrame();
-    expect(frame).not.toContain("[Pasted text");
-    expect(pastedTextFiles().length).toBe(0);
+    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD); await settle(setup);
+    setup.mockInput.pressEnter({ meta: true }); await settle(setup);
+    expect(setup.captureCharFrame()).toContain("[Pasted text #1]");
+    expect(setup.captureCharFrame()).toContain("cannot be stored in the cache");
+  });
+  test("editing a marker removes the entire attachment", async () => {
+    const session = fakeSession();
+    const prompts: string[] = [];
+    session.prompt = async (text: string) => { prompts.push(text); };
+    const setup = await renderApp(session);
+    await setup.mockInput.pasteBracketedText(BIG_PAYLOAD); await settle(setup);
+    setup.mockInput.pressBackspace(); await settle(setup);
+    expect(setup.captureCharFrame()).not.toContain("[Pasted text");
+    expect(setup.captureCharFrame()).toContain("removed 1 pasted-text attachment");
+    await setup.mockInput.typeText("remaining"); setup.mockInput.pressEnter(); await settle(setup);
+    expect(prompts).toEqual(["remaining"]);
   });
 });

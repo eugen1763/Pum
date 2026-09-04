@@ -151,6 +151,7 @@ import {
 } from "./path-autocomplete";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { settingsCompletions } from "./settings-autocomplete";
+import { modelCommandCompletions, modelReference, parseModelSelection, validateEffort } from "./model-command";
 import {
   applySettingChange,
   listSettingsMessage,
@@ -176,9 +177,7 @@ import {
   type PendingImage,
 } from "./image-paste";
 import {
-  cleanupPendingPastedTexts,
-  pastedTextReadBlock,
-  removePendingPastedText,
+  expandPastedTexts,
   shouldStagePastedText,
   stagePastedText as stagePastedTextDefault,
   type PendingPastedText,
@@ -861,7 +860,7 @@ export function App({
   promptStashStore?: PromptStashStore;
   captureImage?: typeof captureClipboardImage;
   readPastedText?: typeof readClipboardText;
-  /** Store large or multiline pasted text in a temp file and show a marker. */
+  /** Keep large or multiline pasted text in memory and show a marker. */
   stagePastedText?: typeof stagePastedTextDefault;
   /** Copies the selected news answer for the popup. */
   copyNewsAnswerText?: typeof copyTextToClipboard;
@@ -1268,7 +1267,7 @@ export function App({
     )
     : EMPTY_STATS_SNAPSHOT), [statsOpen, statsManager, session, statsRevision]);
   const inputHint = transcriptFocused
-    ? " transcript  j/k move  enter details  c copy  esc prompt "
+    ? " transcript  ↑/↓ move  enter details  type for prompt "
     : cancelArmed
     ? " esc again to cancel "
     : quitArmed
@@ -1291,8 +1290,7 @@ export function App({
       commandInput,
       activeAgentId ? "subagent" : "main",
     );
-  // /providers and /settings are the commands whose arguments come from closed
-  // sets, so they complete them. Every other command still stops at its name.
+  // Commands with closed argument sets share the path-completion insert path.
   const argumentSuggestionsOff = shellMode || stashOpen || commandSuggestionsDismissed
     || Boolean(activeAgentId);
   const providersSuggestions = argumentSuggestionsOff
@@ -1300,7 +1298,10 @@ export function App({
     : providersCompletions(commandInput, inputCursorOffset, managedProviders);
   const settingsSuggestions = argumentSuggestionsOff
     ? []
-    : settingsCompletions(commandInput, inputCursorOffset, cwd);
+    : [
+      ...settingsCompletions(commandInput, inputCursorOffset, cwd),
+      ...modelCommandCompletions(commandInput, inputCursorOffset, modelRuntime.getAvailableSnapshot(), session.agent.state.model),
+    ];
   const pathSuggestions = (!shellMode && activeAgentId) || stashOpen || commandSuggestionsDismissed
     || isCommandInput(commandInput)
     || !shouldAutoShowPathCompletions(commandInput, inputCursorOffset)
@@ -1361,9 +1362,6 @@ export function App({
   const lastInputValue = useRef("");
   const pendingPastedTexts = useRef<PendingPastedText[]>([]);
   const nextPastedTextId = useRef(1);
-  /** Pasted-text files consumed by a send whose turn has not settled yet. */
-  const postTurnPastedTexts = useRef(new Map<string, PendingPastedText[]>());
-  const previousSubagentStatus = useRef(new Map<string, string>());
   const imagePasteBusy = useRef(false);
   const loginTextPasteBusy = useRef(false);
   const viewDrafts = useRef(new Map<string, string>());
@@ -1584,16 +1582,8 @@ export function App({
   };
 
   const clearPendingPastedTexts = () => {
-    for (const pasted of pendingPastedTexts.current) removePendingPastedText(pasted);
     pendingPastedTexts.current = [];
     nextPastedTextId.current = 1;
-  };
-
-  const releasePostTurnPastedTexts = (targetKey: string) => {
-    const files = postTurnPastedTexts.current.get(targetKey);
-    if (!files) return;
-    postTurnPastedTexts.current.delete(targetKey);
-    for (const pasted of files) removePendingPastedText(pasted);
   };
 
   const syncInputMetrics = () => {
@@ -1648,8 +1638,7 @@ export function App({
     pathCompletionCycle.current = null;
     const edit = { previous: lastInputValue.current, next: nextValue };
 
-    // Editing any part of a marker deletes the whole attachment and its temp
-    // file at once. Both collections share one running draft, so the pastes
+    // Editing any part of a marker deletes the whole attachment at once. Both collections share one running draft, so the pastes
     // prune against what the images already cut, and both are re-anchored
     // afterwards against the final value.
     const imagePrune = pruneEditedMarkers(pendingImages.current, {
@@ -1671,7 +1660,6 @@ export function App({
     pendingPastedTexts.current = pastes.kept;
 
     for (const image of [...imagePrune.removed, ...images.removed]) removePendingImage(image);
-    for (const pasted of [...pastedPrune.removed, ...pastes.removed]) removePendingPastedText(pasted);
     const removedImages = imagePrune.removed.length + images.removed.length;
     const removedPastedTexts = pastedPrune.removed.length + pastes.removed.length;
 
@@ -1775,7 +1763,6 @@ export function App({
       });
       pendingPastedTexts.current = pendingPastedTexts.current.filter((pasted) => {
         if (!intersects(pasted)) return true;
-        removePendingPastedText(pasted);
         return false;
       });
 
@@ -1821,7 +1808,7 @@ export function App({
 
   /**
    * Replace one large or multiline paste with a `[Pasted text #n]` marker. The text is
-   * written to a private temp file that the agent can `read` during the turn.
+   * kept in memory and expanded into the submitted conversation text.
    */
   const stageLargePastedText = (event: PasteEvent) => {
     if (
@@ -1847,13 +1834,32 @@ export function App({
     const staged = stagePastedText(text);
     const current = input.plainText;
     const selection = input.hasSelection() ? input.getSelection() : null;
-    const start = selection ? selection.start : input.cursorOffset;
-    const end = selection ? selection.end : start;
+    let start = selection ? Math.min(selection.start, selection.end) : input.cursorOffset;
+    let end = selection ? Math.max(selection.start, selection.end) : start;
+    const intersects = (item: { start: number; end: number }) => start === end
+      ? start > item.start && start < item.end
+      : start < item.end && end > item.start;
+    for (const item of [...pendingImages.current, ...pendingPastedTexts.current]) {
+      if (!intersects(item)) continue;
+      start = Math.min(start, item.start);
+      end = Math.max(end, item.end);
+    }
+    pendingImages.current = pendingImages.current.filter((image) => {
+      if (!intersects(image)) return true;
+      removePendingImage(image);
+      return false;
+    });
+    pendingPastedTexts.current = pendingPastedTexts.current.filter((paste) => !intersects(paste));
+    const shift = marker.length - (end - start);
+    const reposition = <T extends { start: number; end: number }>(item: T): T =>
+      item.start >= end ? { ...item, start: item.start + shift, end: item.end + shift } : item;
+    pendingImages.current = pendingImages.current.map(reposition);
+    pendingPastedTexts.current = pendingPastedTexts.current.map(reposition);
     const value = `${current.slice(0, start)}${marker}${current.slice(end)}`;
     pendingPastedTexts.current.push({
       id,
       marker,
-      path: staged.path,
+      text: staged.text,
       bytes: staged.bytes,
       start,
       end: start + marker.length,
@@ -2200,7 +2206,6 @@ export function App({
           answerBufRef.current = "";
           userTurnActiveRef.current = false;
           turnPromptsRef.current = [];
-          releasePostTurnPastedTexts("main");
           streamingRef.current = false;
           setWorking(false);
           // A `/goalf` interview settles into a proposal, never into goal work.
@@ -2234,12 +2239,7 @@ export function App({
       clearTimeout(cancelTimer.current);
       clearPendingImages();
       cleanupPendingImages();
-      const pastedTempFiles = [...pendingPastedTexts.current];
-      for (const files of postTurnPastedTexts.current.values()) pastedTempFiles.push(...files);
-      for (const pasted of pastedTempFiles) removePendingPastedText(pasted);
       pendingPastedTexts.current = [];
-      postTurnPastedTexts.current.clear();
-      cleanupPendingPastedTexts();
       spawnPreviewManager?.cancelAll("shutdown");
     },
     [spawnPreviewManager],
@@ -2249,19 +2249,7 @@ export function App({
     resetCancelArm();
   }, [activeAgentId, visibleBusy]);
 
-  // Release pasted-text temp files once the subagent turn that consumed them settles.
   useEffect(() => {
-    for (const agent of agents) {
-      const previous = previousSubagentStatus.current.get(agent.id);
-      previousSubagentStatus.current.set(agent.id, agent.status);
-      if (
-        (previous === "starting" || previous === "running") &&
-        agent.status !== "starting" &&
-        agent.status !== "running"
-      ) {
-        releasePostTurnPastedTexts(agent.id);
-      }
-    }
     // A judge that settles without calling goal_verdict has said nothing. Drop
     // it, or `judgeInFlight` would stay true and stall the goal for good.
     const judge = judgeRef.current;
@@ -2729,14 +2717,14 @@ export function App({
     // the running bash tool has to see the new policy on the next call.
     if (patch.bashOutput !== undefined) setBashOutputSettingsIfPresent(patch.bashOutput);
     // Session-scoped: the popup never writes the global config, which the
-    // sandboxes keep read-only. `s` in the popup is the one way to promote.
+    // sandboxes keep read-only. Popup `s` and /store explicitly promote.
     const overrides = sessionSettingsDiff(globalSettingsRef.current, next);
     sessionOverridesRef.current = overrides;
     setSessionOverrides(overrides);
     saveSessionSettings(session.sessionFile, overrides);
   };
 
-  /** Promote this session's settings to the global defaults, on `s` in the popup. */
+  /** Explicit global promotion shared by popup `s`, /s, and /store. */
   const promoteSessionSettings = () => {
     const next = settingsRef.current;
     globalSettingsRef.current = next;
@@ -3525,7 +3513,7 @@ export function App({
   /**
    * Session scope by default, exactly like the popup. `--global` also rewrites
    * that one key in pum.json, so the rest of the global file and this session's
-   * other overrides are left alone — only `s` in the popup promotes everything.
+   * other overrides are left alone — popup `s` and /store promote everything.
    */
   const applySettingsPatch = (patch: Partial<PumSettings>, global: boolean) => {
     if (global) {
@@ -3594,25 +3582,42 @@ export function App({
   const runCommand = (text: string): boolean => {
     const trimmed = text.trim();
     if (runGoalCommand(trimmed)) return true;
+    if (trimmed === "/s" || trimmed === "/store") {
+      setEditorText("");
+      promoteSessionSettings();
+      return true;
+    }
     const compress = /^\/compress(?:\s+(.*))?$/s.exec(trimmed);
     const clear = /^\/(?:clear|new)$/.test(trimmed);
-    const historyCommand = trimmed === "/history";
+    const historyCommand = trimmed === "/history" || trimmed === "/resume";
     const loginCommand = trimmed === "/login";
     const providersCommand = parseProvidersCommand(trimmed);
     const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
     const settingsCommand = /^\/settings(?:\s|$)/.test(trimmed);
+    const modelCommand = /^\/model(?:\s|$)/.test(trimmed);
+    const effortCommand = /^\/effort(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
     const processesCommand = trimmed === "/processes";
     const newsCommand = trimmed === "/news";
     const todoCommand = trimmed === "/todo";
     const statsCommand = trimmed === "/stats";
     const worktreeCommand = parseWorktreeCommand(trimmed);
-    if (!compress && !clear && !historyCommand && !loginCommand && !providersCommand && !checkPathCommand && !settingsCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
+    if (!compress && !clear && !historyCommand && !loginCommand && !providersCommand && !checkPathCommand && !settingsCommand && !modelCommand && !effortCommand && !triggersCommand && !processesCommand && !newsCommand && !todoCommand && !statsCommand && !worktreeCommand) return false;
     setEditingStash(null);
 
     if (historyCommand) {
       setEditorText("");
       openHistory();
+      return true;
+    }
+    if (modelCommand && trimmed === "/model") {
+      setEditorText("");
+      setModelQuery("");
+      setModelSearchFocused(true);
+      settingsPageRef.current = "models";
+      setPage("models");
+      settingsOpenRef.current = true;
+      setSettingsOpen(true);
       return true;
     }
     if (loginCommand) {
@@ -3683,6 +3688,25 @@ export function App({
           update({ checkPaths: result.settings.checkPaths });
           append({ kind: "text", role: "system", text: result.message });
         })
+        .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
+        .finally(() => setWorking(streamingRef.current));
+    } else if (modelCommand || effortCommand) {
+      const targetSession = session;
+      Promise.resolve().then(async () => {
+        if (modelCommand) {
+          const selection = parseModelSelection(trimmed.slice("/model".length), modelRuntime.getAvailableSnapshot());
+          // Validate before setModel: an invalid effort must not change the model.
+          // setModel owns authentication, persistence, and model-change events.
+          await targetSession.setModel(selection.model);
+          if (selection.effort !== undefined) targetSession.setThinkingLevel(selection.effort);
+        } else {
+          const value = trimmed.slice("/effort".length).trim();
+          if (value) targetSession.setThinkingLevel(validateEffort(value, targetSession.agent.state.model));
+        }
+        setModelId(targetSession.agent.state.model!.id);
+        setThinkingLevel(targetSession.agent.state.thinkingLevel as ThinkingLevel);
+        append({ kind: "text", role: "system", text: `Model: ${modelReference(targetSession.agent.state.model!)}; effort: ${targetSession.agent.state.thinkingLevel}. Supported efforts: ${getSupportedThinkingLevels(targetSession.agent.state.model).join(", ")}` });
+      })
         .catch((err) => append({ kind: "text", role: "error", text: String(err) }))
         .finally(() => setWorking(streamingRef.current));
     } else if (settingsCommand) {
@@ -4249,21 +4273,18 @@ export function App({
     const targetKey = selectedAgentId ?? "main";
     const rawDisplayText = value ?? inputRef.current?.plainText ?? "";
     const commandEligible = isCommandInput(rawDisplayText);
-    const displayText = rawDisplayText.trim();
     const attachments = value === undefined ? [...pendingImages.current] : [];
     const pastedTexts = value === undefined ? [...pendingPastedTexts.current] : [];
     const submittedEditingIndex = editingStashIndex.current;
-    let promptText = rawDisplayText;
-    for (const image of attachments) promptText = promptText.replace(image.marker, "");
-    for (const pasted of pastedTexts) {
-      promptText = promptText.replace(pasted.marker, pastedTextReadBlock(pasted));
-    }
-    promptText = promptText.trim();
-
-    // History and stash keep the draft form, never the ephemeral temp path.
-    let persistedPrompt = rawDisplayText;
-    for (const pasted of pastedTexts) persistedPrompt = persistedPrompt.replace(pasted.marker, "");
-    persistedPrompt = persistedPrompt.trim();
+    const expandedText = expandPastedTexts(rawDisplayText, pastedTexts);
+    const displayText = pastedTexts.length ? expandedText : expandedText.trim();
+    const expandedPrompt = expandPastedTexts(rawDisplayText, [
+      ...pastedTexts,
+      ...attachments.map((image) => ({ ...image, text: "" })),
+    ]);
+    const promptText = pastedTexts.length ? expandedPrompt : expandedPrompt.trim();
+    // Recall and persisted transcript text remain usable without draft payloads.
+    const persistedPrompt = displayText;
 
     if (!promptText && attachments.length === 0 && pastedTexts.length === 0) return;
 
@@ -4306,17 +4327,13 @@ export function App({
       return;
     }
 
-    // Detach files from editor cleanup until delivery succeeds. A failed send
+    // Detach attachments from editor cleanup until delivery succeeds. A failed send
     // can then restore the exact draft and each still-valid attachment marker.
     if (value === undefined) {
       pendingImages.current = [];
       nextImageId.current = 1;
       pendingPastedTexts.current = [];
       nextPastedTextId.current = 1;
-      if (pastedTexts.length > 0) {
-        const existing = postTurnPastedTexts.current.get(targetKey) ?? [];
-        postTurnPastedTexts.current.set(targetKey, [...existing, ...pastedTexts]);
-      }
     }
 
     setEditorText("");
@@ -4325,18 +4342,11 @@ export function App({
       for (const image of attachments) removePendingImage(image);
     };
     const restoreFailedDraft = () => {
-      const postTurn = postTurnPastedTexts.current.get(targetKey) ?? [];
-      const submittedPaths = new Set(pastedTexts.map((pasted) => pasted.path));
-      const remaining = postTurn.filter((pasted) => !submittedPaths.has(pasted.path));
-      if (remaining.length > 0) postTurnPastedTexts.current.set(targetKey, remaining);
-      else postTurnPastedTexts.current.delete(targetKey);
-
       const canRestore =
         activeAgentIdRef.current === selectedAgentId &&
         !(inputRef.current?.plainText ?? "");
       if (!canRestore) {
         finishAttachments();
-        for (const pasted of pastedTexts) removePendingPastedText(pasted);
         append({
           kind: "text",
           role: "error",
@@ -4365,6 +4375,13 @@ export function App({
     if (attachments.length === 0 && commandEligible && promptText === "/login") {
       appendCommandHistory();
       openLogin();
+      return;
+    }
+
+    // Model controls follow Settings: only main owns model mutations.
+    if (selectedAgentId && attachments.length === 0 && commandEligible
+      && /^\/(?:model|effort|s|store)(?:\s|$)/.test(promptText)) {
+      appendRequesterLine(selectedAgentId, { kind: "text", role: "error", text: "Model, effort, and global settings commands require the main transcript. Select the main transcript first." });
       return;
     }
 
@@ -4433,7 +4450,7 @@ export function App({
   };
 
   const submitShellCommand = () => {
-    const command = inputRef.current?.plainText ?? "";
+    const command = expandPastedTexts(inputRef.current?.plainText ?? "", pendingPastedTexts.current);
     if (!command.trim()) return;
     const selectedAgentId = activeAgentIdRef.current;
     setEditorText("");
@@ -4666,24 +4683,24 @@ export function App({
       ? "  (no truecolor)"
       : "";
   const rowValues: Record<SettingRowId, string> = {
-    theme: `‹ ${theme.name} ›`,
-    providers: "login and custom setup ›",
-    animations: `‹ ${settings.animations ? "on" : "off"} ›`,
-    workingRuleAnimation: `‹ ${WORKING_RULE_ANIMATION_LABELS[settings.workingRuleAnimation]} ›${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
-    outputMode: `‹ ${OUTPUT_MODE_LABELS[settings.outputMode ?? "normal"]} ›`,
-    showAgentMessages: `‹ ${settings.showAgentMessages === false ? "off" : "on"} ›`,
-    webSearch: `‹ ${settings.webSearch ? "on" : "off"} ›${searchProviders.length ? "" : "  (not on provider)"}`,
-    writingStyle: `‹ ${settings.writingStyle} ›`,
-    explanationStrength: `‹ ${settings.explanationStrength} ›`,
-    checkMode: `‹ ${settings.checkMode} ›`,
-    sandboxMode: `‹ ${settings.sandboxMode ?? "auto"} ›`,
-    checkModel: `${settings.checkModel} ›`,
-    checkPaths: `${checkPathsForProject(settings, cwd).length} additional · /check-path ›`,
-    thinkingLevel: `‹ ${thinkingLevel} ›`,
-    showThinking: `‹ ${settings.showThinking ? "on" : "off"} ›`,
-    maxActiveSubagents: `‹ ${settings.maxActiveSubagents} ›`,
-    goalRetryLimit: `‹ ${normalizeGoalRetryLimit(settings.goalRetryLimit) || "unlimited"} ›`,
-    model: `${modelId} ›`,
+    theme: `‹ › ${theme.name}`,
+    providers: "› login and custom setup",
+    animations: `‹ › ${settings.animations ? "on" : "off"}`,
+    workingRuleAnimation: `‹ › ${WORKING_RULE_ANIMATION_LABELS[settings.workingRuleAnimation]}${settings.workingRuleAnimation === "off" ? "" : animationUnavailable}`,
+    outputMode: `‹ › ${OUTPUT_MODE_LABELS[settings.outputMode ?? "normal"]}`,
+    showAgentMessages: `‹ › ${settings.showAgentMessages === false ? "off" : "on"}`,
+    webSearch: `‹ › ${settings.webSearch ? "on" : "off"}${searchProviders.length ? "" : "  (not on provider)"}`,
+    writingStyle: `‹ › ${settings.writingStyle}`,
+    explanationStrength: `‹ › ${settings.explanationStrength}`,
+    checkMode: `‹ › ${settings.checkMode}`,
+    sandboxMode: `‹ › ${settings.sandboxMode ?? "auto"}`,
+    checkModel: `› ${settings.checkModel}`,
+    checkPaths: `› ${checkPathsForProject(settings, cwd).length} additional · /check-path`,
+    thinkingLevel: `‹ › ${thinkingLevel}`,
+    showThinking: `‹ › ${settings.showThinking ? "on" : "off"}`,
+    maxActiveSubagents: `‹ › ${settings.maxActiveSubagents}`,
+    goalRetryLimit: `‹ › ${normalizeGoalRetryLimit(settings.goalRetryLimit) || "unlimited"}`,
+    model: `› ${modelId}`,
   };
 
   const updateSettingsQuery = (query: string) => {
@@ -4897,18 +4914,6 @@ export function App({
   // the life of the app. The ref carries the current closure behind it.
   clickTranscriptDisclosureRef.current = clickTranscriptDisclosure;
 
-  const copyTranscriptRow = () => {
-    const line = visibleLines[transcriptCursorRef.current];
-    if (!line) return;
-    copyTranscriptText(projectedLineRawText(line), {
-      osc52: (value) => renderer.copyToClipboardOSC52(value),
-    }).catch((error) => append({
-      kind: "text",
-      role: "error",
-      text: `copy failed: ${String(error)}`,
-    }));
-  };
-
   usePaste((event) => {
     const controller = loginControllerRef.current;
     if (loginOpen) {
@@ -4922,6 +4927,12 @@ export function App({
   });
 
   useKeyboard((key) => {
+    // Match Textarea's printable sequence handling, but leave all modified
+    // commands (including Option) with their existing owner.
+    const typedText = !key.ctrl && !key.meta && !key.option && !key.super && !key.hyper
+      ? key.name === "space" ? " " : key.sequence && !/[\u0000-\u001f\u007f-\u009f]/u.test(key.sequence)
+        ? key.sequence : ""
+      : "";
     if (spawnPreview) {
       const isPreviewReturn = ["return", "enter", "kpenter", "linefeed"].includes(key.name);
       if (key.name === "escape" || (key.ctrl && key.name === "c")) {
@@ -5095,13 +5106,12 @@ export function App({
       return;
     }
 
-    if (transcriptFocusedRef.current) {
+    if (transcriptFocusedRef.current && !typedText) {
       key.stopPropagation();
       if (key.name === "escape") setTranscriptFocus(false);
-      else if (key.name === "j" || key.name === "down") moveTranscriptCursor(1);
-      else if (key.name === "k" || key.name === "up") moveTranscriptCursor(-1);
+      else if (key.name === "down") moveTranscriptCursor(1);
+      else if (key.name === "up") moveTranscriptCursor(-1);
       else if (["return", "enter", "kpenter", "linefeed"].includes(key.name)) toggleTranscriptDetail();
-      else if (key.name === "c" && !key.ctrl && !key.meta && !key.option) copyTranscriptRow();
       return;
     }
 
@@ -5275,6 +5285,18 @@ export function App({
       else if (key.name === "end") moveTodoCursorTo("last");
       else if (printableKey === "f") cycleTodoFilterState();
       return;
+    }
+
+    // Popups above retain typing ownership. Settings handles its fields below.
+    // A clicked transcript row or a native blur must not consume the first
+    // typed character. Stop dispatch before focusing: OpenTUI can otherwise
+    // deliver this same event to the newly focused textarea a second time.
+    const recoverTypedInput = Boolean(typedText && !settingsOpenRef.current && !settingsOpen
+      && inputRef.current && (!inputRef.current.focused || transcriptFocusedRef.current));
+    if (recoverTypedInput) {
+      key.stopPropagation();
+      if (transcriptFocusedRef.current) setTranscriptFocus(false);
+      inputRef.current?.focus();
     }
 
     // `?` on an empty prompt opens help instead of typing a question mark.
@@ -5451,7 +5473,10 @@ export function App({
       : providersCompletions(inputValue, inputCursor, managedProvidersRef.current);
     const settingsMatches = argumentMatchesOff
       ? []
-      : settingsCompletions(inputValue, inputCursor, cwd);
+      : [
+        ...settingsCompletions(inputValue, inputCursor, cwd),
+        ...modelCommandCompletions(inputValue, inputCursor, modelRuntime.getAvailableSnapshot(), session.agent.state.model),
+      ];
     // Every source carries path-completion offsets, so one insert path serves all.
     const closedSetMatches = providersMatches.length > 0 ? providersMatches : settingsMatches;
     const argumentMatches = closedSetMatches.length > 0 ? closedSetMatches : pathMatches;
@@ -5786,6 +5811,7 @@ export function App({
       settingsOpenRef.current = true;
       setSettingsOpen(true);
     }
+    if (recoverTypedInput) inputRef.current?.insertText(typedText);
   });
 
   const lastLine = visibleLines[visibleLines.length - 1];

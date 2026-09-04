@@ -38,6 +38,10 @@ export const COMMANDS: Command[] = [
     description: "Browse saved sessions for this directory",
   },
   {
+    name: "/resume",
+    description: "Alias for /history",
+  },
+  {
     name: "/login",
     description: "Add or update a provider login",
   },
@@ -56,6 +60,22 @@ export const COMMANDS: Command[] = [
   {
     name: "/stats",
     description: "Show session statistics",
+  },
+  {
+    name: "/model",
+    description: "Choose a main-agent model: /model <name or provider/id> [effort]",
+  },
+  {
+    name: "/store",
+    description: "Save current settings as global defaults (same as Settings s)",
+  },
+  {
+    name: "/s",
+    description: "Alias for /store: save current settings globally",
+  },
+  {
+    name: "/effort",
+    description: "Show or change main-agent reasoning effort: /effort [level]",
   },
   {
     name: "/settings",
@@ -92,7 +112,10 @@ export function matchingCommands(input: string): Command[] {
   // an absolute path. Leaving it to prefix matching would let Tab on /u turn
   // /usr/lib into /new.
   if (/[/\\]/.test(input.slice(1))) return [];
-  return COMMANDS.filter((command) => command.name.startsWith(input));
+  const matches = COMMANDS.filter((command) => command.name.startsWith(input));
+  // A complete short alias such as /s must not execute /stats on Enter.
+  const exact = matches.find((command) => command.name === input);
+  return exact ? [exact, ...matches.filter((command) => command !== exact)] : matches;
 }
 
 export function matchingCommandsForTarget(

@@ -1,24 +1,17 @@
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { registerSandboxTempReadRoot, unregisterSandboxTempReadRoot } from "./filesystem-sandbox";
-
 /** Pasted text at or below this size stays inline unless it has too many lines. */
 export const MAX_PASTED_TEXT_BYTES = 16 * 1024;
 /** A paste with more logical lines becomes an attachment, even when it is small. */
 export const MAX_PASTED_TEXT_LINES = 3;
 
-/** True when a paste should become a staged `[Pasted text #n]` attachment. */
+/** True when a paste should become an in-memory `[Pasted text #n]` attachment. */
 export function shouldStagePastedText(text: string): boolean {
   if (Buffer.byteLength(text, "utf8") > MAX_PASTED_TEXT_BYTES) return true;
-
   let lines = 1;
   for (let index = 0; index < text.length; index++) {
     const character = text[index];
     if (character !== "\n" && character !== "\r") continue;
     if (character === "\r" && text[index + 1] === "\n") index += 1;
-    lines += 1;
-    if (lines > MAX_PASTED_TEXT_LINES) return true;
+    if (++lines > MAX_PASTED_TEXT_LINES) return true;
   }
   return false;
 }
@@ -26,68 +19,29 @@ export function shouldStagePastedText(text: string): boolean {
 export type PendingPastedText = {
   id: number;
   marker: string;
-  /** Absolute temp-file path, `read`-able by the agent during the turn. */
-  path: string;
-  /** UTF-8 byte size of the staged text. */
+  text: string;
   bytes: number;
   start: number;
   end: number;
 };
 
-let pastedTextDir: string | null = null;
-let fileSequence = 0;
+/** Keep the payload in the draft, without filesystem or global state. */
+export function stagePastedText(text: string): { text: string; bytes: number } {
+  return { text, bytes: Buffer.byteLength(text, "utf8") };
+}
 
-function ensurePastedTextDir(): string {
-  if (pastedTextDir === null) {
-    const created = mkdtempSync(join(tmpdir(), "pum-pasted-text-"));
-    // The agent is told to read these files, and the filesystem sandbox allows
-    // only the project and configured roots. Register this exact directory,
-    // which PUM just created, as a read-only sandbox root.
-    // Keep the canonical spelling the sandbox registered, not the one mkdtemp
-    // returned. On a Windows account with an 8.3 alias those differ, and the
-    // agent would be handed a path its own sandbox then refuses.
-    pastedTextDir = registerSandboxTempReadRoot(created);
+/** Expand original marker spans once. Payloads are literal, never replacement patterns. */
+export function expandPastedTexts(
+  draft: string,
+  items: readonly Pick<PendingPastedText, "marker" | "start" | "end" | "text">[],
+): string {
+  let cursor = 0;
+  const parts: string[] = [];
+  for (const item of [...items].sort((a, b) => a.start - b.start)) {
+    if (item.start < cursor || draft.slice(item.start, item.end) !== item.marker) continue;
+    parts.push(draft.slice(cursor, item.start), item.text);
+    cursor = item.end;
   }
-  return pastedTextDir;
-}
-
-/** Write pasted text to a private temp file under the system temp dir. */
-export function stagePastedText(text: string): { path: string; bytes: number } {
-  const bytes = Buffer.byteLength(text, "utf8");
-  const path = join(ensurePastedTextDir(), `pasted-${++fileSequence}.txt`);
-  writeFileSync(path, text, "utf8");
-  return { path, bytes };
-}
-
-/**
- * The model-facing text that replaces a `[Pasted text #n]` marker on send.
- * The absolute temp path always sits alone on its own line so the agent can
- * pass it straight to the `read` tool.
- */
-export function pastedTextReadBlock(item: PendingPastedText): string {
-  const kib = Math.max(1, Math.round(item.bytes / 1024));
-  return [
-    `${item.marker}: the pasted text (${kib} KiB) is too large to keep inline.`,
-    "Read this temp file with the read tool:",
-    item.path,
-  ].join("\n");
-}
-
-export function removePendingPastedText(item: PendingPastedText): void {
-  try {
-    unlinkSync(item.path);
-  } catch {
-    // The file can already be gone during shutdown or failed-send cleanup.
-  }
-}
-
-export function cleanupPendingPastedTexts(): void {
-  if (!pastedTextDir) return;
-  unregisterSandboxTempReadRoot(pastedTextDir);
-  try {
-    rmSync(pastedTextDir, { recursive: true, force: true });
-  } catch {
-    // Temporary pasted-text cleanup must not break shutdown.
-  }
-  pastedTextDir = null;
+  parts.push(draft.slice(cursor));
+  return parts.join("");
 }

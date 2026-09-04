@@ -14,13 +14,14 @@ import { sessionDir } from "../src/config";
 import { canonicalRealpathSync } from "../src/platform";
 import { saveRelocation, type RelocationRecord } from "../src/relocation";
 import {
-  continueRecentProjectSession,
   listProjectSessions,
   resolveSessionResumeAliases,
   resumeAliasFileFor,
   syncSessionResumeAliases,
 } from "../src/session-resume-alias";
 import { startWorktree } from "../src/worktree-start";
+import { lockedProjectSession } from "../src/session-lock-runtime";
+import { SessionLockedError, SessionLockOwner } from "../src/session-lock";
 
 const cleanup: string[] = [];
 afterEach(() => {
@@ -96,8 +97,23 @@ describe("relocation resume aliases", () => {
     const sessions = await listProjectSessions(record.worktreePath);
     expect(sessions.map((session) => session.path)).toEqual([sessionFile]);
 
-    const resumed = await continueRecentProjectSession(record.worktreePath);
-    expect(resumed.getSessionFile()).toBe(sessionFile);
+    const resumed = await lockedProjectSession(record.worktreePath, true, new SessionLockOwner());
+    try { expect(resumed.sessionManager.getSessionFile()).toBe(sessionFile); }
+    finally { resumed.release(); }
+  }, 30_000);
+
+  test("source and worktree startup contend for the same canonical owner", async () => {
+    const source = repository();
+    const sessionFile = persistedSession(source);
+    const record = await activeRelocation(source, sessionFile);
+    const startup = await lockedProjectSession(record.worktreePath, true, new SessionLockOwner());
+    try {
+      expect(startup.sessionManager.getSessionFile()).toBe(sessionFile);
+      await expect(lockedProjectSession(source, true, new SessionLockOwner())).rejects.toBeInstanceOf(SessionLockedError);
+      await expect(lockedProjectSession(record.worktreePath, true, new SessionLockOwner())).rejects.toBeInstanceOf(SessionLockedError);
+    } finally { startup.release(); }
+    const resumed = await lockedProjectSession(source, true, new SessionLockOwner());
+    resumed.release();
   }, 30_000);
 
   test("removes the worktree alias on return and keeps source discovery", async () => {

@@ -132,6 +132,19 @@ async function openFilteredRow(
 }
 
 describe("Settings keyboard flow", () => {
+  test("places settings navigation icons before their values", async () => {
+    const setup = await renderApp(100, 32);
+    await openSettings(setup);
+    const frame = setup.captureCharFrame();
+    expect(frame).toContain("‹ › tokyonight");
+    expect(frame).toContain("› login and custom setup");
+    expect(frame).toContain("› mock-model");
+    expect(frame).not.toContain("mock-model ›");
+    expect(frame).not.toContain("tokyonight ›");
+    await openFilteredRow(setup, "check model");
+    expect(setup.captureCharFrame()).toContain("› mock/check");
+  });
+
   test("cycles through the new working animation labels", async () => {
     const setup = await renderApp();
     await openSettings(setup);

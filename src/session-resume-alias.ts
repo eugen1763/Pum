@@ -256,10 +256,5 @@ export async function listProjectSessions(cwd: string): Promise<SessionInfo[]> {
   return [...byPath.values()].sort((a, b) => b.modified.getTime() - a.modified.getTime());
 }
 
-/** Resume the newest canonical or aliased session for the launch directory. */
-export async function continueRecentProjectSession(cwd: string): Promise<SessionManager> {
-  const sessions = await listProjectSessions(cwd);
-  const recent = sessions[0];
-  if (!recent) return SessionManager.create(cwd, sessionDir(cwd));
-  return SessionManager.open(recent.path, dirname(recent.path), cwd);
-}
+// Mutable startup lives in session-lock-runtime.ts: reserve canonical ownership
+// before SessionManager.open, which can rewrite legacy or empty JSONL files.
