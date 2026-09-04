@@ -147,6 +147,8 @@ export class LoginController {
     const selected = await refreshAndSelectModel(
       this.runtime,
       providerId,
+      // Authentication can select a usable model, but it is not an explicit
+      // model preference. Keep the saved main defaults unchanged.
       (model) => session.setModel(model),
       AbortSignal.timeout(15_000),
       session.model,

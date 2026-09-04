@@ -39,8 +39,15 @@ async function renderApp(options: { child?: boolean; rejectModel?: boolean } = {
     sessionManager: { buildContextEntries: () => [], getEntries: () => [] },
     sessionFile: join(dir, "session.jsonl"), sessionId: "model-test",
     subscribe: () => () => {},
-    setThinkingLevel(level: string) { calls.push(`effort:${level}`); session.agent.state.thinkingLevel = level; },
-    async setModel(model: any) {
+    settingsManager: {
+      setDefaultModelAndProvider(provider: string, id: string) { calls.push(`saved-model:${provider}/${id}`); },
+      setDefaultThinkingLevel(level: string) { calls.push(`saved-effort:${level}`); },
+      flush: async () => {},
+      drainErrors: () => [],
+    },
+    setThinkingLevel(level: string, mutation: any) { expect(mutation).toEqual({ persist: true }); calls.push(`effort:${level}`); session.agent.state.thinkingLevel = level; },
+    async setModel(model: any, mutation: any) {
+      expect(mutation).toEqual({ persist: true });
       calls.push(`model:${model.id}`);
       if (options.rejectModel) throw new Error("No API key for mock");
       session.agent.state.model = model;
@@ -97,6 +104,28 @@ describe("model and effort slash UI", () => {
     await submit(setup, "/effort");
     expect(setup.captureCharFrame()).toContain("effort: high");
   });
+  test("popup model and effort selections persist explicitly", async () => {
+    const { setup, calls } = await renderApp();
+    await submit(setup, "/model");
+    await setup.mockInput.typeText("reasoner");
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(calls).toContain("model:reasoner");
+    setup.mockInput.pressEscape();
+    await settle(setup);
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await settle(setup);
+    await setup.mockInput.typeText("thinking");
+    await settle(setup);
+    setup.mockInput.pressArrow("down");
+    await settle(setup);
+    setup.mockInput.pressArrow("right");
+    await settle(setup);
+    expect(calls.some((call) => call.startsWith("effort:"))).toBe(true);
+  });
   test("invalid effort leaves the model untouched; auth failures do not set effort", async () => {
     const { setup, calls } = await renderApp({ rejectModel: true });
     await submit(setup, "/model mock/plain high");
@@ -130,6 +159,20 @@ describe("model and effort slash UI", () => {
     expect(calls).toHaveLength(2);
     expect(calls.every((call) => call.startsWith("child error:") && call.includes("Select the main transcript first"))).toBe(true);
   });
+  test("popup s promotes the main model while a child transcript is selected", async () => {
+    const { setup, session, calls } = await renderApp({ child: true });
+    session.agent.state.model = models[1];
+    session.agent.state.thinkingLevel = "low";
+    setup.mockInput.pressTab({ shift: true });
+    await settle(setup);
+    setup.mockInput.pressKey("p", { ctrl: true });
+    await settle(setup);
+    setup.mockInput.pressArrow("down");
+    await settle(setup);
+    await setup.mockInput.typeText("s");
+    await settle(setup);
+    expect(calls).toEqual(["saved-model:mock/reasoner", "saved-effort:low"]);
+  });
   for (const alias of ["/s", "/store"]) test(`${alias} promotes current settings with popup feedback`, async () => {
     const { setup, session, calls } = await renderApp();
     setup.mockInput.pressKey("p", { ctrl: true });
@@ -143,6 +186,6 @@ describe("model and effort slash UI", () => {
     await submit(setup, alias);
     expect(existsSync(sessionSettingsFileFor(session.sessionFile))).toBe(false);
     expect(setup.captureCharFrame()).toContain("Saved these settings as the global defaults.");
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(["saved-model:mock/plain", "saved-effort:off"]);
   });
 });

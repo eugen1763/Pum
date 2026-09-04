@@ -38,6 +38,12 @@ function fakeSession() {
         thinkingLevel: "off",
       },
     },
+    settingsManager: {
+      setDefaultModelAndProvider() {},
+      setDefaultThinkingLevel() {},
+      flush: async () => {},
+      drainErrors: () => [],
+    },
     sessionManager: { buildContextEntries: () => [], getEntries: () => [] },
     sessionFile: join(directory, "session.jsonl"),
     sessionId: "current-session",

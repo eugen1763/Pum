@@ -32,7 +32,15 @@ and Quiet can keep them. A subagent completion notice always remains visible.
 
 PUM includes `tokyonight`, `gruvbox`, `catppuccin`, `nord`, `dracula`,
 `rosepine`, `solarized`, `kanagawa`, and `github-light`. Select a preset in
-`Ctrl+P`.
+`Ctrl+P`, or run `/theme <theme>` (an alias for `/settings theme <theme>`).
+Run `/theme` to show the current setting.
+
+Type `/theme ` or `/settings theme ` to see theme suggestions.
+Use Up/Down or mouse hover to preview a highlighted theme without saving it.
+Enter or Tab inserts the selected name. Enter then executes the complete command.
+The preview ends when suggestions close, including after insertion or Escape.
+Clearing the draft or opening a popup also restores the committed theme.
+Changes belong to the session. Add `--global` to save a theme globally, or use `/store` afterward.
 
 Create `theme.json` in the PUM config directory to override semantic tokens:
 

@@ -152,6 +152,7 @@ import {
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { settingsCompletions } from "./settings-autocomplete";
 import { modelCommandCompletions, modelReference, parseModelSelection, validateEffort } from "./model-command";
+import { saveMainModelDefaults } from "./model-settings";
 import {
   applySettingChange,
   listSettingsMessage,
@@ -1010,6 +1011,7 @@ export function App({
   const [commandInput, setCommandInput] = useState("");
   const [inputCursorOffset, setInputCursorOffset] = useState(0);
   const [commandCursor, setCommandCursor] = useState(0);
+  const [hoverSuggestionStart, setHoverSuggestionStart] = useState<number | null>(null);
   const [commandSuggestionsDismissed, setCommandSuggestionsDismissed] = useState(false);
   const [editingStashIndexState, setEditingStashIndexState] = useState<number | null>(null);
   const [inputRows, setInputRows] = useState(1);
@@ -1063,7 +1065,16 @@ export function App({
   const newsCursorRef = useRef(0);
   const statsOpenRef = useRef(false);
 
-  const theme = useMemo(() => loadTheme(settings.theme), [settings.theme]);
+  // Preview only the visible autocomplete selection. The committed setting and
+  // its session/global persistence never participate in this temporary state.
+  const themeSuggestions = shellMode || stashOpen || commandSuggestionsDismissed || activeAgentId
+    || transcriptFocused || settingsOpen || helpOpen || historyOpen || statsOpen || agentSelectorOpen
+    || triggersOpen || loginOpen || providersOpen || newsOpen || todoOpen
+    || questionnaireManager?.current() || spawnPreviewManager?.current()
+    ? [] : settingsCompletions(commandInput, inputCursorOffset, cwd);
+  const previewTheme = themeSuggestions[Math.min(commandCursor, Math.max(0, themeSuggestions.length - 1))]?.previewTheme;
+  const displayedTheme = previewTheme ?? settings.theme;
+  const theme = useMemo(() => loadTheme(displayedTheme), [displayedTheme]);
   const { width, height } = useTerminalDimensions();
   const syntaxStyle = useMemo(() => buildSyntaxStyle(theme), [theme]);
   const newsReadById = useMemo(
@@ -1318,7 +1329,10 @@ export function App({
   // Every match stays selectable. Only SUGGESTION_ROWS of them are on screen,
   // and the window scrolls with the selection.
   const suggestionIndex = Math.min(commandCursor, Math.max(0, suggestionCount - 1));
-  const suggestionStart = suggestionWindowStart(suggestionIndex, suggestionCount);
+  // Hover must not scroll its own row out from under a stationary pointer.
+  const suggestionStart = hoverSuggestionStart === null
+    ? suggestionWindowStart(suggestionIndex, suggestionCount)
+    : Math.min(hoverSuggestionStart, Math.max(0, suggestionCount - SUGGESTION_ROWS));
   const visibleSettingRows = filterSettingsRows(settingsQuery);
   const visibleModels = useMemo(() => filterModels(
     modelRuntime.getAvailableSnapshot(),
@@ -1620,6 +1634,7 @@ export function App({
     setCommandSuggestionsClosed(false);
     commandCursorRef.current = 0;
     setCommandCursor(0);
+    setHoverSuggestionStart(null);
     setCommandInput(value);
     scheduleInputMetrics();
   };
@@ -1671,6 +1686,7 @@ export function App({
     setCommandSuggestionsClosed(false);
     commandCursorRef.current = 0;
     setCommandCursor(0);
+    setHoverSuggestionStart(null);
     setCommandInput(value);
     scheduleInputMetrics();
     if (removedImages > 0 || removedPastedTexts > 0) {
@@ -2727,13 +2743,20 @@ export function App({
   /** Explicit global promotion shared by popup `s`, /s, and /store. */
   const promoteSessionSettings = () => {
     const next = settingsRef.current;
+    // Always promote main, even when a child transcript is selected. Do not
+    // call setModel here: it can reset effort and recheck authentication.
+    const savedModel = saveMainModelDefaults(sessionRef.current);
     globalSettingsRef.current = next;
     saveSettings(next);
     // Nothing differs from global any more, so the session owns no overrides.
     sessionOverridesRef.current = {};
     setSessionOverrides({});
     saveSessionSettings(session.sessionFile, {});
-    appendMainLine({ kind: "text", role: "system", text: "Saved these settings as the global defaults." });
+    void savedModel.then(() => {
+      appendMainLine({ kind: "text", role: "system", text: "Saved these settings as the global defaults." });
+    }).catch((error) => {
+      appendMainLine({ kind: "text", role: "error", text: `Could not save model defaults: ${String(error)}` });
+    });
   };
 
   const stepThinking = (step: number) => {
@@ -2742,7 +2765,7 @@ export function App({
     // step from the committed value instead of from a stale render closure.
     const i = levels.indexOf(session.agent.state.thinkingLevel as ThinkingLevel);
     const target = levels[Math.max(0, Math.min(levels.length - 1, i + step))]!;
-    session.setThinkingLevel(target);
+    session.setThinkingLevel(target, { persist: true });
     // setThinkingLevel clamps to what the model supports — show the real value.
     setThinkingLevel(session.agent.state.thinkingLevel as ThinkingLevel);
   };
@@ -2823,6 +2846,7 @@ export function App({
           await deleteProvider(modelRuntime as any, entry);
           // The active model may have belonged to the provider just removed.
           // Move to another one rather than keep a model PUM cannot authenticate.
+          // This automatic fallback must not replace the saved model preference.
           const runtime = modelRuntime as any;
           const replacement = modelAfterRemoval(
             sessionRef.current.agent.state.model,
@@ -2886,7 +2910,7 @@ export function App({
     setModelQuery("");
     setModelSearchFocused(false);
     session
-      .setModel(model)
+      .setModel(model, { persist: true })
       .then(() => setModelId(session.agent.state.model.id))
       .catch((err) => append({ kind: "text", role: "error", text: String(err) }));
   };
@@ -3593,7 +3617,7 @@ export function App({
     const loginCommand = trimmed === "/login";
     const providersCommand = parseProvidersCommand(trimmed);
     const checkPathCommand = /^\/check-path(?:\s|$)/.test(trimmed);
-    const settingsCommand = /^\/settings(?:\s|$)/.test(trimmed);
+    const settingsCommand = /^\/(?:settings|theme)(?:\s|$)/.test(trimmed);
     const modelCommand = /^\/model(?:\s|$)/.test(trimmed);
     const effortCommand = /^\/effort(?:\s|$)/.test(trimmed);
     const triggersCommand = trimmed === "/triggers";
@@ -3697,11 +3721,11 @@ export function App({
           const selection = parseModelSelection(trimmed.slice("/model".length), modelRuntime.getAvailableSnapshot());
           // Validate before setModel: an invalid effort must not change the model.
           // setModel owns authentication, persistence, and model-change events.
-          await targetSession.setModel(selection.model);
-          if (selection.effort !== undefined) targetSession.setThinkingLevel(selection.effort);
+          await targetSession.setModel(selection.model, { persist: true });
+          if (selection.effort !== undefined) targetSession.setThinkingLevel(selection.effort, { persist: true });
         } else {
           const value = trimmed.slice("/effort".length).trim();
-          if (value) targetSession.setThinkingLevel(validateEffort(value, targetSession.agent.state.model));
+          if (value) targetSession.setThinkingLevel(validateEffort(value, targetSession.agent.state.model), { persist: true });
         }
         setModelId(targetSession.agent.state.model!.id);
         setThinkingLevel(targetSession.agent.state.thinkingLevel as ThinkingLevel);
@@ -5720,6 +5744,7 @@ export function App({
         );
         commandCursorRef.current = next;
         setCommandCursor(next);
+        setHoverSuggestionStart(null);
         return;
       }
       // Keep arrow navigation inside multiline or visually wrapped prompts.
@@ -6026,7 +6051,16 @@ export function App({
               .map((suggestion, index) => {
                 const highlighted = suggestionStart + index === suggestionIndex;
                 return (
-                  <box key={suggestion.key} style={{ height: 1, flexShrink: 0, flexDirection: "row" }}>
+                  <box
+                    key={suggestion.key}
+                    onMouseMove={() => {
+                      const next = suggestionStart + index;
+                      commandCursorRef.current = next;
+                      setHoverSuggestionStart(suggestionStart);
+                      setCommandCursor(next);
+                    }}
+                    style={{ height: 1, flexShrink: 0, flexDirection: "row" }}
+                  >
                     <box style={{ width: 2, flexShrink: 0 }}>
                       {highlighted ? <text content="❯ " fg={theme.accent} /> : null}
                     </box>

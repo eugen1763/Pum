@@ -18,6 +18,31 @@ function set(input: string): { settings: PumSettings; message: string } {
   return applySettingChange(settings, command.spec, command.value);
 }
 
+describe("/theme alias", () => {
+  test("uses the same validation and scope as /settings theme", () => {
+    for (const suffix of ["", " NORD", " gruvbox --global", " --global nord"]) {
+      expect(parseSettingsCommand(`/theme${suffix}`)).toEqual(parseSettingsCommand(`/settings theme${suffix}`));
+    }
+    expect(set("/theme NORD").settings.theme).toBe("nord");
+    expect(() => set("/theme invalid")).toThrow(/unknown value/);
+    expect(parseSettingsCommand("/themes nord")).toBeUndefined();
+  });
+
+  test("completes alias values with original offsets and theme preview metadata", () => {
+    const input = "  /theme GRU";
+    expect(settingsCompletions(input, input.length, process.cwd())).toEqual([
+      { start: 9, end: 12, replacement: "gruvbox", previewTheme: "gruvbox" },
+    ]);
+    expect(settingsCompletions("/theme", 6, process.cwd())).toEqual([]);
+    expect(settingsCompletions("/theme nord", 11, process.cwd())).toEqual([]);
+    const flag = "/theme nord --";
+    expect(settingsCompletions(flag, flag.length, process.cwd())).toEqual([
+      { start: 12, end: 14, replacement: "--global", description: "write pum.json" },
+    ]);
+    expect(settingsCompletions("/settings outputMode q", 22, process.cwd())[0]?.previewTheme).toBeUndefined();
+  });
+});
+
 describe("/settings command", () => {
   test("resolves a name by key, label, case, and separator", () => {
     for (const name of ["checkMode", "checkmode", "CHECKMODE", "check-mode", "check mode"]) {

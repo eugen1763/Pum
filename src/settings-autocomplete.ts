@@ -21,6 +21,8 @@ import {
 export type SettingsCompletion = PathCompletion & {
   /** Trailing hint shown after the value in the suggestion row. */
   description?: string;
+  /** Render-only theme preview. Never update settings until command execution. */
+  previewTheme?: string;
 };
 
 const CHECK_PATH_ACTIONS = ["list", "add", "remove", "clear"];
@@ -50,6 +52,16 @@ export function settingsCompletions(
   cursorOffset: number,
   cwd: string,
 ): SettingsCompletion[] {
+  const alias = /^\s*\/theme(?=\s|$)/.exec(input);
+  if (alias) {
+    const commandEnd = alias[0].length;
+    if (cursorOffset <= commandEnd) return [];
+    const expanded = input.slice(0, commandEnd).replace(/\/theme$/, "/settings theme")
+      + input.slice(commandEnd);
+    const added = expanded.length - input.length;
+    return settingsCompletions(expanded, cursorOffset + added, cwd)
+      .map((completion) => ({ ...completion, start: completion.start - added, end: completion.end - added }));
+  }
   if (!/^\s*\/settings(?:\s|$)/.test(input)) return [];
   const cursor = Math.max(0, Math.min(cursorOffset, input.length));
   // Completing behind a trailing argument would rewrite text the cursor has
@@ -111,6 +123,7 @@ export function settingsCompletions(
         start,
         end,
         replacement: candidate.value,
+        ...(spec.key === "theme" ? { previewTheme: candidate.value } : {}),
         ...(candidate.description ? { description: candidate.description } : {}),
       })),
     ...flag,

@@ -82,6 +82,10 @@ export const COMMANDS: Command[] = [
     description: "Show or change a setting: /settings <name> <value> [--global]",
   },
   {
+    name: "/theme",
+    description: "Show or change the theme: /theme <theme> [--global]",
+  },
+  {
     name: "/check-path",
     description: "Manage additional Check mode directory roots",
   },

@@ -66,6 +66,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/todo", "Show the agent's todo list"],
       ["/stats", "Show session statistics"],
       ["/settings", "Show or change a setting"],
+      ["/theme <theme>", "Preview and change the theme"],
       ["/model", "Choose model [effort]; no name opens picker"],
       ["/effort [level]", "Show or change main-agent reasoning effort"],
       ["/store · /s", "Save current settings as global defaults"],

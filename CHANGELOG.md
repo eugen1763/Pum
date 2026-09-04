@@ -2,6 +2,16 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.32-beta.1] - 2026-09-04
+
+### Added
+
+- Added `/theme <theme>` as an alias for `/settings theme`, with temporary autocomplete previews from keyboard selection and mouse hover.
+
+### Fixed
+- Explicit model and effort selections now persist across restarts through pi's settings APIs.
+- `/s`, `/store`, and Settings `s` now save the current main model and effort alongside PUM settings. Automatic model fallback and child sessions do not overwrite these defaults.
+
 ## [0.2.31-beta.1] - 2026-09-04
 
 ### Added

@@ -781,9 +781,13 @@ These were chosen deliberately. Change them only on purpose.
   reports effort using the installed pi capability list. Both commands complete
   available values. Selected children are refused, never silently retargeted.
   `/store` and `/s` call the same global promotion as Settings `s`.
-- **Model and thinking level are pi's to persist.** `setModel()` and
-  `setThinkingLevel()` write to `<config dir>/settings.json`, and
-  `createAgentSession` reads them back at startup. Do not duplicate that here.
+- **Model and thinking level are pi's to persist.** Explicit main-user model
+  and effort selections call `setModel()` and `setThinkingLevel()` with
+  `{ persist: true }`. Without that option, pi changes only the session.
+  Startup reads pi's defaults from `<config dir>/settings.json`. Popup `s`,
+  `/store`, and `/s` also save the current main model and effort through pi's
+  `SettingsManager`, without switching models or resetting effort. Child setup,
+  login selection, and automatic provider fallback do not overwrite defaults.
   `pum.json` holds only what pi does not know about, including UI preferences,
   web search, check mode, and writing style.
 - **Optional tools live in hidden per-session groups.** PUM does not send

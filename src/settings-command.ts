@@ -367,7 +367,7 @@ export type SettingsCommand =
 
 /** Returns undefined when the input is not a /settings command at all. */
 export function parseSettingsCommand(input: string): SettingsCommand | undefined {
-  const trimmed = input.trim();
+  const trimmed = input.trim().replace(/^\/theme(?=\s|$)/, "/settings theme");
   if (!/^\/settings(?:\s|$)/.test(trimmed)) return undefined;
 
   const tokens = tokenizeSettingsInput(trimmed).slice(1);
