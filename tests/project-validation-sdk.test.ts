@@ -1,3 +1,4 @@
+import { bindRuntimeSettingsActivity } from "../src/runtime-settings";
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -125,6 +126,7 @@ async function fixture(options: { commands?: Command[]; maxRuns?: number } = {})
     sessions.push(session);
     options.beforeBind?.(session);
     if (options.contextOrder === "context-first") contextWindow!.bind(session);
+    bindRuntimeSettingsActivity(session);
     if (options.bind !== false) controller.bind(session);
     if (options.contextOrder === "validation-first") contextWindow!.bind(session);
     const errors: unknown[] = [];

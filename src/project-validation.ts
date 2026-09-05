@@ -5,6 +5,7 @@ import { createSyntheticCheckCall } from "./check-mode";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
 import { canonicalRealpathSync, projectStorageKey } from "./platform";
+import { isRuntimeIdle } from "./runtime-settings";
 
 export const VALIDATION_CUSTOM_TYPE = "pum.validation";
 export const VALIDATION_MAX_CONFIG_BYTES = 16 * 1024;
@@ -139,13 +140,15 @@ export class ProjectValidationController {
     this.directoryKey = projectStorageKey(canonicalRealpathSync(this.cwd));
   }
   get lastFailed(): boolean { return this.latest !== undefined && this.latest.outcome !== "passed"; }
+  /** Uses this controller's exact bound runtime, including selected workers. */
+  get isIdle(): boolean { return !this.retired && !this.active && isRuntimeIdle(this.session); }
   preview(): string {
     const proposal = readValidationProposal(this.cwd);
     return `${this.status()}\n.pum/validation.json SHA-256: ${proposal.digest}\n${proposal.config.commands.map((c) => `${c.kind}: ${JSON.stringify(c.command)} (timeout ${c.timeoutSeconds}s)`).join("\n")}\nMaximum runs: ${proposal.config.maxRuns}. Automatic repair budget: 0.\nEnabling trusts these commands and the current/future project code, scripts and tool configuration they execute, NOT only this digest. Check/Sandbox settings still apply; Check Off may run unconfined.\nDirect user only: /validation enable ${proposal.digest}`;
   }
   enable(digest: string): void {
     if (this.retired || this.readonly || !this.session) throw new Error("Validation is unavailable for this runtime or readonly role.");
-    if (this.active || this.session.isStreaming) throw new Error("Enable validation only while the selected agent is idle.");
+    if (!this.isIdle) throw new Error("Enable validation only while the selected agent is idle.");
     const proposal = readValidationProposal(this.cwd);
     if (!/^[a-f0-9]{64}$/i.test(digest) || proposal.digest !== digest.toLowerCase()) throw new Error("Validation digest does not match. Review /validation again.");
     this.generation++;

@@ -1,5 +1,6 @@
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
-import type { InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { runtimeSettings } from "./runtime-settings";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -85,15 +86,90 @@ export function rejectedToolReason(result: unknown, toolCallId?: string): string
 }
 
 let current: Required<CheckModeConfig> = { profile: "off", model: DEFAULT_CHECK_MODEL, additionalPaths: [] };
+let checkSecurityEpoch = 0;
+const POLICY_CHANGED = "PUM security policy tightened while this tool was being prepared. The earlier approval is invalid; the tool was not executed.";
+const APPROVAL_MISSING = "PUM tool execution has no matching preflight approval; the tool was not executed.";
+const securityStamp = () => `${checkSecurityEpoch}:${runtimeSettings.securityEpoch}`;
 
 export function setCheckModeConfig(config: CheckModeConfig | { enabled: boolean; model: string }): void {
-  current = "profile" in config
+  const next = "profile" in config
     ? { ...config, additionalPaths: [...(config.additionalPaths ?? [])] }
-    : { profile: config.enabled ? "on" : "off", model: config.model, additionalPaths: [] };
+    : { profile: config.enabled ? "on" as const : "off" as const, model: config.model, additionalPaths: [] };
+  if ((current.profile === "off" && next.profile === "on")
+    || current.additionalPaths.some((path) => !next.additionalPaths.includes(path))) checkSecurityEpoch++;
+  current = next;
 }
 
 export function getCheckModeConfig(): CheckModeConfig {
   return { ...current, additionalPaths: [...current.additionalPaths] };
+}
+
+/** pi prepares every parallel call before executing any. Guard both the full
+ * preflight chain and the exact tool's execute entry so an early prepared call
+ * cannot use stale policy while a sibling's preflight awaits. This composes with
+ * synthetic validation calls through the same public beforeToolCall hook. */
+const approvalBoundSessions = new WeakSet<AgentSession>();
+const POLICY_GUARDED_TOOLS = new Set([
+  "read", "write", "edit", "bash", "start_shell", "create_trigger", "resume_trigger", "invoke_trigger",
+]);
+export function bindCheckModeApprovalSession(session: AgentSession): void {
+  if (approvalBoundSessions.has(session)) return;
+  approvalBoundSessions.add(session);
+  // The SDK clones/validates arguments after prepareArguments and passes that
+  // exact object to both preflight and execute. IDs are model-controlled and
+  // need not be unique, even within one batch. Never use them as authority keys.
+  type Approval = { id: string; stamp: string };
+  let approvals = new WeakMap<object, WeakMap<object, Approval>>();
+  const wrapped = new WeakSet<object>();
+  const before = session.agent.beforeToolCall;
+  let disposed = false;
+  const wrap = (tool: NonNullable<typeof session.agent.state.tools>[number]) => {
+    if (!POLICY_GUARDED_TOOLS.has(tool.name) || wrapped.has(tool)) return;
+    wrapped.add(tool);
+    const execute = tool.execute;
+    tool.execute = async (...args) => {
+      const records = approvals.get(tool);
+      const input = args[1];
+      const approved = input && typeof input === "object" ? records?.get(input) : undefined;
+      if (input && typeof input === "object") records?.delete(input);
+      if (disposed) throw new Error(POLICY_CHANGED);
+      if (!approved || approved.id !== args[0]) throw new Error(APPROVAL_MISSING);
+      if (approved.stamp !== securityStamp()) throw new Error(POLICY_CHANGED);
+      return execute.apply(tool, args);
+    };
+  };
+  for (const tool of session.agent.state?.tools ?? []) wrap(tool);
+  session.agent.beforeToolCall = async (event, signal) => {
+    if (!POLICY_GUARDED_TOOLS.has(event.toolCall.name)) return before?.call(session.agent, event, signal);
+    const id = event.toolCall.id;
+    const stamp = securityStamp();
+    const generation = approvals;
+    const tool = event.context.tools?.find((candidate) => candidate.name === event.toolCall.name);
+    if (!tool || !event.args || typeof event.args !== "object") return { block: true, reason: APPROVAL_MISSING };
+    wrap(tool);
+    let records = approvals.get(tool);
+    if (!records) approvals.set(tool, records = new WeakMap());
+    records.delete(event.args);
+    const result = await before?.call(session.agent, event, signal);
+    if (result?.block) return result;
+    if (disposed || generation !== approvals || stamp !== securityStamp()) return { block: true, reason: POLICY_CHANGED };
+    if (signal?.aborted) return { block: true, reason: "Tool preparation was cancelled." };
+    records.set(event.args, { id, stamp });
+    return result;
+  };
+  const unsubscribe = session.subscribe((event) => {
+    // A result's untrusted ID must not revoke a sibling's authority. Execution
+    // consumes its own record; abandoned preparations expire at the turn edge,
+    // including agent_end before an SDK retry (not only final settlement).
+    if (event.type === "agent_end" || event.type === "agent_settled") approvals = new WeakMap();
+  });
+  const dispose = session.dispose.bind(session);
+  session.dispose = () => {
+    disposed = true;
+    approvals = new WeakMap();
+    unsubscribe();
+    return dispose();
+  };
 }
 
 function modelRef(model: Model<any>): string {
@@ -763,6 +839,7 @@ export function createExternalTriggerSafetyChecker(
   observeRequest?: CheckRequestObserver,
 ): ExternalTriggerSafetyChecker {
   return async (proposal, requester, signal) => {
+    const stamp = securityStamp();
     const config = getCheckModeConfig();
     const identity: CheckApprovalIdentity = requester.kind === "subagent"
       ? { kind: "subagent", agentId: requester.agentId }
@@ -775,6 +852,7 @@ export function createExternalTriggerSafetyChecker(
       requester: identity,
       observeRequest,
     });
+    if (evaluation.decision === "allow" && stamp !== securityStamp()) throw new Error(POLICY_CHANGED);
     if (evaluation.decision === "allow") return;
     throw new Error(redactApprovalPreview(evaluation.reason));
   };
@@ -831,9 +909,8 @@ export function createCheckModeExtension(
 
       pi.on("before_agent_start", (event) => {
         currentUserRequest = event.prompt;
-        if (current.profile === "off") return;
         return { systemPrompt: `${event.systemPrompt}\n\n## Check mode tool batching\n\n`
-          + "- Check mode evaluates every bash, edit, and external-trigger process proposal before execution.\n"
+          + "- When Check mode is on, it evaluates every bash, edit, and external-trigger process proposal before execution. Live policy checks override older operational observations.\n"
           + "- Run create_trigger, resume_trigger, and invoke_trigger in separate tool steps because they can start a checked process.\n"
           + "- Do not put a checked tool in the same parallel tool batch as read, write, or another checked call.\n"
           + "- Run inspection reads first. Run each checked tool in a later assistant step.\n"
@@ -847,6 +924,7 @@ export function createCheckModeExtension(
         // an earlier extension delayed this hook until after the caller timed out.
         // Neither path waits for a nonexistent synthetic message_end to clean up.
         const synthetic = syntheticCheckCalls.get(event.input) === event.toolCallId;
+        const stamp = securityStamp();
         const evaluation = await evaluateToolCall(runtime, {
           toolName,
           input: event.input,
@@ -863,9 +941,9 @@ export function createCheckModeExtension(
             inspectedPaths: inspectedPaths(ctx.sessionManager?.buildContextEntries?.() ?? []),
           },
         });
-        if (evaluation.decision === "allow") return;
+        if (evaluation.decision === "allow" && stamp === securityStamp()) return;
 
-        const visibleReason = redactApprovalPreview(evaluation.reason);
+        const visibleReason = evaluation.decision === "allow" ? POLICY_CHANGED : redactApprovalPreview(evaluation.reason);
         if (!synthetic) {
           rejected.set(event.toolCallId, visibleReason);
           pendingRejectedTools.set(event.toolCallId, visibleReason);

@@ -5,7 +5,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { App } from "../src/app";
-import { sessionSettingsFileFor } from "../src/session-settings";
+import { saveSessionSettings, sessionSettingsFileFor, type SessionSettings } from "../src/session-settings";
+import { getCheckModeConfig } from "../src/check-mode";
+import { runtimeSettings } from "../src/runtime-settings";
+import { webSearch } from "../src/web-search";
+import { getWritingStyle } from "../src/writing-style";
+import { getExplanationStrength } from "../src/explanation-strength";
 
 let destroy: (() => void) | undefined;
 const directories: string[] = [];
@@ -66,10 +71,13 @@ async function settle(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
   await setup.flush();
 }
 
-async function renderApp() {
+async function renderApp(options: { overlay?: SessionSettings; forcedCheckPaths?: string[]; forcedSandboxMode?: "off" | "require"; replaceOnNew?: boolean } = {}) {
   const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true });
   destroy = () => setup.renderer.destroy();
   const session = fakeSession();
+  if (options.overlay) saveSessionSettings(session.sessionFile, options.overlay);
+  const sandboxModes: string[] = [];
+  const limits: number[] = [];
   const manager = {
     getAgents: () => [],
     subscribe: () => () => {},
@@ -77,16 +85,19 @@ async function renderApp() {
     abortAgent: async () => {},
     sendUserMessage: async () => {},
     persistToolEvent() {},
-    setMaxActiveSubagents() {},
+    setMaxActiveSubagents(value: number) { limits.push(value); },
   } as any;
   createRoot(setup.renderer).render(
     <App
       session={session}
       modelRuntime={{ getAvailableSnapshot: () => [], getProviders: () => [] } as any}
-      onNewSession={async () => session}
+      onNewSession={async () => options.replaceOnNew ? fakeSession() : session}
       loadSessions={async () => []}
       onSwitchSession={async () => session}
       settings={settings}
+      forcedSandboxMode={options.forcedSandboxMode}
+      forcedCheckPaths={options.forcedCheckPaths}
+      onSandboxModeChange={(mode) => { sandboxModes.push(mode); }}
       searchProviders={[]}
       subagentManager={manager}
       promptHistoryStore={{ load: () => [], append: () => [], remove: () => [] }}
@@ -101,7 +112,7 @@ async function renderApp() {
     />,
   );
   await settle(setup);
-  return { setup, session };
+  return { setup, session, sandboxModes, limits };
 }
 
 /** Open Settings, leave the search box, and land on the first row. */
@@ -113,6 +124,55 @@ async function openSettings(setup: Awaited<ReturnType<typeof createTestRenderer>
 }
 
 describe("settings belong to the session", () => {
+  test("attach applies the saved overlay to policy and presentation globals, preserving forced roots/sandbox", async () => {
+    const { sandboxModes, limits } = await renderApp({
+      overlay: { checkMode: "on", webSearch: true, sandboxMode: "off", writingStyle: "STE", explanationStrength: "detailed", maxActiveSubagents: 3 },
+      forcedSandboxMode: "require", forcedCheckPaths: ["/forced-root"],
+    });
+    expect(getCheckModeConfig()).toMatchObject({ profile: "on", additionalPaths: ["/forced-root"] });
+    expect(webSearch.enabled).toBe(true);
+    expect(sandboxModes.at(-1)).toBe("require");
+    expect(getWritingStyle()).toBe("STE");
+    expect(getExplanationStrength()).toBe("detailed");
+    expect(limits.at(-1)).toBe(3);
+  });
+
+  test("new session reapplies global defaults instead of leaving the prior overlay effective", async () => {
+    const { setup } = await renderApp({ overlay: { checkMode: "on", webSearch: true, writingStyle: "STE", explanationStrength: "detailed" }, replaceOnNew: true });
+    expect(getCheckModeConfig().profile).toBe("on");
+    await setup.mockInput.typeText("/new");
+    setup.mockInput.pressEnter();
+    await settle(setup);
+    expect(getCheckModeConfig().profile).toBe("off");
+    expect(webSearch.enabled).toBe(false);
+    expect(getWritingStyle()).toBe("none");
+    expect(getExplanationStrength()).toBe("simple");
+  });
+
+  test("desired Check change persists immediately, but the visible pending/effective boundary waits for a worker", async () => {
+    const { setup, session } = await renderApp({ overlay: { checkMode: "on" } });
+    const release = runtimeSettings.begin({ role: "long-running worker" });
+    try {
+      setup.mockInput.pressKey("p", { ctrl: true });
+      await settle(setup);
+      await setup.mockInput.typeText("Check mode");
+      await settle(setup);
+      setup.mockInput.pressArrow("down");
+      setup.mockInput.pressArrow("right");
+      await settle(setup);
+      setup.mockInput.pressEscape();
+      await settle(setup);
+      // Off is global, so persisting desired Off removes the previous On overlay.
+      expect(existsSync(sessionSettingsFileFor(session.sessionFile))).toBe(false);
+      expect(getCheckModeConfig().profile).toBe("on");
+      expect(setup.captureCharFrame()).toContain("Check off (effective on)");
+      release();
+      await settle(setup);
+      expect(getCheckModeConfig().profile).toBe("off");
+      expect(setup.captureCharFrame()).not.toContain("Pending until");
+    } finally { release(); }
+  });
+
   test("a change lands in the session companion file, not the global config", async () => {
     const { setup, session } = await renderApp();
     await openSettings(setup);

@@ -293,9 +293,13 @@ describe("SubagentManager extension", () => {
     const result = beforeStart?.({ systemPrompt: "base prompt" });
     expect(result.systemPrompt).toContain(SUBAGENT_COORDINATION_SYSTEM_PROMPT);
     expect(result.systemPrompt).toContain("Never wait for subagents with bash sleep");
-    expect(result.systemPrompt).toContain("Subagent capacity: slots are available (limit 10)");
+    expect(result.systemPrompt).not.toContain("Subagent capacity:");
+    const observation = handlers.get("context")?.[0]?.({ messages: [] }, {
+      cwd: "/repo", sessionManager: { getSessionId: () => "main", getBranch: () => [] },
+    });
+    expect(observation.messages[0].content).toContain("Subagent capacity: slots are available (limit 10)");
     expect(result.systemPrompt).toContain("call enable_tools with Subagents first");
-    expect(result.systemPrompt).toContain("Prefer spawn_subagent for follow-up implementation work");
+    expect(observation.messages[0].content).toContain("Prefer spawn_subagent for follow-up implementation work");
     expect(definitions.get("spawn_subagent").parameters.properties.preview).toBeDefined();
     expect(definitions.get("spawn_subagent").parameters.properties.worktree.description)
       .toContain("Defaults to false");
@@ -1649,6 +1653,24 @@ describe("SubagentManager extension", () => {
       .rejects.toThrow("- grandchild (failed)\n- child (completed)");
   });
 
+  test("readonly, judge and AFK children receive no capacity invitation", () => {
+    for (const role of ["readonly", "judge", "afk"]) {
+      const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test" });
+      addTestAgent(manager, "restricted", "idle");
+      const record = (manager as any).records.get("restricted");
+      if (role === "readonly") record.snapshot.readonly = true;
+      else record.snapshot.role = role;
+      const handlers = new Map<string, Function>();
+      (manager as any).childExtension("restricted").factory({
+        on(name: string, handler: Function) { handlers.set(name, handler); },
+        registerTool() {},
+      });
+      expect(handlers.has("context")).toBe(false);
+      expect(handlers.get("before_agent_start")!({ systemPrompt: "base" }).systemPrompt)
+        .not.toContain("Subagent capacity:");
+    }
+  });
+
   test("nested agents receive the configured capacity and recursive closure guidance", () => {
     const manager = new SubagentManager({ modelRuntime: {} as any, agentDir: "/tmp/pum-test", maxActiveSubagents: 14 });
     addTestAgent(manager, "parent", "idle");
@@ -1659,7 +1681,11 @@ describe("SubagentManager extension", () => {
     });
 
     const result = handlers.get("before_agent_start")?.({ systemPrompt: "base" });
-    expect(result.systemPrompt).toContain("Subagent capacity: slots are available (limit 14)");
+    expect(result.systemPrompt).not.toContain("Subagent capacity:");
+    const observation = handlers.get("context")?.({ messages: [] }, {
+      cwd: "/repo", sessionManager: { getSessionId: () => "parent", getBranch: () => [] },
+    });
+    expect(observation.messages[0].content).toContain("Subagent capacity: slots are available (limit 14)");
     expect(result.systemPrompt).toContain("recursively merge or resolve every retained descendant");
     expect(result.systemPrompt).toContain("Before finish_subagent");
   });
@@ -1725,7 +1751,7 @@ describe("SubagentManager extension", () => {
     );
   });
 
-  test("injects custom at-capacity guidance into the main system prompt", () => {
+  test("appends full/available transitions while keeping main system guidance stable", () => {
     const handlers = new Map<string, Function[]>();
     const pi = {
       on(name: string, handler: Function) {
@@ -1740,9 +1766,24 @@ describe("SubagentManager extension", () => {
     (manager.mainExtension() as { factory: (api: any) => void }).factory(pi);
 
     const result = handlers.get("before_agent_start")?.[0]?.({ systemPrompt: "base prompt" });
-    expect(result.systemPrompt).toContain("all 12 slots are active; no slots available");
-    expect(result.systemPrompt).toContain("Queue follow-up work with message_agent");
-    expect(result.systemPrompt).toContain("keep the work pending for deliberate routing");
+    expect(result.systemPrompt).not.toContain("all 12 slots");
+    const context = handlers.get("context")![0]!;
+    const source = [{ role: "user", content: "continue", timestamp: 1 }];
+    const ctx = { cwd: "/repo", sessionManager: { getSessionId: () => "main", getBranch: () => [] } };
+    const full = context({ messages: source }, ctx).messages;
+    expect(full[0].content).toContain("all 12 slots are active; no slots available");
+    expect(full[0].content).toContain("Queue follow-up work with message_agent");
+    expect(full[0].content).toContain("keep the work pending for deliberate routing");
+    expect(context({ messages: source }, ctx).messages).toEqual(full);
+    (manager as any).records.get("active-0").snapshot.status = "idle";
+    const available = context({ messages: source }, ctx).messages;
+    expect(available.slice(0, full.length)).toEqual(full);
+    expect(available.at(-1).content).toContain("slots are available (limit 12)");
+    expect(handlers.get("before_agent_start")![0]!({ systemPrompt: "base prompt" })).toEqual(result);
+    (manager as any).records.get("active-0").snapshot.status = "running";
+    const again = context({ messages: source }, ctx).messages;
+    expect(again.slice(0, available.length)).toEqual(available);
+    expect(again.at(-1).content).toContain("all 12 slots are active");
   });
 
   test("notifies an idle main after a user instruction reaches a subagent", async () => {

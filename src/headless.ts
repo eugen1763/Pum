@@ -13,11 +13,13 @@ import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
 import { ContextWindowController, CONTEXT_TOOL_NAMES } from "./context-window";
 import { checkPathsForProject, loadSettings } from "./settings";
+import { loadSessionSettings, mergeSessionSettings } from "./session-settings";
+import { bindRuntimeSettingsActivity, runtimeSettings } from "./runtime-settings";
 import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
 import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-prompt";
 import { explanationStrengthExtension, setExplanationStrength } from "./explanation-strength";
-import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
+import { bindCheckModeApprovalSession, createCheckModeExtension, setCheckModeConfig } from "./check-mode";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import {
   bindSearchSession,
@@ -187,7 +189,17 @@ async function runPromptSession(
     }),
   });
 
-  webSearch.enabled = settings.webSearch;
+  runtimeSettings.request({
+    checkMode: settings.checkMode,
+    checkModel: settings.checkModel,
+    sandboxMode: sandboxController.mode,
+    checkPaths: checkPathsForProject(settings, process.cwd()),
+    webSearch: settings.webSearch,
+  }, (effective) => {
+    setCheckModeConfig({ profile: effective.checkMode, model: effective.checkModel, additionalPaths: effective.checkPaths });
+    sandboxController.setMode(effective.sandboxMode);
+    webSearch.enabled = effective.webSearch;
+  });
   installWebSearch(modelRuntime);
 
   const cwd = process.cwd();
@@ -195,6 +207,19 @@ async function runPromptSession(
   const startup = await lockedProjectSession(cwd, options.resume === true, sessionLockOwner);
   const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
+      const releaseSettingsSetup = runtimeSettings.begin({});
+      try {
+      const attachedSettings = mergeSessionSettings(settings, loadSessionSettings(sessionManager.getSessionFile()));
+      setWritingStyle(attachedSettings.writingStyle);
+      setExplanationStrength(attachedSettings.explanationStrength);
+      setBashOutputSettingsIfPresent(attachedSettings.bashOutput);
+      runtimeSettings.request({
+        checkMode: attachedSettings.checkMode,
+        checkModel: attachedSettings.checkModel,
+        sandboxMode: attachedSettings.sandboxMode ?? "auto",
+        checkPaths: checkPathsForProject(attachedSettings, cwd),
+        webSearch: attachedSettings.webSearch,
+      });
       const contextWindow = new ContextWindowController();
       const validation = new ProjectValidationController({ cwd });
       const services = await createAgentSessionServices({
@@ -222,6 +247,8 @@ async function runPromptSession(
         tools: HEADLESS_TOOL_NAMES,
       });
       try {
+        bindRuntimeSettingsActivity(result.session);
+        bindCheckModeApprovalSession(result.session);
         bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
         validation.bind(result.session);
@@ -232,6 +259,7 @@ async function runPromptSession(
         throw error;
       }
       return { ...result, services, diagnostics: services.diagnostics };
+      } finally { releaseSettingsSetup(); }
     },
     {
       cwd,

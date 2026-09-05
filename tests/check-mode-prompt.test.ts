@@ -7,14 +7,15 @@ import {
 } from "../src/check-mode-prompt";
 import { setCheckModeConfig } from "../src/check-mode";
 
-function beforeAgentStart() {
-  let handler: ((event: { systemPrompt: string }) => { systemPrompt: string } | undefined) | undefined;
+function contextObserver() {
+  const handlers = new Map<string, Function>();
   (checkModePromptExtension as any).factory({
-    on(event: string, callback: typeof handler) {
-      if (event === "before_agent_start") handler = callback;
-    },
-  } as any);
-  return handler!;
+    on(event: string, callback: Function) { handlers.set(event, callback); },
+  });
+  expect(handlers.has("before_agent_start")).toBe(false);
+  const messages = [{ role: "user", content: "inspect", timestamp: 1 }];
+  const ctx = { cwd: "/project", sessionManager: { getSessionId: () => "test", getBranch: () => [] } };
+  return () => handlers.get("context")!({ messages }, ctx).messages;
 }
 
 afterEach(() => {
@@ -98,37 +99,38 @@ describe("buildCheckModePrompt", () => {
 });
 
 describe("checkModePromptExtension", () => {
-  test("appends the block to the system prompt", () => {
-    const handler = beforeAgentStart();
+  test("projects the block without changing the system prefix", () => {
+    const handler = contextObserver();
     setSandboxModeSource(() => "auto");
     setCheckModeConfig({
       profile: "on",
       model: "test/verifier",
       additionalPaths: ["C:/data/one"],
     });
-    const result = handler({ systemPrompt: "base" });
-    expect(result).toBeDefined();
-    expect(result!.systemPrompt.startsWith("base\n\n## Allowed and denied")).toBe(true);
-    expect(result!.systemPrompt).toContain("Check mode: on");
-    expect(result!.systemPrompt).toContain("C:/data/one");
+    const result = handler();
+    expect(result[0].customType).toBe("pum.check_policy");
+    expect(result[0].content).toContain("Check mode: on");
+    expect(result[0].content).toContain("C:/data/one");
+    expect(handler()).toEqual(result);
   });
 
-  test("reflects live config so the block follows the toggle and root changes", () => {
-    const handler = beforeAgentStart();
+  test("appends live changes while retaining earlier observations", () => {
+    const handler = contextObserver();
     setSandboxModeSource(() => "require");
 
     setCheckModeConfig({ profile: "on", model: "test/verifier", additionalPaths: [] });
-    const on = handler({ systemPrompt: "base" })!;
-    expect(on.systemPrompt).toContain("Check mode: on");
+    const on = handler();
+    expect(on[0].content).toContain("Check mode: on");
 
     setCheckModeConfig({
       profile: "on",
       model: "test/verifier",
       additionalPaths: ["D:/data/two"],
     });
-    const withRoot = handler({ systemPrompt: "base" })!;
-    expect(withRoot.systemPrompt).toContain("Check mode: on");
-    expect(withRoot.systemPrompt).toContain("Sandbox: require");
-    expect(withRoot.systemPrompt).toContain("D:/data/two");
+    const withRoot = handler();
+    expect(withRoot.slice(0, on.length)).toEqual(on);
+    expect(withRoot.at(-1).content).toContain("Check mode: on");
+    expect(withRoot.at(-1).content).toContain("Sandbox: require");
+    expect(withRoot.at(-1).content).toContain("D:/data/two");
   });
 });

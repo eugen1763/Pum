@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { bindRuntimeSettingsActivity } from "../src/runtime-settings";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App } from "../src/app";
@@ -23,7 +24,9 @@ async function fixture(stashedText?: string, sentHistory: string[] = []) {
   const childLines: {line: any; options: any}[] = [];
   const model = { id: "plain", name: "Plain", provider: "mock", reasoning: false, input: ["text"], contextWindow: 32000 };
   const session = {
-    agent: { state: { model, thinkingLevel: "off" } },
+    isStreaming: false,
+    agent: { state: { model, thinkingLevel: "off", isStreaming: false } },
+    sendCustomMessage: async () => {},
     sessionManager: { buildContextEntries: () => [], getEntries: () => [], appendCustomEntry: () => calls.push("persist") },
     sessionId: "mcp-ui-main", subscribe: (listener: (event: any) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
     clearQueue: () => ({ steering: [], followUp: [] }), abort: async () => { calls.push("abort"); },
@@ -49,6 +52,7 @@ async function fixture(stashedText?: string, sentHistory: string[] = []) {
   const authorityCalls: string[] = [];
   session.dispose = () => {};
   session.sessionManager.getCwd = () => process.cwd();
+  bindRuntimeSettingsActivity(session);
   const validation = new ProjectValidationController({ cwd: process.cwd() });
   validation.bind(session);
   validation.enable = () => { authorityCalls.push("enable"); };
@@ -64,7 +68,7 @@ async function fixture(stashedText?: string, sentHistory: string[] = []) {
   checkpoints.recover = async () => { authorityCalls.push("recover"); return "/test/recovery-copy"; };
   checkpoints.clear = () => { authorityCalls.push("clear"); };
   checkpoints.list = () => { authorityCalls.push("list"); return []; };
-  destroy = () => { setup.renderer.destroy(); validation.dispose(); handlers.get("session_shutdown")!(); };
+  destroy = () => { setup.renderer.destroy(); session.dispose(); handlers.get("session_shutdown")!(); };
   const settings = { showThinking: false, theme: "tokyonight", animations: false, workingRuleAnimation: "off", webSearch: false, writingStyle: "none", explanationStrength: "simple", checkMode: "off", checkModel: "mock/plain", maxActiveSubagents: 10 } as any;
   createRoot(setup.renderer).render(<App session={session}
     modelRuntime={{ getAvailableSnapshot: () => [model], getProviders: () => [] } as any}

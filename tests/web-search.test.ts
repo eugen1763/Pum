@@ -105,15 +105,17 @@ function recordingProvider(received: any[]): any {
 }
 
 // ModelRuntime/SDK copy the options object but retain the payload callback.
-function boundSession(provider: any, sessionId: string, role: SearchSessionRole, method = "streamSimple") {
+async function boundSession(provider: any, sessionId: string, role: SearchSessionRole, method = "streamSimple", prepare = true) {
   const session = {
     sessionId,
     agent: {
+      transformContext: undefined as undefined | ((messages: any[], signal?: AbortSignal) => Promise<any[]>),
       streamFunction: (model: any, context: any, options: any) =>
         provider[method](model, context, { ...options }),
     },
   };
   bindSearchSession(session as any, role);
+  if (prepare) await session.agent.transformContext!([]);
   return session;
 }
 
@@ -136,7 +138,7 @@ describe("web search provider wrapping", () => {
       baseCalled = true;
       return { ...payload, tagged: true };
     };
-    const session = boundSession(wrapped, "main", "main");
+    const session = await boundSession(wrapped, "main", "main");
     session.agent.streamFunction({}, {}, { sessionId: "main", onPayload: baseHook });
 
     const chained = received[0].onPayload as (p: unknown, m: unknown) => Promise<any>;
@@ -171,11 +173,12 @@ describe("web search provider wrapping", () => {
       const prototype = { inheritedMethod: () => "preserved" };
       const base = Object.assign(Object.create(prototype), recordingProvider(received));
       const wrapped = wrapProvider(base);
-      const session = boundSession(wrapped, role, role, method);
+      const session = await boundSession(wrapped, role, role, method);
       const signal = new AbortController().signal;
       session.agent.streamFunction({}, {}, { sessionId: role, transport: "websocket-cached", signal });
       expect(received[0].transport).toBe("websocket-cached");
-      expect(received[0].signal).toBe(signal);
+      expect(received[0].signal).not.toBe(signal); // request-specific composed cancellation
+      expect(received[0].signal.aborted).toBe(false);
       expect((wrapped as any).inheritedMethod()).toBe("preserved");
       expect((await received[0].onPayload({ tools: [functionTool] }, {})).tools)
         .toEqual([functionTool, { type: "web_search" }]);
@@ -185,7 +188,7 @@ describe("web search provider wrapping", () => {
   test.each(["readonly", "judge", "afk", undefined, "unknown"])("denies role %s after extension transforms", async (role) => {
     webSearch.enabled = true;
     const received: any[] = [];
-    const session = boundSession(wrapProvider(recordingProvider(received)), "restricted", role as SearchSessionRole);
+    const session = await boundSession(wrapProvider(recordingProvider(received)), "restricted", role as SearchSessionRole);
     session.agent.streamFunction({}, {}, {
       sessionId: "restricted",
       onPayload: (payload: any) => ({ ...payload, tagged: true, tools: [functionTool, { type: "web_search" }] }),
@@ -196,7 +199,7 @@ describe("web search provider wrapping", () => {
   test("denies absent and mismatched request session identities", async () => {
     webSearch.enabled = true;
     const received: any[] = [];
-    const session = boundSession(wrapProvider(recordingProvider(received)), "main", "main");
+    const session = await boundSession(wrapProvider(recordingProvider(received)), "main", "main");
     for (const sessionId of [undefined, "other"]) {
       session.agent.streamFunction({}, {}, { sessionId });
       expect(await received.at(-1).onPayload({ tools: [] }, {})).toBeUndefined();
@@ -211,7 +214,7 @@ describe("web search provider wrapping", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     for (const role of roles) {
-      const session = boundSession(provider, role, role);
+      const session = await boundSession(provider, role, role);
       withSearchRoute("unrelated-observer-route", () => session.agent.streamFunction({}, {}, {
         sessionId: role,
         onPayload: async (payload: any) => { await gate; return { ...payload, tagged: role }; },
@@ -223,8 +226,9 @@ describe("web search provider wrapping", () => {
     expect((await Promise.all(pending)).map((payload) => payload.tools)).toEqual(roles.map(() => [functionTool]));
     webSearch.enabled = true;
     const enabled = await Promise.all(received.map((options) => options.onPayload({ tools: [functionTool] }, {})));
+    // Re-enabling cannot resurrect payload hooks from before the disable.
     expect(enabled.map((payload) => payload.tools.some((tool: any) => tool.type === "web_search")))
-      .toEqual([true, false, true, false, false]);
+      .toEqual([false, false, false, false, false]);
     expect(enabled.map((payload) => payload.tagged)).toEqual([...roles]);
   });
 
@@ -232,7 +236,7 @@ describe("web search provider wrapping", () => {
     webSearch.enabled = true;
     const received: any[] = [];
     const provider = wrapProvider(recordingProvider(received));
-    const session = boundSession(provider, "main", "main");
+    const session = await boundSession(provider, "main", "main");
     session.agent.streamFunction({}, {}, {
       sessionId: "main",
       onPayload: async (payload: any) => {
@@ -252,13 +256,35 @@ describe("web search provider wrapping", () => {
     expect(await received[1].onPayload({ tools: [] }, {})).toEqual({ tools: [], verifier: true });
   });
 
+  test("request serialization fence preserves extension fields, receiver, and existing toJSON semantics", async () => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const session = await boundSession(wrapProvider(recordingProvider(received)), "main", "main");
+    session.agent.streamFunction({}, {}, { sessionId: "main", onPayload: (body: any) => ({ ...body,
+      tagged: true,
+      toJSON(this: any, key: string) { return { tools: this.tools, tagged: this.tagged, key }; },
+    }) });
+    const guarded = await received[0].onPayload({ tools: [functionTool] }, {});
+    const json = JSON.stringify(guarded);
+    expect(JSON.parse(json)).toEqual({ tools: [functionTool, { type: "web_search" }], tagged: true, key: "" });
+    expect(json).not.toContain("toJSON");
+    expect(JSON.stringify({ type: "response.create", ...guarded })).toBe(json);
+    webSearch.enabled = false;
+    expect(() => JSON.stringify({ type: "response.create", ...guarded })).toThrow("Request was aborted");
+    expect(JSON.stringify(guarded)).toBe(json); // historical comparison is not dispatch
+  });
+
   test("does not duplicate search and preserves undefined hook semantics", async () => {
     webSearch.enabled = true;
     const received: any[] = [];
-    const session = boundSession(wrapProvider(recordingProvider(received)), "main", "main");
+    const session = await boundSession(wrapProvider(recordingProvider(received)), "main", "main");
     session.agent.streamFunction({}, {}, { sessionId: "main", onPayload: () => undefined });
     const body = { tools: [functionTool, { type: "web_search" }] };
-    expect(await received[0].onPayload(body, {})).toBeUndefined();
+    // Undefined from the extension still means use the original body, but the
+    // final policy installs its private fence even for an existing search tool.
+    const guarded = await received[0].onPayload(body, {});
+    expect(JSON.stringify(guarded)).toBe(JSON.stringify(body));
+    expect(guarded.tools).not.toBe(body.tools);
     expect(body.tools).toHaveLength(2);
     webSearch.enabled = false;
     expect(await received[0].onPayload(body, {})).toEqual({ tools: [functionTool] });

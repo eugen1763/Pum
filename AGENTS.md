@@ -52,6 +52,8 @@ bun run start    # open the TUI in the current directory
 | `src/memory-identity.ts` | Stable Git common-directory or non-Git directory identity for project memory |
 | `src/memory.ts` | Bounded Markdown memory, atomic revision edits, context injection, and model tools |
 | `src/memory-context.ts` | Runtime-private per-window memory snapshots and append-only replacement updates |
+| `src/operational-context.ts` | Runtime-private append-only capacity and effective-policy observations |
+| `src/runtime-settings.ts` | Immediate tightening and all-affected-runtimes-idle relaxation coordination |
 | `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/text-paste.ts` | Bounded local clipboard text capture for secure login fields |
@@ -747,6 +749,36 @@ These were chosen deliberately. Change them only on purpose.
   completion. The generated prompt is authoritative execution after
   `message_cache_send`; reuse agents already assigned to its tasks and never
   create duplicate assignments.
+- **Operational state does not rewrite the system prefix.** Capacity and effective
+  Check policy use runtime-private append-only request observations, retained at
+  fixed complete-tool-block boundaries. Unchanged requests/retries add nothing.
+  Current observations supersede older ones but never authorize tools. Main and
+  mutable workers receive capacity notices; readonly/headless/judge/AFK do not.
+  Memory and context-window accounting include the complete retained chain.
+  Replacement, branch changes and explicit no-summary rollover start a fresh
+  projection; no operational companion, durable rewrite or automatic rollover.
+  Writing/explanation changes apply at the next accepted prompt, Bash presentation
+  at the next tool call, UI preferences immediately. Tool-group enablement keeps
+  its canonical next-request schema and existing tool-result notice.
+- **Security relaxation waits for all affected runtimes to settle.** Desired UI
+  settings persist immediately and a pending notice distinguishes effective
+  values. Check on, stronger sandbox, removed roots and search off tighten now;
+  Check off, weaker sandbox, added roots and search on commit together only after
+  main, workers (including readonly), internal roles and user shell activity truly
+  settle. Async admission/setup reserves activity. `agent_end` does not release
+  retries, and retained inactive records do not block. Pending long-worker delays
+  are user-approved. Capacity limits are operational and change immediately without
+  killing existing workers. A monotonic effective-security epoch invalidates
+  pending Check/structured-process approvals after asynchronous review. The bound
+  full preflight chain and core file/process execute entries both recheck it, so
+  an earlier prepared parallel call cannot run while a later sibling crosses a
+  revocation. Synthetic validation uses the same route. This remains a check-time
+  tool-entry boundary, not rollback or an atomic OS transaction.
+  Search additionally snapshots role-effective state at
+  the context boundary and checks a live disable epoch after async payload hooks;
+  disable/re-enable never revives an old request capability. A dispatched hosted
+  request or already-admitted OS process cannot be retroactively confined. See
+  `docs/operational-settings.md` for timing and limitations.
 - **Follow-up implementation work uses available parallel capacity.** Count only
   `starting` and `running` subagents toward the configured active limit. The PUM
   setting defaults to 10 and accepts values from 1 through 25. When a slot is
@@ -918,6 +950,16 @@ These were chosen deliberately. Change them only on purpose.
   companion file) so they survive
   resume and never enter LLM context. There is no News group because PUM has
   no news model tool; groups with zero tools are dropped.
+- **Idle consent uses exact-runtime activity, not App busy or SDK session flags alone.**
+  `isRuntimeIdle` requires a live fully bound session, zero own public/core/shell
+  owners and both SDK session/core streaming flags explicitly false. Unbound,
+  binding and disposed runtimes fail closed. An old cancelled SDK preflight can
+  clear session/App busy while a newer core run continues. App MCP connect/approve,
+  LSP connect/check and validation enable retain transition/selected-runtime guards;
+  main MCP/LSP callbacks and real validation enable independently check exact idle.
+  Unrelated runtime reservations do not block an idle session. Direct revoke,
+  disconnect, stop, disable and cancellation remain available during active work.
+  See `docs/operational-settings.md` for SDK-dependent scope and admission limits.
 - **Direct-user command authority belongs to the draft origin.** App keeps a
   ref-backed direct/restored origin independent of cache indices. All `/mcp`,
   `/validation` and `/checkpoint` operations (including preview/list/status and

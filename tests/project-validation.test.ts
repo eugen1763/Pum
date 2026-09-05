@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { bindRuntimeSettingsActivity } from "../src/runtime-settings";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
 import { linkSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -39,13 +40,15 @@ function runtime(cwd: string, options: { id?: string; readonly?: boolean; execut
   let disposed = 0;
   const session = {
     sessionId: options.id ?? randomUUID(), isStreaming: false,
+    subscribe: () => () => {}, prompt: async () => {}, abort: async () => {},
     sessionManager: { getCwd: () => cwd }, dispose: () => { disposed++; },
     sendCustomMessage: async (message: { details: ValidationEvidence }) => { messages.push(message); },
-    agent: { state: { messages: [], systemPrompt: "", tools: [{ name: "bash", execute: async () => {
+    agent: { state: { isStreaming: false, messages: [], systemPrompt: "", tools: [{ name: "bash", execute: async () => {
       calls.push("execute");
       return options.execute ? options.execute() : { content: [{ type: "text", text: "ok" }] };
     } }] }, beforeToolCall: async () => { calls.push("check"); return {}; } },
   } as unknown as AgentSession;
+  bindRuntimeSettingsActivity(session);
   controller.bind(session);
   const handlers = new Map<string, (...args: any[]) => any>();
   const extension = controller.extension();

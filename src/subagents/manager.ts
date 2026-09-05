@@ -20,6 +20,7 @@ import {
   usageFromEntries,
 } from "../agent-usage";
 import { replayEntries } from "../replay";
+import { registerOperationalNotice } from "../operational-context";
 import { bindFileCheckpointSession } from "../file-checkpoints";
 import { ProjectValidationController, VALIDATION_CUSTOM_TYPE } from "../project-validation";
 import {
@@ -29,7 +30,7 @@ import {
   saveNewsItems,
   tagNewsLines,
 } from "../news";
-import { isRejectedToolResult, rejectedToolReason } from "../check-mode";
+import { bindCheckModeApprovalSession, isRejectedToolResult, rejectedToolReason } from "../check-mode";
 import {
   observeSearchCalls,
   persistSearchCall,
@@ -122,6 +123,7 @@ import {
 import { registerShellTools, type ShellTargetSelector } from "../shells/tools";
 import { captureForkSource, createForkedSession, entriesAfterForkCutoff } from "./fork-session";
 import { SessionLockOwner, releaseSessionLockOnDispose } from "../session-lock";
+import { bindRuntimeSettingsActivity, runtimeSettings } from "../runtime-settings";
 
 const MAX_RETAINED_AGENTS = 100;
 const MAX_MESSAGE_LENGTH = 12_000;
@@ -156,7 +158,7 @@ export const SUBAGENT_COORDINATION_SYSTEM_PROMPT = `## Background subagent coord
 
 - spawn_subagent, message_agent, and list_subagents live in the hidden Subagents tool group. When they are not in the tool list, call enable_tools with Subagents first.
 - spawn_subagent returns after setup. The subagent continues in the background.
-- Count only starting and running subagents as active. The capacity line below reports whether a slot is available.
+- Count only starting and running subagents as active. Request-bound operational notices report whether a slot is available; admission checks remain authoritative.
 - For follow-up implementation work, prefer a new subagent while capacity is available.
 - Subagents share the launch project by default. Set worktree to true only when isolated changes or conflict avoidance require a separate branch.
 - At capacity, use message_agent to queue follow-up work for an appropriate related running subagent.
@@ -274,6 +276,8 @@ type RuntimeRecord = {
   userAborted?: boolean;
   /** In-flight runtime build, so concurrent callers share one session. */
   runtimeReady?: Promise<void>;
+  /** Invalidates async setup before stop/abort waits for that setup to unwind. */
+  runtimeGeneration?: number;
   /** Spawn tool schema registered for this child, refreshed with the Sandbox setting. */
   spawnParameters?: ReturnType<typeof spawnSubagentParameters>;
   /** Set only for a goal judge: where its single structured verdict is delivered. */
@@ -458,6 +462,7 @@ export class SubagentManager {
   private mainCompletionResponse = "";
   private maxActiveSubagents: number;
   private worktreeQueue: Promise<void> = Promise.resolve();
+  private setupGeneration = 0;
   private readonly messageTimes = new Map<string, number[]>();
   private readonly settlements = new Map<string, SubagentSettlement>();
   private readonly acceptedSettlementMessageIds = new Set<string>();
@@ -1179,6 +1184,12 @@ export class SubagentManager {
         // child session_start event on some session creation paths.
         const initialRecord = this.records.get(agentId);
         if (initialRecord) initialRecord.api = pi;
+        if (initialRecord && !isInternalRole(initialRecord.snapshot.role) && !initialRecord.snapshot.readonly) {
+          registerOperationalNotice(pi, {
+            customType: "pum.subagent_capacity",
+            observe: () => buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
+          });
+        }
         pi.on("session_start", (_event, ctx) => {
           const record = this.records.get(agentId);
           if (record) record.api = pi;
@@ -1227,8 +1238,7 @@ export class SubagentManager {
                 ? "Commit completed changes before finishing.\n\n"
                 : "Do not commit unless the task or spawner explicitly requires a commit.\n\n")
               + SUBAGENT_COMMUNICATION_SYSTEM_PROMPT + "\n\n"
-              + SUBAGENT_COORDINATION_SYSTEM_PROMPT + "\n\n"
-              + buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
+              + SUBAGENT_COORDINATION_SYSTEM_PROMPT,
           };
         });
 
@@ -1497,8 +1507,12 @@ export class SubagentManager {
         // Capture the API immediately. Some session creation paths load inline
         // extensions after session_start, so every tool also binds lazily.
         this.mainApi = pi;
+        registerOperationalNotice(pi, {
+          customType: "pum.subagent_capacity",
+          observe: () => buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents),
+        });
         pi.on("before_agent_start", (event) => ({
-          systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}\n\n${buildSubagentCapacityPrompt(this.activeCount(), this.maxActiveSubagents)}`,
+          systemPrompt: `${event.systemPrompt}\n\n${SUBAGENT_COORDINATION_SYSTEM_PROMPT}`,
         }));
         pi.on("agent_start", () => {
           this.mainRunning = true;
@@ -1960,6 +1974,19 @@ export class SubagentManager {
   }
 
   async spawn(options: SpawnSubagentOptions): Promise<SubagentSnapshot> {
+    // Reserve before the serialized admission/setup await: even internal and
+    // readonly agents can be affected by a pending security relaxation. The
+    // bound prompt acquires its session key before this setup key is released.
+    const releaseStarting = runtimeSettings.begin({});
+    try {
+      return await this.spawnReserved(options);
+    } finally {
+      releaseStarting();
+    }
+  }
+
+  private async spawnReserved(options: SpawnSubagentOptions): Promise<SubagentSnapshot> {
+    const setupGeneration = this.setupGeneration;
     if (options.readonly === true && this.sandboxModeSource() === "off") {
       throw new Error("Readonly subagents require the PUM Sandbox setting to be Auto or Require");
     }
@@ -1971,6 +1998,7 @@ export class SubagentManager {
     const lockOwner = new SessionLockOwner();
     let releaseForkLock = () => {};
     const record = await this.withWorktreeLock(async () => {
+      if (this.setupGeneration !== setupGeneration) throw new Error("Subagent startup was cancelled");
       // The judge is not a worker, so the parallel-work limit does not apply.
       if (!isInternalRole(options.role) && this.activeCount() >= this.maxActiveSubagents) {
         throw activeLimitError(this.maxActiveSubagents);
@@ -1996,6 +2024,7 @@ export class SubagentManager {
         ? await createWorktree(this.mainCwd, name)
         : this.projectWorktreeRecord(name);
       try {
+        if (this.setupGeneration !== setupGeneration) throw new Error("Subagent startup was cancelled");
         const now = Date.now();
         const snapshot: SubagentSnapshot = {
           id,
@@ -2055,7 +2084,9 @@ export class SubagentManager {
     });
 
     try {
+      if ((record.runtimeGeneration ?? 0) !== 0) throw new Error("Subagent startup was cancelled");
       await this.ensureRuntime(record);
+      if ((record.runtimeGeneration ?? 0) !== 0) throw new Error("Subagent startup was cancelled");
       this.appendLine(record, { kind: "text", role: "user", text: options.task });
       this.updateStatus(record, "running");
       void withSearchRoute(record.session!.sessionId, () => record.session!.prompt(options.task)).catch((error) => {
@@ -2068,6 +2099,9 @@ export class SubagentManager {
       });
       return cloneSnapshot(record);
     } catch (error) {
+      // A stop owns the status and retained record; cancelled setup must not
+      // resurrect it as failed or start the original prompt after disposal.
+      if ((record.runtimeGeneration ?? 0) !== 0) throw error;
       if (context === "fork") {
         await record.dispose?.();
         this.records.delete(record.snapshot.id);
@@ -2104,15 +2138,22 @@ export class SubagentManager {
    */
   private async ensureRuntime(record: RuntimeRecord, retrySettlements = true): Promise<void> {
     if (!record.session) {
-      record.runtimeReady ??= this.buildRuntime(record).finally(() => {
-        record.runtimeReady = undefined;
-      });
+      if (!record.runtimeReady) {
+        // Restored retained runtimes are built lazily, outside spawn(). Their
+        // async setup is affected too; a merely retained idle record is not.
+        const releaseSetup = record.snapshot.status === "starting" ? () => {} : runtimeSettings.begin({});
+        record.runtimeReady = this.buildRuntime(record).finally(() => {
+          record.runtimeReady = undefined;
+          releaseSetup();
+        });
+      }
       await record.runtimeReady;
     }
     if (retrySettlements) await this.retrySettlementsForParent(record.snapshot.id);
   }
 
   private async buildRuntime(record: RuntimeRecord): Promise<void> {
+    const generation = record.runtimeGeneration ?? 0;
     if (!existsSync(record.snapshot.worktree.path)) throw new Error(`Missing worktree: ${record.snapshot.worktree.path}`);
 
     const model = this.resolveModel(record.snapshot.modelId);
@@ -2177,6 +2218,11 @@ export class SubagentManager {
         : judge ? judgeAllowedToolNames() : childAllowedToolNames(record.snapshot.readonly),
     });
     try {
+      if ((record.runtimeGeneration ?? 0) !== generation) throw new Error("Subagent startup was cancelled");
+      // Every role participates, including readonly workers, judges and AFK.
+      // The binding releases on true settlement/abort/disposal, never agent_end.
+      bindRuntimeSettingsActivity(result.session);
+      bindCheckModeApprovalSession(result.session);
       if (!internal && !record.snapshot.readonly) bindFileCheckpointSession(result.session);
       bindSearchSession(result.session, record.snapshot.readonly ? "readonly" : record.snapshot.role);
       contextWindow?.bind(result.session);
@@ -2521,7 +2567,11 @@ export class SubagentManager {
 
   async abortAgent(id: string): Promise<void> {
     const record = this.findRecord(id);
-    if (!record?.session) return;
+    if (!record) return;
+    if (record.snapshot.status === "starting" || !record.session) {
+      await this.stop(id);
+      return;
+    }
     if (record.session.isStreaming) record.userAborted = true;
     const queued = record.session.clearQueue();
     const remainingOccurrences = new Map<string, number>();
@@ -3153,6 +3203,10 @@ export class SubagentManager {
   async stop(id: string, status: SubagentStatus = "stopped", persist = true): Promise<void> {
     const record = this.findRecord(id);
     if (!record) return;
+    record.runtimeGeneration = (record.runtimeGeneration ?? 0) + 1;
+    // Keep the spawn reservation until async setup has actually unwound. The
+    // generation check prevents a freshly built session from becoming usable.
+    await record.runtimeReady?.catch(() => {});
     const sessionId = record.session?.sessionId;
     if (sessionId) {
       await this.shellManager?.invalidateAgent(sessionId, record.snapshot.id);
@@ -3178,7 +3232,11 @@ export class SubagentManager {
   }
 
   private async stopAll(status: SubagentStatus, persist: boolean): Promise<void> {
+    this.setupGeneration++;
+    // Invalidate every setup synchronously before waiting for the first one.
+    for (const record of this.records.values()) record.runtimeGeneration = (record.runtimeGeneration ?? 0) + 1;
     for (const record of this.records.values()) {
+      await record.runtimeReady?.catch(() => {});
       const sessionId = record.session?.sessionId;
       if (sessionId) {
         await this.shellManager?.invalidateAgent(sessionId, record.snapshot.id);

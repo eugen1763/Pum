@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { bindRuntimeSettingsActivity } from "../src/runtime-settings";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App } from "../src/app";
@@ -22,6 +23,14 @@ function bindController(session: any, readonly = false) {
   session.sessionManager.getCwd = () => cwd;
   session.dispose = () => {};
   session.agent ??= {};
+  session.agent.state ??= {};
+  session.agent.state.isStreaming ??= false;
+  session.isStreaming ??= false;
+  session.prompt ??= async () => {};
+  session.sendCustomMessage ??= async () => {};
+  session.abort ??= async () => {};
+  session.subscribe ??= () => () => {};
+  bindRuntimeSettingsActivity(session);
   const controller = new ProjectValidationController({ cwd, readonly });
   cleanups.push(() => { controller.dispose(); rmSync(cwd, { recursive: true, force: true }); });
   controller.bind(session);
@@ -151,6 +160,26 @@ describe("validation direct-user UI", () => {
     expect(main.controller.status()).toContain("disabled");
     expect(childLines.every(({ options }) => options.persist === false)).toBe(true);
     expect(calls).toEqual([]);
+  });
+
+  test("selected exact worker idle guard catches stale flags but ignores unrelated main work", async () => {
+    const { setup, childLines, child, session } = await renderApp();
+    bindController(session);
+    const workerSession = { sessionId: "validation-ui-child", sessionManager: {} } as any;
+    const worker = bindController(workerSession);
+    setup.mockInput.pressTab({ shift: true }); await settle(setup);
+    child.status = "idle";
+    workerSession.isStreaming = false;
+    workerSession.agent.state.isStreaming = true;
+    await submit(setup, "/validation enable " + worker.digest);
+    expect(worker.controller.status()).toContain("disabled");
+    expect(childLines.at(-1)!.line.text).toContain("become idle");
+    workerSession.agent.state.isStreaming = false;
+    // Only the selected runtime owns this approval, not the main session's work.
+    session.agent.state.isStreaming = true;
+    await submit(setup, "/validation enable " + worker.digest);
+    expect(worker.controller.status()).toContain("enabled");
+    session.agent.state.isStreaming = false;
   });
 
   test("readonly selected worker refuses approval", async () => {

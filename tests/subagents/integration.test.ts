@@ -21,6 +21,7 @@ import { createMemoryExtension, ProjectMemoryStore } from "../../src/memory";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import { checkpointControllerForSession, createFileCheckpointExtension } from "../../src/file-checkpoints";
 import { filesystemSandboxExtension } from "../../src/filesystem-sandbox";
+import { RuntimeSettingsCoordinator, runtimeSettings } from "../../src/runtime-settings";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -1256,5 +1257,227 @@ describe("background subagents", () => {
     expect(() => new SessionLockOwner().acquire(record.snapshot.sessionFile)).toThrow(SessionLockedError);
     await manager.detachMain();
     new SessionLockOwner().acquire(record.snapshot.sessionFile)();
+  });
+});
+
+function activityGate<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function isolatedRuntimeActivity() {
+  const coordinator = new RuntimeSettingsCoordinator();
+  const initial = { checkMode: "on" as const, checkModel: "", sandboxMode: "auto" as const,
+    checkPaths: [] as string[], webSearch: false };
+  coordinator.configure(initial, () => {});
+  const begin = spyOn(runtimeSettings, "begin").mockImplementation((key) => coordinator.begin(key));
+  const settle = spyOn(runtimeSettings, "settle").mockImplementation((key) => coordinator.settle(key));
+  return { coordinator, initial, restore() { begin.mockRestore(); settle.mockRestore(); } };
+}
+
+describe("managed runtime settings activity", () => {
+  test("lazy restart of a stopped retained runtime reserves only its async rebuild", async () => {
+    const activity = isolatedRuntimeActivity();
+    const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
+    const entered = activityGate(); const release = activityGate();
+    let setups = 0;
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir,
+      childExtensionFactories: [{ name: "lazy-settings-setup", factory: async () => {
+        if (++setups > 1) { entered.resolve(); await release.promise; }
+      } }],
+    });
+    const parent = SessionManager.inMemory(repo);
+    const bridge = createMainBridge(manager, parent);
+    await manager.attachMain(bridge.api as any, parent, repo);
+    try {
+      const child = await manager.spawn({ task: "Answer once", modelId: "mock/mock-model", thinkingLevel: "off" });
+      await waitUntil(() => manager.getAgent(child.id)?.status === "idle");
+      await manager.stop(child.id);
+      expect(activity.coordinator.snapshot()?.active).toBe(0);
+      const record = (manager as any).records.get(child.id);
+      const rebuilding = (manager as any).ensureRuntime(record);
+      await entered.promise;
+      activity.coordinator.request({ ...activity.initial, checkMode: "off" });
+      expect(activity.coordinator.snapshot()?.pending).toBe(true);
+      release.resolve(); await rebuilding;
+      expect(activity.coordinator.snapshot()).toMatchObject({ active: 0, pending: false });
+    } finally { release.resolve(); await manager.detachMain(); activity.restore(); }
+  });
+  for (const role of ["worker", "readonly", "judge", "afk"] as const) {
+    test(`${role}: reserves setup, transfers admission, ignores agent_end and releases true settlement`, async () => {
+      const activity = isolatedRuntimeActivity();
+      const runtime = await ModelRuntime.create({
+        authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json"),
+      });
+      const model = runtime.getModel("mock", "mock-model")!;
+      const requested = activityGate<ReturnType<typeof createAssistantMessageEventStream>>();
+      const provider = Object.create(runtime.getProvider("mock")!);
+      provider.streamSimple = () => {
+        const stream = createAssistantMessageEventStream();
+        requested.resolve(stream);
+        return stream;
+      };
+      runtime.registerNativeProvider(provider);
+      const setupEntered = activityGate();
+      const finishSetup = activityGate();
+      const manager = new SubagentManager({ modelRuntime: runtime, agentDir, sandboxModeSource: () => "auto",
+        childExtensionFactories: [{ name: "activity-setup-gate", factory: async () => {
+          setupEntered.resolve();
+          await finishSetup.promise;
+        } }],
+      });
+      const parent = SessionManager.inMemory(repo);
+      const bridge = createMainBridge(manager, parent);
+      await manager.attachMain(bridge.api as any, parent, repo);
+      let completeStream: (() => void) | undefined;
+      try {
+        const spawning = manager.spawn({ name: `activity-${role}`, task: "Answer once.",
+          modelId: "mock/mock-model", thinkingLevel: "off", readonly: role === "readonly",
+          role: role === "readonly" ? "worker" : role });
+        // Reservation is synchronous, before the worktree queue or SDK setup.
+        expect(activity.coordinator.snapshot()?.active).toBe(1);
+        await setupEntered.promise;
+        activity.coordinator.request({ ...activity.initial, checkMode: "off", webSearch: true });
+        expect(activity.coordinator.snapshot()?.pending).toBe(true);
+        expect(activity.coordinator.snapshot()?.effective.checkMode).toBe("on");
+        finishSetup.resolve();
+        const child = await spawning;
+        const stream = await requested.promise;
+        completeStream = () => {
+          completeStream = undefined;
+          stream.push({ type: "done", reason: "stop", message: {
+            role: "assistant", content: [{ type: "text", text: "Task complete." }],
+            provider: model.provider, model: model.id, api: model.api, timestamp: Date.now(), stopReason: "stop",
+            usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          } });
+        };
+        const session = (manager as any).records.get(child.id).session;
+        // One public lifecycle owner plus one core dispatch, not two agents.
+        expect(activity.coordinator.snapshot()?.active).toBe(2);
+        // SDK agent_end is not settlement: retries may still be outstanding.
+        session._emit({ type: "agent_end", messages: [] });
+        expect(activity.coordinator.snapshot()?.pending).toBe(true);
+        expect(activity.coordinator.snapshot()?.active).toBe(2);
+        const settled = activityGate();
+        const unsubscribe = activity.coordinator.subscribe(() => {
+          if (activity.coordinator.snapshot()?.active === 0) settled.resolve();
+        });
+        completeStream();
+        await settled.promise;
+        unsubscribe();
+        expect(activity.coordinator.snapshot()?.pending).toBe(false);
+        expect(activity.coordinator.snapshot()?.effective.checkMode).toBe("off");
+        // Keeping the settled record must not retain a reservation.
+        expect(activity.coordinator.snapshot()?.active).toBe(0);
+      } finally {
+        finishSetup.resolve();
+        // Report assertion failures rather than hanging teardown on the gate.
+        completeStream?.();
+        await manager.detachMain();
+        activity.restore();
+      }
+    });
+  }
+
+  for (const cancel of ["stop", "abortAgent", "detachMain"] as const) {
+    test(`${cancel} during async SDK setup waits for unwind and never starts the cancelled prompt`, async () => {
+      const activity = isolatedRuntimeActivity();
+      const runtime = await ModelRuntime.create({
+        authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json"),
+      });
+      let requests = 0;
+      const provider = Object.create(runtime.getProvider("mock")!);
+      provider.streamSimple = () => { requests++; throw new Error("Cancelled setup must not request a model"); };
+      runtime.registerNativeProvider(provider);
+      const entered = activityGate();
+      const resume = activityGate();
+      const manager = new SubagentManager({ modelRuntime: runtime, agentDir,
+        childExtensionFactories: [{ name: "cancel-setup-gate", factory: async () => {
+          entered.resolve();
+          await resume.promise;
+        } }],
+      });
+      const parent = SessionManager.inMemory(repo);
+      const bridge = createMainBridge(manager, parent);
+      await manager.attachMain(bridge.api as any, parent, repo);
+      try {
+        const spawning = manager.spawn({ name: `cancel-activity-${cancel.toLowerCase()}`, task: "Must not run.",
+          modelId: "mock/mock-model", thinkingLevel: "off" });
+        const rejected = spawning.then(() => undefined, (error) => error);
+        await entered.promise;
+        const record = [...(manager as any).records.values()][0] as any;
+        activity.coordinator.request({ ...activity.initial, checkMode: "off" });
+        const stopping = cancel === "detachMain" ? manager.detachMain() : manager[cancel](record.snapshot.id);
+        expect(activity.coordinator.snapshot()?.active).toBe(1);
+        expect(activity.coordinator.snapshot()?.pending).toBe(true);
+        resume.resolve();
+        await stopping;
+        expect(String(await rejected)).toContain("startup was cancelled");
+        expect(requests).toBe(0);
+        expect(record.session).toBeUndefined();
+        expect(activity.coordinator.snapshot()?.active).toBe(0);
+        expect(activity.coordinator.snapshot()?.pending).toBe(false);
+      } finally {
+        resume.resolve();
+        await manager.detachMain();
+        activity.restore();
+      }
+    });
+  }
+
+  test("failed readonly admission releases setup", async () => {
+    const activity = isolatedRuntimeActivity();
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir });
+    try {
+      const spawning = manager.spawn({ task: "invalid readonly admission", modelId: "mock/mock-model",
+        thinkingLevel: "off", readonly: true });
+      await expect(spawning).rejects.toThrow("Readonly subagents require");
+      expect(activity.coordinator.snapshot()?.active).toBe(0);
+    } finally { activity.restore(); }
+  });
+
+  test("a retained runtime setup failure releases its starting reservation", async () => {
+    const activity = isolatedRuntimeActivity();
+    const manager = new SubagentManager({ modelRuntime: { getModel() { throw new Error("fixture setup failure"); } } as any, agentDir });
+    const parent = SessionManager.inMemory(repo);
+    const bridge = createMainBridge(manager, parent);
+    await manager.attachMain(bridge.api as any, parent, repo);
+    try {
+      await expect(manager.spawn({ name: "activity-failed-setup", task: "Must not run.",
+        modelId: "mock/mock-model", thinkingLevel: "off" })).rejects.toThrow("fixture setup failure");
+      const record = [...(manager as any).records.values()][0] as any;
+      expect(record.snapshot.status).toBe("failed");
+      expect(activity.coordinator.snapshot()?.active).toBe(0);
+      activity.coordinator.request({ ...activity.initial, checkMode: "off" });
+      expect(activity.coordinator.snapshot()?.pending).toBe(false);
+    } finally {
+      await manager.detachMain();
+      activity.restore();
+    }
+  });
+
+  test("detach invalidates a spawn still waiting before record insertion", async () => {
+    const activity = isolatedRuntimeActivity();
+    const manager = new SubagentManager({ modelRuntime: {} as any, agentDir });
+    const queue = activityGate();
+    (manager as any).worktreeQueue = queue.promise;
+    try {
+      const spawning = manager.spawn({ task: "Must not run.", modelId: "mock/mock-model", thinkingLevel: "off" });
+      const rejected = spawning.then(() => undefined, (error) => error);
+      activity.coordinator.request({ ...activity.initial, checkMode: "off" });
+      await manager.detachMain();
+      expect(activity.coordinator.snapshot()?.active).toBe(1);
+      expect(activity.coordinator.snapshot()?.pending).toBe(true);
+      queue.resolve();
+      expect(String(await rejected)).toContain("startup was cancelled");
+      expect((manager as any).records.size).toBe(0);
+      expect(activity.coordinator.snapshot()?.active).toBe(0);
+      expect(activity.coordinator.snapshot()?.pending).toBe(false);
+    } finally {
+      queue.resolve();
+      activity.restore();
+    }
   });
 });

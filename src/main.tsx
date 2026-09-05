@@ -20,6 +20,7 @@ import { ContextWindowController } from "./context-window";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { bindSearchSession, installWebSearch, webSearch } from "./web-search";
+import { bindRuntimeSettingsActivity, isRuntimeIdle, runtimeSettings } from "./runtime-settings";
 import { installModelCatalogFallbacks } from "./model-catalog";
 import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
@@ -30,6 +31,7 @@ import {
 } from "./explanation-strength";
 import {
   createCheckModeExtension,
+  bindCheckModeApprovalSession,
   createExternalTriggerSafetyChecker,
   createManagedShellSafetyChecker,
   setCheckModeConfig,
@@ -277,7 +279,18 @@ export async function start(
   const subagentExtension = subagentManager.mainExtension();
   // Hosted web search rides on the provider, so it must be wrapped before the
   // session picks a model.
-  webSearch.enabled = settings.webSearch;
+  runtimeSettings.request({
+    checkMode: settings.checkMode,
+    checkModel: settings.checkModel,
+    sandboxMode: sandboxController.mode,
+    checkPaths: [...new Set([...checkPathsForProject(settings, process.cwd()), ...forcedCheckPaths])],
+    webSearch: settings.webSearch,
+  }, (effective) => {
+    setCheckModeConfig({ profile: effective.checkMode, model: effective.checkModel, additionalPaths: effective.checkPaths });
+    sandboxController.setMode(effective.sandboxMode);
+    subagentManager.refreshSandboxMode();
+    webSearch.enabled = effective.webSearch;
+  });
   const searchProviders = installWebSearch(modelRuntime);
 
   const cwd = process.cwd();
@@ -295,6 +308,8 @@ export async function start(
   const lspControllers = new WeakMap<AgentSession, LspController>();
   const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
+      const releaseSettingsSetup = runtimeSettings.begin({});
+      try {
       // Bind fresh state to the trusted target before service creation registers
       // enable_tools. Replacements must not reuse the previous runtime's controller.
       const mainToolGroups = new ToolGroupsController("main");
@@ -307,13 +322,13 @@ export async function start(
       const mcp: McpController = new McpController({
         cwd,
         spawn: (request) => mcpProcess.spawn(request),
-        isIdle: () => !!mcpSession && !mcpSession.isStreaming,
+        isIdle: () => isRuntimeIdle(mcpSession),
         isCurrent: (): boolean => !mcpDisposed && !!mcpSession && mcpControllers.get(mcpSession) === mcp,
       });
       const lsp: LspController = new LspController({
         cwd,
         spawn: (request) => mcpProcess.spawn(request),
-        isIdle: () => !!mcpSession && !mcpSession.isStreaming,
+        isIdle: () => isRuntimeIdle(mcpSession),
         isCurrent: (): boolean => !mcpDisposed && !!mcpSession && lspControllers.get(mcpSession) === lsp,
       });
       try {
@@ -369,6 +384,8 @@ export async function start(
         lsp.bind(result.session);
         bindFileCheckpointSession(result.session);
         validation.bind(result.session);
+        bindRuntimeSettingsActivity(result.session);
+        bindCheckModeApprovalSession(result.session);
         bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
         result.session.setActiveToolsByName(mainToolGroups.activeTools());
@@ -385,6 +402,7 @@ export async function start(
         try { mcp.dispose(); } catch { /* Preserve the startup error. */ }
         throw error;
       }
+      } finally { releaseSettingsSetup(); }
     },
     {
       cwd,

@@ -173,6 +173,7 @@ import {
   setExplanationStrength,
 } from "./explanation-strength";
 import { setCheckModeConfig } from "./check-mode";
+import { isRuntimeIdle, runtimeSettings, runtimeSettingsPendingNotice } from "./runtime-settings";
 import { applyCheckPathCommand, parseCheckPathCommand } from "./check-paths";
 import { pruneEditedMarkers, reindexMarkers } from "./attachment-markers";
 import {
@@ -990,6 +991,10 @@ export function App({
   const [settings, setSettings] = useState(
     () => mergeSessionSettings(globalSettingsRef.current, sessionOverridesRef.current),
   );
+  const [pendingSettingsNotice, setPendingSettingsNotice] = useState(() => runtimeSettingsPendingNotice(runtimeSettings.snapshot()));
+  useEffect(() => runtimeSettings.subscribe(() => {
+    setPendingSettingsNotice(runtimeSettingsPendingNotice(runtimeSettings.snapshot()));
+  }), []);
   const [transcriptFocused, setTranscriptFocused] = useState(false);
   const transcriptFocusedRef = useRef(false);
   const [transcriptCursor, setTranscriptCursor] = useState(0);
@@ -2105,6 +2110,7 @@ export function App({
     const mergedSettings = mergeSessionSettings(globalSettingsRef.current, loadedOverrides);
     settingsRef.current = mergedSettings;
     setSettings(mergedSettings);
+    applyRuntimeSettings(mergedSettings, cwd);
     const loadedGoal = loadGoal(session.sessionFile);
     goalRef.current = loadedGoal;
     setGoalState(loadedGoal);
@@ -2525,11 +2531,7 @@ export function App({
     setCwd(target);
     // The check-mode roots follow the move immediately: the next tool call must
     // not be judged against the directory the session just left.
-    setCheckModeConfig({
-      profile: settingsRef.current.checkMode,
-      model: settingsRef.current.checkModel,
-      additionalPaths: liveCheckPaths(settingsRef.current, target),
-    });
+    applyRuntimeSettings(settingsRef.current, target);
     void subagentManager.bindMainSession(session.sessionManager, target).catch(() => {});
     // Both are keyed by project, so the old directory's recall would otherwise
     // follow the session into the new one.
@@ -2732,31 +2734,29 @@ export function App({
       : { kind: "return" });
   };
 
+  const applyRuntimeSettings = (next: PumSettings, directory: string) => {
+    setWritingStyle(next.writingStyle);
+    setExplanationStrength(next.explanationStrength);
+    setBashOutputSettingsIfPresent(next.bashOutput);
+    subagentManager.setMaxActiveSubagents?.(next.maxActiveSubagents);
+    runtimeSettings.request({
+      checkMode: next.checkMode,
+      checkModel: next.checkModel,
+      sandboxMode: forcedSandboxMode ?? next.sandboxMode ?? "auto",
+      checkPaths: liveCheckPaths(next, directory),
+      webSearch: next.webSearch,
+    }, (effective) => {
+      setCheckModeConfig({ profile: effective.checkMode, model: effective.checkModel, additionalPaths: effective.checkPaths });
+      onSandboxModeChange?.(effective.sandboxMode);
+      webSearch.enabled = effective.webSearch;
+    });
+  };
+
   const update = (patch: Partial<PumSettings>) => {
     const next = { ...settingsRef.current, ...patch };
     settingsRef.current = next;
     setSettings(next);
-    if (patch.webSearch !== undefined) webSearch.enabled = patch.webSearch;
-    if (patch.writingStyle !== undefined) setWritingStyle(patch.writingStyle);
-    if (patch.explanationStrength !== undefined) {
-      setExplanationStrength(patch.explanationStrength);
-    }
-    if (patch.sandboxMode !== undefined) {
-      onSandboxModeChange?.(forcedSandboxMode ?? patch.sandboxMode);
-    }
-    if (patch.checkMode !== undefined || patch.checkModel !== undefined || patch.checkPaths !== undefined) {
-      setCheckModeConfig({
-        profile: next.checkMode,
-        model: next.checkModel,
-        additionalPaths: liveCheckPaths(next, cwd),
-      });
-    }
-    if (patch.maxActiveSubagents !== undefined) {
-      subagentManager.setMaxActiveSubagents(patch.maxActiveSubagents);
-    }
-    // main.tsx applies this at startup. /settings can change it mid-session, so
-    // the running bash tool has to see the new policy on the next call.
-    if (patch.bashOutput !== undefined) setBashOutputSettingsIfPresent(patch.bashOutput);
+    applyRuntimeSettings(next, cwd);
     // Session-scoped: the popup never writes the global config, which the
     // sandboxes keep read-only. Popup `s` and /store explicitly promote.
     const overrides = sessionSettingsDiff(globalSettingsRef.current, next);
@@ -4482,7 +4482,7 @@ export function App({
         return;
       }
       const action = promptText.trim().split(/\s+/)[1];
-      if ((action === "connect" || action === "check") && (busyRef.current || session.isStreaming
+      if ((action === "connect" || action === "check") && (busyRef.current || !isRuntimeIdle(session)
         || sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current)) {
         report("Wait for the main session to become idle and session operations to finish before connecting or checking LSP.", true);
         return;
@@ -4522,7 +4522,7 @@ export function App({
         return;
       }
       const action = promptText.trim().split(/\s+/)[1];
-      if ((action === "connect" || action === "approve") && (busyRef.current || session.isStreaming
+      if ((action === "connect" || action === "approve") && (busyRef.current || !isRuntimeIdle(session)
         || sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current)) {
         report("Wait for the main session to become idle and session operations to finish before connecting or approving MCP.", true);
         return;
@@ -4571,7 +4571,7 @@ export function App({
             report("Readonly sessions cannot enable project validation.", true);
             return;
           }
-          if (sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current
+          if (!controller.isIdle || sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current
             || (selectedAgentId ? !selected || selected.status === "starting" || selected.status === "running" : busyRef.current)) {
             report("Wait for the selected session to become idle and session operations to finish before enabling validation.", true);
             return;
@@ -6261,6 +6261,7 @@ export function App({
             ) : null}
           </RenderErrorBoundary>
         </scrollbox>
+        {pendingSettingsNotice ? <text content={pendingSettingsNotice} fg={theme.dim} flexShrink={0} /> : null}
         {ruleLabels.length > 0 ? <Gap /> : null}
         <WorkingRule
           theme={theme}
