@@ -9,6 +9,8 @@ import { writeHeadlessRequestDiagnostics } from "./request-diagnostics-access";
 import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
 import { conversationBranchState } from "./conversation-branch";
+import { isPlanModeActive, planModeExtension } from "./plan-mode";
+import { createFilesystemSandboxExtension } from "./filesystem-sandbox";
 import { installModelCatalogFallbacks } from "./model-catalog";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, hasMemoryContextExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
@@ -54,6 +56,14 @@ export const HEADLESS_TOOL_NAMES = [
   ...CONTEXT_TOOL_NAMES,
 ];
 
+/** Plan mode removes every mutation tool from the headless set too. */
+export const HEADLESS_PLAN_OMITTED_TOOL_NAMES = ["write", "edit", MEMORY_EDIT_TOOL_NAME];
+
+export function headlessToolNames(planMode = false): string[] {
+  const omitted = new Set(HEADLESS_PLAN_OMITTED_TOOL_NAMES);
+  return planMode ? HEADLESS_TOOL_NAMES.filter((name) => !omitted.has(name)) : [...HEADLESS_TOOL_NAMES];
+}
+
 /**
  * Handle one hosted web-search call from a headless run.
  *
@@ -80,6 +90,8 @@ export interface HeadlessOptions {
   overrideStatsFile: boolean;
   pumVersion: string;
   validationDigest?: string;
+  /** Enforced plan-only role for this run (#51). Headless cannot leave it. */
+  plan?: boolean;
 }
 
 /**
@@ -207,9 +219,14 @@ async function runPromptSession(
   const sessionLockOwner = new SessionLockOwner();
   const startup = await lockedProjectSession(cwd, options.resume === true, sessionLockOwner);
   const sessionRuntime = await createLockedAgentSessionRuntime(
-    async ({ cwd, sessionManager, sessionStartEvent }) => {
+    async ({ cwd, sessionManager, sessionStartEvent, planMode }) => {
       const releaseSettingsSetup = runtimeSettings.begin({});
       try {
+      // The launch flag can only add the restriction. A session already recorded
+      // as plan mode resumes restrained even without it, and headless has no
+      // direct-user consent path to leave plan mode in either direction.
+      const restricted = planMode ?? (options.plan === true
+        || isPlanModeActive(sessionManager.getSessionFile(), sessionManager));
       const attachedSettings = mergeSessionSettings(settings, loadSessionSettings(sessionManager.getSessionFile()));
       setWritingStyle(attachedSettings.writingStyle);
       setExplanationStrength(attachedSettings.explanationStrength);
@@ -235,7 +252,11 @@ async function runPromptSession(
             explanationStrengthExtension,
             checkModePromptExtension,
             checkModeExtension,
-            sandboxController.extension(),
+            sandboxController.extension({ readonly: restricted }),
+            ...(restricted
+              ? [createFilesystemSandboxExtension({ readonly: true, roleLabel: "plan mode" })]
+              : []),
+            planModeExtension(restricted),
             validation.extension(),
             contextWindow.extension(),
             memory,
@@ -248,7 +269,7 @@ async function runPromptSession(
         sessionManager,
         sessionStartEvent,
         ...(branchState ?? {}),
-        tools: HEADLESS_TOOL_NAMES,
+        tools: headlessToolNames(restricted),
       });
       try {
         bindRuntimeSettingsActivity(result.session);
@@ -256,7 +277,12 @@ async function runPromptSession(
         bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
         validation.bind(result.session);
-        if (options.validationDigest) validation.enable(options.validationDigest);
+        // Validation runs configured project commands, so it stays a mutation
+        // path that plan mode must not approve on a launch flag.
+        if (options.validationDigest) {
+          if (restricted) throw new Error("Plan mode cannot approve project validation.");
+          validation.enable(options.validationDigest);
+        }
       } catch (error) {
         // The runtime factory cannot dispose a session it has not received yet.
         try { result.session.dispose(); } catch { /* Preserve the binding error. */ }

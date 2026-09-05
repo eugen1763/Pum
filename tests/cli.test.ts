@@ -85,6 +85,30 @@ describe("headless validation approval CLI", () => {
   });
 });
 
+describe("headless plan mode CLI", () => {
+  const digest = "aB".repeat(32);
+  test("accepts --plan only for a direct headless prompt, including resume", () => {
+    for (const args of [["--plan", "-p", "test"], ["-r", "-p", "test", "--plan"]]) {
+      const parsed = parseCliArgs(args);
+      expect(parsed.kind).toBe("start");
+      if (parsed.kind === "start") expect(parsed.options.plan).toBe(true);
+    }
+    const plain = parseCliArgs(["-p", "test"]);
+    if (plain.kind === "start") expect(plain.options).not.toHaveProperty("plan");
+  });
+  test("rejects --plan without a prompt, with validation, and with every command", () => {
+    for (const args of [
+      ["--plan"], ["--plan", "-r"], ["login", "--plan"],
+      ["-p", "test", "--plan", "--validation", digest],
+      ["--validation", digest, "-p", "test", "--plan"],
+      ...["s", "sr", "ss", "worktree", "w"].flatMap((command) => [
+        [command, "--plan", "-p", "test"],
+        ["--plan", command],
+      ]),
+    ]) expect(parseCliArgs(args).kind).toBe("error");
+  });
+});
+
 describe("CLI argument parsing", () => {
   test("preserves login and resume startup arguments", () => {
     expect(parseCliArgs(["login", "--resume"])).toEqual({

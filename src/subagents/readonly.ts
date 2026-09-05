@@ -40,27 +40,35 @@ export function readonlyToolBlockReason(
   return `readonly child cannot use ${toolName}`;
 }
 
-/** Fail closed for every child tool path that can bypass readonly filesystem controls. */
-export function readonlySubagentExtension(readonly: boolean): InlineExtension {
+/**
+ * Fail closed for every tool path that can bypass a restricted role's
+ * filesystem controls.
+ *
+ * One guard serves both restricted roles: a readonly child, and a main session
+ * in plan mode (#51). Schema removal alone is not enforcement, so this refuses
+ * the call itself and rewrites the visible result. The caller supplies the role's
+ * name, prompt and block rule; the block/report machinery stays identical.
+ */
+export function readonlyRoleGuardExtension(options: {
+  name: string;
+  label: string;
+  systemPrompt: string;
+  blockReason: (toolName: string, input: Record<string, unknown>) => string | undefined;
+}): InlineExtension {
   return {
-    name: "pum-readonly-subagent-guard",
+    name: options.name,
     factory(pi) {
-      if (!readonly) return;
       const rejected = new Map<string, string>();
       pi.on("before_agent_start", (event) => ({
-        systemPrompt: `${event.systemPrompt}\n\n## Readonly child\n\n`
-          + "- Inspect files and run non-mutating commands only.\n"
-          + "- Do not use or delegate filesystem mutation.\n"
-          + "- File mutation tools and mutation-capable child services are blocked.\n"
-          + "- Bash runs only with native sandbox enforcement and read-only project roots.",
+        systemPrompt: `${event.systemPrompt}\n\n${options.systemPrompt}`,
       }));
       pi.on("tool_call", (event) => {
-        const reason = readonlyToolBlockReason(
+        const reason = options.blockReason(
           event.toolName,
           event.input as Record<string, unknown>,
         );
         if (!reason) return;
-        const visibleReason = `Readonly subagent blocked ${event.toolName}: ${reason}`;
+        const visibleReason = `${options.label} blocked ${event.toolName}: ${reason}`;
         rejected.set(event.toolCallId, visibleReason);
         return { block: true, reason: visibleReason };
       });
@@ -79,4 +87,19 @@ export function readonlySubagentExtension(readonly: boolean): InlineExtension {
       });
     },
   };
+}
+
+/** Fail closed for every child tool path that can bypass readonly filesystem controls. */
+export function readonlySubagentExtension(readonly: boolean): InlineExtension {
+  if (!readonly) return { name: "pum-readonly-subagent-guard", factory() {} };
+  return readonlyRoleGuardExtension({
+    name: "pum-readonly-subagent-guard",
+    label: "Readonly subagent",
+    systemPrompt: "## Readonly child\n\n"
+      + "- Inspect files and run non-mutating commands only.\n"
+      + "- Do not use or delegate filesystem mutation.\n"
+      + "- File mutation tools and mutation-capable child services are blocked.\n"
+      + "- Bash runs only with native sandbox enforcement and read-only project roots.",
+    blockReason: readonlyToolBlockReason,
+  });
 }

@@ -29,6 +29,8 @@ export interface StartupOptions {
   prompt?: string;
   /** Explicit one-launch approval of the project validation proposal (headless only). */
   validationDigest?: string;
+  /** Run this headless prompt in the enforced plan-only role (#51). */
+  plan?: boolean;
   /** Optional benchmark statistics output for headless mode. */
   statsFile?: string;
   /** Permit replacement of an existing statistics output file. */
@@ -62,6 +64,7 @@ export function parseCliArgs(args: string[]): CliResult {
   let statsFile: string | undefined;
   let validationDigest: string | undefined;
   let overrideStatsFile = false;
+  let plan = false;
   let help = false;
   let version = false;
   let endOfOptions = false;
@@ -116,9 +119,10 @@ export function parseCliArgs(args: string[]): CliResult {
       if (statsFile !== undefined) { fail("Only one --statsFile is supported"); continue; }
       statsFile = value;
     } else if (arg === "--override") overrideStatsFile = true;
+    else if (arg === "--plan") plan = true;
     else if (arg.startsWith("-")) fail(`Unknown option: ${arg}`);
     else if (arg === "ss" && !outerSandbox && !worktree) {
-      if (login || resume || prompt !== undefined || statsFile !== undefined || validationDigest !== undefined || overrideStatsFile) {
+      if (login || resume || prompt !== undefined || statsFile !== undefined || validationDigest !== undefined || overrideStatsFile || plan) {
         fail(SETUP_ARGUMENTS_ERROR);
         continue;
       }
@@ -168,6 +172,15 @@ export function parseCliArgs(args: string[]): CliResult {
   if (overrideStatsFile && statsFile === undefined) {
     return { kind: "error", message: "--override requires --statsFile" };
   }
+  if (plan && prompt === undefined) {
+    // Interactive plan mode is entered with /plan, which needs direct-user
+    // provenance and a confirmed transition. A launch flag is not that consent.
+    return { kind: "error", message: "--plan requires headless --prompt mode; use /plan in the TUI" };
+  }
+  if (plan && validationDigest !== undefined) {
+    // Project validation runs configured commands, so it is a mutation path.
+    return { kind: "error", message: "Cannot combine --plan with --validation" };
+  }
 
   return {
     kind: "start",
@@ -180,6 +193,7 @@ export function parseCliArgs(args: string[]): CliResult {
       ...(prompt !== undefined ? { prompt } : {}),
       ...(statsFile !== undefined ? { statsFile } : {}),
       ...(validationDigest !== undefined ? { validationDigest } : {}),
+      ...(plan ? { plan } : {}),
     },
   };
 }
@@ -206,6 +220,7 @@ Options:
   -r, --resume         Resume the latest session for the current directory.
   -p, --prompt <text>  Run one prompt without the TUI, print the answer, and exit.
   --validation <sha256> Approve project validation for this headless launch only.
+  --plan               Run the headless prompt in the enforced plan-only role.
   --statsFile <path>   Write a versioned JSON statistics artifact after a headless run.
   --override           Permit --statsFile to replace an existing file.
   --                   End the options. Later arguments are directories.

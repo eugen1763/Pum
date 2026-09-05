@@ -42,6 +42,8 @@ support empty-prompt queued-message recall.
 | `/todo` | Open the selected agent's todo list |
 | `/news` | Recent answers |
 | `/history` | Session history |
+| `/plan [text]` | Enter the enforced plan-only role, or record the plan |
+| `/implement [confirm]` | Leave plan mode after an explicit confirmation |
 | `/branch`, `/rewind` | Select an earlier conversation path in the same session; no file restore |
 | `/processes`, `/triggers` | Supervised processes; `/triggers` opens that tab |
 | `/worktree` | Move the running session into a worktree and back |
@@ -52,6 +54,15 @@ support empty-prompt queued-message recall.
 | `/stats` | Usage and cost for the session |
 | `/login` | Add or update a provider |
 | `/providers` | Manage providers: `/providers [add\|edit\|delete] [name]` |
+
+## Plan mode
+
+Type `/plan` directly in the idle main prompt to enter the enforced plan-only
+role: file mutation, mutable delegation, managed shells, MCP and project
+validation are blocked, and Bash needs native sandbox enforcement. `/plan <text>`
+records the plan. The status bar shows `PLAN` while the role is in force. Leaving
+takes two direct commands: `/implement`, then `/implement confirm`. Your own `!`
+shell commands are unaffected. See [plan mode](plan-mode.md).
 
 ## Conversation branches
 

@@ -513,3 +513,36 @@ These scoped clarifications resolve older absolute wording, not change policy.
   `invoke_trigger` separately because each tool can start a checked process.
 
 <!-- end:ld-119 -->
+
+<a id="plan-mode"></a>
+
+## Enforced plan-only mode and implementation approval (#51)
+
+`/plan` is the readonly role applied to the authoritative main session, and
+`/implement confirm` is its only exit. It is a capability gate, not a prompt
+style. See the required [plan mode details](../plan-mode.md).
+
+Reuse existing readonly enforcement in all four layers and add no second
+mechanism: the restricted tool set, the shared call guard, the readonly
+filesystem sandbox and readonly native Bash. Removing a schema is never
+enforcement on its own. Plan mode additionally withholds `memory_edit`, MCP tool
+registration and `/mcp connect|approve`, and refuses `/validation enable`: PUM
+cannot certify an arbitrary server or configured command as non-mutating, so it
+fails closed instead of reasoning about intent. LSP stays, document-only.
+
+When native enforcement is unavailable, Bash fails closed with the existing
+readonly reason. Never degrade it to a direct local shell in this role and never
+emit the unsandboxed-continuation warning. Entering the role must still succeed
+in that state, and the entry message must disclose it. Direct-user `!` Bash keeps
+its configured native sandbox and stays available: the role restrains the agent,
+not the user.
+
+Record the mode twice: a companion record and an append-only, context-excluded
+JSONL transition entry read on the selected ancestry. Either record restrains, so
+no companion loss, crash, rollback or unreadable ancestry can return mutation,
+and only an explicit user transition may append an exit record. Both transitions
+use the same-file locked transaction, the same direct-user provenance boundary
+and the same idle/pending/worker/goal admission gate as conversation navigation,
+and a transition may fail only toward plan mode, with ownership retained. Leaving
+requires a second directly typed confirmation. Headless may enter the role by
+launch flag or by resuming a recorded plan-mode session, and may never leave it.

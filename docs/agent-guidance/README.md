@@ -54,6 +54,9 @@ All 157 original units are covered: 149 preserved and eight clarified with evide
 
 ## Post-migration contracts
 
+- [Enforced plan-only mode and implementation approval (#51)](security.md#plan-mode):
+  the readonly role applied to main, its fail-closed unavailable-enforcement
+  behavior, dual mode records and direct-user transition gate.
 - [Same-session conversation branches and rewind (#50)](sessions-context.md#conversation-branches):
   explicit direct-user navigation, current companions, canonical ownership and
   append-only failure recovery; new-file forks remain deferred.

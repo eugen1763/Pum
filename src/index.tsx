@@ -59,6 +59,7 @@ if (result.kind === "help") {
     resume: result.options.resume,
     statsFile: result.options.statsFile,
     validationDigest: result.options.validationDigest,
+    plan: result.options.plan,
     overrideStatsFile: result.options.overrideStatsFile,
     pumVersion: metadata.version,
   });

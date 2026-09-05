@@ -9,6 +9,7 @@ import { listProjectSessions } from "./session-resume-alias";
 import { SessionLockOwner, releaseSessionLockOnDispose } from "./session-lock";
 import { freezeRuntimeAdmissions, isRuntimeIdle } from "./runtime-settings";
 import { CONVERSATION_BRANCH_CUSTOM_TYPE, hasConversationBranchPendingInput, validateConversationBranchSelection, type ConversationBranchSelection } from "./conversation-branch";
+import { loadPlanRecord, PLAN_MODE_CUSTOM_TYPE, savePlanRecord, type PlanMode } from "./plan-mode";
 
 /** Reserve before SessionManager.open: opening old JSONL can migrate it. */
 export async function lockedProjectSession(cwd: string, resume: boolean, owner: SessionLockOwner) {
@@ -24,6 +25,8 @@ export type ConversationRuntimeState = { model: AgentSession["model"]; thinkingL
 export type LockedRuntimeFactory = (context: Parameters<CreateAgentSessionRuntimeFactory>[0] & {
   /** Branch/recovery only. Pass to the SDK's model/thinkingLevel creation options. */
   conversationState?: ConversationRuntimeState;
+  /** Build the restricted plan-mode role (#51) instead of the full main role. */
+  planMode?: boolean;
 }) => Promise<Awaited<ReturnType<CreateAgentSessionRuntimeFactory>> & {
   /** Synchronous revocation of exact-session PUM capabilities before SDK cleanup. */
   retireConversation?: () => void;
@@ -34,20 +37,35 @@ export interface ConversationBranchResult {
   cancelled?: boolean;
   recovered?: boolean;
 }
+export interface PlanModeTransitionResult {
+  session: AgentSession;
+  /** The mode actually in force. A recovered transition reports `plan`. */
+  mode: PlanMode;
+  recovered: boolean;
+}
+/** App-only manager/input guards, rechecked before and after the old runtime's cleanup. */
+export interface SameFileTransitionOptions {
+  validate?: () => void;
+  validateRetired?: () => void;
+}
 export type LockedAgentSessionRuntime = Pick<AgentSessionRuntime, keyof AgentSessionRuntime> & {
-  branchConversation(selection: ConversationBranchSelection, options?: {
-    validate?: () => void;
-    /** App-only manager/input guards after shutdown; the old runtime is frozen. */
-    validateRetired?: () => void;
-  }): Promise<ConversationBranchResult>;
+  branchConversation(
+    selection: ConversationBranchSelection,
+    options?: SameFileTransitionOptions,
+  ): Promise<ConversationBranchResult>;
+  transitionPlanMode(
+    mode: PlanMode,
+    options?: SameFileTransitionOptions,
+  ): Promise<PlanModeTransitionResult>;
 };
 
-const RECOVERY_REQUIRED = "Conversation branch recovery required. Further session work is blocked. Unfinished shutdown keeps ownership until cleanup settles or this process exits.";
+const RECOVERY_REQUIRED = (noun: string) =>
+  `${noun} recovery required. Further session work is blocked. Unfinished shutdown keeps ownership until cleanup settles or this process exits.`;
 export const CONVERSATION_SHUTDOWN_TIMEOUT_MS = 5_000;
-function assertBranchIdle(session: AgentSession) {
+function assertTransitionIdle(session: AgentSession, noun: string) {
   if (!isRuntimeIdle(session) || session.pendingMessageCount !== 0 || session.isBashRunning !== false || session.hasPendingBashMessages !== false
     || session.isCompacting !== false || session.isRetrying !== false || hasConversationBranchPendingInput(session)) {
-    throw new Error("Conversation branching requires an idle session with no pending messages, summaries, retries or Bash work.");
+    throw new Error(`${noun} requires an idle session with no pending messages, summaries, retries or Bash work.`);
   }
 }
 /** A bounded, strict read also prevents SDK open from migrating or silently ignoring
@@ -134,7 +152,7 @@ export async function createLockedAgentSessionRuntime(
   let beforeInvalidate: Parameters<AgentSessionRuntime["setBeforeSessionInvalidate"]>[0];
   const replace = async <T>(operation: () => Promise<T>): Promise<T> => {
     if (closing) throw new Error("The session is closing.");
-    if (failed) throw new Error(RECOVERY_REQUIRED);
+    if (failed) throw new Error(RECOVERY_REQUIRED("Session"));
     if (replacement) throw new Error("A session switch is already in progress.");
     const pending = Promise.resolve().then(operation);
     replacement = pending;
@@ -142,6 +160,127 @@ export async function createLockedAgentSessionRuntime(
     finally { replacement = undefined; }
   };
   let disposing: Promise<void> | undefined;
+  /**
+   * Retire the exact idle runtime and rebuild it on the same canonical file.
+   *
+   * One transaction serves every same-file role or path change: continuous
+   * ownership, a synchronous admission freeze and capability revocation before
+   * any awaited cleanup, bounded normal SDK shutdown under the still-held lock,
+   * an append-only publication, and a rebuild. Nothing is ever truncated,
+   * rewritten or unlinked, and a failure after retirement fails closed with
+   * ownership retained rather than reporting success.
+   */
+  const transition = async <T>(step: {
+    noun: string;
+    idleNoun: string;
+    validate?: () => void;
+    validateRetired?: () => void;
+    revalidate: (session: AgentSession) => void;
+    publish: (target: SessionManager, rollback: boolean) => void;
+    extras?: (rollback: boolean) => { planMode?: boolean };
+    result: (session: AgentSession, recovered: boolean) => T;
+  }): Promise<T> => {
+    const original = runtime.session;
+    assertTransitionIdle(original, step.idleNoun);
+    step.revalidate(original);
+    const path = original.sessionFile;
+    if (!path) throw new Error(`${step.noun} requires a saved session.`);
+    const release = owner.acquire(path);
+    let keepReservation = false;
+    let retired = false;
+    try {
+      const manager = original.sessionManager;
+      const snapshot = diskSnapshot(manager);
+      const state: ConversationRuntimeState = { model: original.model, thinkingLevel: original.thinkingLevel };
+      const cwd = runtime.cwd;
+      const agentDir = runtime.services.agentDir;
+      const publish = (target: SessionManager, rollback: boolean) => {
+        step.publish(target, rollback);
+        // Public SDK session metadata, not Settings/default setters. Needed when
+        // historical ancestry selects a different model and for immediate resume.
+        if (state.model) target.appendModelChange(state.model.provider, state.model.id);
+        target.appendThinkingLevelChange(state.thinkingLevel);
+        assertPrefix(target, snapshot);
+      };
+      const rebuild = async (target: SessionManager, rollback: boolean) => {
+        const result = await lockedFactory({ cwd, agentDir, sessionManager: target, conversationState: state,
+          ...(step.extras?.(rollback) ?? {}),
+          sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile: path } });
+        try {
+          if (result.session === original || result.session.sessionManager !== target || result.session.sessionId !== original.sessionId
+            || result.session.sessionFile !== path || result.services.cwd !== cwd
+            || result.session.model?.provider !== state.model?.provider || result.session.model?.id !== state.model?.id
+            || result.session.thinkingLevel !== state.thinkingLevel) throw new Error(`${step.noun} runtime identity/state mismatch.`);
+          assertTransitionIdle(result.session, step.idleNoun);
+          assertPrefix(target, snapshot);
+          runtime = new AgentSessionRuntime(result.session, result.services, lockedFactory, result.diagnostics, result.modelFallbackMessage);
+          runtime.setRebindSession(rebind);
+          runtime.setBeforeSessionInvalidate(beforeInvalidate);
+          await rebind?.(result.session);
+          return result.session;
+        } catch (error) { result.session.dispose(); throw error; }
+      };
+      // Freeze synchronously at exact idle, before any awaited arbitrary cleanup.
+      // App holds its manager/input transition guard across this whole operation.
+      step.validate?.();
+      assertTransitionIdle(original, step.idleNoun);
+      step.revalidate(original);
+      assertPrefix(manager, snapshot);
+      freezeRuntimeAdmissions(original);
+      retired = true;
+      retireCapabilities.get(original)?.();
+      let cleanupFailed = false;
+      const unsubscribeError = original.extensionRunner.onError((error) => {
+        // SDK emit catches handler exceptions. Observe only its event code,
+        // never retain or surface the handler's raw error/stack/private data.
+        if (error.event === "session_shutdown") cleanupFailed = true;
+      });
+      const retiring: { runtime: AgentSessionRuntime; settled: boolean } = { runtime, settled: false };
+      retirement = retiring;
+      // Match native same-file replacement's public lifecycle ordering, but
+      // never its mutable tree/fork hooks or runtime.dispose's quit-only reason.
+      // Abort is unnecessary here: exact idle was proven and admissions frozen.
+      const cleanup = (async () => {
+        if (original.extensionRunner.hasHandlers("session_shutdown")) {
+          await original.extensionRunner.emit({ type: "session_shutdown", reason: "resume", targetSessionFile: path });
+        }
+        beforeInvalidate?.();
+        original.dispose();
+      })().finally(() => { retiring.settled = true; unsubscribeError(); });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([cleanup, new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error(`${step.noun} shutdown did not settle.`)), CONVERSATION_SHUTDOWN_TIMEOUT_MS);
+        })]);
+      } finally { if (timer) clearTimeout(timer); }
+      if (cleanupFailed) throw new Error(`${step.noun} shutdown cleanup failed.`);
+      step.validateRetired?.();
+      step.revalidate(original);
+      assertPrefix(manager, snapshot);
+      // The original manager's branch/file setters are permanently fenced by
+      // retirement. Only PUM's newly reopened manager may publish the change.
+      publish(reopenBranch(path, cwd, snapshot), false);
+      try {
+        return step.result(await rebuild(reopenBranch(path, cwd, snapshot), false), false);
+      } catch {
+        // A factory may have appended startup metadata before failing. Preserve
+        // those bytes too, and publish the safe fallback with a second record.
+        const recovery = reopenBranch(path, cwd, snapshot);
+        assertPrefix(recovery, snapshot);
+        publish(recovery, true);
+        return step.result(await rebuild(recovery, true), true);
+      }
+    } catch (error) {
+      if (!retired) throw error;
+      failed = true;
+      keepReservation = true;
+      recoveryReservation = release;
+      if (retirement?.runtime === runtime && retirement.settled) {
+        try { runtime.session.dispose(); } catch { /* Keep ownership and fail closed. */ }
+      }
+      throw new Error(RECOVERY_REQUIRED(step.noun));
+    } finally { if (!keepReservation) release(); }
+  };
   const facade: LockedAgentSessionRuntime = {
     get session() { return runtime.session; },
     get services() { return runtime.services; },
@@ -158,109 +297,51 @@ export async function createLockedAgentSessionRuntime(
     newSession: (newOptions) => replace(() => runtime.newSession(newOptions)),
     fork: (entryId, forkOptions) => replace(() => runtime.fork(entryId, forkOptions)),
     importFromJsonl: (path, cwd) => replace(() => runtime.importFromJsonl(path, cwd)),
-    branchConversation: (selection, branchOptions) => replace(async () => {
+    branchConversation: (selection, branchOptions) => replace(() => {
       const original = runtime.session;
-      assertBranchIdle(original);
+      assertTransitionIdle(original, "Conversation branching");
       const selected = validateConversationBranchSelection(original, selection);
-      const path = original.sessionFile;
-      if (!path) throw new Error("Conversation branching requires a saved session.");
-      const release = owner.acquire(path);
-      let keepReservation = false;
-      let retired = false;
-      try {
-        const manager = original.sessionManager;
-        const snapshot = diskSnapshot(manager);
-        const originalLeaf = manager.getLeafId();
-        const state: ConversationRuntimeState = { model: original.model, thinkingLevel: original.thinkingLevel };
-        const cwd = runtime.cwd;
-        const agentDir = runtime.services.agentDir;
-        const appendAnchor = (target: SessionManager, leaf: string | null, rollback: boolean) => {
+      const originalLeaf = original.sessionManager.getLeafId();
+      return transition({
+        noun: "Conversation branch",
+        idleNoun: "Conversation branching",
+        validate: branchOptions?.validate,
+        validateRetired: branchOptions?.validateRetired,
+        revalidate: (session) => { validateConversationBranchSelection(session, selection); },
+        publish: (target, rollback) => {
+          const leaf = rollback ? originalLeaf : selected.targetId;
           if (leaf === null) target.resetLeaf(); else target.branch(leaf);
           target.appendCustomEntry(CONVERSATION_BRANCH_CUSTOM_TYPE, { version: 1, rollback });
-          // Public SDK session metadata, not Settings/default setters. Needed when
-          // historical ancestry selects a different model and for immediate resume.
-          if (state.model) target.appendModelChange(state.model.provider, state.model.id);
-          target.appendThinkingLevelChange(state.thinkingLevel);
-          assertPrefix(target, snapshot);
-        };
-        const rebuild = async (target: SessionManager) => {
-          const result = await lockedFactory({ cwd, agentDir, sessionManager: target, conversationState: state,
-            sessionStartEvent: { type: "session_start", reason: "resume", previousSessionFile: path } });
-          try {
-            if (result.session === original || result.session.sessionManager !== target || result.session.sessionId !== original.sessionId
-              || result.session.sessionFile !== path || result.services.cwd !== cwd
-              || result.session.model?.provider !== state.model?.provider || result.session.model?.id !== state.model?.id
-              || result.session.thinkingLevel !== state.thinkingLevel) throw new Error("Branch runtime identity/state mismatch.");
-            assertBranchIdle(result.session);
-            assertPrefix(target, snapshot);
-            runtime = new AgentSessionRuntime(result.session, result.services, lockedFactory, result.diagnostics, result.modelFallbackMessage);
-            runtime.setRebindSession(rebind);
-            runtime.setBeforeSessionInvalidate(beforeInvalidate);
-            await rebind?.(result.session);
-            return result.session;
-          } catch (error) { result.session.dispose(); throw error; }
-        };
-        // Freeze synchronously at exact idle, before any awaited arbitrary cleanup.
-        // App holds its manager/input transition guard across this whole operation.
-        branchOptions?.validate?.();
-        assertBranchIdle(original);
-        validateConversationBranchSelection(original, selection);
-        assertPrefix(manager, snapshot);
-        freezeRuntimeAdmissions(original);
-        retired = true;
-        retireCapabilities.get(original)?.();
-        let cleanupFailed = false;
-        const unsubscribeError = original.extensionRunner.onError((error) => {
-          // SDK emit catches handler exceptions. Observe only its event code,
-          // never retain or surface the handler's raw error/stack/private data.
-          if (error.event === "session_shutdown") cleanupFailed = true;
-        });
-        const retiring: { runtime: AgentSessionRuntime; settled: boolean } = { runtime, settled: false };
-        retirement = retiring;
-        // Match native same-file replacement's public lifecycle ordering, but
-        // never its mutable tree/fork hooks or runtime.dispose's quit-only reason.
-        // Abort is unnecessary here: exact idle was proven and admissions frozen.
-        const cleanup = (async () => {
-          if (original.extensionRunner.hasHandlers("session_shutdown")) {
-            await original.extensionRunner.emit({ type: "session_shutdown", reason: "resume", targetSessionFile: path });
-          }
-          beforeInvalidate?.();
-          original.dispose();
-        })().finally(() => { retiring.settled = true; unsubscribeError(); });
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([cleanup, new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(() => reject(new Error("Conversation shutdown did not settle.")), CONVERSATION_SHUTDOWN_TIMEOUT_MS);
-          })]);
-        } finally { if (timer) clearTimeout(timer); }
-        if (cleanupFailed) throw new Error("Conversation shutdown cleanup failed.");
-        branchOptions?.validateRetired?.();
-        validateConversationBranchSelection(original, selection);
-        assertPrefix(manager, snapshot);
-        // The original manager's branch/file setters are permanently fenced by
-        // retirement. Only PUM's newly reopened manager may publish selection.
-        appendAnchor(reopenBranch(path, cwd, snapshot), selected.targetId, false);
-        try {
-          const session = await rebuild(reopenBranch(path, cwd, snapshot));
-          return { session, ...("editorText" in selected ? { editorText: selected.editorText } : {}) };
-        } catch {
-          // A factory may have appended startup metadata before failing. Preserve
-          // those bytes too, and select original ancestry with a second anchor.
-          const recovery = reopenBranch(path, cwd, snapshot);
-          assertPrefix(recovery, snapshot);
-          appendAnchor(recovery, originalLeaf, true);
-          return { session: await rebuild(recovery), recovered: true };
-        }
-      } catch (error) {
-        if (!retired) throw error;
-        failed = true;
-        keepReservation = true;
-        recoveryReservation = release;
-        if (retirement?.runtime === runtime && retirement.settled) {
-          try { runtime.session.dispose(); } catch { /* Keep ownership and fail closed. */ }
-        }
-        throw new Error(RECOVERY_REQUIRED);
-      } finally { if (!keepReservation) release(); }
+        },
+        result: (session, recovered) => recovered
+          ? { session, recovered: true }
+          : { session, ...("editorText" in selected ? { editorText: selected.editorText } : {}) },
+      });
+    }),
+    transitionPlanMode: (mode, planOptions) => replace(() => {
+      const original = runtime.session;
+      assertTransitionIdle(original, "Changing plan mode");
+      // Failure always lands in plan mode: a transition may only ever fail
+      // toward the more restrictive role, never toward regained capability.
+      const target = (rollback: boolean): PlanMode => (rollback ? "plan" : mode);
+      return transition({
+        noun: "Plan mode transition",
+        idleNoun: "Changing plan mode",
+        validate: planOptions?.validate,
+        validateRetired: planOptions?.validateRetired,
+        revalidate: () => {},
+        extras: (rollback) => ({ planMode: target(rollback) === "plan" }),
+        publish: (manager, rollback) => {
+          const next = target(rollback);
+          // The JSONL entry is the record a lost companion cannot contradict, so
+          // it is written first. Both must succeed or the transition fails.
+          manager.appendCustomEntry(PLAN_MODE_CUSTOM_TYPE, { version: 1, mode: next });
+          const file = manager.getSessionFile()!;
+          // Keep the recorded plan text; only the mode and its time change.
+          savePlanRecord(file, { ...(loadPlanRecord(file) ?? {}), version: 1, mode: next, at: Date.now() });
+        },
+        result: (session, recovered) => ({ session, mode: recovered ? target(true) : mode, recovered }),
+      });
     }),
     dispose: () => {
       closing = true;

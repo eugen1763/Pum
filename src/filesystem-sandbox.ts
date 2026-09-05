@@ -219,12 +219,15 @@ function toolPath(input: Record<string, unknown>): string | undefined {
 /** Enforce the process-local filesystem sandbox before built-in tool execution. */
 export type FilesystemSandboxExtensionOptions = {
   readonly?: boolean;
+  /** Names the restricted role in refusals: a readonly child, or plan mode (#51). */
+  roleLabel?: string;
 };
 
 export function createFilesystemSandboxExtension(
   options: FilesystemSandboxExtensionOptions = {},
 ): InlineExtension {
   const readonly = options.readonly === true;
+  const role = options.roleLabel ?? "readonly child";
   return {
     name: readonly ? "pum-readonly-filesystem-sandbox" : "pum-filesystem-sandbox",
     factory(pi) {
@@ -232,7 +235,7 @@ export function createFilesystemSandboxExtension(
       pi.on("before_agent_start", (event) => ({
         systemPrompt: `${event.systemPrompt}\n\n## Filesystem sandbox\n\n`
           + "- The read, write, and edit tools are limited to the project and configured allowed roots.\n"
-          + (readonly ? "- This readonly child cannot use write or edit.\n" : "")
+          + (readonly ? `- This ${role} cannot use write or edit.\n` : "")
           + "- The read tool may also read the temporary files PUM stages for you, such as pasted text and full bash output.\n"
           + "- Do not access credential-sensitive paths or paths through symbolic links or junctions.\n"
           + "- Do not attempt to bypass the filesystem sandbox with alternate path spellings.",
@@ -243,7 +246,7 @@ export function createFilesystemSandboxExtension(
         const toolName = event.toolName as FilesystemSandboxToolName;
         try {
           if (readonly && toolName !== "read") {
-            throw new Error(`readonly child cannot use ${toolName}`);
+            throw new Error(`${role} cannot use ${toolName}`);
           }
           const allowedPaths = getCheckModeConfig().additionalPaths;
           const path = toolPath(event.input);

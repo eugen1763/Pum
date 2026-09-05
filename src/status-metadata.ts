@@ -2,6 +2,8 @@ import { fg, type TextChunk } from "@opentui/core";
 import type { Theme } from "./theme";
 
 export type StatusMetadataValues = {
+  /** Enforced plan-only role (#51). A mode disclosure, never dropped for width. */
+  planMode?: boolean;
   cwd?: string;
   branch: string | null;
   outgoingTokens: number;
@@ -12,7 +14,7 @@ export type StatusMetadataValues = {
 };
 
 export type StatusMetadataItem = {
-  key: "cwd" | "branch" | "outgoing" | "incoming" | "cacheRead" | "cost" | "context";
+  key: "plan" | "cwd" | "branch" | "outgoing" | "incoming" | "cacheRead" | "cost" | "context";
   text: string;
   tone: "cwd" | "branch" | "dim" | "warn";
   priority: number;
@@ -59,6 +61,11 @@ export function formatWorkingDirectory(cwd: string): string {
 
 export function statusMetadataItems(values: StatusMetadataValues): StatusMetadataItem[] {
   const items: StatusMetadataItem[] = [];
+  // Plan mode is a capability restriction the user must be able to see at all
+  // times, so it is never in a removal order and never truncated for width.
+  if (values.planMode) {
+    items.push({ key: "plan", text: "PLAN", tone: "warn", priority: 100 });
+  }
   if (values.cwd) {
     items.push({ key: "cwd", text: formatWorkingDirectory(values.cwd), tone: "cwd", priority: 85 });
   }

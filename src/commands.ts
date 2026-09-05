@@ -78,6 +78,14 @@ export const COMMANDS: Command[] = [
     description: "List runtime file checkpoints, recover <id> to a new copy, or clear",
   },
   {
+    name: "/plan",
+    description: "Enter the enforced plan-only role, or record the plan: /plan [text]",
+  },
+  {
+    name: "/implement",
+    description: "Leave plan mode; /implement confirm applies the capability upgrade",
+  },
+  {
     name: "/branch",
     description: "Select an earlier conversation path in this same session; no file restore",
   },

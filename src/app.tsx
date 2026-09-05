@@ -176,7 +176,15 @@ import {
   type ConversationBranchPage,
   type ConversationBranchSelection,
 } from "./conversation-branch";
-import type { ConversationBranchResult } from "./session-lock-runtime";
+import type { ConversationBranchResult, PlanModeTransitionResult } from "./session-lock-runtime";
+import {
+  describePlanRecord,
+  loadPlanRecord,
+  planModeForSession,
+  savePlanRecord,
+  validatePlanText,
+  type PlanMode,
+} from "./plan-mode";
 import type { SessionHistoryItem } from "./session-history-metadata";
 import { setWritingStyle, WRITING_STYLES } from "./writing-style";
 import {
@@ -833,6 +841,7 @@ export function App({
   onSwitchSession,
   onRelocate,
   onBranchConversation,
+  onTransitionPlanMode,
   settings: initial,
   searchProviders,
   subagentManager,
@@ -880,6 +889,15 @@ export function App({
     selection: ConversationBranchSelection,
     options: { validate: () => void; validateRetired: () => void },
   ) => Promise<ConversationBranchResult | null>;
+  /**
+   * Enter or leave the enforced plan-only role (#51). Same canonical session and
+   * ownership; the host rebuilds the runtime with the new role. A failed
+   * transition reports `plan`, never a half-upgraded runtime.
+   */
+  onTransitionPlanMode?: (
+    mode: PlanMode,
+    options: { validate: () => void; validateRetired: () => void },
+  ) => Promise<PlanModeTransitionResult | null>;
   settings: PumSettings;
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
@@ -1117,6 +1135,10 @@ export function App({
   const branchRunningRef = useRef(false);
   const branchNoticeRef = useRef<string | null>(null);
   const [branchNotice, setBranchNotice] = useState(0);
+  const [planMode, setPlanMode] = useState(() => planModeForSession(initialSession));
+  const planModeRef = useRef(planMode);
+  /** Armed by a direct `/implement`; only `/implement confirm` may upgrade. */
+  const implementArmedRef = useRef(false);
 
   // Preview only the visible autocomplete selection. The committed setting and
   // its session/global persistence never participate in this temporary state.
@@ -2115,6 +2137,12 @@ export function App({
   useEffect(() => {
     // A replaced session cannot still be running the previous session's turn.
     streamingRef.current = false;
+    // The role is read from the session's own durable records, never carried
+    // across from the previous runtime.
+    const activePlanMode = planModeForSession(session);
+    planModeRef.current = activePlanMode;
+    setPlanMode(activePlanMode);
+    implementArmedRef.current = false;
     void subagentManager
       .bindMainSession(session.sessionManager, cwd)
       .catch((error) => append({ kind: "text", role: "error", text: String(error) }));
@@ -3061,44 +3089,50 @@ export function App({
   // Guards that must still hold when the retired runtime's cleanup has settled
   // and the selection is about to be published. Refusing here is not a
   // cancellation: no queued input is dropped and no companion state changes.
-  const conversationBranchStateBlocker = (): string | null => {
+  const sessionTransitionStateBlocker = (noun: string): string | null => {
     if (activeAgentIdRef.current !== null) {
-      return "Conversation branching belongs to the main transcript. Select the main transcript first.";
+      return `${noun} belongs to the main transcript. Select the main transcript first.`;
     }
     if (checkpointRecoveryRef.current || relocatingRef.current || pendingRelocationRef.current) {
-      return "Wait for the running session operation to finish before branching the conversation.";
+      return `Wait for the running session operation to finish before ${noun.toLowerCase()}.`;
     }
     if (pendingImages.current.length > 0 || pendingPastedTexts.current.length > 0) {
-      return "Clear attached images and pasted text before branching the conversation.";
+      return `Clear attached images and pasted text before ${noun.toLowerCase()}.`;
     }
     if (!subagentManager.canBranchMainSession(session.sessionManager)) {
-      return "Worker setup, a retained worker or a pending delivery must finish before branching the conversation.";
+      return `Worker setup, a retained worker or a pending delivery must finish before ${noun.toLowerCase()}.`;
     }
     const goal = goalRef.current;
     if (goal && (goal.state === "active" || goal.state === "blocked")) {
-      return "Stop the goal with /goal stop before branching the conversation.";
+      return `Stop the goal with /goal stop before ${noun.toLowerCase()}.`;
     }
     if (goal?.pendingContinuation) {
-      return "A goal continuation is still owed. Resolve it before branching the conversation.";
+      return `A goal continuation is still owed. Resolve it before ${noun.toLowerCase()}.`;
     }
     return null;
   };
 
-  /** Full opening guard: the state guard plus exact-runtime idleness. */
-  const conversationBranchBlocker = (): string | null => {
-    if (!onBranchConversation) return "Conversation branching is unavailable for this session runtime.";
-    if (branchRunningRef.current) return "A conversation branch is already being applied.";
+  /** Full guard for a same-file runtime transition: state plus exact idleness. */
+  const sessionTransitionBlocker = (noun: string): string | null => {
+    if (branchRunningRef.current) return "A session transition is already being applied.";
     if (sessionSwitchRef.current) {
-      return "Wait for the running session operation to finish before branching the conversation.";
+      return `Wait for the running session operation to finish before ${noun.toLowerCase()}.`;
     }
-    const state = conversationBranchStateBlocker();
+    const state = sessionTransitionStateBlocker(noun);
     if (state) return state;
     if (busyRef.current || !isRuntimeIdle(session) || session.pendingMessageCount !== 0
       || session.isBashRunning !== false || session.hasPendingBashMessages !== false
       || txRef.current.pending.length > 0 || hasConversationBranchPendingInput(session)) {
-      return "Wait for the main session to become idle with no pending input, delivery or Bash work before branching.";
+      return "Wait for the main session to become idle with no pending input, delivery or Bash work first.";
     }
     return null;
+  };
+
+  const conversationBranchStateBlocker = () =>
+    sessionTransitionStateBlocker("Conversation branching");
+  const conversationBranchBlocker = (): string | null => {
+    if (!onBranchConversation) return "Conversation branching is unavailable for this session runtime.";
+    return sessionTransitionBlocker("Conversation branching");
   };
 
   const closeConversationBranch = () => {
@@ -3253,6 +3287,53 @@ export function App({
           }
           inputRef.current?.focus();
         });
+      })
+      .catch((error) => {
+        append({ kind: "text", role: "error", text: String(error) });
+        queueMicrotask(() => inputRef.current?.focus());
+      })
+      .finally(() => {
+        branchRunningRef.current = false;
+        sessionSwitchRef.current = false;
+        setWorking(false);
+      });
+  };
+
+  const applyPlanModeTransition = (mode: PlanMode) => {
+    if (!onTransitionPlanMode) {
+      append({ kind: "text", role: "error", text: "Plan mode is unavailable for this session runtime." });
+      return;
+    }
+    const noun = "Changing plan mode";
+    const blocked = sessionTransitionBlocker(noun);
+    if (blocked) {
+      append({ kind: "text", role: "error", text: blocked });
+      return;
+    }
+    const guard = () => {
+      const reason = sessionTransitionStateBlocker(noun);
+      if (reason) throw new Error(reason);
+    };
+    implementArmedRef.current = false;
+    branchRunningRef.current = true;
+    sessionSwitchRef.current = true;
+    setWorking(true);
+    onTransitionPlanMode(mode, { validate: guard, validateRetired: guard })
+      .then((result) => {
+        if (!result) {
+          append({ kind: "text", role: "system", text: "Plan mode was not changed." });
+          queueMicrotask(() => inputRef.current?.focus());
+          return;
+        }
+        branchNoticeRef.current = result.recovered
+          ? "Plan mode transition failed. The session stays in plan mode; no capability was restored."
+          : result.mode === "plan"
+            ? "Plan mode is ON. File mutation, mutable delegation, managed shells, MCP servers and project validation are blocked; Bash needs native sandbox enforcement. Your own ! commands are unchanged."
+            : "Plan mode is off. Full capability is restored for this session.";
+        focusInputAfterSwitch.current = true;
+        setSession(result.session);
+        setBranchNotice((revision) => revision + 1);
+        queueMicrotask(() => inputRef.current?.focus());
       })
       .catch((error) => {
         append({ kind: "text", role: "error", text: String(error) });
@@ -4783,6 +4864,12 @@ export function App({
         return;
       }
       const action = promptText.trim().split(/\s+/)[1];
+      if (planModeRef.current && action !== "status" && action !== undefined) {
+        // PUM cannot certify a server as non-mutating, so plan mode refuses the
+        // whole lifecycle rather than reasoning about one server's intent.
+        report("Plan mode cannot connect, approve or use MCP servers. Leave plan mode with /implement confirm first.", true);
+        return;
+      }
       if ((action === "connect" || action === "approve") && (busyRef.current || !isRuntimeIdle(session)
         || sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current)) {
         report("Wait for the main session to become idle and session operations to finish before connecting or approving MCP.", true);
@@ -4820,6 +4907,13 @@ export function App({
         report("Usage: /validation [status|enable <64-hex digest>|disable]", true);
         return;
       }
+      // A role refusal does not depend on a runtime controller, so it is
+      // reported before an "unavailable" message can hide the real reason.
+      if (action === "enable" && !selectedAgentId && planModeRef.current) {
+        // Validation runs configured project commands: a mutation path.
+        report("Plan mode cannot enable project validation. Leave plan mode with /implement confirm first.", true);
+        return;
+      }
       const selected = selectedAgentId ? subagentManager.getAgent(selectedAgentId) : undefined;
       const controller = validationForSession(selectedAgentId ? subagentManager.getDiagnosticsSessionId(selectedAgentId) ?? "" : session);
       if (!controller) {
@@ -4847,6 +4941,79 @@ export function App({
       } catch {
         report("Project validation request failed. Preview /validation and check the current proposal and digest before enabling.", true);
       }
+      return;
+    }
+
+    // Explicit user-only capability gate. Entering plan mode only removes
+    // capability, so it needs no confirmation; leaving it is the upgrade, so it
+    // needs a second directly typed command, never a keypress on a restored draft.
+    if (attachments.length === 0 && commandEligible && /^\/(?:plan|implement)(?:\s|$)/.test(promptText)) {
+      setEditingStash(null);
+      histCursor.current = null;
+      draft.current = "";
+      const report = (text: string, error = false) => {
+        const line: Line = { kind: "text", role: error ? "error" : "system", text };
+        if (selectedAgentId) subagentManager.appendAgentLine(selectedAgentId, line, { persist: false });
+        else appendMainLine(line);
+      };
+      const parts = promptText.trim().split(/\s+/);
+      const implement = parts[0] === "/implement";
+      if (!directSubmission) {
+        implementArmedRef.current = false;
+        report("Plan mode commands require direct user input. Clear the draft and type the command anew.", true);
+        return;
+      }
+      if (selectedAgentId) {
+        report("Plan mode is a main-session role. Select the main transcript first.", true);
+        return;
+      }
+      const active = planModeRef.current;
+      if (implement) {
+        if (parts.length > 2 || (parts.length === 2 && parts[1] !== "confirm")) {
+          report("Usage: /implement, then /implement confirm to leave plan mode.", true);
+          return;
+        }
+        if (!active) {
+          implementArmedRef.current = false;
+          report("Plan mode is already off; this session has full capability.", true);
+          return;
+        }
+        if (parts.length === 1) {
+          implementArmedRef.current = true;
+          report("Leaving plan mode restores file mutation, mutable delegation, managed shells, MCP and project validation for this session. Files are not changed by the transition itself.\nType /implement confirm to leave plan mode, or keep planning.");
+          return;
+        }
+        if (!implementArmedRef.current) {
+          report("Type /implement first, read what it restores, then /implement confirm.", true);
+          return;
+        }
+        applyPlanModeTransition("implement");
+        return;
+      }
+      implementArmedRef.current = false;
+      const text = promptText.trim().slice("/plan".length).trim();
+      if (text) {
+        try {
+          const file = session.sessionFile;
+          if (!file) throw new Error("Recording a plan requires a saved session.");
+          const existing = loadPlanRecord(file);
+          savePlanRecord(file, {
+            version: 1,
+            mode: existing?.mode ?? (active ? "plan" : "implement"),
+            text: validatePlanText(text),
+            at: Date.now(),
+          });
+        } catch (error) {
+          report(error instanceof Error ? error.message : "The plan could not be recorded.", true);
+          return;
+        }
+        report("Plan recorded.");
+      }
+      if (active) {
+        report(describePlanRecord(loadPlanRecord(session.sessionFile), true));
+        return;
+      }
+      applyPlanModeTransition("plan");
       return;
     }
 
@@ -6506,6 +6673,7 @@ export function App({
         />
         <StatusBar
           theme={theme}
+          planMode={planMode}
           modelId={visibleModelId}
           thinkingLevel={visibleThinkingLevel}
           cwd={cwd}

@@ -129,6 +129,21 @@ export const MCP_GROUP_TOOL_NAMES = ["mcp_list", "mcp_call"] as const;
 export const LSP_GROUP_TOOL_NAMES = ["lsp_diagnostics"] as const;
 export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree", "Shells", "Todo", "MCP", "LSP"] as const;
 
+/**
+ * Tools kept out of a plan-mode main session's schemas.
+ *
+ * Plan mode is the readonly role applied to the authoritative main agent, so it
+ * starts from the readonly child set and removes two more: `memory_edit` writes
+ * shared project memory, and the MCP tools call servers PUM cannot certify as
+ * non-mutating. `src/plan-mode.ts` refuses the same set at call time, and a test
+ * holds the two lists together. LSP stays: it is document-only (#46).
+ */
+export const PLAN_MODE_OMITTED_TOOL_NAMES = [
+  "memory_edit",
+  ...MCP_GROUP_TOOL_NAMES,
+] as const;
+
+
 export type ToolGroupName = (typeof TOOL_GROUP_NAMES)[number];
 
 export type ToolGroupAudience = "main" | "subagent";
@@ -161,8 +176,11 @@ export const ALL_GROUP_TOOL_NAMES: readonly string[] = [
 ];
 
 /** The tool names a session of an audience may expose (the allowlist). */
-export function mainAllowedToolNames(): string[] {
-  return [...CORE_TOOL_NAMES, ...MAIN_EXTRA_TOOL_NAMES, ENABLE_TOOLS, ...ALL_GROUP_TOOL_NAMES];
+export function mainAllowedToolNames(planMode = false): string[] {
+  const names = [...CORE_TOOL_NAMES, ...MAIN_EXTRA_TOOL_NAMES, ENABLE_TOOLS, ...ALL_GROUP_TOOL_NAMES];
+  if (!planMode) return names;
+  const omitted = new Set<string>([...READONLY_CHILD_OMITTED_TOOL_NAMES, ...PLAN_MODE_OMITTED_TOOL_NAMES]);
+  return names.filter((name) => !omitted.has(name));
 }
 
 /** The complete tool list of a goal judge session. */
@@ -211,6 +229,7 @@ export function hiddenGroupNames(enabled: readonly string[]): string[] {
 export function activeToolNames(
   enabledGroups: Iterable<string>,
   audience: ToolGroupAudience,
+  /** Readonly child, or plan mode on main: both are the same restricted role. */
   readonly = false,
 ): string[] {
   const active = new Set<string>([...CORE_TOOL_NAMES, ENABLE_TOOLS]);
@@ -223,7 +242,7 @@ export function activeToolNames(
   for (const group of enabledGroups) {
     for (const name of toolNamesInGroup(group)) active.add(name);
   }
-  const allowed = audience === "main" ? mainAllowedToolNames() : childAllowedToolNames(readonly);
+  const allowed = audience === "main" ? mainAllowedToolNames(readonly) : childAllowedToolNames(readonly);
   return allowed.filter((name) => active.has(name));
 }
 
@@ -301,7 +320,9 @@ export class ToolGroupsController {
   constructor(audience: ToolGroupAudience, sessionFile?: string, isReadonly = false) {
     this.audience = audience;
     this.file = sessionFile;
-    this.isReadonly = audience === "subagent" && isReadonly;
+    // Both audiences carry the restricted role now: a readonly child, or a main
+    // session in plan mode. Revealing a group never widens the role's allowlist.
+    this.isReadonly = isReadonly;
   }
 
   /** The companion file currently bound, if any. */
@@ -326,7 +347,9 @@ export class ToolGroupsController {
   }
 
   availableToolNames(names: readonly string[]): string[] {
-    const allowed = new Set(this.audience === "main" ? mainAllowedToolNames() : childAllowedToolNames(this.isReadonly));
+    const allowed = new Set(this.audience === "main"
+      ? mainAllowedToolNames(this.isReadonly)
+      : childAllowedToolNames(this.isReadonly));
     return names.filter((name) => allowed.has(name));
   }
 

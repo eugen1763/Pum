@@ -5,6 +5,7 @@ import {
   createAgentSessionServices,
   ModelRuntime,
   type AgentSession,
+  type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
 import { mkdirSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -15,6 +16,7 @@ import { createMcpProcessAdapter } from "./mcp-process";
 import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
 import { bindConversationBranchSession } from "./conversation-branch";
+import { isPlanModeActive, planModeExtension } from "./plan-mode";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, hasMemoryContextExtension } from "./memory";
 import { ContextWindowController } from "./context-window";
@@ -312,12 +314,16 @@ export async function start(
   const mcpControllers = new WeakMap<AgentSession, McpController>();
   const lspControllers = new WeakMap<AgentSession, LspController>();
   const sessionRuntime = await createLockedAgentSessionRuntime(
-    async ({ cwd, sessionManager, sessionStartEvent, conversationState }) => {
+    async ({ cwd, sessionManager, sessionStartEvent, conversationState, planMode }) => {
       const releaseSettingsSetup = runtimeSettings.begin({});
       try {
+      // Only an explicit transition names the role. Every other build -
+      // startup, resume, relocation, conversation branch - reads the durable
+      // records, so a plan-mode session can never come back mutable by itself.
+      const restricted = planMode ?? isPlanModeActive(sessionManager.getSessionFile(), sessionManager);
       // Bind fresh state to the trusted target before service creation registers
       // enable_tools. Replacements must not reuse the previous runtime's controller.
-      const mainToolGroups = new ToolGroupsController("main");
+      const mainToolGroups = new ToolGroupsController("main", undefined, restricted);
       mainToolGroups.load(sessionManager.getSessionFile());
       const memory = createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" });
       const contextWindow = new ContextWindowController({ memoryInjected: hasMemoryContextExtension([memory]) });
@@ -348,17 +354,26 @@ export async function start(
             writingStyleExtension,
             explanationStrengthExtension,
             checkModePromptExtension,
-            filesystemSandboxExtension,
-            createFileCheckpointExtension(),
+            // Plan mode is the readonly role applied to main, so it uses exactly
+            // the layers a readonly child already gets: no mutation tools, the
+            // hard call guard, the readonly filesystem sandbox and readonly
+            // native Bash. The guard is not a substitute for any of the others.
+            restricted
+              ? createFilesystemSandboxExtension({ readonly: true, roleLabel: "plan mode" })
+              : filesystemSandboxExtension,
+            createFileCheckpointExtension({ readonly: restricted }),
             mainCheckModeExtension,
-            sandboxExtension,
+            restricted ? sandboxController.extension({ readonly: true }) : sandboxExtension,
+            planModeExtension(restricted),
             validation.extension(),
             contextWindow.extension(),
             memory,
             questionnaireManager.extension({ id: "main", name: "main" }),
             mainToolGroups.extension(),
-            { name: "pum-main-mcp", factory: (pi) => { for (const tool of mcp.tools()) pi.registerTool(tool); } },
-            { name: "pum-main-lsp", factory: (pi) => { for (const tool of lsp.tools()) pi.registerTool(tool); } },
+            // MCP servers can mutate and PUM cannot certify one as read-only, so
+            // plan mode withholds the tools rather than reasoning about intent.
+            ...(restricted ? [] : [{ name: "pum-main-mcp", factory: (pi: ExtensionAPI) => { for (const tool of mcp.tools()) pi.registerTool(tool); } }]),
+            { name: "pum-main-lsp", factory: (pi: ExtensionAPI) => { for (const tool of lsp.tools()) pi.registerTool(tool); } },
             mainTodoTools.extension(),
             subagentExtension,
           ],
@@ -375,7 +390,7 @@ export async function start(
         // nothing to restore from, so it would silently fall back to global
         // defaults. Only the branch transaction supplies this.
         ...(conversationState ?? {}),
-        tools: mainAllowedToolNames(),
+        tools: mainAllowedToolNames(restricted),
       });
       mcpSession = result.session;
       mcpControllers.set(result.session, mcp);
@@ -548,6 +563,13 @@ export async function start(
         const result = await sessionRuntime.switchSession(path);
         if (!result.cancelled) statsManager.bindMainSession(sessionRuntime.session);
         return result.cancelled ? null : sessionRuntime.session;
+      }}
+      onTransitionPlanMode={async (mode, planOptions) => {
+        // Same canonical session, file and lock: only the role changes, and a
+        // failed transition can only land in the more restrictive one.
+        const result = await sessionRuntime.transitionPlanMode(mode, planOptions);
+        statsManager.bindMainSession(sessionRuntime.session);
+        return result;
       }}
       onBranchConversation={async (selection, branchOptions) => {
         // Same session, same file, same lock: only the selected conversation

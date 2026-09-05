@@ -66,6 +66,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/todo", "Show the agent's todo list"],
       ["/stats", "Show session statistics"],
       ["/diagnostics [clear]", "Show or clear opt-in request diagnostics"],
+      ["/plan · /implement", "Enter or leave the enforced plan-only role"],
       ["/branch · /rewind", "Pick an earlier conversation path; no file restore"],
       ["/checkpoint [list|recover <id>|clear]", "Recover a runtime checkpoint to a new copy"],
       ["/validation [status|enable <digest>|disable]", "Preview or approve runtime project validation"],

@@ -16,6 +16,8 @@ export { truncateStatusText } from "./status-metadata";
 
 export type StatusProps = {
   theme: Theme;
+  /** Enforced plan-only role (#51). */
+  planMode?: boolean;
   modelId: string;
   thinkingLevel: string;
   cwd: string;
