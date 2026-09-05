@@ -2,13 +2,19 @@
 
 [← Back to the README](../README.md)
 
-Every session always has `read`, `write`, `edit`, `bash`, `memory_read`, and the questionnaire.
-The main agent also has `memory_edit`.
-Everything else lives in a hidden group that the model reveals
-with `enable_tools` when it needs it, so a schema the turn will not use never
-costs context: **Admin** (triggers and the message cache), **Subagents**,
-**Worktree**, **Shells**, and **Todo**. Revealing is one-way for the rest of the
-session.
+Mutable TUI main and worker sessions have `read`, `write`, `edit`, `bash`,
+`memory_read`, `questionnaire`, `history`, `get_context_remaining`, and
+`new_context` as core tools. Main also has `memory_edit`; workers have
+`finish_subagent`. Readonly workers omit mutation and other denied capabilities.
+Headless has coding, memory and context tools but no interactive tools; internal
+judge/AFK roles have separate restricted tools, not this core inventory.
+
+Optional groups are revealed with `enable_tools`: **Admin** (triggers and the
+message cache), **Subagents**, **Worktree**, **Shells**, **Todo**, and the
+main-TUI-only **MCP** and **LSP** bridges. Registration and role allowlists still
+control availability; revealing is one-way for the session and **never grants
+MCP/LSP consent**. See [current agent/tool contracts](agent-guidance/agents-tools.md#ld-109)
+and [readonly scope](subagents.md#readonly-children).
 
 ## Project memory
 

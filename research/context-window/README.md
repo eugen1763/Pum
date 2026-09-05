@@ -1,5 +1,10 @@
 # Context-window capability inspection
 
+> Historical inspection/design record, not current implementation authority.
+> “Initial inspection” statements describe the preimplementation state. For
+> current requirements read [session/context contracts](../../docs/agent-guidance/sessions-context.md),
+> [context budgets](../../docs/context-budgets.md) and [history](../../docs/transcript-history.md).
+
 ## Reference
 
 - Repository: https://github.com/fitchmultz/pi-posthorse

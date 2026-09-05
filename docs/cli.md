@@ -44,8 +44,10 @@ called `login`.
 
 ## Headless runs
 
-`pum -p "<text>"` runs one prompt with `read`, `write`, `edit`, and `bash`, and
-nothing else: the interactive tools need a running TUI. It keeps
+`pum -p "<text>"` runs one prompt with `read`, `write`, `edit`, `bash`,
+`memory_read`, `memory_edit`, `history`, `get_context_remaining`, and `new_context`.
+Interactive tools, tool-group reveal, managed subagents, MCP and LSP are not
+registered; see [headless contracts](agent-guidance/architecture.md#ld-003). It keeps
 the configured Check mode, sandbox, writing style, and explanation strength, and
 the session persists to the normal per-directory store, so `-r` and the TUI can
 continue it.

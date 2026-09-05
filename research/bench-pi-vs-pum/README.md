@@ -1,5 +1,10 @@
 # PUM vs pi vs OpenCode benchmark
 
+> Historical benchmark/harness documentation, not current quality, cost or
+> compatibility evidence. Running it requires separate authorization for its
+> downloads, filesystem access and paid provider use. Current project contracts
+> are indexed in [agent guidance](../../docs/agent-guidance/README.md).
+
 This harness compares PUM, pi, and OpenCode on identical coding exercises. It
 uses the **Aider polyglot** exercise set (`Aider-AI/polyglot-benchmark`), which
 is based on the Exercism tracks.

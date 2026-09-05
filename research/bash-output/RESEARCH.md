@@ -1,5 +1,10 @@
 # Research: reducing the bash tool's context footprint
 
+> Historical experiments and measurements, not a current benchmark or API guarantee.
+> Current mandatory behavior is in the [Bash-output contract](../../docs/agent-guidance/agents-tools.md#ld-034)
+> and [security contracts](../../docs/agent-guidance/security.md). Revalidate installed
+> dependencies before relying on the then-current implementation observations below.
+
 **Status:** implemented and unit-tested (`src/bash-output.ts`), wired into the
 bash tool extension, benchmarked head-to-head against pi's built-in tool.
 

@@ -52,7 +52,10 @@ On blocks an explicit verifier verdict of `UNSAFE`. An unclear, unavailable,
 failed, or timed-out review does not block a fully validated call. The one
 exception is a deterministic match for a direct main-agent `npm publish` or
 `npm dist-tag add ... latest`, which On allows outright; managed subagents
-cannot use it.
+cannot use it. The implementation currently recognizes a broader validated tag
+than the documented `latest` wording; this is an [unresolved documentation/policy
+scope discrepancy](agent-guidance/security.md#policy-wording-ambiguity), not a
+new permission or a policy change.
 
 For `edit`, PUM validates the complete proposed change before any mutation.
 Review data includes the unified diff, changed paths, line counts,
@@ -78,8 +81,11 @@ The **Sandbox** setting has three modes:
 - **Require:** block checked calls unless native enforcement is available.
 - **Off:** do not sandbox. Check mode policy is unchanged.
 
-Check mode **Off** always uses pi's normal unsandboxed Bash backend. For an
-active Check mode, PUM recomputes the policy from the exact approved command,
+For mutable model Bash/managed shells, Check mode **Off** uses pi's normal
+unsandboxed backend. Direct-user `!` Bash retains Sandbox Auto/Require even Check
+Off. Readonly children still require native readonly/networkless execution, and
+MCP/LSP use separate mandatory native adapters even with Check and Sandbox Off.
+For an active Check mode, PUM recomputes the policy from the exact approved command,
 the authoritative working directory, the configured roots, and deterministic
 access analysis. Model input cannot supply policy fields.
 
@@ -100,7 +106,8 @@ cannot run work that Bash would have confined. **External triggers do not**:
 their synchronous spawn boundary cannot carry the exact approved policy object
 into execution, and recomputing a second policy there would weaken approval
 identity. Triggers keep deterministic Check mode and direct argv supervision.
-PUM never sandboxes the TUI/model process itself.
+This inner Bash controller never sandboxes the TUI/model process itself; the
+separate outer launcher below confines the PUM child.
 
 ## Outer sandbox (MVP)
 

@@ -164,8 +164,11 @@ git diff --check
 Run the TUI from the repository root with `bun run start`, and refresh the
 README images with `bun run scripts/capture-screenshots.tsx`. Use a throwaway
 `PUM_DIR` for local integration tests, and capture TUI output through `tmux`
-rather than piping standard output. [AGENTS.md](AGENTS.md) holds the
-architecture, the locked decisions, and the TUI test guidance.
+rather than piping standard output. [AGENTS.md](AGENTS.md) holds the mandatory
+security/workflow core and routes to the [indexed current contracts](docs/agent-guidance/README.md),
+[source layout](docs/agent-guidance/layout.md), and [TUI test guidance](docs/agent-guidance/testing.md).
+Detailed rules remain mandatory; [historical research](docs/agent-guidance/historical-references.md)
+is clearly separated from current authority.
 
 ## Release status
 

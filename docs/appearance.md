@@ -8,7 +8,7 @@
 shows. It changes presentation only — nothing is rewritten in the session or in
 the model's context, so switching modes re-renders everything you already have.
 
-- **Quiet** folds every successful call into one activity row, commands and mutations included.
+- **Quiet** folds every settled call into one activity row, including failed/rejected calls, commands and mutations.
 - **Normal** keeps commands and mutations as their own rows, and shows an editing tool's diff inline without being asked, capped at twenty changed lines.
 - **Verbose** lists every call, expanded, with the complete retained input and result and no rendered diff.
 

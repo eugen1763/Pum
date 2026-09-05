@@ -3,8 +3,9 @@
 PUM supports a deliberately narrow **2025-11-25 tools-only stdio subset**, not
 latest-version or full MCP compatibility. Main TUI only. Configuration is inert;
 launch, resume, tool-group reveal and repository instructions never start a server
-or grant approval. The implementation is subject to independent integration review;
-no installed third-party server or successful native interoperability run is claimed.
+or grant approval. Issue #45 was reviewed and closed on September 5, 2026;
+its recorded validation below is historical evidence, not a fresh run.
+No installed third-party server or successful native interoperability run is claimed.
 
 ## Accepted scope and residual risk
 
@@ -198,5 +199,6 @@ On this host Bubblewrap was absent during the initial implementation. Native
 fixtures are skipped and that absence is a material validation limitation. No
 paid-provider test, installed third-party interoperability, Windows MCP execution,
 headless access, remote HTTP/SSE/OAuth, authenticated/writable/networked servers,
-full-protocol compatibility or confidentiality proof is claimed. Main review and
-its validation are required before committing or closing #45; no release is implied.
+full-protocol compatibility or confidentiality proof is claimed. These remain
+validation limitations after #45 integration; closure does not establish native
+interoperability or imply a release.
