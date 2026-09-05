@@ -10,6 +10,7 @@ import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session
 import { installModelCatalogFallbacks } from "./model-catalog";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
+import { ContextWindowController, CONTEXT_TOOL_NAMES } from "./context-window";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
@@ -37,13 +38,14 @@ import { prepareHeadlessStatsOutput, type HeadlessStatsOutput } from "./headless
  * are not constructed here, and subagent, trigger, and message-cache tools
  * need the running TUI for routing and notifications.
  */
-const HEADLESS_TOOL_NAMES = [
+export const HEADLESS_TOOL_NAMES = [
   "read",
   "write",
   "edit",
   "bash",
   MEMORY_READ_TOOL_NAME,
   MEMORY_EDIT_TOOL_NAME,
+  ...CONTEXT_TOOL_NAMES,
 ];
 
 /**
@@ -189,6 +191,7 @@ async function runPromptSession(
   const startup = await lockedProjectSession(cwd, options.resume === true, sessionLockOwner);
   const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
+      const contextWindow = new ContextWindowController();
       const services = await createAgentSessionServices({
         cwd,
         agentDir: AGENT_DIR,
@@ -201,6 +204,7 @@ async function runPromptSession(
             checkModePromptExtension,
             checkModeExtension,
             sandboxController.extension(),
+            contextWindow.extension(),
             createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
           ],
         },
@@ -211,6 +215,13 @@ async function runPromptSession(
         sessionStartEvent,
         tools: HEADLESS_TOOL_NAMES,
       });
+      try {
+        contextWindow.bind(result.session);
+      } catch (error) {
+        // The runtime factory cannot dispose a session it has not received yet.
+        try { result.session.dispose(); } catch { /* Preserve the binding error. */ }
+        throw error;
+      }
       return { ...result, services, diagnostics: services.diagnostics };
     },
     {

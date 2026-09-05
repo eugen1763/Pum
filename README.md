@@ -120,6 +120,22 @@ Use `bun run start -r` to resume the latest session for the current directory,
 and `/login` to add or update a provider later.
 Inside the TUI, `/history` or its alias `/resume` opens the saved-session browser.
 
+Agents have separate context tools: `history` searches and reads the active session
+transcript. `get_context_remaining` reports the context budget. `new_context`
+requests a rollover, deferred until the entire tool batch succeeds. Rollover keeps
+the canonical session ID, session file, and full entries across resume. The agent
+can supply an optional literal handoff; rollover never generates a summary.
+Automatic summarization is disabled in these runtimes. Rollover is explicit, not
+automatic. Manual `/compress` is unchanged before the first rollover. With an
+active PUM rollover boundary, the controller refuses `/compress` before native
+summarization or authentication preflight. Use `new_context` instead; the complete
+transcript remains available. These tools are available to main, headless, and
+worker agents, including readonly workers, but not internal judges or AFK delegates.
+
+`history` returns metadata-only reads for structural entries, so agents can follow
+`parentId` links without exposing private custom data. History pages run
+sequentially and account for prior history results in the same tool batch.
+
 Only one PUM instance can own a saved session at a time. Close the owning
 session before resuming it elsewhere. This also applies to headless runs,
 managed agents, and worktree resume aliases. A locked history selection leaves

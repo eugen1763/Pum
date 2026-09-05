@@ -51,6 +51,86 @@ describe("read tool metadata", () => {
   });
 });
 
+describe("context tool metadata", () => {
+  test("shows history search queries and supplied finite pagination", () => {
+    expect(toolArgs("history", { op: "search", query: "exact instructions" }, "/repo"))
+      .toEqual(["search", "exact instructions"]);
+    expect(toolArgs("history", {
+      op: "search", query: "exact instructions", offset: 0, limit: 10,
+      entryId: "not a search argument", imageOffset: 1, imageLimit: 2,
+    }, "/repo"))
+      .toEqual(["search", "exact instructions", "offset=0", "limit=10"]);
+    expect(toolArgText("history", { op: "search", query: "first\nsecond", limit: 3 }, "/repo"))
+      .toBe("search, first\\nsecond, limit=3");
+  });
+
+  test("shows history entry IDs and independent text and image pagination", () => {
+    expect(toolArgs("history", { op: "read", entryId: "entry-1" }, "/repo"))
+      .toEqual(["read", "entry-1"]);
+    expect(toolArgs("history", {
+      op: "read", entryId: "entry-1", query: "not a read argument",
+      offset: 4000, limit: 800, imageOffset: 2, imageLimit: 0,
+    }, "/repo"))
+      .toEqual(["read", "entry-1", "offset=4000", "limit=800", "imageOffset=2", "imageLimit=0"]);
+    expect(toolArgs("history", { op: "read", entryId: "entry-1", imageLimit: 2 }, "/repo"))
+      .toEqual(["read", "entry-1", "imageLimit=2"]);
+  });
+
+  test("never echoes handoff prose into transcript labels or flat logs", () => {
+    const handoff = "PRIVATE HANDOFF\n".repeat(10000);
+    const args = { handoff, path: "/repo/private", unrelated: "private fallback" };
+    expect(toolArgs("new_context", args, "/repo"))
+      .toEqual([`handoff: ${handoff.length} chars`]);
+    const text = toolArgText("new_context", args, "/repo");
+    expect(text).toBe(`handoff: ${handoff.length} chars`);
+    expect(text).not.toContain("PRIVATE");
+    expect(text.length).toBeLessThan(40);
+    expect(toolArgs("new_context", { handoff: "" }, "/repo"))
+      .toEqual(["handoff: 0 chars"]);
+    expect(toolArgs("new_context", {}, "/repo")).toEqual([]);
+  });
+
+  test("context budget has no display arguments, even with unexpected input", () => {
+    expect(toolArgs("get_context_remaining", {}, "/repo")).toEqual([]);
+    expect(toolArgText("get_context_remaining", { path: "/repo/private", handoff: "private" }, "/repo"))
+      .toBe("");
+  });
+
+  test("rejects malformed context argument containers without exposing fallback text", () => {
+    for (const name of ["history", "new_context", "get_context_remaining"]) {
+      for (const args of [undefined, null, false, 12, "private", ["private"]]) {
+        expect(toolArgs(name, args, "/repo")).toEqual([]);
+        expect(toolArgText(name, args, "/repo")).toBe("");
+      }
+    }
+    for (const handoff of [undefined, null, 12, false, ["private"], { text: "private" }]) {
+      expect(toolArgs("new_context", { handoff, path: "/repo/private", other: "private" }, "/repo"))
+        .toEqual([]);
+    }
+    for (const op of [undefined, null, false, 12, "unknown", ["search"]]) {
+      expect(toolArgs("history", { op, query: "private", path: "/repo/private" }, "/repo"))
+        .toEqual([]);
+    }
+  });
+
+  test("ignores malformed history targets and non-finite range values", () => {
+    expect(toolArgs("history", {
+      op: "search", query: { text: "private" }, offset: "1", limit: Infinity,
+    }, "/repo"))
+      .toEqual(["search"]);
+    expect(toolArgs("history", {
+      op: "read", entryId: ["private"], offset: NaN, limit: -Infinity,
+      imageOffset: "2", imageLimit: null,
+    }, "/repo"))
+      .toEqual(["read"]);
+    expect(toolArgs("history", {
+      op: "read", entryId: "entry-1", offset: 0, limit: undefined,
+      imageOffset: 0, imageLimit: Infinity,
+    }, "/repo"))
+      .toEqual(["read", "entry-1", "offset=0", "imageOffset=0"]);
+  });
+});
+
 describe("other tool metadata", () => {
   test("preserves every Bash command line for the transcript", () => {
     expect(toolArgs("bash", { command: "printf one \\\r\n  && printf two" }, "/repo"))

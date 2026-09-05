@@ -189,6 +189,12 @@ describe("headless project memory", () => {
       expect(memoryFiles).toHaveLength(1);
       expect(readFileSync(memoryFiles[0]!, "utf8")).toContain("Headless memory probe");
       expect(requests.length).toBeGreaterThanOrEqual(5);
+      for (const request of requests as Array<{ tools: Array<{ function: { name: string } }> }>) {
+        expect(request.tools.map((tool) => tool.function.name).sort()).toEqual([
+          "bash", "edit", "get_context_remaining", "history", "memory_edit", "memory_read",
+          "new_context", "read", "write",
+        ]);
+      }
     } finally {
       server.stop(true);
     }

@@ -17,6 +17,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { ContextWindowController, CONTEXT_TOOL_NAMES } from "../src/context-window";
 import {
   ADMIN_GROUP_TOOL_NAMES,
   ALL_GROUP_TOOL_NAMES,
@@ -28,7 +29,9 @@ import {
   ToolGroupsController,
   TOOL_GROUP_NAMES,
   activeToolNames,
+  afkAllowedToolNames,
   childAllowedToolNames,
+  judgeAllowedToolNames,
   loadToolGroups,
   mainAllowedToolNames,
   saveToolGroups,
@@ -93,6 +96,21 @@ const groupToolStubExtension = {
 };
 
 describe("tool group membership", () => {
+  test("core tools include own-session context tools, but internal agents do not", () => {
+    expect([...CORE_TOOL_NAMES].sort()).toEqual([
+      "bash", "edit", "get_context_remaining", "history", "memory_read",
+      "new_context", "questionnaire", "read", "write",
+    ]);
+    expect(activeToolNames([], "main").sort()).toEqual([
+      ...CORE_TOOL_NAMES, "enable_tools", "memory_edit",
+    ].sort());
+    expect(activeToolNames([], "subagent").sort()).toEqual([
+      ...CORE_TOOL_NAMES, "enable_tools", "finish_subagent",
+    ].sort());
+    expect(judgeAllowedToolNames().sort()).toEqual(["bash", "goal_verdict", "read"]);
+    expect(afkAllowedToolNames()).toEqual(["afk_answer"]);
+  });
+
   test("main sessions expose only core tools plus enable_tools by default", () => {
     const active = activeToolNames([], "main");
     for (const core of [...CORE_TOOL_NAMES, ...MAIN_EXTRA_TOOL_NAMES, ENABLE_TOOLS]) {
@@ -130,7 +148,7 @@ describe("tool group membership", () => {
     }
     for (const tool of [
       "read", "bash", "finish_subagent", "list_subagents", "message_cache_list", "message_cache_read", "list_triggers", "inspect_trigger",
-      "pause_trigger", "cancel_trigger", "worktree",
+      "pause_trigger", "cancel_trigger", "worktree", ...CONTEXT_TOOL_NAMES,
     ]) {
       expect(active).toContain(tool);
       expect(childAllowedToolNames(true)).toContain(tool);
@@ -274,11 +292,12 @@ describe("tool group wiring in a real session", () => {
     expect(model).toBeDefined();
 
     const groups = new ToolGroupsController("main");
+    const contextWindow = new ContextWindowController();
     const services = await createAgentSessionServices({
       cwd: repo,
       agentDir,
       modelRuntime: runtime,
-      resourceLoaderOptions: { extensionFactories: [groupToolStubExtension, groups.extension()] },
+      resourceLoaderOptions: { extensionFactories: [contextWindow.extension(), groupToolStubExtension, groups.extension()] },
     });
     const result = await createAgentSessionFromServices({
       services,
@@ -286,6 +305,7 @@ describe("tool group wiring in a real session", () => {
       model,
       tools: mainAllowedToolNames(),
     });
+    contextWindow.bind(result.session);
     const sessionFile = result.session.sessionFile;
     expect(sessionFile).toBeDefined();
     groups.load(sessionFile);
@@ -294,7 +314,7 @@ describe("tool group wiring in a real session", () => {
     const toolNames = () => result.session.agent.state.tools.map((tool) => tool.name);
 
     // Core tools and enable_tools are always present.
-    for (const core of ["read", "write", "edit", "bash", ENABLE_TOOLS]) {
+    for (const core of ["read", "write", "edit", "bash", ...CONTEXT_TOOL_NAMES, ENABLE_TOOLS]) {
       expect(toolNames()).toContain(core);
     }
     expect(toolNames()).not.toContain("apply_patch");
@@ -322,11 +342,12 @@ describe("tool group wiring in a real session", () => {
 
     // Resume: a new session over the same file restores the enabled group.
     const groups2 = new ToolGroupsController("main");
+    const contextWindow2 = new ContextWindowController();
     const services2 = await createAgentSessionServices({
       cwd: repo,
       agentDir,
       modelRuntime: runtime,
-      resourceLoaderOptions: { extensionFactories: [groupToolStubExtension, groups2.extension()] },
+      resourceLoaderOptions: { extensionFactories: [contextWindow2.extension(), groupToolStubExtension, groups2.extension()] },
     });
     const resumed = await createAgentSessionFromServices({
       services: services2,
@@ -334,10 +355,13 @@ describe("tool group wiring in a real session", () => {
       model,
       tools: mainAllowedToolNames(),
     });
+    contextWindow2.bind(resumed.session);
     groups2.load(resumed.session.sessionFile);
     expect(groups2.enabledGroups()).toEqual(["Admin"]);
     resumed.session.setActiveToolsByName(groups2.activeTools());
-    expect(resumed.session.agent.state.tools.map((tool) => tool.name)).toContain("create_trigger");
+    const resumedTools = resumed.session.agent.state.tools.map((tool) => tool.name);
+    expect(resumedTools).toContain("create_trigger");
+    for (const name of CONTEXT_TOOL_NAMES) expect(resumedTools).toContain(name);
     resumed.session.dispose();
   });
 });

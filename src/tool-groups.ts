@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { GOAL_VERDICT_TOOL_NAME } from "./goal-judge";
 import { TODO_TOOL_NAMES } from "./todo-tools";
 import { AFK_ANSWER_TOOL_NAME } from "./afk-delegate";
+import { CONTEXT_TOOL_NAMES } from "./context-window";
 
 /**
  * Always-present tool that reveals hidden tool groups in this thread.
@@ -27,7 +28,7 @@ const TOOL_GROUPS_SUFFIX = "tool-groups.json";
  * Tools that are always sent in every session.
  *
  * The pi built-ins (read, write, edit, bash) must never be filtered.
- * Questionnaire and project-memory reads are always present too.
+ * Questionnaire, project-memory reads, and own-session context tools stay present too.
  */
 export const CORE_TOOL_NAMES = [
   "read",
@@ -36,6 +37,7 @@ export const CORE_TOOL_NAMES = [
   "bash",
   "questionnaire",
   "memory_read",
+  ...CONTEXT_TOOL_NAMES,
 ] as const;
 
 /** Extra always-sent tool that only the authoritative main agent may use. */

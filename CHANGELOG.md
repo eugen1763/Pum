@@ -2,6 +2,18 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.34-beta.1] - 2026-09-05
+
+### Added
+- Added session-scoped `history` search and recovery with stable entry IDs, bounded text and image pages, and private structural metadata protection.
+- Added `get_context_remaining` with active-window estimates that account for model changes, newly enabled tools, and prompt overhead.
+- Added explicit `new_context` rollover without generated summaries. Rollovers retain the complete transcript and canonical session across resume.
+- Added stable system-prompt guidance for proactive context checks, literal handoffs, and selective recovery in main, headless, and worker sessions.
+
+### Changed
+- Sessions with context tools no longer summarize automatically. Rollover requires an explicit `new_context` call after a complete successful tool batch.
+- Manual `/compress` remains available before rollover. After rollover, PUM refuses compression to protect archived windows and handoff-only information.
+
 ## [0.2.33-beta.1] - 2026-09-04
 
 ### Fixed

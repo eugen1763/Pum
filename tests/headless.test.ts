@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { headlessSearchObserver } from "../src/headless";
+import { HEADLESS_TOOL_NAMES, headlessSearchObserver } from "../src/headless";
 import { WEB_SEARCH_CUSTOM_TYPE } from "../src/web-search";
 
 type Entry = { type: string; data: unknown };
@@ -13,6 +13,13 @@ function recorder() {
   const observe = headlessSearchObserver(sessionManager as any, (line) => lines.push(line));
   return { entries, lines, observe };
 }
+
+test("headless exposes exactly coding, memory, and own-session context tools", () => {
+  expect([...HEADLESS_TOOL_NAMES].sort()).toEqual([
+    "bash", "edit", "get_context_remaining", "history", "memory_edit", "memory_read",
+    "new_context", "read", "write",
+  ]);
+});
 
 describe("headless web search", () => {
   test("persists every phase as a custom session entry", () => {

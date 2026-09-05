@@ -96,8 +96,28 @@ export function displayToolPath(path: string, cwd: string): string {
 
 /** Tool args are typed `any`, so every access here is defensive. */
 export function toolArgs(name: string, args: any, cwd: string): string[] {
-  if (!args || typeof args !== "object") return [];
+  if (!args || typeof args !== "object" || Array.isArray(args)) return [];
 
+  if (name === "get_context_remaining") return [];
+  if (name === "new_context") {
+    // A handoff can be long or sensitive. Never fall through to the raw input.
+    return typeof args.handoff === "string" ? [`handoff: ${args.handoff.length} chars`] : [];
+  }
+  if (name === "history") {
+    if (args.op !== "search" && args.op !== "read") return [];
+    const parts = [args.op];
+    const target = args.op === "search" ? args.query : args.entryId;
+    if (typeof target === "string") parts.push(target);
+    const ranges = args.op === "read"
+      ? ["offset", "limit", "imageOffset", "imageLimit"]
+      : ["offset", "limit"];
+    for (const field of ranges) {
+      if (typeof args[field] === "number" && Number.isFinite(args[field])) {
+        parts.push(`${field}=${args[field]}`);
+      }
+    }
+    return parts;
+  }
   if (name === "bash" && typeof args.command === "string") {
     return [args.command.replaceAll("\r\n", "\n").replaceAll("\r", "\n")];
   }

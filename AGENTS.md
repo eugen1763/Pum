@@ -55,6 +55,9 @@ bun run start    # open the TUI in the current directory
 | `src/subagents/spawn-preview-popup.tsx` | Responsive Markdown preview and optional note input |
 | `src/subagents/readonly.ts` | Fail-closed readonly child tool guard |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
+| `src/context-window.ts` | Active context budgets and deferred, persisted context rollover |
+| `src/context-guidance.ts` | Stable system-prompt guidance for proactive context management |
+| `src/transcript-history.ts` | Session-scoped transcript search and bounded text/image recovery |
 | `src/queue-recall.ts` | Atomic newest-first recall of queued user messages |
 | `src/session-resume-alias.ts` | Trusted source/worktree pointers to one canonical relocated session JSONL |
 | `src/session-history-metadata.ts` | Bounded session JSONL metadata and usage index |
@@ -129,7 +132,7 @@ These were chosen deliberately. Change them only on purpose.
 
 - **Bun** as the runtime. OpenTUI's renderer needs it.
 - **CLI help and version exit before startup.** `src/index.tsx` reads package metadata, parses arguments, and dynamically imports `src/main.tsx` only for direct TUI startup (or `src/headless.ts` for `-p`). Unknown options and commands exit with code 2, but `-h`/`--help` and `-v`/`--version` print and exit 0 even when a later argument is invalid. `--` ends option parsing, so an operand may start with `-`. In `pum s`/`pum sr` the `login` keyword must come before any mount directory, so a directory genuinely named `login` stays mountable after `--`. Startup accepts `login`, `-r`/`--resume`, and `-p`/`--prompt <text>`. `pum s` and `pum sr` launch the TUI through the outer sandbox. `pum ss` probes the runtime without starting the TUI.
-- **`-p` is headless.** `pum -p "<text>"` runs one prompt in `src/headless.ts` with read, write, edit, bash, memory_read, and memory_edit. It keeps the configured Check mode (on/off), sandbox, writing style, and explanation strength. Interactive tools (questionnaire, enable_tools, subagents, triggers, message cache) are not registered. The session persists to the normal per-directory store, so `-r` and the TUI can continue it. Headless mode does not combine with `pum s` or `pum sr` in the current launcher protocol.
+- **`-p` is headless.** `pum -p "<text>"` runs one prompt in `src/headless.ts` with read, write, edit, bash, memory_read, memory_edit, history, get_context_remaining, and new_context. It keeps the configured Check mode (on/off), sandbox, writing style, and explanation strength. Interactive tools (questionnaire, enable_tools, subagents, triggers, message cache) are not registered. The session persists to the normal per-directory store, so `-r` and the TUI can continue it. Headless mode does not combine with `pum s` or `pum sr` in the current launcher protocol.
 - **`@earendil-works/pi-coding-agent`**, not `pi-ai` on its own. It brings the
   agent loop, session files, and the `read`/`write`/`edit`/`bash` tools. Using
   `pi-ai` alone would mean writing all of that here.
@@ -392,6 +395,25 @@ These were chosen deliberately. Change them only on purpose.
   grapheme boundaries and disappears rather than overflow a narrow terminal. The
   working-rule animation sweeps the whole row, label included, and the static
   behavior is unchanged when animation is off.
+- **Context tools belong to the active session.** `history` searches and reads
+  that session's transcript. Structural-entry reads return metadata only, allowing
+  `parentId` traversal without exposing private custom data. History pages execute
+  sequentially and budget prior history results in the same tool batch.
+  `get_context_remaining` reports the context budget.
+  `new_context` requests an explicit rollover after the entire tool batch succeeds.
+  Rollover retains the canonical session ID, session file, and full entries.
+  Rollover generates no summary. The caller can supply an optional literal handoff.
+  Automatic summarization is disabled locally; rollover is explicit, not automatic.
+  Manual `/compress` is unchanged before the first rollover. With an active PUM
+  rollover boundary, the controller refuses manual compaction before native
+  summarization or authentication preflight. The installed SDK prepares the
+  persisted branch, including archived windows, and ignores the synthetic literal
+  handoff. `new_context` remains supported, and the transcript stays complete.
+  Settings saves cannot re-enable automatic compaction in these runtimes, and
+  saved defaults are not changed.
+  Main, headless, and managed worker runtimes each own a controller, including readonly workers.
+  Internal judges and AFK delegates get none of these schemas.
+  Register the controller before memory injection and bind it immediately after session creation.
 - **Sessions persist** to `<config dir>/sessions`.
 - **Mutable sessions have one process owner.** TUI, headless, and managed-child
   runtimes acquire a canonical JSONL ownership lock before opening existing
@@ -792,7 +814,8 @@ These were chosen deliberately. Change them only on purpose.
   web search, check mode, and writing style.
 - **Optional tools live in hidden per-session groups.** PUM does not send
   every custom tool schema on every request. Core tools (read, write, edit,
-  bash, memory_read, questionnaire; memory_edit for main and finish_subagent for children) are always
+  bash, memory_read, questionnaire, history, get_context_remaining, new_context;
+  memory_edit for main and finish_subagent for children) are always
   sent. The Admin (trigger + message-cache), Subagents, and Worktree groups
   are hidden until the model reveals them. One always-present `enable_tools`
   tool (registered per session) accepts group names; its execute calls

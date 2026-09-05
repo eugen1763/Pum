@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +15,7 @@ import { createWorktree, listWorktrees } from "../../src/worktree";
 import type { SubagentStatus } from "../../src/subagents/types";
 import { SandboxController } from "../../src/sandbox";
 import { replayEntries } from "../../src/replay";
+import { ContextWindowController, CONTEXT_TOOL_NAMES } from "../../src/context-window";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -242,7 +243,9 @@ describe("background subagents", () => {
     const childSession = (manager as any).records.get(child.id).session;
     const childTool = childSession.agent.state.tools.find((tool: any) => tool.name === "questionnaire");
     expect(childTool).toBeDefined();
-    expect(childSession.agent.state.tools.map((tool: any) => tool.name)).not.toContain("apply_patch");
+    const childTools = childSession.agent.state.tools.map((tool: any) => tool.name);
+    expect(childTools).not.toContain("apply_patch");
+    for (const name of CONTEXT_TOOL_NAMES) expect(childTools).toContain(name);
     const childExecution = childTool.execute("child-questionnaire", { questions: [{
       id: "format",
       prompt: "Choose format",
@@ -256,6 +259,43 @@ describe("background subagents", () => {
     });
     await manager.detachMain();
     unsubscribeUi();
+  });
+
+  test("internal judge and AFK runtimes omit own-session context schemas", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const manager = new SubagentManager({
+      modelRuntime: runtime,
+      agentDir,
+      sandboxModeSource: () => "off",
+    });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    try {
+      const judge = await manager.spawnGoalJudge({
+        task: "Wait for judge schema inspection.",
+        modelId: "mock/mock-model",
+        thinkingLevel: "off",
+        onVerdict() {},
+      });
+      const judgeSession = (manager as any).records.get(judge.id).session;
+      expect(judgeSession.agent.state.tools.map((tool: any) => tool.name).sort())
+        .toEqual(["bash", "goal_verdict", "read"]);
+      await manager.removeGoalJudge(judge.id);
+
+      const afk = await manager.spawnAfkDelegate({
+        task: "Wait for AFK schema inspection.",
+        modelId: "mock/mock-model",
+        thinkingLevel: "off",
+        onAnswer() {},
+      });
+      const afkSession = (manager as any).records.get(afk.id).session;
+      expect(afkSession.agent.state.tools.map((tool: any) => tool.name)).toEqual(["afk_answer"]);
+      await manager.removeAfkDelegate(afk.id);
+    } finally {
+      await manager.detachMain();
+    }
   });
 
   test("overrides Bash in main and managed child sessions", async () => {
@@ -944,6 +984,44 @@ describe("background subagents", () => {
     await (restored as any).worktreeAction(repo, "remove", failed!.id);
     expect(restored.getAgent(failed!.id)).toBeUndefined();
     await restored.detachMain();
+  });
+
+  test("disposes an unattached session on context binding failure and preserves the original error", async () => {
+    const { SessionLockOwner } = await import("../../src/session-lock");
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    const bindingError = new Error("Invalid persisted context marker");
+    let disposed = 0;
+    let sessionFile: string | undefined;
+    const binding = spyOn(ContextWindowController.prototype, "bind").mockImplementation((session) => {
+      sessionFile = session.sessionFile;
+      const dispose = session.dispose.bind(session);
+      session.dispose = () => {
+        disposed += 1;
+        dispose();
+        throw new Error("Secondary disposal error");
+      };
+      throw bindingError;
+    });
+    try {
+      await expect(manager.spawn({
+        task: "Fail while binding context.",
+        name: "failed-context-binding",
+        modelId: "mock/mock-model",
+        thinkingLevel: "off",
+      })).rejects.toBe(bindingError);
+      expect(disposed).toBe(1);
+      expect(sessionFile).toBeDefined();
+      // The outer setup catch still releases ownership after disposal fails.
+      new SessionLockOwner().acquire(sessionFile)();
+    } finally {
+      binding.mockRestore();
+      await manager.detachMain();
+    }
   });
 
   test("discards a goal judge when runtime setup fails", async () => {

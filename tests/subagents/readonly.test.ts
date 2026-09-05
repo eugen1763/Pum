@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readonlySubagentExtension, readonlyToolBlockReason } from "../../src/subagents/readonly";
+import { CONTEXT_TOOL_NAMES } from "../../src/context-window";
 import {
   READONLY_CHILD_OMITTED_TOOL_NAMES,
   childAllowedToolNames,
@@ -16,6 +17,13 @@ describe("readonly subagent guard", () => {
     expect(readonlyToolBlockReason("create_trigger", {})).toContain("cannot use create_trigger");
     expect(readonlyToolBlockReason("worktree", { action: "merge" })).toContain("worktree merge");
     expect(readonlyToolBlockReason("custom_mutator", {})).toContain("custom_mutator");
+  });
+
+  test("permits all own-session context tools", () => {
+    for (const name of CONTEXT_TOOL_NAMES) {
+      expect(childAllowedToolNames(true)).toContain(name);
+      expect(readonlyToolBlockReason(name)).toBeUndefined();
+    }
   });
 
   test("blocks guarded tool calls through the pi hook", () => {

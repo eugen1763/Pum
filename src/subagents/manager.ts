@@ -55,6 +55,7 @@ import {
 import { isInternalRole, type RelocationRequest, type RelocationRequestResult } from "./types";
 import { AFK_ANSWER_TOOL_NAME, afkAnswerParameters } from "../afk-delegate";
 import { TodoToolsController } from "../todo-tools";
+import { ContextWindowController } from "../context-window";
 import {
   registerTriggerTools,
   type TriggerRuntimeManager,
@@ -2121,6 +2122,7 @@ export class SubagentManager {
     // Each child tracks its own enabled tool groups, persisted next to its
     // session file. Restore before the child's enable_tools tool registers.
     const internal = isInternalRole(record.snapshot.role);
+    const contextWindow = internal ? undefined : new ContextWindowController();
     const judge = record.snapshot.role === "judge";
     if (!internal) {
       record.toolGroups = new ToolGroupsController("subagent", undefined, record.snapshot.readonly);
@@ -2142,6 +2144,7 @@ export class SubagentManager {
             record.snapshot.id,
             record.snapshot.readonly === true,
           )),
+          ...(contextWindow ? [contextWindow.extension()] : []),
           ...(!internal ? this.childWorkerExtensionFactories.map((factory) => factory(
             record.snapshot.id,
             record.snapshot.readonly === true,
@@ -2159,6 +2162,13 @@ export class SubagentManager {
         ? afkAllowedToolNames()
         : judge ? judgeAllowedToolNames() : childAllowedToolNames(record.snapshot.readonly),
     });
+    try {
+      contextWindow?.bind(result.session);
+    } catch (error) {
+      // This session is not attached to the record or its disposal lock yet.
+      try { result.session.dispose(); } catch { /* Preserve the binding error. */ }
+      throw error;
+    }
     releaseSessionLockOnDispose(result.session, release);
     lockAttached = true;
     record.session = result.session;

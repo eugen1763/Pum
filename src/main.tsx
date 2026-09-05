@@ -12,6 +12,7 @@ import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension } from "./memory";
+import { ContextWindowController } from "./context-window";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { installWebSearch, webSearch } from "./web-search";
@@ -285,6 +286,7 @@ export async function start(
   );
   const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
+      const contextWindow = new ContextWindowController();
       const services = await createAgentSessionServices({
         cwd,
         agentDir: AGENT_DIR,
@@ -298,6 +300,7 @@ export async function start(
             filesystemSandboxExtension,
             mainCheckModeExtension,
             sandboxExtension,
+            contextWindow.extension(),
             createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
             questionnaireManager.extension({ id: "main", name: "main" }),
             mainToolGroups.extension(),
@@ -319,6 +322,13 @@ export async function start(
         sessionStartEvent,
         tools: mainAllowedToolNames(),
       });
+      try {
+        contextWindow.bind(result.session);
+      } catch (error) {
+        // The runtime factory cannot dispose a session it has not received yet.
+        try { result.session.dispose(); } catch { /* Preserve the binding error. */ }
+        throw error;
+      }
       result.session.setActiveToolsByName(mainToolGroups.activeTools());
       return { ...result, services, diagnostics: services.diagnostics };
     },
