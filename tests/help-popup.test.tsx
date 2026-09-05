@@ -98,7 +98,7 @@ describe("Help popup layout", () => {
   test("keeps every wide-layout row reachable", async () => {
     // A constant popup height used to hide the last rows of the taller column
     // at every terminal size, and the arrows did nothing in this layout.
-    const tall = await renderHelp(140, 44, 0);
+    const tall = await renderHelp(140, 50, 0);
     expect(tall).toContain("Ctrl+H");
     expect(tall).toContain("pum -r");
     expect(tall).toContain("/ in Settings");

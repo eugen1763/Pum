@@ -36,6 +36,10 @@ bun run start    # open the TUI in the current directory
 | `src/tool-line.ts` | Which argument to show, and `+n −n` from mutation patches |
 | `src/questionnaire.ts` | Model tool, request queue, answer state, and main/child bridge |
 | `src/tool-groups.ts` | Hidden tool groups, the `enable_tools` tool, and per-session persistence |
+| `src/mcp.ts` | Main-TUI-only MCP consent, runtime lifecycle and static tool bridge |
+| `src/mcp-config.ts` | Inert bounded exact-cwd MCP proposals and identity-checked reads |
+| `src/mcp-process.ts` | Mandatory Linux native readonly/networkless MCP process policy |
+| `src/mcp-protocol.ts` | Bounded pinned 2025-11-25 tools-only stdio MCP client |
 | `src/questionnaire-popup.tsx` | OpenTUI questionnaire popup and responsive layout |
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
 | `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
@@ -911,6 +915,39 @@ These were chosen deliberately. Change them only on purpose.
   companion file) so they survive
   resume and never enter LLM context. There is no News group because PUM has
   no news model tool; groups with zero tools are dropped.
+- **Direct-user command authority belongs to the draft origin.** App keeps a
+  ref-backed direct/restored origin independent of cache indices. All `/mcp`,
+  `/validation` and `/checkpoint` operations (including preview/list/status and
+  revoke/disable) refuse cached, historical, queued or programmatically restored
+  drafts. Editing and completion never upgrade origin; per-view switches preserve
+  it and failed delivery restores untrusted text. No-op navigation cannot clear
+  it. Ctrl+C on a nonempty draft explicitly clears it so the user can type anew.
+  Submission snapshots authority before clearing the editor. See
+  `docs/draft-command-provenance.md` for the conservative policy and UI regressions.
+- **MCP is an explicitly approved main-TUI capability.** Exact-cwd `.pum/mcp.json`
+  is an inert proposal. Direct `/mcp` preview and `/mcp connect <server> <digest>`
+  authorize process discovery only; separate `/mcp approve <server> <toolset-digest>`
+  permits exact discovered tools. Cached/stashed commands, model/extension input,
+  Check review and `enable_tools` never grant consent. The optional main-only MCP
+  group contains static PUM `mcp_list`/`mcp_call` schemas, not server definitions.
+  Calls require the exact bound SessionManager instance, ID and cwd. Workers,
+  readonly agents, judges, AFK and headless have no server access. Nothing starts
+  or inherits trust on launch/resume/runtime replacement. Revoke, cancellation,
+  failure, config bytes or path identity changes, tool-list changes and disposal
+  withdraw authority. File watchers revoke on relevant renames rather than trusting
+  detached old inodes; boundary revalidation also checks config/ancestor identity.
+  Linux Bubblewrap is mandatory even with Check/Sandbox Off: no fallback/network,
+  fixed credential-free environment, readonly cwd only (no additional roots),
+  minimal system runtime mounts and exact external executable file, never its
+  directory. PUM configuration remains denied. The user approved live-project
+  residual exposure: bounded sensitive-name masks are defense in depth, not a
+  guarantee against arbitrary secrets, aliases or future files returned to the
+  model. Recursive scans do not follow links and fail closed on bounds/errors.
+  General Bash sandbox policy stays unchanged. Protocol is pinned legacy
+  2025-11-25 tools-only stdio, not latest/full MCP. No OAuth, remote transport,
+  installers, resources, sampling, prompts or URI following. Treat descriptions,
+  schemas and bounded text results as untrusted data. See `docs/mcp.md` for limits
+  and missing native-enforcement evidence on hosts without Bubblewrap.
 - **Release publication uses npm trusted publishing.** GitHub OIDC publishes
   prereleases under `beta` and stable versions under `latest`, with npm
   provenance. The workflow does not promote prereleases to `latest` and does

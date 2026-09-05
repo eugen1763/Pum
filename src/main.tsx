@@ -4,10 +4,13 @@ import {
   createAgentSessionFromServices,
   createAgentSessionServices,
   ModelRuntime,
+  type AgentSession,
 } from "@earendil-works/pi-coding-agent";
 import { mkdirSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { App } from "./app";
+import { McpController } from "./mcp";
+import { createMcpProcessAdapter } from "./mcp-process";
 import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
@@ -286,6 +289,8 @@ export async function start(
     !context.worktreeStart && options.resume === true,
     sessionLockOwner,
   );
+  // Process-local authority, keyed by exact runtime object; never restored from disk.
+  const mcpControllers = new WeakMap<AgentSession, McpController>();
   const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
       // Bind fresh state to the trusted target before service creation registers
@@ -294,6 +299,15 @@ export async function start(
       mainToolGroups.load(sessionManager.getSessionFile());
       const contextWindow = new ContextWindowController();
       const validation = new ProjectValidationController({ cwd });
+      let mcpSession: AgentSession | undefined;
+      let mcpDisposed = false;
+      const mcpProcess = createMcpProcessAdapter({ configDir: AGENT_DIR });
+      const mcp: McpController = new McpController({
+        cwd,
+        spawn: (request) => mcpProcess.spawn(request),
+        isIdle: () => !!mcpSession && !mcpSession.isStreaming,
+        isCurrent: (): boolean => !mcpDisposed && !!mcpSession && mcpControllers.get(mcpSession) === mcp,
+      });
       const services = await createAgentSessionServices({
         cwd,
         agentDir: AGENT_DIR,
@@ -313,6 +327,7 @@ export async function start(
             createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
             questionnaireManager.extension({ id: "main", name: "main" }),
             mainToolGroups.extension(),
+            { name: "pum-main-mcp", factory: (pi) => { for (const tool of mcp.tools()) pi.registerTool(tool); } },
             mainTodoTools.extension(),
             subagentExtension,
           ],
@@ -327,7 +342,16 @@ export async function start(
         sessionStartEvent,
         tools: mainAllowedToolNames(),
       });
+      mcpSession = result.session;
+      mcpControllers.set(result.session, mcp);
+      const disposeSession = result.session.dispose.bind(result.session);
+      result.session.dispose = () => {
+        mcpDisposed = true;
+        mcpControllers.delete(result.session);
+        try { mcp.dispose(); } finally { disposeSession(); }
+      };
       try {
+        mcp.bind(result.session);
         bindFileCheckpointSession(result.session);
         validation.bind(result.session);
         bindSearchSession(result.session, "main");
@@ -492,6 +516,7 @@ export async function start(
       triggerManager={triggerManager}
       shellManager={shellManager}
       userBashOperations={sandboxController.userBashOperations()}
+      mcpForSession={(session) => mcpControllers.get(session)}
       onExit={() => shutdown(0)}
     />,
   );

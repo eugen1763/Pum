@@ -62,6 +62,10 @@ export const COMMANDS: Command[] = [
     description: "Show session statistics",
   },
   {
+    name: "/mcp",
+    description: "Main TUI MCP: preview, connect <server> <config digest>, approve <server> <toolset digest>, revoke or disconnect",
+  },
+  {
     name: "/validation",
     description: "Preview project validation; status, enable <digest>, or disable for this runtime",
   },

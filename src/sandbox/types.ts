@@ -48,11 +48,16 @@ export type SandboxProcessOptions = {
   signal?: AbortSignal;
   timeoutSeconds?: number;
   stdin?: Uint8Array;
+  /** Keep stdin open for an explicitly managed persistent protocol. */
+  persistentStdin?: boolean;
 };
 
 export type SandboxProcessHandle = {
   completed: Promise<SandboxProcessExit>;
   kill(): void;
+  /** Present only when persistent stdin was requested and is supported. */
+  write?(data: string): Promise<void>;
+  closeInput?(): void;
 };
 
 export interface SandboxBackend {

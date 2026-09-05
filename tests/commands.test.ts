@@ -87,6 +87,11 @@ describe("command suggestions", () => {
       .toEqual([]);
   });
 
+  test("MCP is discoverable only for the main TUI target", () => {
+    expect(matchingCommandsForTarget("/mc", "main").map(command => command.name)).toEqual(["/mcp"]);
+    expect(matchingCommandsForTarget("/mc", "subagent")).toEqual([]);
+  });
+
   test("offers /background to main and selected subagents without exposing main-only commands", () => {
     expect(COMMANDS.find((command) => command.name === "/background")?.description)
       .toBe("Start a shared-project agent for the selected transcript");

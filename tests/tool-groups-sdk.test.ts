@@ -129,8 +129,9 @@ describe("canonical tools through the installed SDK request and prompt construct
       expect(originalDescription).toContain(variant.audience === "main" ? "memory_edit" : "finish_subagent");
       if (variant.readonly) expect(originalDescription).not.toContain("- Shells:");
 
-      const forwardActivation = await forward.capture(TOOL_GROUP_NAMES);
-      expect(await reverse.capture([...TOOL_GROUP_NAMES].reverse())).toBe(forwardActivation);
+      const availableGroups = forward.groups.availableGroups();
+      const forwardActivation = await forward.capture(availableGroups);
+      expect(await reverse.capture([...availableGroups].reverse())).toBe(forwardActivation);
       // The SDK snapshots the system prompt at turn start. After in-turn tool
       // activation, compare a new turn so both live and resumed prompts reflect
       // the same active set. The activation requests above also match bytewise.
@@ -143,7 +144,7 @@ describe("canonical tools through the installed SDK request and prompt construct
       expect(finalDescription).toBe(originalDescription);
       // Every successful call updates state in the tool result, not its schema.
       const results = forward.manager.getEntries().filter((entry) => entry.type === "message" && entry.message.role === "toolResult");
-      expect(results).toHaveLength(TOOL_GROUP_NAMES.length);
+      expect(results).toHaveLength(availableGroups.length);
       const lastResult = results.at(-1)!;
       if (lastResult.type !== "message" || lastResult.message.role !== "toolResult") throw new Error("Missing tool result");
       expect(lastResult.message.isError).toBe(false);
@@ -170,7 +171,7 @@ describe("canonical tools through the installed SDK request and prompt construct
       expect(replacement.session.agent.state.tools.find((tool) => tool.name === ENABLE_TOOLS)!.description).toBe(originalDescription);
       // A new controller must not retarget an old runtime's enable_tools closure.
       await replacement.capture(["Todo"]);
-      expect(resumed.groups.enabledGroups()).toEqual([...TOOL_GROUP_NAMES].sort());
+      expect(resumed.groups.enabledGroups()).toEqual([...availableGroups].sort());
     });
   }
 

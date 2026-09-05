@@ -124,7 +124,9 @@ export const SHELLS_GROUP_TOOL_NAMES = [
  * The hidden groups. There is no News group because PUM has no news model
  * tool (news.ts is a UI-only feature), so that group would contain zero tools.
  */
-export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree", "Shells", "Todo"] as const;
+/** Static PUM schemas only; revealing these never grants server authority. */
+export const MCP_GROUP_TOOL_NAMES = ["mcp_list", "mcp_call"] as const;
+export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree", "Shells", "Todo", "MCP"] as const;
 
 export type ToolGroupName = (typeof TOOL_GROUP_NAMES)[number];
 
@@ -142,6 +144,7 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, ToolGroupDefinition>> =
   Worktree: { label: "Worktree", toolNames: WORKTREE_GROUP_TOOL_NAMES },
   Shells: { label: "Shells", toolNames: SHELLS_GROUP_TOOL_NAMES },
   Todo: { label: "Todo", toolNames: TODO_TOOL_NAMES },
+  MCP: { label: "MCP", toolNames: MCP_GROUP_TOOL_NAMES },
 };
 
 /** Union of every optional tool name across all hidden groups. */
@@ -151,6 +154,7 @@ export const ALL_GROUP_TOOL_NAMES: readonly string[] = [
   ...WORKTREE_GROUP_TOOL_NAMES,
   ...SHELLS_GROUP_TOOL_NAMES,
   ...TODO_TOOL_NAMES,
+  ...MCP_GROUP_TOOL_NAMES,
 ];
 
 /** The tool names a session of an audience may expose (the allowlist). */
@@ -176,7 +180,7 @@ export function childAllowedToolNames(readonly = false): string[] {
     ...CORE_TOOL_NAMES,
     ...CHILD_EXTRA_TOOL_NAMES,
     ENABLE_TOOLS,
-    ...ALL_GROUP_TOOL_NAMES,
+    ...ALL_GROUP_TOOL_NAMES.filter((name) => !(MCP_GROUP_TOOL_NAMES as readonly string[]).includes(name)),
   ];
   if (!readonly) return names;
   const omitted = new Set<string>(READONLY_CHILD_OMITTED_TOOL_NAMES);
@@ -271,6 +275,9 @@ function buildEnableToolsDescription(controller: ToolGroupsController): string {
     const available = controller.availableToolNames(TOOL_GROUPS[name].toolNames);
     if (available.length > 0) lines.push(`- ${name}: ${available.join(", ")}`);
   }
+  if (controller.audience === "main") {
+    lines.push("Revealing MCP grants no server access; only direct-user /mcp connection and exact toolset approval can authorize it.");
+  }
   return lines.join("\n");
 }
 
@@ -301,7 +308,7 @@ export class ToolGroupsController {
   /** Read the persisted groups for a session into this controller. */
   load(sessionFile?: string): void {
     if (sessionFile !== undefined) this.file = sessionFile;
-    this.enabled = new Set(loadToolGroups(this.file));
+    this.enabled = new Set(loadToolGroups(this.file).filter((group) => this.availableGroups().includes(group)));
   }
 
   /** The enabled group names, sorted. */
@@ -315,16 +322,19 @@ export class ToolGroupsController {
   }
 
   availableToolNames(names: readonly string[]): string[] {
-    if (!this.isReadonly) return [...names];
-    const omitted = new Set<string>(READONLY_CHILD_OMITTED_TOOL_NAMES);
-    return names.filter((name) => !omitted.has(name));
+    const allowed = new Set(this.audience === "main" ? mainAllowedToolNames() : childAllowedToolNames(this.isReadonly));
+    return names.filter((name) => allowed.has(name));
+  }
+
+  availableGroups(): ToolGroupName[] {
+    return TOOL_GROUP_NAMES.filter((name) => this.availableToolNames(TOOL_GROUPS[name].toolNames).length > 0);
   }
 
   /** Enable one group, persist, and report the resulting state. */
   enableGroup(group: string): void {
-    if (!isGroupName(group)) {
+    if (!isGroupName(group) || !this.availableGroups().includes(group)) {
       throw new Error(
-        `Unknown tool group: ${group}\nAvailable groups: ${TOOL_GROUP_NAMES.join(", ")}`,
+        `Unknown tool group: ${group}\nAvailable groups: ${this.availableGroups().join(", ")}`,
       );
     }
     this.enabled.add(group);
@@ -333,7 +343,10 @@ export class ToolGroupsController {
 
   /** Text that reports enabled and hidden groups. */
   describe(): string {
-    return describeToolGroups(this.enabledGroups());
+    return [
+      `Enabled tool groups: ${this.enabledGroups().join(", ") || "(none)"}`,
+      `Hidden tool groups: ${this.availableGroups().filter((name) => !this.enabled.has(name)).join(", ") || "(none)"}`,
+    ].join("\n");
   }
 
   /**
@@ -351,10 +364,10 @@ export class ToolGroupsController {
       parameters: Type.Object(
         {
           groups: Type.Array(
-            Type.Union(TOOL_GROUP_NAMES.map((name) => Type.Literal(name))),
+            Type.Union(controller.availableGroups().map((name) => Type.Literal(name))),
             {
               minItems: 1,
-              maxItems: TOOL_GROUP_NAMES.length,
+              maxItems: controller.availableGroups().length,
               description: "Tool groups to reveal in this thread",
             },
           ),
@@ -368,7 +381,7 @@ export class ToolGroupsController {
         const enabled = controller.enabledGroups();
         return {
           content: [{ type: "text" as const, text: controller.describe() }],
-          details: { enabled, hidden: hiddenGroupNames(enabled) },
+          details: { enabled, hidden: controller.availableGroups().filter((name) => !enabled.includes(name)) },
         };
       },
     });

@@ -26,6 +26,7 @@ export interface BubblewrapSpawnRequest {
   cwd: string;
   env: NodeJS.ProcessEnv;
   stdin?: Uint8Array;
+  persistentStdin?: boolean;
   onStdout: (chunk: Buffer) => void;
   onStderr: (chunk: Buffer) => void;
 }
@@ -39,6 +40,8 @@ export interface BubblewrapProcessHandle {
   pid?: number;
   completed: Promise<BubblewrapProcessResult>;
   kill: (signal: NodeJS.Signals) => void;
+  write?(data: string): Promise<void>;
+  closeInput?(): void;
 }
 
 export interface BubblewrapProcessAdapter {
@@ -70,12 +73,10 @@ export class NodeBubblewrapProcessAdapter implements BubblewrapProcessAdapter {
       detached: true,
       shell: false,
       windowsHide: true,
-      stdio: [request.stdin ? "pipe" : "ignore", "pipe", "pipe"],
+      stdio: [request.stdin || request.persistentStdin ? "pipe" : "ignore", "pipe", "pipe"],
     });
-    if (request.stdin) {
-      child.stdin?.on("error", () => {});
-      child.stdin?.end(request.stdin);
-    }
+    child.stdin?.on("error", () => {});
+    if (request.stdin && !request.persistentStdin) child.stdin?.end(request.stdin);
     child.stdout?.on("data", request.onStdout);
     child.stderr?.on("data", request.onStderr);
 
@@ -87,6 +88,18 @@ export class NodeBubblewrapProcessAdapter implements BubblewrapProcessAdapter {
     return {
       pid: child.pid,
       completed,
+      ...(request.persistentStdin ? {
+        write(data: string): Promise<void> {
+          return new Promise((resolve, reject) => {
+            if (!child.stdin || child.stdin.destroyed || child.stdin.writableEnded) {
+              reject(new Error("Persistent process input is closed"));
+              return;
+            }
+            child.stdin.write(data, "utf8", (error) => error ? reject(new Error("Persistent process input failed")) : resolve());
+          });
+        },
+        closeInput() { child.stdin?.end(); },
+      } : {}),
       kill(signal) {
         if (!child.pid) return;
         try {
@@ -334,6 +347,7 @@ function managedSandboxHandle(
   };
   const onAbort = () => stop("abort");
   options.signal?.addEventListener("abort", onAbort, { once: true });
+  if (options.signal?.aborted) onAbort();
   const timeoutMs = timeoutMilliseconds(options.timeoutSeconds);
   if (timeoutMs !== undefined) timeoutHandle = setTimeout(() => stop("timeout"), timeoutMs);
 
@@ -347,7 +361,14 @@ function managedSandboxHandle(
     options.signal?.removeEventListener("abort", onAbort);
   });
 
-  return { completed, kill: () => stop("abort") };
+  return {
+    completed,
+    kill: () => stop("abort"),
+    ...(options.persistentStdin && child.write && child.closeInput ? {
+      write: (data: string) => child.write!(data),
+      closeInput: () => child.closeInput!(),
+    } : {}),
+  };
 }
 
 /** Create the reusable Linux Bubblewrap backend for the native sandbox layer. */
@@ -369,6 +390,9 @@ export function createBubblewrapBackend(options: BubblewrapBackendOptions = {}):
     }),
     spawn(policy, processOptions) {
       if (processOptions.signal?.aborted) throw new Error("aborted");
+      // Validate before process creation so a late option error cannot leak a child.
+      timeoutMilliseconds(processOptions.timeoutSeconds);
+      if (processOptions.persistentStdin && processOptions.stdin) throw new Error("Conflicting stdin modes");
       const args = buildBubblewrapArgv(policy, {
         systemMounts: options.systemMounts,
         pathKind: options.pathKind,
@@ -379,6 +403,7 @@ export function createBubblewrapBackend(options: BubblewrapBackendOptions = {}):
         cwd: policy.cwd,
         env: sandboxEnvironment(policy.environment),
         stdin: processOptions.stdin,
+        persistentStdin: processOptions.persistentStdin,
         onStdout: (chunk) => processOptions.onStdout(chunk),
         onStderr: (chunk) => processOptions.onStderr(chunk),
       });

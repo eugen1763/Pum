@@ -25,6 +25,7 @@ import {
   CORE_TOOL_NAMES,
   ENABLE_TOOLS,
   MAIN_EXTRA_TOOL_NAMES,
+  MCP_GROUP_TOOL_NAMES,
   SHELLS_GROUP_TOOL_NAMES,
   ToolGroupsController,
   TOOL_GROUP_NAMES,
@@ -204,8 +205,36 @@ describe("tool group membership", () => {
       expect(childAllowedToolNames()).toContain(tool);
     }
     for (const tool of [...ALL_GROUP_TOOL_NAMES]) {
-      expect(childAllowedToolNames()).toContain(tool);
+      if ((MCP_GROUP_TOOL_NAMES as readonly string[]).includes(tool)) expect(childAllowedToolNames()).not.toContain(tool);
+      else expect(childAllowedToolNames()).toContain(tool);
     }
+  });
+
+  test("MCP has static main-only names and revealing does not expose server schemas", () => {
+    expect(toolNamesInGroup("MCP")).toEqual(["mcp_list", "mcp_call"]);
+    expect(activeToolNames(["MCP"], "main")).toEqual([...activeToolNames([], "main"), ...MCP_GROUP_TOOL_NAMES]);
+    for (const readonly of [false, true]) {
+      const child = new ToolGroupsController("subagent", undefined, readonly);
+      expect(child.availableGroups()).not.toContain("MCP");
+      expect(() => child.enableGroup("MCP")).toThrow(/Unknown tool group/);
+      expect(activeToolNames(["MCP"], "subagent", readonly)).toEqual(activeToolNames([], "subagent", readonly));
+      for (const name of MCP_GROUP_TOOL_NAMES) {
+        expect(childAllowedToolNames(readonly)).not.toContain(name);
+        expect(judgeAllowedToolNames()).not.toContain(name);
+        expect(afkAllowedToolNames()).not.toContain(name);
+      }
+    }
+  });
+
+  test("restored MCP visibility is filtered for workers", () => {
+    const sessionFile = join(sessionDirPath, "mcp-role.jsonl");
+    saveToolGroups(sessionFile, ["MCP", "Todo"]);
+    const main = new ToolGroupsController("main", sessionFile);
+    const child = new ToolGroupsController("subagent", sessionFile);
+    main.load(); child.load();
+    expect(main.enabledGroups()).toEqual(["MCP", "Todo"]);
+    expect(child.enabledGroups()).toEqual(["Todo"]);
+    expect(child.describe()).not.toContain("MCP");
   });
 
   test("allowlists contain no duplicate names", () => {

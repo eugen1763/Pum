@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { diagnosticsCommandText } from "./request-diagnostics-access";
 import { checkpointControllerForSession, checkpointRecoveryFailureText } from "./file-checkpoints";
 import { VALIDATION_CUSTOM_TYPE, validationForSession } from "./project-validation";
+import type { McpController } from "./mcp";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, BashOperations, ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -844,6 +845,7 @@ export function App({
   initialRelocation,
   initialCwd,
   userBashOperations,
+  mcpForSession,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -889,6 +891,8 @@ export function App({
   initialCwd?: string;
   /** User commands bypass Check mode but use this native sandbox execution path. */
   userBashOperations?: BashOperations;
+  /** Exact main-runtime lookup; never inherited by workers or restored as trust. */
+  mcpForSession?: (session: AgentSession) => McpController | undefined;
 }) {
   // The one authoritative active directory. Everything directory-dependent
   // reads this rather than process.cwd(), so a live move rebinds by re-render
@@ -1389,6 +1393,11 @@ export function App({
   });
   /** Cache row currently checked out into the selected transcript input. */
   const editingStashIndex = useRef<number | null>(null);
+  // Authority belongs to the draft, never to a mutable cache row index. Edits
+  // retain this origin; only clearing the editor starts a new direct draft.
+  type DraftOrigin = "direct" | "restored";
+  const draftOrigin = useRef<DraftOrigin>("direct");
+  const viewDraftOrigins = useRef(new Map<string, DraftOrigin>());
   /**
    * Text to install after the cache view closes.
    *
@@ -1627,7 +1636,9 @@ export function App({
     value: string,
     cursorOffset = value.length,
     preserveImages = false,
+    origin: DraftOrigin = "restored",
   ) => {
+    draftOrigin.current = value ? origin : "direct";
     if (!preserveImages && pendingImages.current.length > 0) clearPendingImages();
     if (!preserveImages && pendingPastedTexts.current.length > 0) clearPendingPastedTexts();
     const input = inputRef.current;
@@ -1806,7 +1817,7 @@ export function App({
         const markerStart = value.indexOf(pending.marker);
         return { ...pending, start: markerStart, end: markerStart + pending.marker.length };
       });
-      setEditorText(value, start + marker.length, true);
+      setEditorText(value, start + marker.length, true, draftOrigin.current);
     } catch (error) {
       append({ kind: "text", role: "error", text: `image paste failed: ${String(error)}` });
     } finally {
@@ -1885,7 +1896,7 @@ export function App({
       start,
       end: start + marker.length,
     });
-    setEditorText(value, start + marker.length, true);
+    setEditorText(value, start + marker.length, true, draftOrigin.current);
   };
 
   const append = (line: Line) =>
@@ -3359,6 +3370,7 @@ export function App({
       ? requesterAgentId
       : null;
     viewDrafts.current.set(targetAgentId ?? "main", quote);
+    viewDraftOrigins.current.set(targetAgentId ?? "main", "restored");
     if (activeAgentIdRef.current !== targetAgentId) selectAgentView(targetAgentId);
     else setEditorText(quote);
     queueMicrotask(() => {
@@ -3474,6 +3486,7 @@ export function App({
     histCursor.current = null;
     // clearQueue may have dropped a subagent completion notice queued to the
     // streaming main agent; re-arm undelivered notices so a merge is not stuck.
+    mcpForSession?.(session)?.cancel();
     session.abort().finally(() => {
       setWorking(false);
       void subagentManager.resendUndeliveredMainSettlements();
@@ -3493,6 +3506,7 @@ export function App({
     }
     const key = target ?? "main";
     viewDrafts.current.set(key, recalled.text);
+    viewDraftOrigins.current.set(key, "restored");
     if (activeAgentIdRef.current === target) {
       setEditorText(recalled.text);
       histCursor.current = null;
@@ -4226,11 +4240,13 @@ export function App({
       if (activeAgentIdRef.current !== requesterAgentId) {
         if (!(viewDrafts.current.get(requesterKey) ?? "")) {
           viewDrafts.current.set(requesterKey, draftText);
+          viewDraftOrigins.current.set(requesterKey, "restored");
         }
         return;
       }
       if (!(inputRef.current?.plainText ?? "")) {
         viewDrafts.current.set(requesterKey, draftText);
+        viewDraftOrigins.current.set(requesterKey, "restored");
         setEditorText(draftText, draftText.length, true);
       }
     };
@@ -4301,7 +4317,7 @@ export function App({
     return true;
   };
 
-  const submitPrompt = (value?: string, stashIndex?: number) => {
+  const submitPrompt = (value?: string, stashIndex?: number, directCompletion = false) => {
     // Read the selected agent from the ref, not the state. A view switch updates
     // the ref synchronously, but a switch-then-send in one input chunk runs
     // before React commits the new state, so the state would still name the
@@ -4313,6 +4329,10 @@ export function App({
     const attachments = value === undefined ? [...pendingImages.current] : [];
     const pastedTexts = value === undefined ? [...pendingPastedTexts.current] : [];
     const submittedEditingIndex = editingStashIndex.current;
+    // Completion transforms a draft; it cannot turn restored/cache content into
+    // user consent. Snapshot before editor cleanup starts the next direct draft.
+    const directSubmission = draftOrigin.current === "direct"
+      && (value === undefined || directCompletion) && stashIndex === undefined;
     const expandedText = expandPastedTexts(rawDisplayText, pastedTexts);
     const displayText = pastedTexts.length ? expandedText : expandedText.trim();
     const expandedPrompt = expandPastedTexts(rawDisplayText, [
@@ -4399,6 +4419,7 @@ export function App({
       nextPastedTextId.current = Math.max(1, ...pastedTexts.map((pasted) => pasted.id + 1));
       setEditingStash(submittedEditingIndex);
       viewDrafts.current.set(targetKey, rawDisplayText);
+      viewDraftOrigins.current.set(targetKey, "restored");
       viewEditingStashIndices.current.set(targetKey, submittedEditingIndex);
       setEditorText(rawDisplayText, rawDisplayText.length, true);
     };
@@ -4432,6 +4453,46 @@ export function App({
       return;
     }
 
+    // MCP consent exists only at this direct input boundary. It is not an SDK
+    // command, saved prompt, model capability, or selected-worker operation.
+    if (attachments.length === 0 && commandEligible && /^\/mcp(?:\s|$)/.test(promptText)) {
+      setEditingStash(null);
+      histCursor.current = null;
+      draft.current = "";
+      const report = (text: string, error = false) => {
+        const line: Line = { kind: "text", role: error ? "error" : "system", text };
+        if (selectedAgentId) subagentManager.appendAgentLine(selectedAgentId, line, { persist: false });
+        else appendMainLine(line);
+      };
+      if (!directSubmission) {
+        report("MCP commands require direct user input. Clear the draft and type the command anew.", true);
+        return;
+      }
+      if (selectedAgentId) {
+        report("MCP is available only in the main TUI session; workers cannot access servers.", true);
+        return;
+      }
+      const controller = mcpForSession?.(session);
+      if (!controller) {
+        report("MCP is unavailable for this session runtime.", true);
+        return;
+      }
+      const action = promptText.trim().split(/\s+/)[1];
+      if ((action === "connect" || action === "approve") && (busyRef.current || session.isStreaming
+        || sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current)) {
+        report("Wait for the main session to become idle and session operations to finish before connecting or approving MCP.", true);
+        return;
+      }
+      void controller.command(promptText).then((text) => {
+        if (sessionRef.current === session && mcpForSession?.(session) === controller) report(text);
+      }).catch(() => {
+        if (sessionRef.current === session && mcpForSession?.(session) === controller) {
+          report("MCP request failed. Preview /mcp and check the current proposal and digests.", true);
+        }
+      });
+      return;
+    }
+
     // Approval is a direct-user capability, never an SDK command or model
     // message. Reports are transient and belong only to the selected runtime.
     if (attachments.length === 0 && commandEligible && /^\/validation(?:\s|$)/.test(promptText)) {
@@ -4443,6 +4504,10 @@ export function App({
       setEditingStash(null);
       histCursor.current = null;
       draft.current = "";
+      if (!directSubmission) {
+        report("Validation commands require direct user input. Clear the draft and type the command anew.", true);
+        return;
+      }
       const parts = promptText.trim().split(/\s+/);
       const action = parts[1];
       if (!(parts.length === 1 || (parts.length === 2 && (action === "status" || action === "disable"))
@@ -4492,6 +4557,10 @@ export function App({
       histCursor.current = null;
       draft.current = "";
       const selected = selectedAgentId ? subagentManager.getAgent(selectedAgentId) : undefined;
+      if (!directSubmission) {
+        report("Checkpoint commands require direct user input. Clear the draft and type the command anew.", true);
+        return;
+      }
       const controller = checkpointControllerForSession(selectedAgentId ? subagentManager.getDiagnosticsSessionId(selectedAgentId) ?? "" : session.sessionId);
       const parts = promptText.trim().split(/\s+/);
       const action = parts[1] ?? "list";
@@ -4883,11 +4952,13 @@ export function App({
     const currentKey = current ?? "main";
     const targetKey = target ?? "main";
     viewDrafts.current.set(currentKey, inputRef.current?.plainText ?? "");
+    viewDraftOrigins.current.set(currentKey, draftOrigin.current);
     viewEditingStashIndices.current.set(currentKey, editingStashIndex.current);
     activeAgentIdRef.current = target;
     setActiveAgentId(target);
     setEditingStash(viewEditingStashIndices.current.get(targetKey) ?? null);
-    setEditorText(viewDrafts.current.get(targetKey) ?? "");
+    setEditorText(viewDrafts.current.get(targetKey) ?? "", undefined, false,
+      viewDraftOrigins.current.get(targetKey) ?? "restored");
     setStashMode(false);
     histCursor.current = null;
     resetCancelArm();
@@ -5760,7 +5831,7 @@ export function App({
       if (commandMatches.length > 0 && !/\s/.test(inputValue)) {
         key.stopPropagation();
         const selected = commandMatches[Math.min(commandCursorRef.current, commandMatches.length - 1)]!;
-        setEditorText(selected.name);
+        setEditorText(selected.name, undefined, false, draftOrigin.current);
         return;
       }
 
@@ -5778,7 +5849,7 @@ export function App({
           : Math.min(commandCursorRef.current, completions.length - 1);
         const sourceValue = continuing ? previousCycle!.sourceValue : inputValue;
         const completed = applyPathCompletion(sourceValue, completions[index]!);
-        setEditorText(completed.value, completed.cursorOffset, true);
+        setEditorText(completed.value, completed.cursorOffset, true, draftOrigin.current);
         pathCompletionCycle.current = {
           sourceValue,
           completions,
@@ -5818,7 +5889,7 @@ export function App({
     if (isPlainReturn && commandMatches.length > 0 && !/\s/.test(inputValue)) {
       key.stopPropagation();
       const selected = commandMatches[Math.min(commandCursorRef.current, commandMatches.length - 1)]!;
-      submitPrompt(selected.name);
+      submitPrompt(selected.name, undefined, true);
       return;
     }
 
@@ -5827,10 +5898,10 @@ export function App({
       const index = Math.min(commandCursorRef.current, visibleArgumentMatches.length - 1);
       const completed = applyPathCompletion(inputValue, visibleArgumentMatches[index]!);
       if (closedSetMatches.length > 0) {
-        submitPrompt(completed.value);
+        submitPrompt(completed.value, undefined, true);
         return;
       }
-      setEditorText(completed.value, completed.cursorOffset, true);
+      setEditorText(completed.value, completed.cursorOffset, true, draftOrigin.current);
       pathCompletionCycle.current = {
         sourceValue: inputValue,
         completions: visibleArgumentMatches,
