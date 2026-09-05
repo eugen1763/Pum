@@ -2,6 +2,11 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.34-beta.2] - 2026-09-05
+
+### Fixed
+- The system-prompt stability test now accepts Windows checkout line endings. Runtime context tools and guidance remain unchanged.
+
 ## [0.2.34-beta.1] - 2026-09-05
 
 ### Added

@@ -2,6 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { CONTEXT_GUIDANCE } from "../src/context-guidance";
 
+function staticGuidanceText(source: string): string {
+  // A single literal export prevents timestamps, live meters, configuration reads,
+  // and other runtime-dependent prompt changes without needing mocked globals.
+  const literal = source.match(/^\/\*\*[^]*?\*\/\s*export const CONTEXT_GUIDANCE = `([^`]*)`;\s*$/);
+  expect(literal).not.toBeNull();
+  expect(literal![1]).not.toContain("${");
+  // JavaScript template literals normalize both CRLF and lone CR to LF.
+  return literal![1]!.replace(/\r\n?/g, "\n");
+}
+
 function includes(...instructions: string[]) {
   for (const instruction of instructions) expect(CONTEXT_GUIDANCE).toContain(instruction);
 }
@@ -9,15 +19,27 @@ function includes(...instructions: string[]) {
 describe("context guidance", () => {
   test("exports concise static text without configuration or per-turn dependencies", async () => {
     const source = readFileSync(new URL("../src/context-guidance.ts", import.meta.url), "utf8");
-    // A single literal export prevents timestamps, live meters, configuration reads,
-    // and other runtime-dependent prompt changes without needing mocked globals.
-    const literal = source.match(/^\/\*\*[^]*?\*\/\s*export const CONTEXT_GUIDANCE = `([^`]*)`;\s*$/);
-    expect(literal).not.toBeNull();
-    expect(literal![1]).toBe(CONTEXT_GUIDANCE);
-    expect(literal![1]).not.toContain("${");
+    expect(staticGuidanceText(source)).toBe(CONTEXT_GUIDANCE);
     expect(CONTEXT_GUIDANCE.trim()).toBe(CONTEXT_GUIDANCE);
     expect(CONTEXT_GUIDANCE.split(/\s+/).length).toBeLessThanOrEqual(300);
     expect((await import("../src/context-guidance")).CONTEXT_GUIDANCE).toBe(CONTEXT_GUIDANCE);
+  });
+
+  test.each([
+    ["LF", "\n"],
+    ["CRLF", "\r\n"],
+    ["CR", "\r"],
+  ])("matches an evaluated literal with synthetic %s source line endings", (_name, lineEnding) => {
+    const source = readFileSync(new URL("../src/context-guidance.ts", import.meta.url), "utf8");
+    const variant = source.replace(/\r\n?|\n/g, lineEnding!);
+    const normalized = staticGuidanceText(variant);
+    // Evaluate the in-memory source as JavaScript after removing only the export.
+    // This checks real template-literal semantics without rewriting the source file.
+    const evaluated = new Function(
+      `${variant.replace("export const CONTEXT_GUIDANCE", "const CONTEXT_GUIDANCE")}\nreturn CONTEXT_GUIDANCE;`,
+    )();
+    expect(normalized).toBe(evaluated);
+    expect(evaluated).toBe(CONTEXT_GUIDANCE);
   });
 
   test("teaches proactive budget checks without polling or automatic rollover assumptions", () => {
