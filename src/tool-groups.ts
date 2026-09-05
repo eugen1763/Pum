@@ -126,7 +126,8 @@ export const SHELLS_GROUP_TOOL_NAMES = [
  */
 /** Static PUM schemas only; revealing these never grants server authority. */
 export const MCP_GROUP_TOOL_NAMES = ["mcp_list", "mcp_call"] as const;
-export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree", "Shells", "Todo", "MCP"] as const;
+export const LSP_GROUP_TOOL_NAMES = ["lsp_diagnostics"] as const;
+export const TOOL_GROUP_NAMES = ["Admin", "Subagents", "Worktree", "Shells", "Todo", "MCP", "LSP"] as const;
 
 export type ToolGroupName = (typeof TOOL_GROUP_NAMES)[number];
 
@@ -145,6 +146,7 @@ export const TOOL_GROUPS: Readonly<Record<ToolGroupName, ToolGroupDefinition>> =
   Shells: { label: "Shells", toolNames: SHELLS_GROUP_TOOL_NAMES },
   Todo: { label: "Todo", toolNames: TODO_TOOL_NAMES },
   MCP: { label: "MCP", toolNames: MCP_GROUP_TOOL_NAMES },
+  LSP: { label: "LSP", toolNames: LSP_GROUP_TOOL_NAMES },
 };
 
 /** Union of every optional tool name across all hidden groups. */
@@ -155,6 +157,7 @@ export const ALL_GROUP_TOOL_NAMES: readonly string[] = [
   ...SHELLS_GROUP_TOOL_NAMES,
   ...TODO_TOOL_NAMES,
   ...MCP_GROUP_TOOL_NAMES,
+  ...LSP_GROUP_TOOL_NAMES,
 ];
 
 /** The tool names a session of an audience may expose (the allowlist). */
@@ -180,7 +183,7 @@ export function childAllowedToolNames(readonly = false): string[] {
     ...CORE_TOOL_NAMES,
     ...CHILD_EXTRA_TOOL_NAMES,
     ENABLE_TOOLS,
-    ...ALL_GROUP_TOOL_NAMES.filter((name) => !(MCP_GROUP_TOOL_NAMES as readonly string[]).includes(name)),
+    ...ALL_GROUP_TOOL_NAMES.filter((name) => !([...MCP_GROUP_TOOL_NAMES, ...LSP_GROUP_TOOL_NAMES] as readonly string[]).includes(name)),
   ];
   if (!readonly) return names;
   const omitted = new Set<string>(READONLY_CHILD_OMITTED_TOOL_NAMES);
@@ -277,6 +280,7 @@ function buildEnableToolsDescription(controller: ToolGroupsController): string {
   }
   if (controller.audience === "main") {
     lines.push("Revealing MCP grants no server access; only direct-user /mcp connection and exact toolset approval can authorize it.");
+    lines.push("LSP reads cached diagnostics only; revealing it never starts a server or checks files. Only direct-user /lsp commands authorize that work.");
   }
   return lines.join("\n");
 }

@@ -11,6 +11,7 @@ import { diagnosticsCommandText } from "./request-diagnostics-access";
 import { checkpointControllerForSession, checkpointRecoveryFailureText } from "./file-checkpoints";
 import { VALIDATION_CUSTOM_TYPE, validationForSession } from "./project-validation";
 import type { McpController } from "./mcp";
+import type { LspController } from "./lsp";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, BashOperations, ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -846,6 +847,7 @@ export function App({
   initialCwd,
   userBashOperations,
   mcpForSession,
+  lspForSession,
 }: {
   session: AgentSession;
   modelRuntime: ModelRuntime;
@@ -893,6 +895,7 @@ export function App({
   userBashOperations?: BashOperations;
   /** Exact main-runtime lookup; never inherited by workers or restored as trust. */
   mcpForSession?: (session: AgentSession) => McpController | undefined;
+  lspForSession?: (session: AgentSession) => LspController | undefined;
 }) {
   // The one authoritative active directory. Everything directory-dependent
   // reads this rather than process.cwd(), so a live move rebinds by re-render
@@ -3487,6 +3490,7 @@ export function App({
     // clearQueue may have dropped a subagent completion notice queued to the
     // streaming main agent; re-arm undelivered notices so a merge is not stuck.
     mcpForSession?.(session)?.cancel();
+    lspForSession?.(session)?.cancel();
     session.abort().finally(() => {
       setWorking(false);
       void subagentManager.resendUndeliveredMainSettlements();
@@ -4450,6 +4454,46 @@ export function App({
       setEditingStash(null);
       histCursor.current = null;
       draft.current = "";
+      return;
+    }
+
+    // Every LSP operation requires the same ref-backed draft origin as MCP.
+    // Even cached reads/status/stop cannot become programmatic consent commands.
+    if (attachments.length === 0 && commandEligible && /^\/lsp(?:\s|$)/.test(promptText)) {
+      setEditingStash(null);
+      histCursor.current = null;
+      draft.current = "";
+      const report = (text: string, error = false) => {
+        const line: Line = { kind: "text", role: error ? "error" : "system", text };
+        if (selectedAgentId) subagentManager.appendAgentLine(selectedAgentId, line, { persist: false });
+        else appendMainLine(line);
+      };
+      if (!directSubmission) {
+        report("LSP commands require direct user input. Clear the draft and type the command anew.", true);
+        return;
+      }
+      if (selectedAgentId) {
+        report("LSP is available only in the main TUI session; workers cannot access servers.", true);
+        return;
+      }
+      const controller = lspForSession?.(session);
+      if (!controller) {
+        report("LSP is unavailable for this session runtime.", true);
+        return;
+      }
+      const action = promptText.trim().split(/\s+/)[1];
+      if ((action === "connect" || action === "check") && (busyRef.current || session.isStreaming
+        || sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current)) {
+        report("Wait for the main session to become idle and session operations to finish before connecting or checking LSP.", true);
+        return;
+      }
+      void controller.command(promptText).then((text) => {
+        if (sessionRef.current === session && lspForSession?.(session) === controller) report(text);
+      }).catch(() => {
+        if (sessionRef.current === session && lspForSession?.(session) === controller) {
+          report("LSP request failed or was revoked. Native Linux Bubblewrap, a supported server and unchanged proposal/file are required. Preview /lsp before approving again.", true);
+        }
+      });
       return;
     }
 

@@ -87,6 +87,11 @@ describe("command suggestions", () => {
       .toEqual([]);
   });
 
+  test("LSP is discoverable only for the main TUI target", () => {
+    expect(matchingCommandsForTarget("/ls", "main").map(command => command.name)).toEqual(["/lsp"]);
+    expect(matchingCommandsForTarget("/ls", "subagent")).toEqual([]);
+  });
+
   test("MCP is discoverable only for the main TUI target", () => {
     expect(matchingCommandsForTarget("/mc", "main").map(command => command.name)).toEqual(["/mcp"]);
     expect(matchingCommandsForTarget("/mc", "subagent")).toEqual([]);

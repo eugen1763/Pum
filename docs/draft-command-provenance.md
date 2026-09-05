@@ -1,6 +1,6 @@
 # Direct-user command drafts (#70)
 
-`/mcp`, `/validation` and `/checkpoint` are App-only runtime operations, not
+`/mcp`, `/lsp`, `/validation` and `/checkpoint` are App-only runtime operations, not
 model/SDK commands. Their authority now comes from the submitted draft's origin,
 not from its text or a mutable cache row index.
 
@@ -20,7 +20,8 @@ not from its text or a mutable cache row index.
 - Clear a nonempty draft with **Ctrl+C**, then type anew to issue a direct command.
   Ordinary editing/deletion is not an authority reset. Submitting a rejected
   command also leaves a new empty editor, as other command submissions do.
-- The same conservative rule covers **all** three command families, including
+- The same conservative rule covers **all** four command families, including
+  LSP preview/connect/check/problems/status/stop,
   MCP preview/status/revoke/disconnect, validation preview/status/disable and
   checkpoint list. Restored text never invokes their controllers. Fresh explicit
   revoke/disable retains its existing busy-runtime availability.
@@ -56,7 +57,7 @@ Other slash-command families are outside this prerequisite's scope.
 ## Rendered regressions
 
 `tests/mcp-ui.test.tsx` uses OpenTUI's real renderer/input dispatch with bound
-validation/checkpoint controllers and an injected MCP controller. Tests assert
+validation/checkpoint controllers and injected MCP/LSP controllers. Tests assert
 both rendered refusal and absence of controller calls, not source patterns alone.
 
 Coverage includes single cached execution, checkout+Enter, the exact
@@ -65,11 +66,20 @@ nonempty history, edits (including replacing every character), argument completi
 agent-view restoration, deleting a checked-out stash row
 from another view, failed delivery followed by editing/history, queued worker
 recall/view restoration, and main text-only steering-queue recall. The five
-sensitive commands (MCP connect/approve, validation enable, checkpoint recover/
-clear) share the matrix. Preview/revocation completion remains inert for cached
+original sensitive commands (MCP connect/approve, validation enable, checkpoint
+recover/clear), plus LSP connect/check, share the matrix. Preview/revocation completion remains inert for cached
 drafts; clearing/retyping and fresh per-view drafts remain functional.
 
-The fixtures do not launch a real MCP server or test native confinement. Adjacent
+LSP is main-TUI-only. Every runtime creates a fresh controller using the mandatory
+MCP readonly/networkless process adapter, binds the exact session, and disposes it
+on retirement. Main Esc cancellation withdraws LSP authority alongside MCP. No
+startup/resume consent is restored, no SDK slash command is registered, and
+headless and worker runtimes import no LSP controller. The hidden main-only LSP
+group exposes only cached `lsp_diagnostics`; revealing it does not connect a server
+or check a file. `/lsp problems` produces compact transient transcript output,
+not a modal, automatic model context, or a repair turn.
+
+The fixtures do not launch a real MCP/LSP server or test native confinement. Adjacent
 rendered validation/checkpoint, cache, queue, clear-input, delivery and completion
 suites protect their existing behaviors. Native MCP policy and its enforcement
 limitations are documented separately in `docs/mcp.md`.

@@ -26,6 +26,7 @@ import {
   ENABLE_TOOLS,
   MAIN_EXTRA_TOOL_NAMES,
   MCP_GROUP_TOOL_NAMES,
+  LSP_GROUP_TOOL_NAMES,
   SHELLS_GROUP_TOOL_NAMES,
   ToolGroupsController,
   TOOL_GROUP_NAMES,
@@ -205,7 +206,7 @@ describe("tool group membership", () => {
       expect(childAllowedToolNames()).toContain(tool);
     }
     for (const tool of [...ALL_GROUP_TOOL_NAMES]) {
-      if ((MCP_GROUP_TOOL_NAMES as readonly string[]).includes(tool)) expect(childAllowedToolNames()).not.toContain(tool);
+      if (([...MCP_GROUP_TOOL_NAMES, ...LSP_GROUP_TOOL_NAMES] as readonly string[]).includes(tool)) expect(childAllowedToolNames()).not.toContain(tool);
       else expect(childAllowedToolNames()).toContain(tool);
     }
   });
@@ -224,6 +225,25 @@ describe("tool group membership", () => {
         expect(afkAllowedToolNames()).not.toContain(name);
       }
     }
+  });
+
+  test("LSP is hidden, cached-read-only and excluded from every worker role", () => {
+    expect(toolNamesInGroup("LSP")).toEqual(["lsp_diagnostics"]);
+    expect(activeToolNames([], "main")).not.toContain("lsp_diagnostics");
+    expect(activeToolNames(["LSP"], "main")).toEqual([...activeToolNames([], "main"), ...LSP_GROUP_TOOL_NAMES]);
+    const sessionFile = join(sessionDirPath, "lsp-role.jsonl");
+    saveToolGroups(sessionFile, ["LSP"]);
+    for (const readonly of [false, true]) {
+      const child = new ToolGroupsController("subagent", sessionFile, readonly);
+      child.load();
+      expect(child.availableGroups()).not.toContain("LSP");
+      expect(child.enabledGroups()).toEqual([]);
+      expect(() => child.enableGroup("LSP")).toThrow(/Unknown tool group/);
+      expect(childAllowedToolNames(readonly)).not.toContain("lsp_diagnostics");
+      expect(activeToolNames(["LSP"], "subagent", readonly)).toEqual(activeToolNames([], "subagent", readonly));
+    }
+    expect(judgeAllowedToolNames()).not.toContain("lsp_diagnostics");
+    expect(afkAllowedToolNames()).not.toContain("lsp_diagnostics");
   });
 
   test("restored MCP visibility is filtered for workers", () => {

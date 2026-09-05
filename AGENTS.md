@@ -40,6 +40,9 @@ bun run start    # open the TUI in the current directory
 | `src/mcp-config.ts` | Inert bounded exact-cwd MCP proposals and identity-checked reads |
 | `src/mcp-process.ts` | Mandatory Linux native readonly/networkless MCP process policy |
 | `src/mcp-protocol.ts` | Bounded pinned 2025-11-25 tools-only stdio MCP client |
+| `src/lsp.ts` | Main-TUI-only direct-consent document diagnostics lifecycle and cached agent feedback |
+| `src/lsp-files.ts` | Inert bounded LSP proposals and identity-checked Python document snapshots |
+| `src/lsp-protocol.ts` | Bounded LSP 3.17 document-only pull-diagnostics stdio profile |
 | `src/questionnaire-popup.tsx` | OpenTUI questionnaire popup and responsive layout |
 | `src/git-branch.ts` | Reads and watches `.git/HEAD` |
 | `src/syntax.ts` | Theme → `SyntaxStyle` for markdown and code highlighting |
@@ -948,6 +951,29 @@ These were chosen deliberately. Change them only on purpose.
   installers, resources, sampling, prompts or URI following. Treat descriptions,
   schemas and bounded text results as untrusted data. See `docs/mcp.md` for limits
   and missing native-enforcement evidence on hosts without Bubblewrap.
+- **LSP is an explicitly approved main-TUI document diagnostics capability.**
+  Exact-cwd `.pum/lsp.json` is inert strict version-1 executable/args JSON. Every
+  `/lsp` command uses the same ref-backed direct-user origin guard as MCP, including
+  preview/status/problems/stop. Preview then `connect <digest>` grants only one
+  runtime's process authority; `check <relative.py>` explicitly checks one bounded
+  Python document. Nothing starts from model/cache/repository configuration alone,
+  resume, relocation, startup, or worker inheritance. The unchanged reviewed MCP
+  process adapter mandates native Linux Bubblewrap, readonly live cwd, private
+  scratch, filtered environment, denied PUM config, no network/additional roots or
+  unsandboxed fallback even Check/Sandbox Off. Preview explicitly discloses the
+  readonly live-project secret/alias/future-file risk; no writes/auth are authorized.
+  LSP 3.17 Content-Length stdio supports full synchronization and full document
+  pulls only, requiring UTF-16 and no inter-file/workspace diagnostics. No real
+  server compatibility claim, workspace intelligence, server-driven edits,
+  navigation, installers or remote transport. Generation plus exact bytes/file and
+  ancestor identity/timestamps gate acceptance and every tool/problems exposure;
+  edits, stale results, cancellation and failures withdraw evidence. Config changes,
+  runtime disposal and relocation revoke trust. Main-only hidden LSP contains just
+  `lsp_diagnostics`, which reads cached untrusted evidence and cannot start/check
+  anything. Compact `/lsp problems` output and ordinary tool copies are historical
+  once delivered, not automatically refreshed. No steering/repair/context injection.
+  Workers/judges/AFK/headless have no LSP authority; `-p` is explicitly unsupported.
+  See `docs/lsp.md` for exact scope, limits and absent-host native evidence.
 - **Release publication uses npm trusted publishing.** GitHub OIDC publishes
   prereleases under `beta` and stable versions under `latest`, with npm
   provenance. The workflow does not promote prereleases to `latest` and does

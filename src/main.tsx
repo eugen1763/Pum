@@ -10,6 +10,7 @@ import { mkdirSync, writeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { App } from "./app";
 import { McpController } from "./mcp";
+import { LspController } from "./lsp";
 import { createMcpProcessAdapter } from "./mcp-process";
 import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
@@ -291,6 +292,7 @@ export async function start(
   );
   // Process-local authority, keyed by exact runtime object; never restored from disk.
   const mcpControllers = new WeakMap<AgentSession, McpController>();
+  const lspControllers = new WeakMap<AgentSession, LspController>();
   const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
       // Bind fresh state to the trusted target before service creation registers
@@ -308,6 +310,13 @@ export async function start(
         isIdle: () => !!mcpSession && !mcpSession.isStreaming,
         isCurrent: (): boolean => !mcpDisposed && !!mcpSession && mcpControllers.get(mcpSession) === mcp,
       });
+      const lsp: LspController = new LspController({
+        cwd,
+        spawn: (request) => mcpProcess.spawn(request),
+        isIdle: () => !!mcpSession && !mcpSession.isStreaming,
+        isCurrent: (): boolean => !mcpDisposed && !!mcpSession && lspControllers.get(mcpSession) === lsp,
+      });
+      try {
       const services = await createAgentSessionServices({
         cwd,
         agentDir: AGENT_DIR,
@@ -328,6 +337,7 @@ export async function start(
             questionnaireManager.extension({ id: "main", name: "main" }),
             mainToolGroups.extension(),
             { name: "pum-main-mcp", factory: (pi) => { for (const tool of mcp.tools()) pi.registerTool(tool); } },
+            { name: "pum-main-lsp", factory: (pi) => { for (const tool of lsp.tools()) pi.registerTool(tool); } },
             mainTodoTools.extension(),
             subagentExtension,
           ],
@@ -344,25 +354,37 @@ export async function start(
       });
       mcpSession = result.session;
       mcpControllers.set(result.session, mcp);
+      lspControllers.set(result.session, lsp);
       const disposeSession = result.session.dispose.bind(result.session);
       result.session.dispose = () => {
         mcpDisposed = true;
         mcpControllers.delete(result.session);
-        try { mcp.dispose(); } finally { disposeSession(); }
+        lspControllers.delete(result.session);
+        try { lsp.dispose(); } finally {
+          try { mcp.dispose(); } finally { disposeSession(); }
+        }
       };
       try {
         mcp.bind(result.session);
+        lsp.bind(result.session);
         bindFileCheckpointSession(result.session);
         validation.bind(result.session);
         bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
+        result.session.setActiveToolsByName(mainToolGroups.activeTools());
       } catch (error) {
         // The runtime factory cannot dispose a session it has not received yet.
         try { result.session.dispose(); } catch { /* Preserve the binding error. */ }
         throw error;
       }
-      result.session.setActiveToolsByName(mainToolGroups.activeTools());
       return { ...result, services, diagnostics: services.diagnostics };
+      } catch (error) {
+        // Service/session setup can fail before a runtime owns these controllers.
+        mcpDisposed = true;
+        try { lsp.dispose(); } catch { /* Preserve the startup error. */ }
+        try { mcp.dispose(); } catch { /* Preserve the startup error. */ }
+        throw error;
+      }
     },
     {
       cwd,
@@ -517,6 +539,7 @@ export async function start(
       shellManager={shellManager}
       userBashOperations={sandboxController.userBashOperations()}
       mcpForSession={(session) => mcpControllers.get(session)}
+      lspForSession={(session) => lspControllers.get(session)}
       onExit={() => shutdown(0)}
     />,
   );

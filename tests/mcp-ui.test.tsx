@@ -44,6 +44,8 @@ async function fixture(stashedText?: string, sentHistory: string[] = []) {
   let command = async (text: string) => "MCP preview: " + text;
   const controller = { command: (text: string) => { commands.push(text); return command(text); }, cancel: () => calls.push("cancel") } as any;
   let current: any = controller;
+  let lspCancels = 0;
+  const lspController = { command: controller.command, cancel: () => { lspCancels++; } } as any;
   const authorityCalls: string[] = [];
   session.dispose = () => {};
   session.sessionManager.getCwd = () => process.cwd();
@@ -69,11 +71,12 @@ async function fixture(stashedText?: string, sentHistory: string[] = []) {
     onNewSession={async () => session} loadSessions={async () => []} onSwitchSession={async () => session}
     settings={settings} searchProviders={[]} subagentManager={manager}
     mcpForSession={target => target === session ? current : undefined}
+    lspForSession={target => target === session && current ? lspController : undefined}
     promptHistoryStore={{ load: () => sentHistory, append: () => { calls.push("history"); return sentHistory; }, remove: () => [] }}
     promptStashStore={{ load: () => stashedText ? [{ text: stashedText, executed: false }] : [], append: () => [], markExecuted: () => [], markExecutedMany: () => [], replace: () => [], remove: () => [] }}
   />);
   await settle(setup);
-  return { setup, calls, commands, authorityCalls, childLines, child, session, manager, emit,
+  return { setup, calls, commands, authorityCalls, childLines, child, session, manager, emit, lspCancels: () => lspCancels,
     setCommand: (fn: typeof command) => { command = fn; }, retire: () => { current = undefined; } };
 }
 async function submit(setup: Awaited<ReturnType<typeof createTestRenderer>>, text: string) {
@@ -90,6 +93,8 @@ async function checkout(setup: Awaited<ReturnType<typeof createTestRenderer>>) {
 const protectedCommands = [
   "/mcp connect server " + "a".repeat(64),
   "/mcp approve server " + "b".repeat(64),
+  "/lsp connect " + "d".repeat(64),
+  "/lsp check example.py",
   "/validation enable " + "c".repeat(64),
   "/checkpoint recover cp-test",
   "/checkpoint clear",
@@ -144,7 +149,7 @@ describe("draft provenance across rendered command input", () => {
       expect(f.calls).toEqual([]);
     });
   }
-  for (const text of ["/mcp", "/mcp revoke server", "/mcp disconnect server", "/validation", "/validation status", "/validation disable", "/checkpoint", "/checkpoint list"]) {
+  for (const text of ["/mcp", "/mcp revoke server", "/mcp disconnect server", "/lsp", "/lsp preview", "/lsp problems", "/lsp status", "/lsp stop", "/validation", "/validation status", "/validation disable", "/checkpoint", "/checkpoint list"]) {
     test(`conservative preview/revocation policy: recalled ${text} stays inert`, async () => {
       const f = await fixture(text);
       await checkout(f.setup);
@@ -197,7 +202,7 @@ describe("draft provenance across rendered command input", () => {
     expect(f.commands).toEqual([]);
     expect(f.setup.captureCharFrame()).toContain("commands require direct user input");
   });
-  for (const text of ["/mcp sta", "/validation sta", "/checkpoint cle"]) {
+  for (const text of ["/mcp sta", "/lsp sta", "/validation sta", "/checkpoint cle"]) {
     test(`argument completion of cached ${text} cannot grant authority`, async () => {
       const f = await fixture(text);
       await checkout(f.setup);
@@ -206,7 +211,7 @@ describe("draft provenance across rendered command input", () => {
       expect(f.setup.captureCharFrame()).toContain("commands require direct user input");
     });
   }
-  test("main text-only queued recall cannot become consent after editing and history restoration", async () => {
+  for (const family of ["mcp", "lsp"]) test(`${family} main text-only queued recall cannot become consent after editing and history restoration`, async () => {
     const f = await fixture(undefined, ["previous message"]);
     let queue: string[] = [];
     f.session.getSteeringMessages = () => queue;
@@ -214,7 +219,7 @@ describe("draft provenance across rendered command input", () => {
     f.session.clearQueue = () => { const steering = queue; queue = []; return { steering, followUp: [] }; };
     f.session.steer = async (text: string) => { queue.push(text); };
     f.emit({ type: "agent_start" }); await settle(f.setup);
-    const text = protectedCommands[0]!;
+    const text = protectedCommands.find(text => text.startsWith(`/${family} `))!;
     await submit(f.setup, "x" + text);
     expect(queue).toEqual(["x" + text]);
     f.setup.mockInput.pressArrow("up"); await settle(f.setup);
@@ -235,6 +240,65 @@ describe("draft provenance across rendered command input", () => {
     f.setup.mockInput.pressTab({ shift: true }); await settle(f.setup);
     f.setup.mockInput.pressEnter(); await settle(f.setup);
     expect(f.commands).toEqual([text]);
+  });
+});
+
+describe("main TUI direct LSP authority boundary", () => {
+  test("all fresh commands produce compact transient output without prompting", async () => {
+    const f = await fixture();
+    const texts = ["/lsp", "/lsp preview", "/lsp connect " + "a".repeat(64), "/lsp check example.py", "/lsp problems", "/lsp status", "/lsp stop"];
+    f.setCommand(async text => "LSP compact problems: " + text);
+    for (const text of texts) await submit(f.setup, text);
+    expect(f.commands.map(text => text.trim())).toEqual(texts);
+    expect(f.setup.captureCharFrame()).toContain("LSP compact problems:");
+    expect(f.calls).toEqual([]);
+  });
+  test("busy refuses connect/check but retains explicit stop", async () => {
+    const f = await fixture(); f.emit({ type: "agent_start" }); await settle(f.setup);
+    await submit(f.setup, "/lsp connect " + "a".repeat(64));
+    await submit(f.setup, "/lsp check example.py");
+    expect(f.commands).toEqual([]);
+    expect(f.setup.captureCharFrame()).toContain("become idle");
+    await submit(f.setup, "/lsp stop");
+    expect(f.commands).toEqual(["/lsp stop"]); expect(f.calls).toEqual([]);
+  });
+  test("selected mutable and readonly workers never reach the LSP controller", async () => {
+    const f = await fixture(); f.setup.mockInput.pressTab({ shift: true }); await settle(f.setup);
+    for (const readonly of [false, true]) {
+      f.child.readonly = readonly;
+      for (const text of ["/lsp preview", "/lsp connect " + "a".repeat(64), "/lsp check example.py", "/lsp problems", "/lsp status", "/lsp stop"]) await submit(f.setup, text);
+    }
+    expect(f.commands).toEqual([]); expect(f.calls).toEqual([]);
+    expect(f.childLines).toHaveLength(12);
+    expect(f.childLines.every(({ line, options }) => line.text.includes("main TUI session") && options.persist === false)).toBe(true);
+  });
+  test("errors and retired runtimes never leak raw or late results", async () => {
+    const f = await fixture();
+    f.setCommand(async () => { throw new Error("private LSP failure"); });
+    await submit(f.setup, "/lsp preview");
+    expect(f.setup.captureCharFrame()).toContain("LSP request failed");
+    expect(f.setup.captureCharFrame()).not.toContain("private LSP failure");
+    let finish!: (text: string) => void;
+    f.setCommand(() => new Promise(resolve => { finish = resolve; }));
+    await submit(f.setup, "/lsp problems"); f.retire(); finish("STALE LSP REPORT"); await settle(f.setup);
+    expect(f.setup.captureCharFrame()).not.toContain("STALE LSP REPORT");
+    await submit(f.setup, "/lsp status");
+    expect(f.setup.captureCharFrame()).toContain("LSP is unavailable"); expect(f.calls).toEqual([]);
+  });
+  test("every main runtime owns fresh LSP authority with explicit bind/disposal and no SDK command", () => {
+    const main = readFileSync(new URL("../src/main.tsx", import.meta.url), "utf8");
+    const factory = main.indexOf("async ({ cwd, sessionManager, sessionStartEvent }) => {");
+    expect(main.indexOf("new LspController", factory)).toBeGreaterThan(factory);
+    expect(main).toContain("lsp.bind(result.session)");
+    expect(main).toContain("lspControllers.delete(result.session)");
+    expect(main).toContain("try { lsp.dispose(); } finally {");
+    expect(main).toContain("spawn: (request) => mcpProcess.spawn(request)");
+    expect(main).not.toMatch(/registerCommand\(["']lsp/);
+    for (const path of ["headless.ts", "subagents/manager.ts"]) {
+      const source = readFileSync(new URL("../src/" + path, import.meta.url), "utf8");
+      expect(source).not.toContain("LspController");
+      expect(source).not.toMatch(/from ["'].*\/lsp["']/);
+    }
   });
 });
 
@@ -309,6 +373,7 @@ describe("main TUI direct MCP authority boundary", () => {
     const f = await fixture(); f.emit({type: "agent_start"}); await settle(f.setup);
     f.setup.mockInput.pressEscape(); await settle(f.setup); f.setup.mockInput.pressEscape(); await settle(f.setup);
     expect(f.calls).toEqual(["cancel", "abort"]);
+    expect(f.lspCancels()).toBe(1);
   });
   test("main factory owns fresh controllers and explicit disposal, never SDK command registration", () => {
     const main = readFileSync(new URL("../src/main.tsx", import.meta.url), "utf8");

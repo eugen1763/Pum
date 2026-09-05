@@ -66,6 +66,10 @@ export const COMMANDS: Command[] = [
     description: "Main TUI MCP: preview, connect <server> <config digest>, approve <server> <toolset digest>, revoke or disconnect",
   },
   {
+    name: "/lsp",
+    description: "Main TUI Python diagnostics: preview, connect <digest>, check <relative.py>, problems, status, stop",
+  },
+  {
     name: "/validation",
     description: "Preview project validation; status, enable <digest>, or disable for this runtime",
   },
