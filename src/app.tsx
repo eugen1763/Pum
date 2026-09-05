@@ -9,6 +9,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { diagnosticsCommandText } from "./request-diagnostics-access";
 import { checkpointControllerForSession, checkpointRecoveryFailureText } from "./file-checkpoints";
+import { VALIDATION_CUSTOM_TYPE, validationForSession } from "./project-validation";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, BashOperations, ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -2130,6 +2131,12 @@ export function App({
         case "message_end":
           if (event.message.role === "assistant") {
             setTx((value) => settleTranscriptMessage(value));
+          } else if (event.message.role === "custom" && event.message.customType === VALIDATION_CUSTOM_TYPE) {
+            append({
+              kind: "text",
+              role: (event.message.details as { outcome?: string } | undefined)?.outcome === "passed" ? "system" : "error",
+              text: String(event.message.content),
+            });
           }
           break;
         case "message_update": {
@@ -4422,6 +4429,54 @@ export function App({
       setEditingStash(null);
       histCursor.current = null;
       draft.current = "";
+      return;
+    }
+
+    // Approval is a direct-user capability, never an SDK command or model
+    // message. Reports are transient and belong only to the selected runtime.
+    if (attachments.length === 0 && commandEligible && /^\/validation(?:\s|$)/.test(promptText)) {
+      const report = (text: string, error = false) => {
+        const line: Line = { kind: "text", role: error ? "error" : "system", text };
+        if (selectedAgentId) subagentManager.appendAgentLine(selectedAgentId, line, { persist: false });
+        else appendMainLine(line);
+      };
+      setEditingStash(null);
+      histCursor.current = null;
+      draft.current = "";
+      const parts = promptText.trim().split(/\s+/);
+      const action = parts[1];
+      if (!(parts.length === 1 || (parts.length === 2 && (action === "status" || action === "disable"))
+        || (parts.length === 3 && action === "enable" && /^[0-9a-f]{64}$/i.test(parts[2]!)))) {
+        report("Usage: /validation [status|enable <64-hex digest>|disable]", true);
+        return;
+      }
+      const selected = selectedAgentId ? subagentManager.getAgent(selectedAgentId) : undefined;
+      const controller = validationForSession(selectedAgentId ? subagentManager.getDiagnosticsSessionId(selectedAgentId) ?? "" : session);
+      if (!controller) {
+        report("Project validation is unavailable for this session runtime.", true);
+        return;
+      }
+      try {
+        if (action === "enable") {
+          if (selected?.readonly) {
+            report("Readonly sessions cannot enable project validation.", true);
+            return;
+          }
+          if (sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current
+            || (selectedAgentId ? !selected || selected.status === "starting" || selected.status === "running" : busyRef.current)) {
+            report("Wait for the selected session to become idle and session operations to finish before enabling validation.", true);
+            return;
+          }
+          controller.enable(parts[2]!);
+          report(controller.status());
+        } else if (action === "disable") {
+          // Deliberately allowed while busy: revoke and cancel in-flight work.
+          controller.disable();
+          report(controller.status());
+        } else report(action === "status" ? controller.status() : controller.preview());
+      } catch {
+        report("Project validation request failed. Preview /validation and check the current proposal and digest before enabling.", true);
+      }
       return;
     }
 

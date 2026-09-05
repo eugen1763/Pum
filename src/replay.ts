@@ -22,6 +22,7 @@ import {
   type ManagedShellLifecycleEvent,
 } from "./shells/types";
 import { settledUserBashCall } from "./user-bash";
+import { VALIDATION_CUSTOM_TYPE } from "./project-validation";
 
 const textOf = (content: unknown): string => {
   if (typeof content === "string") return content;
@@ -265,6 +266,11 @@ export function replayEntries(
         searchCalls.set(search.id, call);
         lines.push({ kind: "tool", call });
       }
+      continue;
+    }
+
+    if (entry?.type === "custom_message" && entry.customType === VALIDATION_CUSTOM_TYPE && typeof entry.content === "string") {
+      lines.push({ kind: "text", role: entry.details?.outcome === "passed" ? "system" : "error", text: entry.content });
       continue;
     }
 

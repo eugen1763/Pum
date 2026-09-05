@@ -81,6 +81,7 @@ bun run start    # open the TUI in the current directory
 | `src/check-paths.ts` | Project-scoped additional Check mode root validation and commands |
 | `src/filesystem-sandbox.ts` | Process-local path boundary for file tools |
 | `src/file-checkpoints.ts` | Bounded runtime-only file-tool preimages and explicit user recovery-copy export |
+| `src/project-validation.ts` | Inert project proposals, direct-user runtime approval, bounded checked batch validation and evidence |
 | `src/check-policy.ts` | Deterministic shell and structured-process hard rules |
 | `src/check-mutation.ts` | Pre-execution edit and patch diff proposals |
 | `src/check-approvals.ts` | Check mode identity model and canonical-input serializer |
@@ -345,6 +346,24 @@ These were chosen deliberately. Change them only on purpose.
   triggers, Git and external mutations are not covered. Failed exports may leave
   an artifact for user inspection; never unlink a name another actor could have
   changed. See `docs/file-checkpoints.md` for check-time race and retention limits.
+- **Automatic validation requires direct-user runtime approval.** Exact-cwd
+  `.pum/validation.json` is inert, strict bounded version-1 JSON. Direct App
+  `/validation` previews commands and their SHA-256; `/validation enable <digest>`
+  approves only the selected idle mutable runtime. No SDK command, model tool,
+  inherited worker consent, saved setting, or replayed evidence grants authority.
+  Headless requires `--validation <digest>` with direct `-p`. Changed/missing/invalid
+  config revokes; disable and disposal abort. Approval trusts the commands and
+  current/future project code they execute, not merely proposal bytes. Successful
+  write/edit batches validate once at awaited `turn_end` through the session's
+  Check preflight and registered native-sandbox Bash, never user executeBash.
+  Preserve `agent_settled` lifecycle; compose next-turn context refresh so evidence
+  reaches the model without reviving rolled-over history, and stop on abort.
+  Finish plus mutation in one worker batch is refused. At most four commands,
+  120s each including preflight, 1–20 runs per approval (default 5), first failure
+  stops, automatic repair budget zero. Same-cwd concurrent validators skip rather
+  than poll; external/Bash edits are not tracked or isolated. Readonly/judge/AFK
+  roles never run it. Bounded historical `pum.validation` evidence persists in the
+  normal transcript; trust does not. See `docs/project-validation.md` for limits.
 - **Bash output is summarized to a bounded head+tail view.** `src/bash-output.ts`
   wraps pi's bash tool in main and managed child sessions. The default keeps
   first 30 / last 40 lines within 3KB, strips ANSI, drops progress-only lines,

@@ -21,6 +21,7 @@ import {
 } from "../agent-usage";
 import { replayEntries } from "../replay";
 import { bindFileCheckpointSession } from "../file-checkpoints";
+import { ProjectValidationController, VALIDATION_CUSTOM_TYPE } from "../project-validation";
 import {
   loadNewsItems,
   mergeNewsItems,
@@ -998,6 +999,9 @@ export class SubagentManager {
         break;
       }
       case "message_end":
+        if (event.message?.role === "custom" && event.message.customType === VALIDATION_CUSTOM_TYPE) {
+          this.appendLine(record, { kind: "text", role: event.message.details?.outcome === "passed" ? "system" : "error", text: String(event.message.content) });
+        }
         if (event.message?.role === "assistant") {
           this.updateTranscript(record, (value) => settleTranscriptMessage(value));
         }
@@ -2129,6 +2133,9 @@ export class SubagentManager {
     // session file. Restore before the child's enable_tools tool registers.
     const internal = isInternalRole(record.snapshot.role);
     const contextWindow = internal ? undefined : new ContextWindowController();
+    const validation = internal ? undefined : new ProjectValidationController({
+      cwd: record.snapshot.worktree.path, readonly: record.snapshot.readonly,
+    });
     const judge = record.snapshot.role === "judge";
     if (!internal) {
       record.toolGroups = new ToolGroupsController("subagent", undefined, record.snapshot.readonly);
@@ -2150,6 +2157,7 @@ export class SubagentManager {
             record.snapshot.id,
             record.snapshot.readonly === true,
           )),
+          ...(validation ? [validation.extension()] : []),
           ...(contextWindow ? [contextWindow.extension()] : []),
           ...(!internal ? this.childWorkerExtensionFactories.map((factory) => factory(
             record.snapshot.id,
@@ -2172,6 +2180,7 @@ export class SubagentManager {
       if (!internal && !record.snapshot.readonly) bindFileCheckpointSession(result.session);
       bindSearchSession(result.session, record.snapshot.readonly ? "readonly" : record.snapshot.role);
       contextWindow?.bind(result.session);
+      validation?.bind(result.session);
     } catch (error) {
       // This session is not attached to the record or its disposal lock yet.
       try { result.session.dispose(); } catch { /* Preserve the binding error. */ }

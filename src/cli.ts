@@ -27,6 +27,8 @@ export interface StartupOptions {
   worktree?: WorktreeOptions;
   /** Non-interactive one-shot prompt for `pum -p "<text>"`. */
   prompt?: string;
+  /** Explicit one-launch approval of the project validation proposal (headless only). */
+  validationDigest?: string;
   /** Optional benchmark statistics output for headless mode. */
   statsFile?: string;
   /** Permit replacement of an existing statistics output file. */
@@ -58,6 +60,7 @@ export function parseCliArgs(args: string[]): CliResult {
   let setup = false;
   let prompt: string | undefined;
   let statsFile: string | undefined;
+  let validationDigest: string | undefined;
   let overrideStatsFile = false;
   let help = false;
   let version = false;
@@ -97,6 +100,15 @@ export function parseCliArgs(args: string[]): CliResult {
       index += 1;
       if (prompt !== undefined) { fail("Only one --prompt is supported"); continue; }
       prompt = value;
+    } else if (arg === "--validation") {
+      const value = args[index + 1];
+      // Do not swallow help/version as a malformed digest: their short-circuit
+      // contract applies even after an incomplete validation option.
+      if (value === undefined || value.startsWith("-")) { fail("Missing digest after --validation"); continue; }
+      index += 1;
+      if (validationDigest !== undefined) { fail("Only one --validation is supported"); continue; }
+      validationDigest = value;
+      if (!/^[0-9a-f]{64}$/i.test(value)) fail("--validation requires a 64-character hexadecimal SHA-256 digest");
     } else if (arg === "--statsFile" || arg === "--stats-file") {
       const value = args[index + 1];
       if (value === undefined) { fail(`Missing file path after ${arg}`); continue; }
@@ -106,7 +118,7 @@ export function parseCliArgs(args: string[]): CliResult {
     } else if (arg === "--override") overrideStatsFile = true;
     else if (arg.startsWith("-")) fail(`Unknown option: ${arg}`);
     else if (arg === "ss" && !outerSandbox && !worktree) {
-      if (login || resume || prompt !== undefined || statsFile !== undefined || overrideStatsFile) {
+      if (login || resume || prompt !== undefined || statsFile !== undefined || validationDigest !== undefined || overrideStatsFile) {
         fail(SETUP_ARGUMENTS_ERROR);
         continue;
       }
@@ -130,6 +142,9 @@ export function parseCliArgs(args: string[]): CliResult {
   if (version) return { kind: "version" };
   if (error !== undefined) return { kind: "error", message: error };
   if (setup) return { kind: "sandboxSetup" };
+  if (validationDigest !== undefined && (prompt === undefined || login || outerSandbox || worktree)) {
+    return { kind: "error", message: "--validation requires direct headless --prompt mode (no login, sandbox, or worktree command)" };
+  }
   if (login && prompt !== undefined) return { kind: "error", message: "Cannot combine login with --prompt" };
   if (outerSandbox && prompt !== undefined) {
     return { kind: "error", message: "Cannot combine an outer sandbox command with --prompt" };
@@ -164,6 +179,7 @@ export function parseCliArgs(args: string[]): CliResult {
       ...(worktree ? { worktree } : {}),
       ...(prompt !== undefined ? { prompt } : {}),
       ...(statsFile !== undefined ? { statsFile } : {}),
+      ...(validationDigest !== undefined ? { validationDigest } : {}),
     },
   };
 }
@@ -189,6 +205,7 @@ Options:
   -v, --version        Print the ${metadata.name} package version and exit.
   -r, --resume         Resume the latest session for the current directory.
   -p, --prompt <text>  Run one prompt without the TUI, print the answer, and exit.
+  --validation <sha256> Approve project validation for this headless launch only.
   --statsFile <path>   Write a versioned JSON statistics artifact after a headless run.
   --override           Permit --statsFile to replace an existing file.
   --                   End the options. Later arguments are directories.
@@ -220,6 +237,9 @@ Non-interactive mode:
   continue the latest session for the current directory. --statsFile creates
   missing parent directories and fails before startup when the file exists,
   unless --override is present. --stats-file is also accepted.
+  --validation requires a 64-hex digest of .pum/validation.json in the runtime
+  directory. Approval trusts its commands and the project code they execute,
+  not just the proposal bytes; it does not enable sandboxing. No approval persists.
 
 Start PUM in a project directory with "pum". If no provider is available,
 PUM opens the login panel automatically. Inside PUM, enter ? on an empty prompt

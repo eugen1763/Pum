@@ -33,6 +33,7 @@ import { toolArgText } from "./tool-line";
 import { shutdownSignals, signalExitCode } from "./platform";
 import { SessionStatsManager } from "./session-stats";
 import { prepareHeadlessStatsOutput, type HeadlessStatsOutput } from "./headless-stats";
+import { ProjectValidationController, VALIDATION_CUSTOM_TYPE, validationForSession } from "./project-validation";
 
 /**
  * Tools exposed to a headless run. The interactive-only tools stay out:
@@ -75,6 +76,7 @@ export interface HeadlessOptions {
   statsFile?: string;
   overrideStatsFile: boolean;
   pumVersion: string;
+  validationDigest?: string;
 }
 
 /**
@@ -194,6 +196,7 @@ async function runPromptSession(
   const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
       const contextWindow = new ContextWindowController();
+      const validation = new ProjectValidationController({ cwd });
       const services = await createAgentSessionServices({
         cwd,
         agentDir: AGENT_DIR,
@@ -206,6 +209,7 @@ async function runPromptSession(
             checkModePromptExtension,
             checkModeExtension,
             sandboxController.extension(),
+            validation.extension(),
             contextWindow.extension(),
             createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
           ],
@@ -220,6 +224,8 @@ async function runPromptSession(
       try {
         bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
+        validation.bind(result.session);
+        if (options.validationDigest) validation.enable(options.validationDigest);
       } catch (error) {
         // The runtime factory cannot dispose a session it has not received yet.
         try { result.session.dispose(); } catch { /* Preserve the binding error. */ }
@@ -256,6 +262,9 @@ async function runPromptSession(
         }
         break;
       case "message_end":
+        if (event.message.role === "custom" && event.message.customType === VALIDATION_CUSTOM_TYPE) {
+          process.stderr.write(`${String(event.message.content)}\n`);
+        }
         if (event.message.role === "assistant" && wroteText) {
           process.stdout.write("\n");
           wroteText = false;
@@ -306,8 +315,9 @@ async function runPromptSession(
     await withSearchRoute(session.sessionId, () => session.prompt(options.prompt));
     // A turn that ended in a provider or abort error prints no text; report it
     // and exit non-zero so a script does not read failure as success.
+    if (validationForSession(session)?.lastFailed) exitCode = 1;
     const messages = session.state.messages;
-    const last = messages[messages.length - 1];
+    const last = messages.findLast((message) => message.role === "assistant");
     if (last?.role === "assistant" && (last.stopReason === "error" || last.stopReason === "aborted")) {
       process.stderr.write(`pum: ${(last as any).errorMessage ?? `request ${last.stopReason}`}\n`);
       exitCode = 1;

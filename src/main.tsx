@@ -54,6 +54,7 @@ import { TerminalTitleController } from "./terminal-title";
 import { isOrcaTerminal, OrcaStatusController } from "./orca-status";
 import { SandboxController } from "./sandbox";
 import { bindFileCheckpointSession, createFileCheckpointExtension } from "./file-checkpoints";
+import { ProjectValidationController } from "./project-validation";
 import {
   createFilesystemSandboxExtension,
   filesystemSandboxExtension,
@@ -292,6 +293,7 @@ export async function start(
       const mainToolGroups = new ToolGroupsController("main");
       mainToolGroups.load(sessionManager.getSessionFile());
       const contextWindow = new ContextWindowController();
+      const validation = new ProjectValidationController({ cwd });
       const services = await createAgentSessionServices({
         cwd,
         agentDir: AGENT_DIR,
@@ -306,6 +308,7 @@ export async function start(
             createFileCheckpointExtension(),
             mainCheckModeExtension,
             sandboxExtension,
+            validation.extension(),
             contextWindow.extension(),
             createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
             questionnaireManager.extension({ id: "main", name: "main" }),
@@ -326,6 +329,7 @@ export async function start(
       });
       try {
         bindFileCheckpointSession(result.session);
+        validation.bind(result.session);
         bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
       } catch (error) {

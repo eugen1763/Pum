@@ -48,6 +48,43 @@ async function expectNoStartup(result: RunResult): Promise<void> {
   expect(existsSync(result.configPath)).toBe(false);
 }
 
+describe("headless validation approval CLI", () => {
+  const digest = "aB".repeat(32);
+  test("accepts an exact digest only for direct headless launches, including resume", () => {
+    for (const args of [["--validation", digest, "-p", "test"], ["-r", "-p", "test", "--validation", digest]]) {
+      const parsed = parseCliArgs(args);
+      expect(parsed.kind).toBe("start");
+      if (parsed.kind === "start") expect(parsed.options.validationDigest).toBe(digest);
+    }
+    const plain = parseCliArgs(["-p", "test"]);
+    if (plain.kind === "start") expect(plain.options).not.toHaveProperty("validationDigest");
+  });
+  test("rejects missing, malformed, duplicate, and incompatible approval", () => {
+    for (const args of [
+      ["--validation"], ["-p", "test", "--validation", "a".repeat(63)],
+      ["-p", "test", "--validation", "g".repeat(64)],
+      ["-p", "test", "--validation", digest, "--validation", digest],
+      ["--validation", digest], ["login", "-p", "test", "--validation", digest],
+      ...["s", "sr", "ss", "worktree", "w"].flatMap((command) => [
+        [command, "-p", "test", "--validation", digest],
+        ["--validation", digest, command],
+      ]),
+    ]) expect(parseCliArgs(args).kind).toBe("error");
+  });
+  test("help and version still short-circuit invalid approval without startup", async () => {
+    for (const flag of ["--help", "--version"]) {
+      const parsed = parseCliArgs(["--validation", flag]);
+      expect(parsed.kind).toBe(flag === "--help" ? "help" : "version");
+      const result = await runCli("--validation", "bad", flag);
+      expect(result.exitCode).toBe(0);
+      await expectNoStartup(result);
+    }
+    const invalid = await runCli("--validation", digest);
+    expect(invalid.exitCode).toBe(2);
+    await expectNoStartup(invalid);
+  });
+});
+
 describe("CLI argument parsing", () => {
   test("preserves login and resume startup arguments", () => {
     expect(parseCliArgs(["login", "--resume"])).toEqual({

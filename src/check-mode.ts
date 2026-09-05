@@ -1,6 +1,6 @@
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { InlineExtension, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AGENT_DIR } from "./config";
@@ -29,6 +29,17 @@ export type CheckModeConfig = {
 
 const REJECTED_TOOL_DETAIL = "pumRejected";
 const pendingRejectedTools = new Map<string, string>();
+// Synthetic validation has its own bounded evidence, not an assistant/toolResult
+// pair. Scope suppression to an internally generated ID AND newly cloned input
+// identity; never clear real calls. Weak metadata survives late preflight without
+// retaining an ID registry or needing a cleanup event that will never arrive.
+const syntheticCheckCalls = new WeakMap<object, string>();
+export function createSyntheticCheckCall<T extends Record<string, unknown>>(input: T): { id: string; args: T } {
+  const id = `validation-${randomUUID()}`;
+  const args = { ...input };
+  syntheticCheckCalls.set(args, id);
+  return { id, args };
+}
 
 function toolResultText(result: unknown): string | undefined {
   const content = (result as { content?: unknown } | null)?.content;
@@ -832,6 +843,10 @@ export function createCheckModeExtension(
       pi.on("tool_call", async (event, ctx) => {
         if (current.profile === "off" || !["bash", "edit"].includes(event.toolName)) return;
         const toolName = event.toolName as CheckedToolName;
+        // Capture before awaiting. Weak provenance also remains recognizable if
+        // an earlier extension delayed this hook until after the caller timed out.
+        // Neither path waits for a nonexistent synthetic message_end to clean up.
+        const synthetic = syntheticCheckCalls.get(event.input) === event.toolCallId;
         const evaluation = await evaluateToolCall(runtime, {
           toolName,
           input: event.input,
@@ -851,8 +866,10 @@ export function createCheckModeExtension(
         if (evaluation.decision === "allow") return;
 
         const visibleReason = redactApprovalPreview(evaluation.reason);
-        rejected.set(event.toolCallId, visibleReason);
-        pendingRejectedTools.set(event.toolCallId, visibleReason);
+        if (!synthetic) {
+          rejected.set(event.toolCallId, visibleReason);
+          pendingRejectedTools.set(event.toolCallId, visibleReason);
+        }
         return { block: true, reason: visibleReason };
       });
 

@@ -62,6 +62,10 @@ export const COMMANDS: Command[] = [
     description: "Show session statistics",
   },
   {
+    name: "/validation",
+    description: "Preview project validation; status, enable <digest>, or disable for this runtime",
+  },
+  {
     name: "/checkpoint",
     description: "List runtime file checkpoints, recover <id> to a new copy, or clear",
   },
@@ -136,7 +140,7 @@ export function matchingCommandsForTarget(
 ): Command[] {
   const matches = matchingCommands(input);
   return target === "subagent"
-    ? matches.filter((command) => command.name === "/background" || command.name === "/diagnostics" || command.name === "/checkpoint")
+    ? matches.filter((command) => command.name === "/background" || command.name === "/diagnostics" || command.name === "/checkpoint" || command.name === "/validation")
     : matches;
 }
 

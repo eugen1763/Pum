@@ -58,6 +58,7 @@ if (result.kind === "help") {
     prompt: result.options.prompt,
     resume: result.options.resume,
     statsFile: result.options.statsFile,
+    validationDigest: result.options.validationDigest,
     overrideStatsFile: result.options.overrideStatsFile,
     pumVersion: metadata.version,
   });
