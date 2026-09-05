@@ -19,6 +19,7 @@ import { explanationStrengthExtension, setExplanationStrength } from "./explanat
 import { createCheckModeExtension, setCheckModeConfig } from "./check-mode";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import {
+  bindSearchSession,
   installWebSearch,
   observeSearchCalls,
   persistSearchCall,
@@ -216,6 +217,7 @@ async function runPromptSession(
         tools: HEADLESS_TOOL_NAMES,
       });
       try {
+        bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
       } catch (error) {
         // The runtime factory cannot dispose a session it has not received yet.

@@ -16,6 +16,7 @@ import type { SubagentStatus } from "../../src/subagents/types";
 import { SandboxController } from "../../src/sandbox";
 import { replayEntries } from "../../src/replay";
 import { ContextWindowController, CONTEXT_TOOL_NAMES } from "../../src/context-window";
+import { bindSearchSession, webSearch, wrapProvider } from "../../src/web-search";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -185,6 +186,72 @@ function createMainBridge(manager: SubagentManager, sessionManager: SessionManag
 }
 
 describe("background subagents", () => {
+  test("shared runtime authorizes only bound main and mutable worker hosted search requests", async () => {
+    const runtime = await ModelRuntime.create({
+      authPath: join(agentDir, "auth.json"),
+      modelsPath: join(agentDir, "models.json"),
+    });
+    const model = runtime.getModel("mock", "mock-model")!;
+    const base = runtime.getProvider("mock")!;
+    const observed = Object.create(base);
+    const payloads = new Map<string, any>();
+    let captured!: () => void;
+    const allCaptured = new Promise<void>((resolve) => { captured = resolve; });
+    observed.streamSimple = (model: any, context: any, options: any) => base.streamSimple(model, context, {
+      ...options,
+      onPayload: async (payload: any, model: any) => {
+        const result = await options.onPayload?.(payload, model);
+        payloads.set(options.sessionId, result ?? payload);
+        if (payloads.size === 5) captured();
+        return result;
+      },
+    });
+    // Exercise the real SDK and ModelRuntime option-forwarding path without
+    // contacting Codex. The local mock accepts the resulting hosted-tool body.
+    runtime.registerNativeProvider(wrapProvider(observed));
+    const services = await createAgentSessionServices({ cwd: repo, agentDir, modelRuntime: runtime });
+    const main = await createAgentSessionFromServices({
+      services, sessionManager: SessionManager.inMemory(repo), model, tools: [],
+    });
+    bindSearchSession(main.session, "main");
+    let sandboxMode: "auto" | "off" = "auto";
+    const manager = new SubagentManager({ modelRuntime: runtime, agentDir, sandboxModeSource: () => sandboxMode });
+    await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+    webSearch.enabled = true;
+    try {
+      const mainTurn = main.session.prompt("Say hello.");
+      const common = { task: "Say hello.", modelId: "mock/mock-model", thinkingLevel: "off" };
+      const worker = await manager.spawn({ ...common, name: "search-worker" });
+      const readonly = await manager.spawn({ ...common, name: "search-readonly", readonly: true });
+      sandboxMode = "off";
+      const judge = await manager.spawnGoalJudge({ ...common, onVerdict() {} });
+      const afk = await manager.spawnAfkDelegate({ ...common, onAnswer() {} });
+      expect(judge.readonly).toBe(false);
+      expect(afk.readonly).toBe(false);
+      await allCaptured;
+      const hasSearch = (sessionId: string) => payloads.get(sessionId).tools?.some((tool: any) => tool.type === "web_search") ?? false;
+      expect(hasSearch(main.session.sessionId)).toBe(true);
+      for (const [agent, eligible] of [[worker, true], [readonly, false], [judge, false], [afk, false]] as const) {
+        const session = (manager as any).records.get(agent.id).session;
+        expect(hasSearch(session.sessionId)).toBe(eligible);
+      }
+      // A real utility completion on the same runtime stays isolated, even with
+      // a session ID matching the main agent and an ordinary payload callback.
+      await runtime.completeSimple(model, { messages: [{ role: "user", content: "Say safe.", timestamp: 0 }] }, {
+        sessionId: main.session.sessionId,
+        onPayload: (payload) => payload,
+        maxTokens: 10,
+      });
+      expect(hasSearch(main.session.sessionId)).toBe(false);
+      await mainTurn;
+    } finally {
+      webSearch.enabled = false;
+      await manager.detachMain();
+      await main.session.abort();
+      main.session.dispose();
+    }
+  }, 20_000);
+
   test("runs questionnaire tools through main and child pi sessions", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),

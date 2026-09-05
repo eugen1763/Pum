@@ -1,5 +1,5 @@
 import type { Provider } from "@earendil-works/pi-ai";
-import type { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
@@ -25,41 +25,58 @@ type PayloadHook = (
   model: unknown,
 ) => unknown | undefined | Promise<unknown | undefined>;
 
-function addSearchTool(payload: unknown): unknown | undefined {
-  if (!webSearch.enabled || !payload || typeof payload !== "object") return undefined;
+export type SearchSessionRole = "main" | "worker" | "readonly" | "judge" | "afk";
+type SearchAuthority = Readonly<{ sessionId: string; role: SearchSessionRole | undefined }>;
+
+// A hook's presence, sessionId option, or ambient observation route grants nothing.
+// Only the session stream boundary can create a request-bound capability.
+const requestAuthorities = new WeakMap<PayloadHook, SearchAuthority>();
+
+/** Bind once during trusted session setup, including resumed/replaced sessions. */
+export function bindSearchSession(
+  session: Pick<AgentSession, "sessionId" | "agent">,
+  role: SearchSessionRole | undefined,
+): void {
+  const authority: SearchAuthority = Object.freeze({ sessionId: session.sessionId, role });
+  const stream = session.agent.streamFunction;
+  session.agent.streamFunction = (model, context, options) => {
+    const base = options?.onPayload;
+    const hook: PayloadHook = (payload, model) => base?.(payload, model as any);
+    requestAuthorities.set(hook, authority);
+    return withSearchRoute(authority.sessionId, () => stream(model, context, {
+      ...options,
+      onPayload: hook,
+    }));
+  };
+}
+
+function searchAuthorized(base: PayloadHook | undefined, sessionId: unknown): boolean {
+  const authority = base && requestAuthorities.get(base);
+  return Boolean(authority && authority.sessionId && authority.sessionId === sessionId
+    && (authority.role === "main" || authority.role === "worker"));
+}
+
+function addSearchTool(payload: unknown, authorized: boolean): unknown | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
   const body = payload as { tools?: unknown[] };
   const tools = Array.isArray(body.tools) ? body.tools : [];
-  if (tools.some((t) => (t as { type?: string })?.type === "web_search")) return undefined;
+  const isSearch = (tool: unknown) => (tool as { type?: string })?.type === "web_search";
+  if (!authorized || !webSearch.enabled) {
+    // An extension transform cannot reintroduce a denied hosted tool.
+    return tools.some(isSearch) ? { ...body, tools: tools.filter((tool) => !isSearch(tool)) } : undefined;
+  }
+  if (tools.some(isSearch)) return undefined;
   return { ...body, tools: [...tools, { type: "web_search" }] };
 }
 
-/**
- * Build the `onPayload` hook for a wrapped provider request.
- *
- * pi's agent loop installs its own `onPayload` (the `before_provider_request`
- * emitter) on every model turn, and forwards it into the provider call. Direct
- * utility completions do not: most importantly PUM's Check mode verifier calls
- * `runtime.completeSimple(...)` on this same provider with no such hook. That
- * absence is the clean, structural signal we key on — no brittle heuristic on
- * token counts or prompt text, and no edit to any other file.
- *
- * This fixes two defects together:
- *  1. CHAINING. We call any pre-existing hook first and feed its transformed
- *     payload into the search-tool step, instead of overwriting it. A user's
- *     `before_provider_request` extension transform still runs on `openai-codex`.
- *  2. VERIFIER ISOLATION. We attach the hosted `web_search` tool ONLY when the
- *     agent hook is present. The verifier (no hook) therefore never runs a hosted
- *     search while its prompt carries untrusted patch/command text, and search
- *     output cannot displace its small structured JSON reply. Normal chat turns
- *     keep search, because they always route through the agent loop's hook.
- */
-export function chainSearchTool(base: PayloadHook | undefined): PayloadHook | undefined {
-  if (typeof base !== "function") return base;
+/** Chain the extension transform, then enforce the request-bound authorization. */
+export function chainSearchTool(base: PayloadHook | undefined, sessionId?: unknown): PayloadHook {
+  const authorized = searchAuthorized(base, sessionId);
   return async (payload, model) => {
-    const baseResult = await base(payload, model);
+    const baseResult = await base?.(payload, model);
     // `undefined` from a hook means "leave the payload unchanged".
     const effective = baseResult === undefined ? payload : baseResult;
-    const withTool = addSearchTool(effective);
+    const withTool = addSearchTool(effective, authorized);
     return withTool === undefined ? baseResult : withTool;
   };
 }
@@ -70,12 +87,12 @@ export function wrapProvider(base: Provider): Provider {
   wrapped.stream = ((model: any, context: any, options: any) =>
     base.stream(model, context, {
       ...options,
-      onPayload: chainSearchTool(options?.onPayload),
+      onPayload: chainSearchTool(options?.onPayload, options?.sessionId),
     })) as Provider["stream"];
   wrapped.streamSimple = ((model: any, context: any, options: any) =>
     base.streamSimple(model, context, {
       ...options,
-      onPayload: chainSearchTool(options?.onPayload),
+      onPayload: chainSearchTool(options?.onPayload, options?.sessionId),
     })) as Provider["streamSimple"];
   return wrapped;
 }

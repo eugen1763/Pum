@@ -80,3 +80,22 @@ view-only popup for the selected transcript, where `f` filters.
 Web search is on by default for supported OpenAI Codex providers. Searches
 appear as transcript tool rows and persist in resumed sessions. Other providers
 continue without it. Turn it off in `Ctrl+P`.
+
+Only explicitly bound main sessions (TUI and headless) and mutable workers can
+receive the hosted tool. Readonly workers, goal judges, and AFK delegates cannot
+receive it, even when the toggle is on. Direct utility completions, including
+Check mode verification, remain isolated.
+
+Authorization uses the requesting session identity and role. A payload hook or
+an observation route alone grants no access. Unknown roles and unbound request
+paths fail closed. Extension payload transforms still run, but PUM removes
+`web_search` when authorization or the toggle denies it.
+
+Compatibility: custom session integrations must bind their trusted session role
+with `bindSearchSession` before the first turn. A restored worker with no stored
+role does not receive hosted search. New workers have an explicit worker role.
+The installed SDK must preserve
+the request callback and session ID through provider dispatch. If that contract
+changes, search stops rather than granting access. Cached WebSocket transport,
+search observation, and replay remain unchanged. This is a hosted-tool policy,
+not network isolation for arbitrary application code or other tools.

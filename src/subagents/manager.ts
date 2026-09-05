@@ -32,6 +32,7 @@ import {
   observeSearchCalls,
   persistSearchCall,
   withSearchRoute,
+  bindSearchSession,
 } from "../web-search";
 import { bashOutput, bashResultDisplay, editCounts, toolArgs, type ToolCall } from "../tool-line";
 import { toolPreviewFromResult, toolPreviewFromStart } from "../tool-preview";
@@ -2163,6 +2164,7 @@ export class SubagentManager {
         : judge ? judgeAllowedToolNames() : childAllowedToolNames(record.snapshot.readonly),
     });
     try {
+      bindSearchSession(result.session, record.snapshot.readonly ? "readonly" : record.snapshot.role);
       contextWindow?.bind(result.session);
     } catch (error) {
       // This session is not attached to the record or its disposal lock yet.

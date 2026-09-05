@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  bindSearchSession,
+  type SearchSessionRole,
+  withSearchRoute,
   SearchCallRouter,
   SearchCallTracker,
   webSearch,
@@ -101,6 +104,21 @@ function recordingProvider(received: any[]): any {
   };
 }
 
+// ModelRuntime/SDK copy the options object but retain the payload callback.
+function boundSession(provider: any, sessionId: string, role: SearchSessionRole, method = "streamSimple") {
+  const session = {
+    sessionId,
+    agent: {
+      streamFunction: (model: any, context: any, options: any) =>
+        provider[method](model, context, { ...options }),
+    },
+  };
+  bindSearchSession(session as any, role);
+  return session;
+}
+
+const functionTool = { type: "function", name: "read" };
+
 describe("web search provider wrapping", () => {
   afterEach(() => {
     webSearch.enabled = false;
@@ -118,7 +136,8 @@ describe("web search provider wrapping", () => {
       baseCalled = true;
       return { ...payload, tagged: true };
     };
-    wrapped.streamSimple({} as any, {} as any, { onPayload: baseHook } as any);
+    const session = boundSession(wrapped, "main", "main");
+    session.agent.streamFunction({}, {}, { sessionId: "main", onPayload: baseHook });
 
     const chained = received[0].onPayload as (p: unknown, m: unknown) => Promise<any>;
     expect(typeof chained).toBe("function");
@@ -145,10 +164,111 @@ describe("web search provider wrapping", () => {
     expect(out.tools).toEqual([]); // no hosted tool while search is off
   });
 
+  test.each(["main", "worker"] as const)("authorizes %s on both stream methods", async (role) => {
+    webSearch.enabled = true;
+    for (const method of ["stream", "streamSimple"]) {
+      const received: any[] = [];
+      const prototype = { inheritedMethod: () => "preserved" };
+      const base = Object.assign(Object.create(prototype), recordingProvider(received));
+      const wrapped = wrapProvider(base);
+      const session = boundSession(wrapped, role, role, method);
+      const signal = new AbortController().signal;
+      session.agent.streamFunction({}, {}, { sessionId: role, transport: "websocket-cached", signal });
+      expect(received[0].transport).toBe("websocket-cached");
+      expect(received[0].signal).toBe(signal);
+      expect((wrapped as any).inheritedMethod()).toBe("preserved");
+      expect((await received[0].onPayload({ tools: [functionTool] }, {})).tools)
+        .toEqual([functionTool, { type: "web_search" }]);
+    }
+  });
+
+  test.each(["readonly", "judge", "afk", undefined, "unknown"])("denies role %s after extension transforms", async (role) => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const session = boundSession(wrapProvider(recordingProvider(received)), "restricted", role as SearchSessionRole);
+    session.agent.streamFunction({}, {}, {
+      sessionId: "restricted",
+      onPayload: (payload: any) => ({ ...payload, tagged: true, tools: [functionTool, { type: "web_search" }] }),
+    });
+    expect(await received[0].onPayload({}, {})).toEqual({ tagged: true, tools: [functionTool] });
+  });
+
+  test("denies absent and mismatched request session identities", async () => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const session = boundSession(wrapProvider(recordingProvider(received)), "main", "main");
+    for (const sessionId of [undefined, "other"]) {
+      session.agent.streamFunction({}, {}, { sessionId });
+      expect(await received.at(-1).onPayload({ tools: [] }, {})).toBeUndefined();
+    }
+  });
+
+  test("concurrent session hooks retain roles across routes, awaits, and toggle changes", async () => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const provider = wrapProvider(recordingProvider(received));
+    const roles = ["main", "readonly", "worker", "judge", "afk"] as const;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    for (const role of roles) {
+      const session = boundSession(provider, role, role);
+      withSearchRoute("unrelated-observer-route", () => session.agent.streamFunction({}, {}, {
+        sessionId: role,
+        onPayload: async (payload: any) => { await gate; return { ...payload, tagged: role }; },
+      }));
+    }
+    const pending = received.map((options) => options.onPayload({ tools: [functionTool] }, {}));
+    webSearch.enabled = false;
+    release();
+    expect((await Promise.all(pending)).map((payload) => payload.tools)).toEqual(roles.map(() => [functionTool]));
+    webSearch.enabled = true;
+    const enabled = await Promise.all(received.map((options) => options.onPayload({ tools: [functionTool] }, {})));
+    expect(enabled.map((payload) => payload.tools.some((tool: any) => tool.type === "web_search")))
+      .toEqual([true, false, true, false, false]);
+    expect(enabled.map((payload) => payload.tagged)).toEqual([...roles]);
+  });
+
+  test("direct completions cannot inherit authority from a route or an authorized extension callback", async () => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const provider = wrapProvider(recordingProvider(received));
+    const session = boundSession(provider, "main", "main");
+    session.agent.streamFunction({}, {}, {
+      sessionId: "main",
+      onPayload: async (payload: any) => {
+        // Mirrors completeSimple delegation to streamSimple, with a hook and even
+        // the same sessionId. This call must not inherit the outer authorization.
+        await withSearchRoute("main", async () => {
+          await Promise.resolve();
+          provider.streamSimple({} as any, {} as any, {
+            sessionId: "main",
+            onPayload: (body: any) => ({ ...body, verifier: true }),
+          } as any);
+        });
+        return payload;
+      },
+    });
+    expect((await received[0].onPayload({ tools: [] }, {})).tools).toEqual([{ type: "web_search" }]);
+    expect(await received[1].onPayload({ tools: [] }, {})).toEqual({ tools: [], verifier: true });
+  });
+
+  test("does not duplicate search and preserves undefined hook semantics", async () => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const session = boundSession(wrapProvider(recordingProvider(received)), "main", "main");
+    session.agent.streamFunction({}, {}, { sessionId: "main", onPayload: () => undefined });
+    const body = { tools: [functionTool, { type: "web_search" }] };
+    expect(await received[0].onPayload(body, {})).toBeUndefined();
+    expect(body.tools).toHaveLength(2);
+    webSearch.enabled = false;
+    expect(await received[0].onPayload(body, {})).toEqual({ tools: [functionTool] });
+    expect(body.tools).toHaveLength(2);
+  });
+
   // Defect 2: verifier/safety requests reach the provider through completeSimple
   // with NO onPayload hook. They must never receive the hosted web_search tool,
   // even while search is enabled for chat turns.
-  test("does not attach the search tool to hook-less (verifier) requests", () => {
+  test("does not attach the search tool to hook-less (verifier) requests", async () => {
     webSearch.enabled = true;
     const received: any[] = [];
     const wrapped = wrapProvider(recordingProvider(received));
@@ -160,8 +280,8 @@ describe("web search provider wrapping", () => {
       maxRetries: 0,
     } as any);
 
-    // With no agent hook present, no onPayload is installed, so the request body
-    // is never rewritten to include { type: "web_search" }.
-    expect(received[0].onPayload).toBeUndefined();
+    expect(await received[0].onPayload({ tools: [] }, {})).toBeUndefined();
+    expect(await received[0].onPayload({ tools: [{ type: "web_search" }] }, {}))
+      .toEqual({ tools: [] });
   });
 });

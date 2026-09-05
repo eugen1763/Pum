@@ -15,7 +15,7 @@ import { createMemoryExtension } from "./memory";
 import { ContextWindowController } from "./context-window";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
-import { installWebSearch, webSearch } from "./web-search";
+import { bindSearchSession, installWebSearch, webSearch } from "./web-search";
 import { installModelCatalogFallbacks } from "./model-catalog";
 import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
@@ -323,6 +323,7 @@ export async function start(
         tools: mainAllowedToolNames(),
       });
       try {
+        bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
       } catch (error) {
         // The runtime factory cannot dispose a session it has not received yet.

@@ -770,6 +770,18 @@ These were chosen deliberately. Change them only on purpose.
   `runtime.registerNativeProvider()`. Verified working against the live Codex
   backend: with it on, answers come back with citations; with it off, the model
   resorts to a `bash` call instead.
+  - Hosted search authorization belongs to the requesting session, not the
+    global toggle or an ambient observation route. `bindSearchSession` wraps the
+    trusted session stream boundary and associates each request callback with
+    its exact session ID and role through a private WeakMap. Only explicitly
+    bound TUI/headless main sessions and mutable workers qualify. Readonly
+    workers, judges, AFK delegates, unbound requests, and unknown roles fail
+    closed. Direct Check verifier completions receive no capability, even if
+    they have a payload hook or run inside an authorized request's async scope.
+    Extension hooks run first; the wrapper then removes denied `web_search`
+    entries. Bind every new or restored runtime before its first turn. Custom
+    integrations must do the same. The SDK must preserve the callback identity
+    and session ID through dispatch; losing either disables hosted search.
   - `samplingParams` looks like an easier injection point but is a shallow
     `Object.assign`, so setting `tools` there would **wipe** read/write/edit/bash.
   - pi drops the returned `web_search_call` items, so logging them means reading
