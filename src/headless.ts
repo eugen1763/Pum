@@ -5,6 +5,7 @@ import {
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { mkdirSync } from "node:fs";
+import { writeHeadlessRequestDiagnostics } from "./request-diagnostics-access";
 import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
 import { installModelCatalogFallbacks } from "./model-catalog";
@@ -274,6 +275,9 @@ async function runPromptSession(
   const dispose = async () => {
     if (disposed) return;
     disposed = true;
+    // Disposal clears the process-local diagnostics. Print their safe report
+    // once before teardown, including on signal/failed-turn paths.
+    writeHeadlessRequestDiagnostics(session.sessionId, (text) => process.stderr.write(text));
     try {
       await sessionRuntime.dispose();
     } catch (error) {

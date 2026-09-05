@@ -65,6 +65,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/news", "Open recent answers (News)"],
       ["/todo", "Show the agent's todo list"],
       ["/stats", "Show session statistics"],
+      ["/diagnostics [clear]", "Show or clear opt-in request diagnostics"],
       ["/settings", "Show or change a setting"],
       ["/theme <theme>", "Preview and change the theme"],
       ["/model", "Choose model [effort]; no name opens picker"],

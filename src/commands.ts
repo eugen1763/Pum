@@ -62,6 +62,10 @@ export const COMMANDS: Command[] = [
     description: "Show session statistics",
   },
   {
+    name: "/diagnostics",
+    description: "Show opt-in request diagnostics for this session; clear resets them",
+  },
+  {
     name: "/model",
     description: "Choose a main-agent model: /model <name or provider/id> [effort]",
   },
@@ -128,7 +132,7 @@ export function matchingCommandsForTarget(
 ): Command[] {
   const matches = matchingCommands(input);
   return target === "subagent"
-    ? matches.filter((command) => command.name === "/background")
+    ? matches.filter((command) => command.name === "/background" || command.name === "/diagnostics")
     : matches;
 }
 

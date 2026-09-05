@@ -7,6 +7,7 @@ import {
   type TextareaRenderable,
 } from "@opentui/core";
 import { randomUUID } from "node:crypto";
+import { diagnosticsCommandText } from "./request-diagnostics-access";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, BashOperations, ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -4399,6 +4400,22 @@ export function App({
     if (attachments.length === 0 && commandEligible && promptText === "/login") {
       appendCommandHistory();
       openLogin();
+      return;
+    }
+
+    // Diagnostics belong to the selected session, but never enter its durable
+    // transcript or model context. Intercept before ordinary child delivery.
+    if (attachments.length === 0 && commandEligible && /^\/diagnostics(?:\s|$)/.test(promptText.trim())) {
+      const diagnosticSessionId = selectedAgentId
+        ? subagentManager.getDiagnosticsSessionId(selectedAgentId)
+        : session.sessionId;
+      const line: Line = { kind: "text", role: "system", text: diagnosticsCommandText(promptText, diagnosticSessionId)! };
+      if (selectedAgentId) subagentManager.appendAgentLine(selectedAgentId, line, { persist: false });
+      else appendMainLine(line);
+      setEditorText("");
+      setEditingStash(null);
+      histCursor.current = null;
+      draft.current = "";
       return;
     }
 

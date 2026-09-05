@@ -714,17 +714,21 @@ export class SubagentManager {
     this.emit();
   }
 
+  /** Trusted user access only; do not persist raw diagnostic session identities. */
+  getDiagnosticsSessionId(agentId: string): string | undefined {
+    return this.records.get(agentId)?.session?.sessionId;
+  }
+
   /**
-   * Show one line in a child's transcript and keep it across resume.
-   *
-   * The custom entry is display-only: it is replayed for the user and never
-   * re-enters the model's context, because whatever produced it already told
-   * the agent through its own tool result.
+   * Show a display-only line, normally keeping it across resume. Diagnostics
+   * explicitly opt out: transcript snapshots are runtime-only and registry
+   * persistence excludes them via snapshotMetadata(). Neither form enters LLM context.
    */
-  appendAgentLine(agentId: string, line: Line): void {
+  appendAgentLine(agentId: string, line: Line, options: { persist?: boolean } = {}): void {
     const record = this.records.get(agentId);
     if (!record) return;
     this.appendLine(record, line);
+    if (options.persist === false) return;
     try {
       record.session?.sessionManager.appendCustomEntry(AGENT_NOTICE_CUSTOM_TYPE, { agentId, line });
     } catch {

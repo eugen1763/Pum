@@ -1,6 +1,7 @@
 import type { Provider } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { beginRequestDiagnostic, clearRequestDiagnostics, requestDiagnosticsEnabled, resetRequestDiagnostics } from "./request-diagnostics";
 
 /**
  * Web search through the Codex subscription.
@@ -31,6 +32,8 @@ type SearchAuthority = Readonly<{ sessionId: string; role: SearchSessionRole | u
 // A hook's presence, sessionId option, or ambient observation route grants nothing.
 // Only the session stream boundary can create a request-bound capability.
 const requestAuthorities = new WeakMap<PayloadHook, SearchAuthority>();
+const diagnosticObservers = new WeakMap<PayloadHook, (payload: unknown) => void>();
+const finalPayloadHooks = new WeakSet<PayloadHook>();
 
 /** Bind once during trusted session setup, including resumed/replaced sessions. */
 export function bindSearchSession(
@@ -38,15 +41,38 @@ export function bindSearchSession(
   role: SearchSessionRole | undefined,
 ): void {
   const authority: SearchAuthority = Object.freeze({ sessionId: session.sessionId, role });
+  resetRequestDiagnostics(authority.sessionId);
+  const disposable = session as typeof session & Partial<Pick<AgentSession, "dispose">>;
+  const dispose = disposable.dispose;
+  if (dispose) disposable.dispose = function () {
+    try { return dispose.call(session); }
+    finally { clearRequestDiagnostics(authority.sessionId); }
+  };
   const stream = session.agent.streamFunction;
   session.agent.streamFunction = (model, context, options) => {
-    const base = options?.onPayload;
-    const hook: PayloadHook = (payload, model) => base?.(payload, model as any);
-    requestAuthorities.set(hook, authority);
-    return withSearchRoute(authority.sessionId, () => stream(model, context, {
-      ...options,
-      onPayload: hook,
-    }));
+    const run = (diagnostic?: Awaited<ReturnType<typeof beginRequestDiagnostic>>) => {
+      const base = options?.onPayload;
+      const hook: PayloadHook = async (payload, model) => {
+        const result = await base?.(payload, model as any);
+        // Wrapped providers observe after search policy, never before it. Other
+        // providers observe the extension's effective serialized payload here.
+        if (diagnostic && !finalPayloadHooks.has(hook)) diagnostic.payload(result === undefined ? payload : result);
+        return result;
+      };
+      requestAuthorities.set(hook, authority);
+      if (diagnostic) diagnosticObservers.set(hook, diagnostic.payload);
+      const observe = (result: Awaited<ReturnType<typeof stream>>) => {
+        if (diagnostic) void result.result().then((message) => diagnostic.finish(message), () => diagnostic.finish());
+        return result;
+      };
+      try {
+        const result = withSearchRoute(authority.sessionId, () => stream(model, context, { ...options, onPayload: hook }));
+        return result instanceof Promise ? result.then(observe, (error) => { diagnostic?.finish(); throw error; }) : observe(result);
+      } catch (error) { diagnostic?.finish(); throw error; }
+    };
+    return requestDiagnosticsEnabled()
+      ? beginRequestDiagnostic(authority.sessionId, role, options?.transport, model.api).then(run)
+      : run();
   };
 }
 
@@ -72,11 +98,14 @@ function addSearchTool(payload: unknown, authorized: boolean): unknown | undefin
 /** Chain the extension transform, then enforce the request-bound authorization. */
 export function chainSearchTool(base: PayloadHook | undefined, sessionId?: unknown): PayloadHook {
   const authorized = searchAuthorized(base, sessionId);
+  if (base) finalPayloadHooks.add(base);
+  const observe = base && diagnosticObservers.get(base);
   return async (payload, model) => {
     const baseResult = await base?.(payload, model);
     // `undefined` from a hook means "leave the payload unchanged".
     const effective = baseResult === undefined ? payload : baseResult;
     const withTool = addSearchTool(effective, authorized);
+    observe?.(withTool === undefined ? effective : withTool);
     return withTool === undefined ? baseResult : withTool;
   };
 }

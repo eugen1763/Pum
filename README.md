@@ -88,6 +88,7 @@ PUM uses [pi](https://github.com/earendil-works/pi) for the agent loop and
 | [Safety](docs/security.md) | Filesystem sandbox, Check mode, native sandbox, outer sandbox |
 | [Appearance](docs/appearance.md) | Transcript detail, themes, Markdown, animation, title |
 | [Configuration](docs/configuration.md) | Where PUM stores things, and what |
+| [Request diagnostics](docs/request-diagnostics.md) | Opt-in safe request reports; transport signals are not server cache hits |
 
 ## Requirements
 
@@ -119,6 +120,10 @@ bun run start
 Use `bun run start -r` to resume the latest session for the current directory,
 and `/login` to add or update a provider later.
 Inside the TUI, `/history` or its alias `/resume` opens the saved-session browser.
+For local request debugging, start with `PUM_REQUEST_DIAGNOSTICS=1 bun run start`
+and use `/diagnostics` in the selected transcript. Headless runs emit the safe
+report on stderr only. Diagnostics stay in bounded process memory, not session
+files, and do not establish provider cache hits. See [Request diagnostics](docs/request-diagnostics.md).
 
 Agents have separate context tools: `history` searches and reads the active session
 transcript. `get_context_remaining` reports the context budget. `new_context`

@@ -15,6 +15,7 @@ import { Type } from "typebox";
 import { resolveMemoryIdentity } from "./memory-identity";
 import { MemoryContextProjection, type MemoryObservation } from "./memory-context";
 import { CONTEXT_WINDOW_CUSTOM_TYPE } from "./context-window";
+import { recordDiagnosticMemoryRevision } from "./request-diagnostics";
 
 export const MEMORY_READ_TOOL_NAME = "memory_read";
 export const MEMORY_EDIT_TOOL_NAME = "memory_edit";
@@ -254,6 +255,7 @@ export function createMemoryExtension(options: {
         try {
           snapshot = new ProjectMemoryStore(options.agentDir, ctx.cwd).read();
         } catch { /* invalid and unavailable content never enters the projection */ }
+        recordDiagnosticMemoryRevision(ctx.sessionManager.getSessionId(), snapshot?.revision);
         const boundary = ctx.sessionManager.getBranch().findLast((entry) =>
           entry.type === "custom" && entry.customType === CONTEXT_WINDOW_CUSTOM_TYPE);
         const scope = JSON.stringify([ctx.sessionManager.getSessionId(), ctx.cwd, boundary?.id ?? null]);

@@ -426,6 +426,17 @@ These were chosen deliberately. Change them only on purpose.
   Main, headless, and managed worker runtimes each own a controller, including readonly workers.
   Internal judges and AFK delegates get none of these schemas.
   Register the controller before memory injection and bind it immediately after session creation.
+- **Request diagnostics are opt-in and ephemeral.** Only `PUM_REQUEST_DIAGNOSTICS=1`
+  enables collection. `/diagnostics [clear]` reads or clears the selected session's
+  safe report, never a durable transcript entry or model message. Headless emits
+  enabled reports on stderr before teardown and leaves stdout unchanged. Retain at
+  most 64 requests per process, clear at shutdown, and write no diagnostic files.
+  Reports contain hashes, lengths, finite codes, and memory revision metadata, never
+  raw prompts, private memory, secrets, errors, or IDs. Full/delta transport does
+  not mean server cache hit/miss. Local prefix comparisons are explanatory, not
+  the SDK continuation decision (whose baseline includes the prior assistant
+  response); SDK debug counters are process-local/session-scoped, with unsupported
+  providers unavailable. See `docs/request-diagnostics.md`.
 - **Sessions persist** to `<config dir>/sessions`.
 - **Mutable sessions have one process owner.** TUI, headless, and managed-child
   runtimes acquire a canonical JSONL ownership lock before opening existing

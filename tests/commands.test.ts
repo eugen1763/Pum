@@ -95,7 +95,11 @@ describe("command suggestions", () => {
     expect(matchingCommandsForTarget("/back", "subagent").map((command) => command.name))
       .toEqual(["/background"]);
     expect(matchingCommandsForTarget("/", "subagent").map((command) => command.name))
-      .toEqual(["/background"]);
+      .toEqual(["/background", "/diagnostics"]);
+    expect(matchingCommandsForTarget("/diag", "main").map((command) => command.name))
+      .toEqual(["/diagnostics"]);
+    expect(matchingCommandsForTarget("/diag", "subagent").map((command) => command.name))
+      .toEqual(["/diagnostics"]);
     expect(matchingCommandsForTarget("/clear", "subagent")).toEqual([]);
   });
 
