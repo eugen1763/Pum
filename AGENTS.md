@@ -410,7 +410,16 @@ These were chosen deliberately. Change them only on purpose.
 - **Context tools belong to the active session.** `history` searches and reads
   that session's transcript. Structural-entry reads return metadata only, allowing
   `parentId` traversal without exposing private custom data. History pages execute
-  sequentially and budget prior history results in the same tool batch.
+  sequentially and budget prior history results in the same tool batch. Search
+  continuation uses a bounded authenticated `nextCursor` with the same query,
+  never a nonzero numeric offset. It binds the session, query, original append-only
+  transcript prefix and next match offset, so newly persisted recovery calls/results
+  cannot shift pages. Cursors survive in-runtime rollover and branch changes, but
+  expire on runtime replacement/restart. No cursor registry or transcript cache is
+  persisted. Read text continues by stable entry ID and UTF-16 offset; a nonzero
+  text offset attaches no images by default unless image pagination is explicit.
+  Each serialized result carries the historical-data notice once. See
+  `docs/transcript-history.md` for scope, validation and limitations.
   `get_context_remaining` reports the context budget.
   `new_context` requests an explicit rollover after the entire tool batch succeeds.
   Rollover retains the canonical session ID, session file, and full entries.

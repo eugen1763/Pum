@@ -423,6 +423,43 @@ describe("context windows through the installed pi SDK", () => {
     expect(run.replies).toEqual([]);
   });
 
+  test("search cursors survive actual rollover and exclude persisted recovery calls/results between pages", async () => {
+    const { open } = await fixture();
+    const run = await open();
+    const ids = Array.from({ length: 4 }, (_, index) => run.manager.appendMessage({
+      role: "user", content: `CURSOR_ARCHIVE_NEEDLE ${index}`, timestamp: 1,
+    }));
+    run.replies.push([call("cursor-first", "history", { op: "search", query: "CURSOR_ARCHIVE_NEEDLE", limit: 1 })], text("FIRST_PAGE"));
+    await run.session.prompt("Search the archive.");
+    const page = (id: string): any => {
+      const entry = run.manager.getEntries().find((entry) => entry.type === "message"
+        && entry.message.role === "toolResult" && entry.message.toolCallId === id);
+      if (entry?.type !== "message" || entry.message.role !== "toolResult") throw new Error("Missing history result");
+      expect(entry.message.isError).toBe(false);
+      return entry.message.details;
+    };
+    const first = page("cursor-first");
+    // The first assistant's stored search call matches its own query too.
+    expect(first.totalMatches).toBe(5);
+    expect(first.results[0].kind).toBe("assistant");
+    run.replies.push([call("cursor-rollover", "new_context", { handoff: "Continue archive recovery using the retained cursor." })], text("FRESH_WINDOW"));
+    await run.session.prompt("Start a fresh context.");
+    expect(boundaries(run.manager)).toHaveLength(1);
+    run.manager.appendMessage({ role: "user", content: "CURSOR_ARCHIVE_NEEDLE appended later", timestamp: 2 });
+    run.replies.push([call("cursor-second", "history", {
+      op: "search", query: "CURSOR_ARCHIVE_NEEDLE", cursor: first.nextCursor, limit: 25,
+    })], text("RECOVERED"));
+    await run.session.prompt("Continue the snapshot search.");
+    const second = page("cursor-second");
+    expect(second.totalMatches).toBe(first.totalMatches);
+    expect(second.results.map((result: any) => result.entryId)).toEqual(ids.toReversed());
+    expect(second.nextCursor).toBeNull();
+    expect(second.nextOffset).toBeNull();
+    expect(second.results.every((result: any) => result.windowId === null)).toBe(true);
+    expect(run.extensionErrors).toEqual([]);
+    expect(run.replies).toEqual([]);
+  });
+
   test("two rollovers preserve original JSONL entries and resume the latest window with history access", async () => {
     const { open } = await fixture();
     const run = await open();
