@@ -240,6 +240,7 @@ async function runPromptSession(
   }
 
   const session = sessionRuntime.session;
+  process.stderr.write("pum: File checkpoints are unavailable in headless mode. Checkpoint memory does not survive exit; previously exported recovery files remain. Bash is not checkpointed.\n");
   statsManager.bindMainSession(session);
   let exitCode = 0;
   let wroteText = false;

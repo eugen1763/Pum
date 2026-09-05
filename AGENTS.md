@@ -80,6 +80,7 @@ bun run start    # open the TUI in the current directory
 | `src/check-mode.ts` | On/off Check mode for commands, mutations, and trigger processes |
 | `src/check-paths.ts` | Project-scoped additional Check mode root validation and commands |
 | `src/filesystem-sandbox.ts` | Process-local path boundary for file tools |
+| `src/file-checkpoints.ts` | Bounded runtime-only file-tool preimages and explicit user recovery-copy export |
 | `src/check-policy.ts` | Deterministic shell and structured-process hard rules |
 | `src/check-mutation.ts` | Pre-execution edit and patch diff proposals |
 | `src/check-approvals.ts` | Check mode identity model and canonical-input serializer |
@@ -330,6 +331,20 @@ These were chosen deliberately. Change them only on purpose.
   count above one are blocked; reads stay allowed, because hard links are common
   in real trees. The check cannot say where the other links point, and it is a
   check-time test rather than a guarantee against a link created afterwards.
+- **File checkpoints export recovery copies, never rewind originals.** TUI main
+  and mutable workers retain at most 32 successful write/edit preimages and 8 MiB
+  per runtime, with a 1 MiB file cap and FIFO eviction. Capture runs inside pi's
+  native mutation queue. Direct-user `/checkpoint [list|recover <id>|clear]`
+  exports prior bytes to a new exclusive-created sibling, checks current roots,
+  sensitivity, links and postimage fingerprints, and never overwrites/deletes
+  the original or changes conversation history. A new-file record has prior
+  absence, not deletable undo. No recovery model tool or SDK slash command exists.
+  Runtime replacement, worker close and exit discard private in-memory bytes;
+  bind every main/mutable worker's disposal explicitly because SDK dispose does
+  not emit session_shutdown. Headless reports no checkpoints. Bash, shells,
+  triggers, Git and external mutations are not covered. Failed exports may leave
+  an artifact for user inspection; never unlink a name another actor could have
+  changed. See `docs/file-checkpoints.md` for check-time race and retention limits.
 - **Bash output is summarized to a bounded head+tail view.** `src/bash-output.ts`
   wraps pi's bash tool in main and managed child sessions. The default keeps
   first 30 / last 40 lines within 3KB, strips ANSI, drops progress-only lines,

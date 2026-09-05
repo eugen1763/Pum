@@ -8,6 +8,7 @@ import {
 } from "@opentui/core";
 import { randomUUID } from "node:crypto";
 import { diagnosticsCommandText } from "./request-diagnostics-access";
+import { checkpointControllerForSession, checkpointRecoveryFailureText } from "./file-checkpoints";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession, BashOperations, ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -1417,6 +1418,8 @@ export function App({
   const streamingRef = useRef(false);
   /** True while a session switch or /clear is replacing the session object. */
   const sessionSwitchRef = useRef(false);
+  /** User recovery copies must finish before UI actions can replace their runtime. */
+  const checkpointRecoveryRef = useRef(false);
   /** True while the running main-agent turn started from a direct user prompt. */
   const userTurnActiveRef = useRef(false);
   /** Text of the final assistant message; reset at each assistant message start. */
@@ -3369,6 +3372,7 @@ export function App({
   };
 
   const selectHistorySession = (path: string) => {
+    if (checkpointRecoveryRef.current) return;
     setHistoryOpen(false);
     if (path === session.sessionFile) {
       queueMicrotask(() => inputRef.current?.focus());
@@ -3605,6 +3609,7 @@ export function App({
   };
 
   const runCommand = (text: string): boolean => {
+    if (checkpointRecoveryRef.current) return true;
     const trimmed = text.trim();
     if (runGoalCommand(trimmed)) return true;
     if (trimmed === "/s" || trimmed === "/store") {
@@ -4312,6 +4317,7 @@ export function App({
     const persistedPrompt = displayText;
 
     if (!promptText && attachments.length === 0 && pastedTexts.length === 0) return;
+    if (checkpointRecoveryRef.current) return;
 
     const backgroundCandidate = commandEligible ? parseBackgroundCommand(promptText) : null;
     if (backgroundCandidate?.kind === "error") {
@@ -4419,6 +4425,59 @@ export function App({
       return;
     }
 
+    // Explicit user-only recovery: never registered as an extension command or
+    // model tool, and never interpreted from an attached image or pasted marker.
+    if (attachments.length === 0 && commandEligible && /^\/checkpoint(?:\s|$)/.test(promptText)) {
+      const report = (text: string, error = false) => {
+        const line: Line = { kind: "text", role: error ? "error" : "system", text };
+        if (selectedAgentId) subagentManager.appendAgentLine(selectedAgentId, line, { persist: false });
+        else appendMainLine(line);
+      };
+      setEditingStash(null);
+      histCursor.current = null;
+      draft.current = "";
+      const selected = selectedAgentId ? subagentManager.getAgent(selectedAgentId) : undefined;
+      const controller = checkpointControllerForSession(selectedAgentId ? subagentManager.getDiagnosticsSessionId(selectedAgentId) ?? "" : session.sessionId);
+      const parts = promptText.trim().split(/\s+/);
+      const action = parts[1] ?? "list";
+      if (!((action === "list" || action === "clear") && parts.length <= 2)
+        && !(action === "recover" && parts.length === 3)) {
+        report("Usage: /checkpoint [list|recover <id>|clear]", true);
+        return;
+      }
+      if (!controller) {
+        report("File checkpoints are unavailable for this session runtime.", true);
+        return;
+      }
+      if (action === "list") {
+        const records = controller.list();
+        report(`${controller.summary()}\n${records.length ? records.map((record) =>
+          `${record.id} | ${record.toolName} | ${record.priorAbsent ? "previously absent" : `${record.bytes} bytes before change`} | ${JSON.stringify(record.path)}`
+        ).join("\n") : "No file checkpoints retained."}\nRecovery creates a new copy only; original files are never restored in place.`);
+      } else if (action === "clear") {
+        controller.clear();
+        report("File checkpoints cleared for this session runtime; original files unchanged.");
+      } else {
+        if (sessionSwitchRef.current || relocatingRef.current || pendingRelocationRef.current
+          || (selectedAgentId ? !selected || selected.status === "starting" || selected.status === "running" : busyRef.current)) {
+          report("Wait for the selected session to become idle and session operations to finish before recovering a checkpoint.", true);
+          return;
+        }
+        checkpointRecoveryRef.current = true;
+        report("Creating a checkpoint recovery copy; wait for it to finish before changing sessions.");
+        void Promise.resolve().then(() => {
+          const liveId = selectedAgentId ? subagentManager.getDiagnosticsSessionId(selectedAgentId) : session.sessionId;
+          if (!liveId || checkpointControllerForSession(liveId) !== controller) throw new Error("Checkpoint runtime changed");
+          return controller.recover(parts[2]!);
+        }).then((path) => {
+          report(`Recovery copy created: ${JSON.stringify(path)}\nOriginal unchanged. Inspect the copy and apply it manually if wanted.`);
+        }).catch((error) => {
+          report(checkpointRecoveryFailureText(error), true);
+        }).finally(() => { checkpointRecoveryRef.current = false; });
+      }
+      return;
+    }
+
     // Model controls follow Settings: only main owns model mutations.
     if (selectedAgentId && attachments.length === 0 && commandEligible
       && /^\/(?:model|effort|s|store)(?:\s|$)/.test(promptText)) {
@@ -4491,6 +4550,7 @@ export function App({
   };
 
   const submitShellCommand = () => {
+    if (checkpointRecoveryRef.current) return;
     const command = expandPastedTexts(inputRef.current?.plainText ?? "", pendingPastedTexts.current);
     if (!command.trim()) return;
     const selectedAgentId = activeAgentIdRef.current;
@@ -4753,6 +4813,7 @@ export function App({
   };
 
   const selectAgentView = (target: string | null): boolean => {
+    if (checkpointRecoveryRef.current) return false;
     const current = activeAgentIdRef.current;
     // Nothing moves between views, so a pending attachment cannot be stranded.
     if (target === current) return true;
@@ -4968,6 +5029,13 @@ export function App({
   });
 
   useKeyboard((key) => {
+    // A recovery is an explicit filesystem copy owned by the selected runtime.
+    // Hold user transitions (including quit, settings, and agent/session switches)
+    // until it settles rather than disposing that runtime underneath the copy.
+    if (checkpointRecoveryRef.current) {
+      key.stopPropagation();
+      return;
+    }
     // Match Textarea's printable sequence handling, but leave all modified
     // commands (including Option) with their existing owner.
     const typedText = !key.ctrl && !key.meta && !key.option && !key.super && !key.hyper

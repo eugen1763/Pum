@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +18,9 @@ import { replayEntries } from "../../src/replay";
 import { ContextWindowController, CONTEXT_TOOL_NAMES } from "../../src/context-window";
 import { bindSearchSession, webSearch, wrapProvider } from "../../src/web-search";
 import { createMemoryExtension, ProjectMemoryStore } from "../../src/memory";
+import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
+import { checkpointControllerForSession, createFileCheckpointExtension } from "../../src/file-checkpoints";
+import { filesystemSandboxExtension } from "../../src/filesystem-sandbox";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -187,6 +190,81 @@ function createMainBridge(manager: SubagentManager, sessionManager: SessionManag
 }
 
 describe("background subagents", () => {
+  for (const disposal of ["worker removal", "manager detach"] as const) {
+    test(`${disposal} clears checkpoints captured by a real managed worker runtime`, async () => {
+      const runtime = await ModelRuntime.create({
+        authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json"),
+      });
+      const model = runtime.getModel("mock", "mock-model")!;
+      const path = join(repo, disposal === "worker removal" ? "checkpoint-remove.txt" : "checkpoint-detach.txt");
+      writeFileSync(path, "private worker preimage\r\n");
+      const replies: AssistantMessage["content"][] = [
+        [{ type: "toolCall", id: "checkpoint-write", name: "write", arguments: { path, content: "worker postimage\r\n" } }],
+        [{ type: "text", text: "Mutation finished." }],
+      ];
+      const provider = Object.create(runtime.getProvider("mock")!);
+      provider.streamSimple = () => {
+        const content = replies.shift();
+        if (!content) throw new Error("Unexpected checkpoint worker model request");
+        const stopReason = content.some((part) => part.type === "toolCall") ? "toolUse" : "stop";
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: "done", reason: stopReason, message: {
+          role: "assistant", content, provider: model.provider, model: model.id, api: model.api, timestamp: Date.now(), stopReason,
+          usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        } });
+        return stream;
+      };
+      runtime.registerNativeProvider(provider);
+      const manager = new SubagentManager({ modelRuntime: runtime, agentDir,
+        childExtensionFactories: [filesystemSandboxExtension],
+        childWorkerExtensionFactories: [(_id, readonly) => createFileCheckpointExtension({ readonly })],
+      });
+      const sessionManager = SessionManager.inMemory(repo);
+      const tools = new Map<string, any>();
+      const api = { on() {}, registerTool(tool: any) { tools.set(tool.name, tool); }, appendEntry() {}, sendMessage() {} };
+      const extension = manager.mainExtension();
+      if (typeof extension === "function") throw new Error("Expected named manager extension");
+      extension.factory(api as any);
+      await manager.attachMain(api as any, sessionManager, repo);
+      let copy: string | undefined;
+      try {
+        const worker = await manager.spawn({ name: disposal === "worker removal" ? "checkpoint-remove" : "checkpoint-detach",
+          task: "Execute the fixture mutation.", modelId: "mock/mock-model", thinkingLevel: "off" });
+        await waitUntil(() => manager.getAgent(worker.id)?.status === "idle");
+        expect(replies).toHaveLength(0);
+        const sessionId = manager.getDiagnosticsSessionId(worker.id)!;
+        const controller = checkpointControllerForSession(sessionId)!;
+        expect(controller).toBeDefined();
+        expect(controller.list()).toHaveLength(1);
+        const record = controller.list()[0]!;
+        copy = await controller.recover(record.id);
+        expect(readFileSync(copy, "utf8")).toBe("private worker preimage\r\n");
+        expect(readFileSync(path, "utf8")).toBe("worker postimage\r\n");
+        if (disposal === "worker removal") {
+          // Use the registered public tool, not private records or a direct SDK
+          // dispose: this exercises worktree remove -> stop -> runtime teardown.
+          await tools.get("worktree").execute("close-worker", { action: "remove", target: worker.id }, undefined, undefined,
+            { cwd: repo, sessionManager });
+          expect(manager.getAgent(worker.id)).toBeUndefined();
+        } else await manager.detachMain();
+        expect(manager.getDiagnosticsSessionId(worker.id)).toBeUndefined();
+        expect(checkpointControllerForSession(sessionId)).toBeUndefined();
+        expect(controller.list()).toEqual([]);
+        await expect(controller.recover(record.id)).rejects.toThrow();
+        // Only private checkpoint memory is disposed, never exported files.
+        expect(readFileSync(copy, "utf8")).toBe("private worker preimage\r\n");
+        expect(readFileSync(path, "utf8")).toBe("worker postimage\r\n");
+      } finally {
+        await manager.detachMain();
+        // These tests share the integration repository with merge tests, which
+        // deliberately require a clean tree. Remove only this fixture's files.
+        if (copy) rmSync(copy, { force: true });
+        rmSync(path, { force: true });
+      }
+    });
+  }
+
   test("shared runtime authorizes only bound main and mutable worker hosted search requests", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),

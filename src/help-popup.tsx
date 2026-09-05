@@ -66,6 +66,7 @@ export const HELP_GROUPS: HelpGroup[] = [
       ["/todo", "Show the agent's todo list"],
       ["/stats", "Show session statistics"],
       ["/diagnostics [clear]", "Show or clear opt-in request diagnostics"],
+      ["/checkpoint [list|recover <id>|clear]", "Recover a runtime checkpoint to a new copy"],
       ["/settings", "Show or change a setting"],
       ["/theme <theme>", "Preview and change the theme"],
       ["/model", "Choose model [effort]; no name opens picker"],

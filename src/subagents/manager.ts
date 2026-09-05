@@ -20,6 +20,7 @@ import {
   usageFromEntries,
 } from "../agent-usage";
 import { replayEntries } from "../replay";
+import { bindFileCheckpointSession } from "../file-checkpoints";
 import {
   loadNewsItems,
   mergeNewsItems,
@@ -2168,6 +2169,7 @@ export class SubagentManager {
         : judge ? judgeAllowedToolNames() : childAllowedToolNames(record.snapshot.readonly),
     });
     try {
+      if (!internal && !record.snapshot.readonly) bindFileCheckpointSession(result.session);
       bindSearchSession(result.session, record.snapshot.readonly ? "readonly" : record.snapshot.role);
       contextWindow?.bind(result.session);
     } catch (error) {

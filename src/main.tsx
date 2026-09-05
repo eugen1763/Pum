@@ -53,6 +53,7 @@ import { installSelectionClipboard } from "./clipboard";
 import { TerminalTitleController } from "./terminal-title";
 import { isOrcaTerminal, OrcaStatusController } from "./orca-status";
 import { SandboxController } from "./sandbox";
+import { bindFileCheckpointSession, createFileCheckpointExtension } from "./file-checkpoints";
 import {
   createFilesystemSandboxExtension,
   filesystemSandboxExtension,
@@ -263,6 +264,7 @@ export async function start(
       (_agentId, isReadonly) => createFilesystemSandboxExtension({ readonly: isReadonly }),
     ],
     childWorkerExtensionFactories: [
+      (_agentId, isReadonly) => createFileCheckpointExtension({ readonly: isReadonly }),
       () => createMemoryExtension({ agentDir: AGENT_DIR, audience: "subagent" }),
     ],
     sandboxModeSource: () => sandboxController.mode,
@@ -301,6 +303,7 @@ export async function start(
             explanationStrengthExtension,
             checkModePromptExtension,
             filesystemSandboxExtension,
+            createFileCheckpointExtension(),
             mainCheckModeExtension,
             sandboxExtension,
             contextWindow.extension(),
@@ -322,6 +325,7 @@ export async function start(
         tools: mainAllowedToolNames(),
       });
       try {
+        bindFileCheckpointSession(result.session);
         bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
       } catch (error) {

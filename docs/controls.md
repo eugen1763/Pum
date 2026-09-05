@@ -46,10 +46,29 @@ support empty-prompt queued-message recall.
 | `/worktree` | Move the running session into a worktree and back |
 | `/settings [name] [value]` | Show or change any `pum.json` setting. See [Configuration](configuration.md) |
 | `/check-path` | Manage additional Check mode roots |
+| `/checkpoint [list\|recover <id>\|clear]` | List runtime file checkpoints, create a recovery copy, or discard checkpoints |
 | `/compress`, `/clear`, `/new` | Compact the context, or start fresh |
 | `/stats` | Usage and cost for the session |
 | `/login` | Add or update a provider |
 | `/providers` | Manage providers: `/providers [add\|edit\|delete] [name]` |
+
+## File checkpoint recovery
+
+Type `/checkpoint` (or `/checkpoint list`) directly in the TUI prompt to inspect
+checkpoints for the selected main or retained worker session. The list includes
+IDs, tool names, paths, prior absence, and the runtime's scope, limits, and skip
+counts. Checkpoints are runtime-only, not durable backups or a general undo log.
+
+`/checkpoint recover <id>` requires the selected session to be idle. It writes a
+**new recovery copy**, never restores or deletes the original path. Inspect the
+returned copy and apply it manually if wanted. A previously absent file has no
+old content to recover. User keyboard transitions pause while the copy is being
+created. `/checkpoint clear` discards this runtime's retained checkpoints without
+changing original files.
+
+These commands are explicit user actions only, not model tools or extension slash
+commands. Attached images and pasted-text markers do not authorize recovery.
+Reports stay in the UI rather than entering model context or the durable transcript.
 
 ## Providers
 
