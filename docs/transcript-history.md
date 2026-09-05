@@ -60,8 +60,10 @@ there is no additional notice prepended to model text.
 
 History executes sequentially, so the controller includes earlier persisted
 results in the same SDK batch. UTF-8 bytes / 3 plus 1200 tokens per attached image
-remain conservative estimates, not provider accounting. Cursor bytes are included
-in every fitting decision. Shrinking a page advances only by the results actually
+remain conservative estimates, not provider accounting. The controller first
+reduces available space by its bounded upward calibration factor and reserves
+message framing; see `context-budgets.md`. Cursor bytes are included in every
+fitting decision. Shrinking a page advances only by the results actually
 returned. Refusal preserves its original snapshot and offsets in `nextCursor`;
 retry after rollover. A minimal refusal itself can exceed an exhausted budget.
 Unknown capacity uses static text/result/image caps; invalid known budgets refuse.

@@ -1,3 +1,4 @@
+import { estimateContextMessage, CONTEXT_MESSAGE_TOKENS } from "../src/context-estimate";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,7 +6,6 @@ import { join } from "node:path";
 import {
   createAgentSessionFromServices,
   createAgentSessionServices,
-  estimateTokens,
   ModelRuntime,
   SessionManager,
   SettingsManager,
@@ -397,24 +397,33 @@ describe("context windows through the installed pi SDK", () => {
     };
     const firstPage = first.details as Page;
     const secondPage = second.details as Page;
-    expect(firstPage.budget.availableTokens).toBe(available);
+    // The deliberately oversized provider fixture saturates calibration at 2.
+    const factor = 2;
+    expect(firstPage.budget.availableTokens).toBe(available / factor - CONTEXT_MESSAGE_TOKENS);
     // This requires the actual SDK message_end to update state before call two.
-    expect(secondPage.budget.availableTokens).toBe(available - estimateTokens(first));
-    expect(secondPage.budget.availableTokens).toBeLessThan(available);
-    expect(secondPage.text.length).toBeLessThan(firstPage.text.length);
+    expect(secondPage.budget.availableTokens).toBe(Math.max(0,
+      Math.floor((available - estimateContextMessage(first) * factor) / factor) - CONTEXT_MESSAGE_TOKENS));
+    expect(secondPage.budget.availableTokens).toBeLessThan(firstPage.budget.availableTokens);
+    expect(firstPage.text.length).toBeGreaterThan(0);
     for (const result of results) {
       const page = result.details as Page;
       expect(result.isError).toBe(false);
       expect(page.budgetLimited).toBe(true);
-      expect(page.text.length).toBeGreaterThan(0);
+      if (page.text === undefined) {
+        // A minimal refusal is unavoidable once even metadata cannot fit. It
+        // must not consume the requested page, even in the same tool batch.
+        expect(page.nextOffset).toBe(page.offset);
+        continue;
+      }
       expect(page.text.length).toBeLessThan(16_384);
       expect(page.text).toBe(archived.slice(page.offset, page.nextOffset));
       const payload = result.content[0];
       if (payload?.type !== "text") throw new Error("Expected history text payload");
       expect(Math.ceil(Buffer.byteLength(payload.text, "utf8") / 3)).toBeLessThanOrEqual(page.budget.availableTokens);
     }
-    // Use the controller's installed SDK estimate for the shared context cost.
-    expect(results.reduce((total, result) => total + estimateTokens(result), 0)).toBeLessThanOrEqual(available);
+    // The fitted first page respects calibrated context cost. A subsequent
+    // bounded refusal can still consume unavoidable metadata beyond zero budget.
+    expect(estimateContextMessage(first) * factor).toBeLessThanOrEqual(available);
     const persisted = run.manager.getEntries().filter((entry) => entry.type === "message"
       && entry.message.role === "toolResult").map((entry) => entry.type === "message" ? entry.message : undefined);
     expect(persisted).toEqual(results);

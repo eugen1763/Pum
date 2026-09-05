@@ -96,7 +96,7 @@ async function runHeadless(cwd: string, agentDir: string, prompt: string) {
 }
 
 describe("headless project memory", () => {
-  test("pum -p writes memory in one checkout and reads it from a moved worktree", async () => {
+  test("pum -p shares worktree memory and rolls over with automatic memory and no-summary history", async () => {
     const root = temporaryRoot();
     const primary = join(root, "primary");
     const moved = join(root, "orca", "workspaces", "Pum", "feature-memory");
@@ -110,7 +110,9 @@ describe("headless project memory", () => {
     git(primary, "-c", "user.name=PUM Test", "-c", "user.email=pum@example.invalid", "commit", "-m", "initial");
     git(primary, "worktree", "add", "-b", "feature-memory", moved);
 
-    let phase: "write" | "read" = "write";
+    let phase: "write" | "read" | "rollover" = "write";
+    let rolloverRequests = 0;
+    const handoff = "Continue the headless fixture from this literal handoff.";
     const requests: unknown[] = [];
     const server = Bun.serve({
       port: 0,
@@ -120,6 +122,13 @@ describe("headless project memory", () => {
         requests.push(body);
         const serialized = JSON.stringify(body);
         const toolResults = body.messages?.filter((message: any) => message?.role === "tool") ?? [];
+
+        if (phase === "rollover") {
+          rolloverRequests++;
+          return rolloverRequests === 1
+            ? toolCall("new_context", JSON.stringify({ handoff }), "headless-rollover")
+            : textCompletion("Headless rollover complete.");
+        }
 
         if (phase === "write") {
           if (toolResults.length === 0) return toolCall("memory_read", "{}", "memory-read-write");
@@ -191,6 +200,44 @@ describe("headless project memory", () => {
       expect(readRun.stdout).toContain("Recalled headless memory probe from moved worktree");
       expect(readRun.stderr).toContain("memory_read");
       expect(readRun.stderr).not.toContain("memory_edit");
+
+      phase = "rollover";
+      const beforeRollover = requests.length;
+      const rolloverPrompt = "Roll over headless now; preserve this original prompt in history.";
+      const rolloverRun = await runHeadless(moved, agentDir, rolloverPrompt);
+      expect(rolloverRun.exitCode).toBe(0);
+      expect(rolloverRun.stdout).toContain("Headless rollover complete.");
+      expect(rolloverRun.stderr).toContain("new_context");
+      expect(rolloverRun.stderr).not.toContain("memory_read");
+      expect(rolloverRun.stderr).not.toContain("todo_list");
+      const rolloverBodies = requests.slice(beforeRollover) as Array<{ messages: Array<{ role: string; content: unknown }> }>;
+      expect(rolloverBodies).toHaveLength(2);
+      const nextMessages = rolloverBodies[1]!.messages;
+      const header = nextMessages.find((message) => JSON.stringify(message.content).includes("Fresh PUM context window:"));
+      expect(header).toBeDefined();
+      const headerText = JSON.stringify(header!.content);
+      expect(headerText).toContain("Project memory is automatically injected");
+      expect(headerText).toContain("The rollover generated no summary");
+      expect(headerText).toContain(handoff);
+      expect(headerText).not.toContain("memory_read");
+      expect(headerText).not.toContain("todo_list");
+      expect(headerText).not.toContain("enable_tools");
+      expect(JSON.stringify(nextMessages)).toContain("Headless memory probe: linked worktrees share this fact.");
+      expect(JSON.stringify(nextMessages)).not.toContain(rolloverPrompt);
+      // Inspect only this fixture's persisted sessions: rollover keeps the full
+      // original conversation and literal boundary, without a compaction entry.
+      const sessionRoot = join(agentDir, "sessions");
+      const persisted = readdirSync(sessionRoot, { recursive: true })
+        .filter((path) => typeof path === "string" && path.endsWith(".jsonl"))
+        .map((path) => readFileSync(join(sessionRoot, path as string), "utf8"))
+        .find((text) => text.includes(rolloverPrompt));
+      expect(persisted).toBeDefined();
+      const entries = persisted!.trim().split("\n").map((line) => JSON.parse(line));
+      expect(entries.filter((entry) => entry.type === "compaction")).toEqual([]);
+      const boundaries = entries.filter((entry) => entry.type === "custom" && entry.customType === "pum.context_window");
+      expect(boundaries).toHaveLength(1);
+      expect(boundaries[0].data.handoff).toBe(handoff);
+      expect(persisted).toContain("Headless rollover complete.");
 
       const projects = join(agentDir, "memory", "projects");
       const memoryFiles = readdirSync(projects, { withFileTypes: true })

@@ -15,7 +15,7 @@ import { createMcpProcessAdapter } from "./mcp-process";
 import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
-import { createMemoryExtension } from "./memory";
+import { createMemoryExtension, hasMemoryContextExtension } from "./memory";
 import { ContextWindowController } from "./context-window";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
@@ -314,7 +314,8 @@ export async function start(
       // enable_tools. Replacements must not reuse the previous runtime's controller.
       const mainToolGroups = new ToolGroupsController("main");
       mainToolGroups.load(sessionManager.getSessionFile());
-      const contextWindow = new ContextWindowController();
+      const memory = createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" });
+      const contextWindow = new ContextWindowController({ memoryInjected: hasMemoryContextExtension([memory]) });
       const validation = new ProjectValidationController({ cwd });
       let mcpSession: AgentSession | undefined;
       let mcpDisposed = false;
@@ -348,7 +349,7 @@ export async function start(
             sandboxExtension,
             validation.extension(),
             contextWindow.extension(),
-            createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
+            memory,
             questionnaireManager.extension({ id: "main", name: "main" }),
             mainToolGroups.extension(),
             { name: "pum-main-mcp", factory: (pi) => { for (const tool of mcp.tools()) pi.registerTool(tool); } },
@@ -387,8 +388,8 @@ export async function start(
         bindRuntimeSettingsActivity(result.session);
         bindCheckModeApprovalSession(result.session);
         bindSearchSession(result.session, "main");
-        contextWindow.bind(result.session);
         result.session.setActiveToolsByName(mainToolGroups.activeTools());
+        contextWindow.bind(result.session);
       } catch (error) {
         // The runtime factory cannot dispose a session it has not received yet.
         try { result.session.dispose(); } catch { /* Preserve the binding error. */ }

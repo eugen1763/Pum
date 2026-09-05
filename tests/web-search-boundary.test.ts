@@ -8,7 +8,8 @@ import {
 } from "../src/web-search";
 import { CONTEXT_WINDOW_CUSTOM_TYPE, ContextWindowController } from "../src/context-window";
 import { Agent } from "@earendil-works/pi-agent-core";
-import { estimateTokens, SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { estimateContextMessage as estimateTokens } from "../src/context-estimate";
 
 const readTool = { type: "function", name: "read" };
 const hostedTool = { type: "web_search" };

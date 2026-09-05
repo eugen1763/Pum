@@ -1,7 +1,7 @@
 import { Type } from "typebox";
+import { createHash } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
-  estimateTokens,
   sessionEntryToContextMessages,
   type AgentSession,
   type ExtensionAPI,
@@ -11,6 +11,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { registerTranscriptHistoryTool } from "./transcript-history";
 import { CONTEXT_GUIDANCE } from "./context-guidance";
+import { contextRecoveryGuidance } from "./context-recovery";
+import { contextCalibration, contextUsage, estimateContextMessage as estimateTokens, estimateContextText,
+  CONTEXT_MESSAGE_TOKENS } from "./context-estimate";
 
 export const CONTEXT_TOOL_NAMES = ["history", "get_context_remaining", "new_context"] as const;
 export const CONTEXT_WINDOW_CUSTOM_TYPE = "pum.context_window";
@@ -18,16 +21,38 @@ export const CONTEXT_HANDOFF_MAX_CHARS = 20_000;
 
 interface BoundaryData { version: 1; handoff?: string }
 interface Pending { id: string; handoff?: string; signal?: AbortSignal; duplicate: boolean }
-interface PromptSnapshot { systemPrompt: string; tools: string; modelKey?: string }
+interface EstimateFingerprint { hash: string; tokens: number }
+interface PromptSnapshot { systemPrompt: EstimateFingerprint; tools: EstimateFingerprint; modelKey?: string }
 interface RequestSnapshot extends PromptSnapshot {
   windowId: string | null;
-  stateSystemPrompt: string;
-  stateTools: string;
+  generation: number;
+  stateSystemPrompt: EstimateFingerprint;
+  stateTools: EstimateFingerprint;
   injectedTokens: number;
+  estimatedInputTokens: number;
+  sourceHash: string;
+  sourceCount: number;
+}
+interface UsageSnapshot extends RequestSnapshot {
+  responseHash: string;
+  total: number;
+  factor: number;
+  limited: boolean;
+  eligible: boolean;
+  growth: number;
+}
+function fingerprint(text: string): EstimateFingerprint {
+  return { hash: createHash("sha256").update(text).digest("hex"), tokens: estimateContextText(text) };
+}
+function messageHash(messages: readonly AgentMessage[]): string {
+  const hash = createHash("sha256");
+  for (const message of messages) hash.update(JSON.stringify(message)).update("\n");
+  return hash.digest("hex");
 }
 const MANUAL_COMPACTION_REFUSAL = "Manual /compress is unavailable after a PUM context rollover on the active branch. Use new_context instead. The full transcript is retained.";
 function modelIdentity(model: AgentSession["model"]): string | undefined {
-  return model ? `${model.provider}/${model.id}:${model.contextWindow}` : undefined;
+  return model && Number.isFinite(model.contextWindow) && model.contextWindow > 0
+    ? JSON.stringify([model.provider, model.id, model.api, model.contextWindow]) : undefined;
 }
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -47,11 +72,11 @@ function boundaryData(value: unknown): BoundaryData {
   const { handoff } = handoffParams({ handoff: value.handoff });
   return { version: 1, ...(handoff === undefined ? {} : { handoff }) };
 }
-function header(id: string, handoff?: string, navigation?: { userId?: string; previousId?: string | null }): AgentMessage {
+function header(id: string, handoff?: string, navigation?: { userId?: string; previousId?: string | null }, recovery = ""): AgentMessage {
   return {
     role: "custom", customType: CONTEXT_WINDOW_CUSTOM_TYPE, display: false, timestamp: 0,
-    content: `Fresh PUM context window: ${id}. Earlier transcript entries remain available through history. The rollover generated no summary. Restore project memory and the session todo list with the available tools. Recover exact user instructions and relevant results with history before continuing. Current system instructions still apply.`
-      + (navigation ? `\nHistory navigation: latest prior user entry ID: ${navigation.userId ?? "none"}; previous transcript entry ID: ${navigation.previousId ?? "none"}. Use history with op "read" and entryId, then follow parentId links to recover exact earlier instructions.` : "")
+    content: `Fresh PUM context window: ${id}. Earlier transcript entries remain retained in the full session transcript. The rollover generated no summary. Current system instructions still apply. ${recovery}`
+      + (navigation ? `\nHistory navigation: latest prior user entry ID: ${navigation.userId ?? "none"}; previous transcript entry ID: ${navigation.previousId ?? "none"}. These IDs are navigation metadata, not a requirement to restore earlier content.` : "")
       + (handoff === undefined ? "" : `\n\nLiteral handoff supplied to new_context:\n${handoff}`),
   };
 }
@@ -73,7 +98,11 @@ export class ContextWindowController {
   private usageFloor = 0;
   private preparedPrompt?: PromptSnapshot;
   private requestSnapshot?: RequestSnapshot;
-  private usageSnapshots = new WeakMap<AgentMessage, RequestSnapshot>();
+  private usageSnapshots = new WeakMap<AgentMessage, UsageSnapshot>();
+  private latestUsageSnapshot?: UsageSnapshot;
+  private generation = 0;
+
+  constructor(private readonly options: { memoryInjected?: boolean } = {}) {}
 
   extension(): InlineExtension {
     return { name: "pum-context-window", factory: (pi: ExtensionAPI) => {
@@ -81,10 +110,10 @@ export class ContextWindowController {
         const meter = this.remaining();
         if (meter.reserveExceedsCapacity === true && typeof meter.remainingTokens === "number") {
           const model = this.requireSession().model!;
-          return Math.max(0, meter.remainingTokens - Math.min(model.maxTokens, Math.floor(model.contextWindow / 4)));
+          return this.historyBudget(Math.max(0, meter.remainingTokens - this.responseHeadroom(model.contextWindow)), meter);
         }
         return typeof meter.remainingBeforeReserve === "number" && typeof meter.remainingTokens === "number"
-          ? Math.min(meter.remainingBeforeReserve, meter.remainingTokens) : undefined;
+          ? this.historyBudget(Math.min(meter.remainingBeforeReserve, meter.remainingTokens), meter) : undefined;
       });
       pi.on("session_start", () => { this.disableAutomaticCompaction(); this.restore(); });
       pi.on("session_tree", () => { this.pending = undefined; this.restore(); });
@@ -92,6 +121,7 @@ export class ContextWindowController {
         const key = modelIdentity(event.model);
         if (key !== this.modelKey) {
           this.modelKey = key;
+          this.generation++;
           this.usageFloor = this.session?.agent.state.messages.length ?? 0;
         }
       });
@@ -154,8 +184,18 @@ export class ContextWindowController {
         this.preparedPrompt = undefined;
         this.requestSnapshot = undefined;
       } else if (event.type === "message_end" && event.message.role === "assistant") {
-        if (this.requestSnapshot) this.usageSnapshots.set(event.message, this.requestSnapshot);
+        const snapshot = this.requestSnapshot;
         this.requestSnapshot = undefined;
+        const usage = contextUsage(event.message.usage);
+        if (snapshot && snapshot.modelKey && usage && ["stop", "toolUse", "length"].includes(event.message.stopReason)
+          && snapshot.generation === this.generation && snapshot.modelKey === modelIdentity(session.model)
+          && event.message.provider === session.model?.provider && event.message.model === session.model?.id
+          && event.message.api === session.model?.api) {
+          const paired = { ...snapshot, responseHash: messageHash([event.message]),
+            total: usage.total, ...contextCalibration(usage.input, snapshot.estimatedInputTokens), growth: 0 };
+          this.usageSnapshots.set(event.message, paired);
+          this.latestUsageSnapshot = paired;
+        }
       }
     });
     // Reload and unrelated settings saves replace effective overrides. Native
@@ -171,17 +211,34 @@ export class ContextWindowController {
     const transform = session.agent.transformContext;
     session.agent.transformContext = async (messages, signal) => {
       const originalTokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
-      const stateSystemPrompt = session.agent.state.systemPrompt;
+      const stateSystemPrompt = fingerprint(session.agent.state.systemPrompt);
       const stateTools = this.toolSchemas();
       const prompt = this.preparedPrompt ?? { systemPrompt: stateSystemPrompt, tools: stateTools, modelKey: modelIdentity(session.model) };
       this.requestSnapshot = undefined;
+      const generation = this.generation;
+      const windowId = this.windowId;
+      const sourceHash = messageHash(messages);
+      const sourceCount = messages.length;
       const transformed = transform ? await transform.call(session.agent, messages, signal) : messages;
       // Observe the complete extension chain, including memory injected after our
       // extension. Return it unchanged; memory and dynamic instructions stay active.
-      this.observedExtraTokens = Math.max(0, transformed.reduce((sum, message) => sum + estimateTokens(message), 0)
-        - originalTokens);
-      this.requestSnapshot = { ...prompt, windowId: this.windowId, stateSystemPrompt, stateTools,
-        injectedTokens: this.observedExtraTokens };
+      if (generation === this.generation && !signal?.aborted) {
+        this.observedExtraTokens = Math.max(0, transformed.reduce((sum, message) => sum + estimateTokens(message), 0)
+          - originalTokens);
+        const measured = this.latestUsageSnapshot;
+        if (measured?.generation === generation && measured.modelKey === prompt.modelKey) {
+          // A failed request may have observed growth followed by shrinkage
+          // without an intervening meter call. Do not reclaim that observation.
+          measured.growth = Math.max(measured.growth,
+            Math.max(0, prompt.systemPrompt.tokens - measured.systemPrompt.tokens)
+            + Math.max(0, prompt.tools.tokens - measured.tools.tokens)
+            + Math.max(0, this.observedExtraTokens - measured.injectedTokens));
+        }
+        this.requestSnapshot = { ...prompt, windowId, generation, stateSystemPrompt, stateTools,
+          injectedTokens: this.observedExtraTokens, sourceHash, sourceCount,
+          estimatedInputTokens: transformed.reduce((sum, message) => sum + estimateTokens(message), 0)
+            + prompt.systemPrompt.tokens + prompt.tools.tokens };
+      }
       return transformed;
     };
     const previous = session.agent.prepareNextTurnWithContext;
@@ -193,7 +250,7 @@ export class ContextWindowController {
       const input = fresh ? { ...turn, context: { ...turn.context, messages: session.agent.state.messages.slice() } } : turn;
       const update = previous ? await previous.call(session.agent, input, signal) : await legacy?.call(session.agent, signal);
       const context = update?.context ?? input.context;
-      this.preparedPrompt = { systemPrompt: context.systemPrompt, tools: this.toolSchemas(context.tools),
+      this.preparedPrompt = { systemPrompt: fingerprint(context.systemPrompt), tools: this.toolSchemas(context.tools),
         modelKey: modelIdentity(update?.model ?? session.model) };
       return fresh ? { ...update, context } : update;
     };
@@ -215,11 +272,13 @@ export class ContextWindowController {
     const branch = session.sessionManager.getBranch();
     const index = branch.findLastIndex(isBoundary);
     this.windowId = index < 0 ? null : branch[index]!.id;
+    this.generation++;
     this.usageFloor = 0;
     this.modelKey = modelIdentity(session.model);
     this.requestSnapshot = undefined;
     this.preparedPrompt = undefined;
     this.usageSnapshots = new WeakMap();
+    this.latestUsageSnapshot = undefined;
     if (index < 0) { this.restoreUsageFloor(branch); return; }
     const boundary = branch[index]!;
     if (boundary.type !== "custom") return;
@@ -239,7 +298,7 @@ export class ContextWindowController {
     const latestUser = branch.slice(0, index).findLast((entry) => entry.type === "message" && entry.message.role === "user");
     session.agent.state.messages = [header(boundary.id, data.handoff, {
       userId: latestUser?.id, previousId: boundary.parentId,
-    }), ...entries.flatMap(sessionEntryToContextMessages)];
+    }, this.recoveryGuidance()), ...entries.flatMap(sessionEntryToContextMessages)];
     this.restoreUsageFloor(branch);
     this.refreshPending = true;
   }
@@ -292,12 +351,12 @@ export class ContextWindowController {
     const latestUser = branch.findLast((entry) => entry.type === "message" && entry.message.role === "user");
     const freshTokens = estimateTokens(header("pending", handoff, {
       userId: latestUser?.id, previousId: session.sessionManager.getLeafId(),
-    })) + this.overheadTokens();
+    }, this.recoveryGuidance())) + this.overheadTokens();
     const configuredReserve = this.reserveTokens();
     // A default reserve can exceed a small model's entire window. It is not an
     // automatic threshold; use bounded output headroom for explicit rollover.
     const reserve = capacity && configuredReserve >= capacity
-      ? Math.min(model?.maxTokens ?? 0, Math.floor(capacity / 4)) : configuredReserve;
+      ? this.responseHeadroom(capacity) : configuredReserve;
     if (!capacity || !Number.isFinite(capacity) || freshTokens >= Math.max(0, capacity - reserve)) {
       throw new Error("The handoff and prompt overhead do not fit the current model's fresh context with response headroom.");
     }
@@ -306,36 +365,55 @@ export class ContextWindowController {
     const reserve = this.requireSession().settingsManager.getCompactionSettings().reserveTokens;
     return Number.isFinite(reserve) ? Math.max(0, reserve) : 0;
   }
-  private toolSchemas(tools = this.requireSession().agent.state.tools): string {
-    return JSON.stringify(tools.map((tool) => ({
+  private recoveryGuidance(): string {
+    return contextRecoveryGuidance(this.requireSession().agent.state.tools.map((tool) => tool.name),
+      this.options.memoryInjected === true);
+  }
+  private responseHeadroom(capacity: number): number {
+    const max = this.requireSession().model?.maxTokens;
+    return Math.min(typeof max === "number" && Number.isFinite(max) && max > 0 ? max : 1024, Math.floor(capacity / 4));
+  }
+  private historyBudget(available: number, meter: Record<string, unknown>): number {
+    const factor = typeof meter.calibrationFactor === "number" ? meter.calibrationFactor : 1;
+    return Math.max(0, Math.floor(available / factor) - CONTEXT_MESSAGE_TOKENS);
+  }
+  private toolSchemas(tools = this.requireSession().agent.state.tools): EstimateFingerprint {
+    const schema = fingerprint(JSON.stringify(tools.map((tool) => ({
       name: tool.name, description: tool.description, parameters: tool.parameters,
-    })));
+    }))));
+    // Provider envelopes/deferred references differ. Reserve framing per active
+    // definition; measured requests already include this, so only growth is added.
+    schema.tokens += tools.length * 32;
+    return schema;
   }
   private overheadTokens(): number {
     const state = this.requireSession().agent.state;
-    return Math.ceil((state.systemPrompt.length + this.toolSchemas().length) / 4) + this.observedExtraTokens;
+    return Math.max(estimateContextText(state.systemPrompt), this.preparedPrompt?.systemPrompt.tokens ?? 0)
+      + Math.max(this.toolSchemas().tokens, this.preparedPrompt?.tools.tokens ?? 0) + this.observedExtraTokens;
   }
-  private overheadGrowth(snapshot: RequestSnapshot): number {
+  private overheadGrowth(snapshot: UsageSnapshot): number {
     const state = this.requireSession().agent.state;
     // A public next-turn hook can supply a request prompt different from state.
     // Keep that effective baseline until state actually changes. Never subtract
     // estimated shrinkage from measured provider usage or offset tool growth.
-    const prompt = state.systemPrompt === snapshot.stateSystemPrompt ? snapshot.systemPrompt : state.systemPrompt;
+    const statePrompt = fingerprint(state.systemPrompt);
+    const prompt = statePrompt.hash === snapshot.stateSystemPrompt.hash ? snapshot.systemPrompt : statePrompt;
     const stateTools = this.toolSchemas();
-    const tools = stateTools === snapshot.stateTools ? snapshot.tools : stateTools;
-    return Math.ceil(Math.max(0, prompt.length - snapshot.systemPrompt.length) / 4)
-      + Math.ceil(Math.max(0, tools.length - snapshot.tools.length) / 4)
-      + Math.max(0, this.observedExtraTokens - snapshot.injectedTokens);
+    const tools = stateTools.hash === snapshot.stateTools.hash ? snapshot.tools : stateTools;
+    snapshot.growth = Math.max(snapshot.growth, Math.max(0, prompt.tokens - snapshot.systemPrompt.tokens)
+      + Math.max(0, tools.tokens - snapshot.tools.tokens)
+      + Math.max(0, this.observedExtraTokens - snapshot.injectedTokens));
+    return snapshot.growth;
   }
   private remaining(): Record<string, unknown> {
     const session = this.requireSession();
     const model = session.model;
     const messages = session.agent.state.messages;
     const key = modelIdentity(model);
-    if (key !== this.modelKey) { this.modelKey = key; this.usageFloor = messages.length; }
+    if (key !== this.modelKey) { this.modelKey = key; this.generation++; this.usageFloor = messages.length; }
     let usageIndex = -1;
     let usageTokens = 0;
-    let usageSnapshot: RequestSnapshot | undefined;
+    let usageSnapshot: UsageSnapshot | undefined;
     for (let index = messages.length - 1; index >= this.usageFloor; index--) {
       const message = messages[index]!;
       if (message.role !== "assistant") continue;
@@ -343,21 +421,19 @@ export class ContextWindowController {
       if (message.provider !== model?.provider || message.model !== model?.id) break;
       const snapshot = this.usageSnapshots.get(message);
       // A restored usage count has no trustworthy prompt/schema baseline.
-      if (!snapshot || snapshot.modelKey !== key || snapshot.windowId !== this.windowId) continue;
-      const usage = message.usage;
-      if (!usage || typeof usage !== "object") continue;
-      const values = [usage.input, usage.output, usage.cacheRead, usage.cacheWrite];
-      if (message.stopReason !== "error" && message.stopReason !== "aborted"
-        && values.every((value) => Number.isFinite(value) && value >= 0)) {
-        const components = values.reduce((sum, value) => sum + value, 0);
-        const total = Number.isFinite(usage.totalTokens) && usage.totalTokens >= 0 ? usage.totalTokens : 0;
-        if (Math.max(components, total) > 0) {
-          usageTokens = Math.max(components, total); usageIndex = index; usageSnapshot = snapshot; break;
-        }
-      }
+      if (!snapshot || snapshot.modelKey !== key || snapshot.windowId !== this.windowId
+        || snapshot.generation !== this.generation) continue;
+      // A non-append source or modified response invalidates this projection.
+      // Fall back once rather than hashing every older prefix (quadratic work).
+      if (snapshot.sourceCount !== index || snapshot.responseHash !== messageHash([message])
+        || snapshot.sourceHash !== messageHash(messages.slice(0, index))) break;
+      usageTokens = snapshot.total; usageIndex = index; usageSnapshot = snapshot; break;
     }
-    const trailing = messages.slice(usageIndex + 1).reduce((sum, message) => sum + estimateTokens(message), 0);
-    const overhead = usageSnapshot ? this.overheadGrowth(usageSnapshot) : this.overheadTokens();
+    const rawTrailing = messages.slice(usageIndex + 1).reduce((sum, message) => sum + estimateTokens(message), 0);
+    const rawOverhead = usageSnapshot ? this.overheadGrowth(usageSnapshot) : this.overheadTokens();
+    const factor = usageSnapshot?.factor ?? 1;
+    const trailing = Math.ceil(rawTrailing * factor);
+    const overhead = Math.ceil(rawOverhead * factor);
     const used = Math.ceil(usageTokens + trailing + overhead);
     const capacity = model && Number.isFinite(model.contextWindow) && model.contextWindow > 0 ? model.contextWindow : null;
     const reserve = this.reserveTokens();
@@ -368,7 +444,10 @@ export class ContextWindowController {
       remainingBeforeReserve: capacity === null ? null : Math.max(0, capacity - reserve - used),
       source: usageIndex < 0 ? "estimate" : trailing > 0 || overhead > 0 ? "provider_usage_plus_estimate" : "provider_usage",
       providerUsageTokens: usageTokens, estimatedTrailingTokens: trailing, estimatedOverheadTokens: overhead,
-      note: "Remaining capacity is approximate. Provider usage requires a matching request, model capacity, and active window. Conservative estimates add only positive prompt, tool-schema, and observed injected-context growth; shrinkage never reduces measured usage. Unobserved dynamic context and provider tokenization can differ. Without a request baseline, the full active context is estimated. No automatic rollover threshold is enabled. If the configured reserve exhausts capacity, explicit rollover uses bounded response headroom instead.",
+      calibrationFactor: factor, calibrationLimited: usageSnapshot?.limited ?? false,
+      calibrationEligible: usageSnapshot?.eligible ?? false,
+      uncalibratedTrailingTokens: rawTrailing, uncalibratedOverheadTokens: rawOverhead,
+      note: "Remaining capacity is approximate. Provider usage requires a matching request, model capacity, and active window. Conservative estimates use UTF-8 bytes / 3, 1200 tokens per image and message framing. The upward-only calibration factor (1–2, prompt samples >=1024 estimated tokens) applies only to heuristic tail and positive overhead growth, never measured totals. Growth stays at its per-anchor high-water mark until a newer measured response; shrinkage never reduces measured usage. Factor saturation is uncertainty, not an accuracy guarantee. Unobserved dynamic context, payload hooks and provider tokenization can differ. Without a request baseline, the full active context is estimated. No automatic rollover threshold is enabled. If the configured reserve exhausts capacity, explicit rollover uses bounded response headroom instead.",
     };
   }
 }

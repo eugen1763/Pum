@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  createAgentSessionFromServices, createAgentSessionServices, estimateTokens, ModelRuntime,
+  createAgentSessionFromServices, createAgentSessionServices, ModelRuntime,
   SessionManager, SettingsManager, type AgentSession, type ExtensionAPI, type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -11,6 +11,7 @@ import {
   type AssistantMessage, type Context, type Model, type ToolCall,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { estimateContextMessage as estimateTokens } from "../src/context-estimate";
 import { CONTEXT_TOOL_NAMES, CONTEXT_WINDOW_CUSTOM_TYPE, ContextWindowController } from "../src/context-window";
 import { createMemoryExtension, ProjectMemoryStore } from "../src/memory";
 import { registerOperationalNotice } from "../src/operational-context";
@@ -109,7 +110,7 @@ async function fixture(options: { retry?: boolean; memoryFirst?: boolean; root?:
   const changeMemory = (value: string) => { const current = store.read(); store.edit(current.revision, current.content, value); };
   const prompt = async (value = "Continue") => { replies.push(text("Answer")); await session.prompt(value); return requests.at(-1)!; };
   const meter = async () => (await session.agent.state.tools.find((tool) => tool.name === "get_context_remaining")!
-    .execute("meter", {}, new AbortController().signal)).details as { estimatedOverheadTokens: number; usedTokens: number };
+    .execute("meter", {}, new AbortController().signal)).details as { estimatedOverheadTokens: number; uncalibratedOverheadTokens: number; calibrationFactor: number; usedTokens: number };
   return { root, cwd, agentDir, session, manager, controller, errors, requests, replies, changeMemory, prompt, meter,
     setActive: (value: number) => { active = value; }, setPolicy: (value: string) => { policy = `${POLICY}: ${value}`; },
     setMutation: (fn: () => void) => { mutation = fn; }, setOnRequest: (fn: () => void) => { onRequest = fn; } };
@@ -185,7 +186,7 @@ describe("operational notices composed with memory/window through the installed 
     const file = readFileSync(h.manager.getSessionFile()!, "utf8");
     const files = readdirSync(join(h.root, "sessions")).sort();
     let prior = await h.session.agent.transformContext!(h.session.agent.state.messages);
-    let overhead = before.estimatedOverheadTokens;
+    let overhead = before.uncalibratedOverheadTokens;
     for (let index = 0; index < 6; index++) {
       h.setActive(index % 2 === 0 ? 2 : 0);
       h.setPolicy(`${index} ${"bounded effective observation ".repeat(100)}`);
@@ -195,11 +196,12 @@ describe("operational notices composed with memory/window through the installed 
         - prior.reduce((sum, message) => sum + estimateTokens(message), 0);
       const current = await h.meter();
       expect(delta).toBeGreaterThan(900);
-      expect(current.estimatedOverheadTokens - overhead).toBe(delta);
+      expect(current.uncalibratedOverheadTokens - overhead).toBe(delta);
+      expect(current.estimatedOverheadTokens).toBe(Math.ceil(current.uncalibratedOverheadTokens * current.calibrationFactor));
       expect(current.usedTokens).toBeGreaterThan(before.usedTokens);
       await h.session.agent.transformContext!(h.session.agent.state.messages);
       expect((await h.meter()).estimatedOverheadTokens).toBe(current.estimatedOverheadTokens);
-      prior = projected; overhead = current.estimatedOverheadTokens;
+      prior = projected; overhead = current.uncalibratedOverheadTokens;
     }
     expect(prior.filter((message) => message.role === "custom" && message.customType === "pum.subagent_capacity")).toHaveLength(7);
     expect(h.manager.getEntries()).toEqual(durable);

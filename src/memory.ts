@@ -235,11 +235,18 @@ function readToolText(snapshot: MemorySnapshot): string {
   return snapshot.content ? `${header}\n\n${snapshot.content}` : `${header}\n\nProject memory is empty.`;
 }
 
+// Runtime factories use object identity, never an extension/tool name or role,
+// to tell rollover guidance that this projection is actually registered.
+const memoryExtensions = new WeakSet<object>();
+export function hasMemoryContextExtension(extensions: readonly InlineExtension[]): boolean {
+  return extensions.some((extension) => memoryExtensions.has(extension));
+}
+
 export function createMemoryExtension(options: {
   agentDir: string;
   audience: MemoryAudience;
 }): InlineExtension {
-  return {
+  const extension: InlineExtension = {
     name: `pum-project-memory-${options.audience}`,
     factory(pi: ExtensionAPI) {
       const projection = new MemoryContextProjection();
@@ -317,4 +324,6 @@ export function createMemoryExtension(options: {
       });
     },
   };
+  memoryExtensions.add(extension);
+  return extension;
 }

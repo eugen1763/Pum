@@ -60,6 +60,7 @@ import { isInternalRole, type RelocationRequest, type RelocationRequestResult } 
 import { AFK_ANSWER_TOOL_NAME, afkAnswerParameters } from "../afk-delegate";
 import { TodoToolsController } from "../todo-tools";
 import { ContextWindowController } from "../context-window";
+import { hasMemoryContextExtension } from "../memory";
 import {
   registerTriggerTools,
   type TriggerRuntimeManager,
@@ -2173,7 +2174,12 @@ export class SubagentManager {
     // Each child tracks its own enabled tool groups, persisted next to its
     // session file. Restore before the child's enable_tools tool registers.
     const internal = isInternalRole(record.snapshot.role);
-    const contextWindow = internal ? undefined : new ContextWindowController();
+    const workerExtensions = internal ? [] : this.childWorkerExtensionFactories.map((factory) => factory(
+      record.snapshot.id, record.snapshot.readonly === true,
+    ));
+    const contextWindow = internal ? undefined : new ContextWindowController({
+      memoryInjected: hasMemoryContextExtension(workerExtensions),
+    });
     const validation = internal ? undefined : new ProjectValidationController({
       cwd: record.snapshot.worktree.path, readonly: record.snapshot.readonly,
     });
@@ -2200,10 +2206,7 @@ export class SubagentManager {
           )),
           ...(validation ? [validation.extension()] : []),
           ...(contextWindow ? [contextWindow.extension()] : []),
-          ...(!internal ? this.childWorkerExtensionFactories.map((factory) => factory(
-            record.snapshot.id,
-            record.snapshot.readonly === true,
-          )) : []),
+          ...workerExtensions,
           this.childExtension(record.snapshot.id),
         ],
       },
@@ -2225,6 +2228,8 @@ export class SubagentManager {
       bindCheckModeApprovalSession(result.session);
       if (!internal && !record.snapshot.readonly) bindFileCheckpointSession(result.session);
       bindSearchSession(result.session, record.snapshot.readonly ? "readonly" : record.snapshot.role);
+      // Narrow before restoring a rollover header so its capabilities are real.
+      if (record.toolGroups) result.session.setActiveToolsByName(record.toolGroups.activeTools());
       contextWindow?.bind(result.session);
       validation?.bind(result.session);
     } catch (error) {
@@ -2237,8 +2242,6 @@ export class SubagentManager {
     record.session = result.session;
     record.snapshot.sessionFile = result.session.sessionFile;
     this.statsManager?.attach(record.snapshot.id, result.session, record.snapshot.modelId);
-    // Narrow the outgoing tool list to core plus enabled groups for this child.
-    if (record.toolGroups) result.session.setActiveToolsByName(record.toolGroups.activeTools());
     record.unsubscribe = result.session.subscribe((event) => this.processSessionEvent(record, event));
     record.unsubscribeSearch = observeSearchCalls(result.session.sessionId, (call) => {
       if (call.phase === "start") {

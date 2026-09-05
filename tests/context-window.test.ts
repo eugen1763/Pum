@@ -308,10 +308,11 @@ describe("capacity and compaction policy", () => {
     expect((await meter()).usedTokens).toBe(2100);
     expect((await meter()).estimatedOverheadTokens).toBe(0);
     h.agent.state.systemPrompt += "g".repeat(800);
-    expect((await meter()).usedTokens).toBe(2300);
-    expect((await meter()).source).toBe("provider_usage_plus_estimate");
+    const promptGrowth = await meter();
+    expect(promptGrowth.usedTokens).toBe(2100 + Math.ceil((1600 - 1334) * promptGrowth.calibrationFactor));
+    expect(promptGrowth.source).toBe("provider_usage_plus_estimate");
     h.agent.state.systemPrompt = "short";
-    expect((await meter()).usedTokens).toBe(2100);
+    expect((await meter()).usedTokens).toBe(promptGrowth.usedTokens);
     h.agent.state.tools = [{ name: "revealed", description: "tool".repeat(500), parameters: { type: "object" } } as any];
     const expanded = await meter();
     expect(expanded.usedTokens).toBeGreaterThan(2600);
@@ -380,11 +381,12 @@ describe("capacity and compaction policy", () => {
     memory = user("m".repeat(8000));
     await h.agent.transformContext!(h.agent.state.messages);
     const grown = (await h.execute("get_context_remaining")).details;
-    expect(grown.usedTokens).toBe(3000);
-    expect(grown.estimatedOverheadTokens).toBe(1000);
+    expect(grown.uncalibratedOverheadTokens).toBe(1333);
+    expect(grown.estimatedOverheadTokens).toBe(Math.ceil(1333 * grown.calibrationFactor));
+    expect(grown.usedTokens).toBe(2000 + grown.estimatedOverheadTokens);
     memory = user("short");
     await h.agent.transformContext!(h.agent.state.messages);
-    expect((await h.execute("get_context_remaining")).details.usedTokens).toBe(2000);
+    expect((await h.execute("get_context_remaining")).details.usedTokens).toBe(grown.usedTokens);
   });
 
   test("negative or nonfinite saved reserves cannot increase hard capacity", async () => {

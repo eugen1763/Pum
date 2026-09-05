@@ -65,7 +65,9 @@ bun run start    # open the TUI in the current directory
 | `src/subagents/spawn-preview-popup.tsx` | Responsive Markdown preview and optional note input |
 | `src/subagents/readonly.ts` | Fail-closed readonly child tool guard |
 | `src/replay.ts` | Rebuilds transcript lines from a resumed session's entries |
-| `src/context-window.ts` | Active context budgets and deferred, persisted context rollover |
+| `src/context-window.ts` | Calibrated runtime-local budgets and deferred, persisted context rollover |
+| `src/context-estimate.ts` | Conservative shared text/image estimates and bounded usage calibration |
+| `src/context-recovery.ts` | Synthetic-window recovery guidance from actual active capabilities |
 | `src/context-guidance.ts` | Stable system-prompt guidance for proactive context management |
 | `src/transcript-history.ts` | Session-scoped transcript search and bounded text/image recovery |
 | `src/queue-recall.ts` | Atomic newest-first recall of queued user messages |
@@ -478,6 +480,24 @@ These were chosen deliberately. Change them only on purpose.
   Main, headless, and managed worker runtimes each own a controller, including readonly workers.
   Internal judges and AFK delegates get none of these schemas.
   Register the controller before memory injection and bind it immediately after session creation.
+- **Context calibration is runtime-local and approximate.** Only a successful
+  assistant response paired with a matching request/model/API/capacity/window and
+  unchanged source/response fingerprints anchors the meter. Invalid, all-zero,
+  output-only, total-only, restored or stale usage is not trusted. The measured
+  total is never scaled or capped. UTF-8 bytes / 3, message/schema framing and
+  1200 tokens per image estimate the tail and positive prompt/schema/injection
+  growth; an upward-only 1–2 factor from a >=1024-token request calibrates only
+  those heuristic terms. Observed overhead growth retains a per-anchor high-water
+  mark until newer trusted usage includes it; shrinkage never subtracts from the
+  measurement. History fitting shares the factor and framing reserve. No raw
+  prompt/private-content calibration copies, transcript calibration entries or
+  companion files are created. Stable common guidance and a synthetic header use
+  actual active tools, after group narrowing, plus identity-marked registered
+  memory injection. Supplied memory needs no routine reread; empty/withdrawn
+  notices do not restore facts. Missing/hidden todos need not be enabled, and
+  history recovery is selective. Main/headless/workers participate; internal
+  judges/AFK remain excluded. Explicit no-summary rollover and bounded small-model
+  response headroom remain. See `docs/context-budgets.md` for formulas and limits.
 - **Request diagnostics are opt-in and ephemeral.** Only `PUM_REQUEST_DIAGNOSTICS=1`
   enables collection. `/diagnostics [clear]` reads or clears the selected session's
   safe report, never a durable transcript entry or model message. Headless emits

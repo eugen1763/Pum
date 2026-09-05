@@ -408,6 +408,95 @@ describe("background subagents", () => {
     unsubscribeUi();
   });
 
+  for (const readonly of [false, true]) {
+    for (const memoryState of ["absent", "current", "withdrawn"] as const) {
+      test(`${readonly ? "readonly" : "mutable"} worker rollover reflects ${memoryState} memory and active recovery tools`, async () => {
+        const runtime = await ModelRuntime.create({
+          authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json"),
+        });
+        const store = new ProjectMemoryStore(agentDir, repo);
+        const old = store.read();
+        const probe = "WORKER_ROLLOVER_CURRENT_MEMORY_PROBE";
+        store.edit(old.revision, old.content, probe);
+        const manager = new SubagentManager({
+          modelRuntime: runtime, agentDir, sandboxModeSource: () => "auto",
+          childWorkerExtensionFactories: memoryState === "absent" ? []
+            : [() => createMemoryExtension({ agentDir, audience: "subagent" })],
+        });
+        await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
+        try {
+          const worker = await manager.spawn({ task: "Initial worker turn before rollover.",
+            name: `rollover-${readonly ? "readonly" : "mutable"}-${memoryState}`, readonly,
+            modelId: "mock/mock-model", thinkingLevel: "off" });
+          const session = (manager as any).records.get(worker.id).session;
+          // spawn returns during SDK preflight, before the core has an active
+          // run for waitForIdle to await. Observe settlement without polling.
+          await new Promise<void>((resolve) => {
+            const unsubscribe = session.subscribe((event: any) => {
+              if (event.type === "agent_settled") { unsubscribe(); resolve(); }
+            });
+            if (manager.getAgent(worker.id)?.status === "idle") { unsubscribe(); resolve(); }
+          });
+          await session.agent.waitForIdle();
+          const tools = session.agent.state.tools.map((tool: any) => tool.name);
+          expect(tools).not.toContain("todo_list");
+          expect(tools).not.toContain("memory_edit");
+          expect(tools.includes("memory_read")).toBe(memoryState !== "absent");
+          if (memoryState === "withdrawn") {
+            const current = store.read();
+            store.edit(current.revision, current.content, "");
+          }
+          const requests: any[] = [];
+          const handoff = "Continue only the worker fixture; literal handoff.";
+          const replies: AssistantMessage["content"][] = [
+            [{ type: "toolCall", id: "worker-rollover", name: "new_context", arguments: { handoff } }],
+            [{ type: "text", text: "Worker rollover complete." }],
+          ];
+          session.agent.streamFunction = (model: any, context: any) => {
+            requests.push(JSON.parse(JSON.stringify(context)));
+            const content = replies.shift();
+            if (!content) throw new Error("Unexpected worker rollover request");
+            const stopReason = content.some((part) => part.type === "toolCall") ? "toolUse" : "stop";
+            const stream = createAssistantMessageEventStream();
+            stream.push({ type: "done", reason: stopReason, message: {
+              role: "assistant", content, provider: model.provider, model: model.id, api: model.api,
+              timestamp: Date.now(), stopReason,
+              usage: { input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+            } });
+            return stream;
+          };
+          const sessionId = session.sessionId;
+          await session.prompt("Roll over this worker now.");
+          expect(requests).toHaveLength(2);
+          const nextMessages = JSON.stringify(requests[1].messages);
+          const header = requests[1].messages.find((message: any) => JSON.stringify(message.content).includes("Fresh PUM context window:"));
+          expect(header).toBeDefined();
+          const headerText = JSON.stringify(header.content);
+          expect(headerText).toContain("The rollover generated no summary");
+          expect(headerText).toContain(handoff);
+          expect(headerText).not.toContain("todo_list");
+          expect(headerText).not.toContain("Use memory_read");
+          expect(headerText).not.toContain("enable_tools");
+          expect(headerText.includes("Project memory is automatically injected")).toBe(memoryState !== "absent");
+          expect(nextMessages.includes(probe)).toBe(memoryState === "current");
+          if (memoryState === "withdrawn") {
+            expect(nextMessages).toContain("Project memory is empty. No earlier project memory facts remain current.");
+          }
+          expect(session.sessionId).toBe(sessionId);
+          const entries = session.sessionManager.getEntries();
+          expect(JSON.stringify(entries)).toContain("Initial worker turn before rollover.");
+          expect(entries.filter((entry: any) => entry.type === "compaction")).toEqual([]);
+          expect(entries.filter((entry: any) => entry.type === "custom" && entry.customType === "pum.context_window")).toHaveLength(1);
+        } finally {
+          await manager.detachMain();
+          const current = store.read();
+          store.edit(current.revision, current.content, old.content);
+        }
+      }, 15_000);
+    }
+  }
+
   test("internal judge and AFK runtimes omit own-session context schemas and private memory", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),

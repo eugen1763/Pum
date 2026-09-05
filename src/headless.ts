@@ -10,7 +10,7 @@ import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
 import { installModelCatalogFallbacks } from "./model-catalog";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
-import { createMemoryExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
+import { createMemoryExtension, hasMemoryContextExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
 import { ContextWindowController, CONTEXT_TOOL_NAMES } from "./context-window";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { loadSessionSettings, mergeSessionSettings } from "./session-settings";
@@ -220,7 +220,8 @@ async function runPromptSession(
         checkPaths: checkPathsForProject(attachedSettings, cwd),
         webSearch: attachedSettings.webSearch,
       });
-      const contextWindow = new ContextWindowController();
+      const memory = createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" });
+      const contextWindow = new ContextWindowController({ memoryInjected: hasMemoryContextExtension([memory]) });
       const validation = new ProjectValidationController({ cwd });
       const services = await createAgentSessionServices({
         cwd,
@@ -236,7 +237,7 @@ async function runPromptSession(
             sandboxController.extension(),
             validation.extension(),
             contextWindow.extension(),
-            createMemoryExtension({ agentDir: AGENT_DIR, audience: "main" }),
+            memory,
           ],
         },
       });

@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
+import { CONTEXT_IMAGE_TOKENS, estimateContextText } from "./context-estimate";
 
 const MAX_TEXT = 16_384;
 const MAX_RESULTS = 25;
@@ -250,7 +251,7 @@ function decodeCursor(token: string, key: Buffer): SearchCursor {
 
 /** Conservative text heuristic plus the controller's image estimate; not provider accounting. */
 function estimatedTokens(details: Record<string, unknown>, images: ImageContent[]): number {
-  return Math.ceil(Buffer.byteLength(JSON.stringify(details), "utf8") / 3) + images.length * 1200;
+  return estimateContextText(JSON.stringify(details)) + images.length * CONTEXT_IMAGE_TOKENS;
 }
 
 function fitBudget(details: Record<string, unknown>, images: ImageContent[], available: number | undefined,

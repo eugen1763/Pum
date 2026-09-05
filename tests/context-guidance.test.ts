@@ -69,8 +69,8 @@ describe("context guidance", () => {
     includes(
       "These tools access only the calling session.",
       "Do not read raw configuration or session files or access another agent's history.",
-      "project memory when available",
-      "your own todos when available",
+      "no memory or todo checkpoint is required",
+      "do not routinely restore memory or todos",
     );
     const namedTools = [...new Set(CONTEXT_GUIDANCE.match(/\b[a-z]+_[a-z_]+\b/g))].sort();
     expect(namedTools).toEqual(["get_context_remaining", "new_context"]);
@@ -81,10 +81,9 @@ describe("context guidance", () => {
   test("checkpoints task state separately from durable project facts", () => {
     includes(
       "prepare a concise literal handoff: current user objective and constraints, verified completed actions, remaining work, and relevant entry IDs.",
-      "Keep durable project facts in project memory when available.",
-      "Keep transient task state in your own todos when available or the optional handoff.",
+      "The handoff can preserve transient task state; no memory or todo checkpoint is required.",
       "Do not put task progress in project memory.",
-      "After checkpoint writes succeed, call new_context once in its own batch with the optional handoff.",
+      "Call new_context once in its own batch with the optional handoff.",
       "Do not combine rollover with irreversible work.",
     );
   });
@@ -94,7 +93,8 @@ describe("context guidance", () => {
       "Rollover commits only after the complete tool batch succeeds.",
       "Failed, cancelled, or duplicate rollover batches create no boundary.",
       "The full transcript and session ID remain unchanged.",
-      "After rollover, restore only needed memory, todos, and history.",
+      "After rollover, use the supplied context and capability-aware recovery guidance; do not routinely restore memory or todos.",
+      "Only recover missing relevant details.",
       "Do not flood fresh context with the old transcript.",
       "Verify live state before repeating completed external actions.",
     );
