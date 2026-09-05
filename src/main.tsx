@@ -121,7 +121,6 @@ export async function start(
   setBashOutputSettingsIfPresent(settings.bashOutput);
   const questionnaireManager = new QuestionnaireManager();
   const spawnPreviewManager = new SpawnPreviewManager();
-  const mainToolGroups = new ToolGroupsController("main");
   const mainTodoTools = new TodoToolsController("main");
   const sessionHistoryIndex = new SessionHistoryIndex();
   const messageCacheController = new MessageCacheController(process.cwd());
@@ -286,6 +285,10 @@ export async function start(
   );
   const sessionRuntime = await createLockedAgentSessionRuntime(
     async ({ cwd, sessionManager, sessionStartEvent }) => {
+      // Bind fresh state to the trusted target before service creation registers
+      // enable_tools. Replacements must not reuse the previous runtime's controller.
+      const mainToolGroups = new ToolGroupsController("main");
+      mainToolGroups.load(sessionManager.getSessionFile());
       const contextWindow = new ContextWindowController();
       const services = await createAgentSessionServices({
         cwd,
@@ -309,10 +312,6 @@ export async function start(
           ],
         },
       });
-      // Each session tracks its own enabled tool groups, persisted next to
-      // the session file. Restore before enable_tools registers and runs, then
-      // narrow the outgoing tool list to core plus enabled groups.
-      mainToolGroups.load(sessionManager.getSessionFile());
       // Bind the list to this session before any tool can run, so a resumed
       // session reads its own plan and /clear starts an empty one.
       mainTodoTools.load(sessionManager.getSessionFile());

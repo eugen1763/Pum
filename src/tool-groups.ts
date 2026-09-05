@@ -198,7 +198,8 @@ export function hiddenGroupNames(enabled: readonly string[]): string[] {
  * The outgoing tool list for a session with the given enabled groups.
  *
  * Core tools and `enable_tools` are always present. Child sessions add the
- * child-only core tools. Enabled groups contribute their real tools.
+ * child-only core tools. Enabled groups contribute their real tools. The audience
+ * allowlist defines the canonical order, independent of activation or restore order.
  */
 export function activeToolNames(
   enabledGroups: Iterable<string>,
@@ -215,9 +216,8 @@ export function activeToolNames(
   for (const group of enabledGroups) {
     for (const name of toolNamesInGroup(group)) active.add(name);
   }
-  if (audience !== "subagent" || !readonly) return [...active];
-  const omitted = new Set<string>(READONLY_CHILD_OMITTED_TOOL_NAMES);
-  return [...active].filter((name) => !omitted.has(name));
+  const allowed = audience === "main" ? mainAllowedToolNames() : childAllowedToolNames(readonly);
+  return allowed.filter((name) => active.has(name));
 }
 
 const isGroupName = (value: unknown): value is ToolGroupName =>
@@ -260,11 +260,7 @@ export function describeToolGroups(enabled: readonly string[]): string {
 }
 
 function buildEnableToolsDescription(controller: ToolGroupsController): string {
-  const always = controller.availableToolNames([
-    ...CORE_TOOL_NAMES,
-    ENABLE_TOOLS,
-    ...(controller.audience === "subagent" ? CHILD_EXTRA_TOOL_NAMES : []),
-  ]);
+  const always = activeToolNames([], controller.audience, controller.isReadonly);
   const lines = [
     "Reveal one or more hidden tool groups in this thread. The real tool schemas of a revealed group start being sent from the next request onward.",
     "",
@@ -275,8 +271,6 @@ function buildEnableToolsDescription(controller: ToolGroupsController): string {
     const available = controller.availableToolNames(TOOL_GROUPS[name].toolNames);
     if (available.length > 0) lines.push(`- ${name}: ${available.join(", ")}`);
   }
-  const enabled = controller.enabledGroups();
-  lines.push("", `Currently enabled: ${enabled.length > 0 ? enabled.join(", ") : "(none)"}`);
   return lines.join("\n");
 }
 

@@ -835,9 +835,14 @@ These were chosen deliberately. Change them only on purpose.
   next request onward. `state.tools` is pi's authoritative outgoing tool list
   (it flows unmodified into the request body), so narrowing it never filters
   the core loop's built-ins. Hidden tools stay in the registry but are absent
-  from the model tool list until enabled. Main and child sessions track their
-  own groups independently, persisted in a companion file next to each
-  session JSONL (the same pattern as the news companion file) so they survive
+  from the model tool list until enabled. The audience allowlist defines one
+  canonical outgoing tool order, independent of activation or restore order.
+  `enable_tools` descriptions contain no enabled state; results report that state.
+  Main and child runtimes load their own controller from the trusted session file
+  before service creation registers tools, including after runtime replacement.
+  Main and child sessions track their own groups independently, persisted in a
+  companion file next to each session JSONL (the same pattern as the news
+  companion file) so they survive
   resume and never enter LLM context. There is no News group because PUM has
   no news model tool; groups with zero tools are dropped.
 - **Release publication uses npm trusted publishing.** GitHub OIDC publishes
