@@ -59,6 +59,11 @@ traces every original section and bullet to its current anchor.
   aliases share the lock. Stop work before disposal/release. Never reclaim by
   elapsed time, heartbeat expiry or recursive deletion: only demonstrably dead
   same-host/same-Linux-PID-namespace ownership can be recovered; uncertainty blocks.
+- `/branch` (`/rewind`) is explicit same-session conversation navigation, not a
+  new-file fork or filesystem restore. Preserve the canonical ID/JSONL, full tree,
+  rollover archives and CURRENT companions, with continuous ownership across
+  replacement/rollback. Require direct draft provenance, exact idle, no pending
+  input/delivery/setup or retained workers. Read the indexed branch contract.
 - Session settings stay beside that session; only explicit user promotion writes
   global defaults. Model/effort persistence goes through pi's Settings APIs.
   `/clear` and `/new` start from global settings without the old goal/overlay.

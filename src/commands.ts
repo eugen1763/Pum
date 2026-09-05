@@ -78,6 +78,14 @@ export const COMMANDS: Command[] = [
     description: "List runtime file checkpoints, recover <id> to a new copy, or clear",
   },
   {
+    name: "/branch",
+    description: "Select an earlier conversation path in this same session; no file restore",
+  },
+  {
+    name: "/rewind",
+    description: "Alias for /branch: same-session conversation navigation only",
+  },
+  {
     name: "/diagnostics",
     description: "Show opt-in request diagnostics for this session; clear resets them",
   },

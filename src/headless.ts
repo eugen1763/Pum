@@ -8,6 +8,7 @@ import { mkdirSync } from "node:fs";
 import { writeHeadlessRequestDiagnostics } from "./request-diagnostics-access";
 import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
+import { conversationBranchState } from "./conversation-branch";
 import { installModelCatalogFallbacks } from "./model-catalog";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, hasMemoryContextExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
@@ -241,10 +242,12 @@ async function runPromptSession(
           ],
         },
       });
+      const branchState = conversationBranchState(sessionManager, services.modelRuntime);
       const result = await createAgentSessionFromServices({
         services,
         sessionManager,
         sessionStartEvent,
+        ...(branchState ?? {}),
         tools: HEADLESS_TOOL_NAMES,
       });
       try {

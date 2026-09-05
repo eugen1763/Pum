@@ -52,6 +52,12 @@ No provider tokenizer, paid request, server-cache hit or whole-task context savi
 was measured. A task that needs several topics must read them despite the cost.
 All 157 original units are covered: 149 preserved and eight clarified with evidence.
 
+## Post-migration contracts
+
+- [Same-session conversation branches and rewind (#50)](sessions-context.md#conversation-branches):
+  explicit direct-user navigation, current companions, canonical ownership and
+  append-only failure recovery; new-file forks remain deferred.
+
 ## Original-to-current inventory
 
 | Original section / item | Original heading | Current contract |

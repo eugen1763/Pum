@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   bindSearchSession,
+  revokeSearchSession,
   type SearchSessionRole,
   withSearchRoute,
   SearchCallRouter,
@@ -124,6 +125,37 @@ const functionTool = { type: "function", name: "read" };
 describe("web search provider wrapping", () => {
   afterEach(() => {
     webSearch.enabled = false;
+  });
+
+  test("retirement revokes only the exact bound runtime before SDK disposal, including same-ID replacement", async () => {
+    webSearch.enabled = true;
+    const received: any[] = [];
+    const provider = wrapProvider(recordingProvider(received));
+    const old = await boundSession(provider, "same-canonical-session", "main");
+    old.agent.streamFunction({}, {}, { sessionId: old.sessionId });
+    const replacement = await boundSession(provider, old.sessionId, "main");
+    replacement.agent.streamFunction({}, {}, { sessionId: replacement.sessionId });
+    const oldBody = await received[0].onPayload({ tools: [functionTool] }, {});
+    expect(oldBody.tools).toContainEqual({ type: "web_search" });
+    revokeSearchSession({ sessionId: old.sessionId }); // IDs/ambient objects grant no revocation.
+    expect(received[0].signal.aborted).toBe(false);
+    revokeSearchSession(old);
+    revokeSearchSession(old);
+    expect(webSearch.enabled).toBe(true);
+    expect(received[0].signal.aborted).toBe(true);
+    expect(received[1].signal.aborted).toBe(false);
+    expect(() => JSON.stringify({ ...oldBody, type: "response.create" })).toThrow("aborted");
+    const denied = await received[0].onPayload({ tools: [functionTool, { type: "web_search" }] }, {});
+    expect(denied.tools).toEqual([functionTool]);
+    const allowed = await received[1].onPayload({ tools: [functionTool] }, {});
+    expect(allowed.tools).toContainEqual({ type: "web_search" });
+    await old.agent.transformContext!([]);
+    old.agent.streamFunction({}, {}, { sessionId: old.sessionId });
+    expect(received[2].signal.aborted).toBe(true);
+    const freshDenied = await received[2].onPayload({ tools: [{ type: "web_search" }] }, {});
+    expect(freshDenied.tools).toEqual([]);
+    revokeSearchSession(replacement);
+    expect(received[1].signal.aborted).toBe(true);
   });
 
   // Defect 1: the wrapper must chain, not overwrite, a pre-existing onPayload,

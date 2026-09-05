@@ -14,12 +14,13 @@ import { LspController } from "./lsp";
 import { createMcpProcessAdapter } from "./mcp-process";
 import { SessionLockOwner } from "./session-lock";
 import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session-lock-runtime";
+import { bindConversationBranchSession } from "./conversation-branch";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, hasMemoryContextExtension } from "./memory";
 import { ContextWindowController } from "./context-window";
 import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
-import { bindSearchSession, installWebSearch, webSearch } from "./web-search";
+import { bindSearchSession, installWebSearch, revokeSearchSession, webSearch } from "./web-search";
 import { bindRuntimeSettingsActivity, isRuntimeIdle, runtimeSettings } from "./runtime-settings";
 import { installModelCatalogFallbacks } from "./model-catalog";
 import { identityExtension } from "./identity";
@@ -59,7 +60,11 @@ import { installSelectionClipboard } from "./clipboard";
 import { TerminalTitleController } from "./terminal-title";
 import { isOrcaTerminal, OrcaStatusController } from "./orca-status";
 import { SandboxController } from "./sandbox";
-import { bindFileCheckpointSession, createFileCheckpointExtension } from "./file-checkpoints";
+import {
+  bindFileCheckpointSession,
+  checkpointControllerForSession,
+  createFileCheckpointExtension,
+} from "./file-checkpoints";
 import { ProjectValidationController } from "./project-validation";
 import {
   createFilesystemSandboxExtension,
@@ -307,7 +312,7 @@ export async function start(
   const mcpControllers = new WeakMap<AgentSession, McpController>();
   const lspControllers = new WeakMap<AgentSession, LspController>();
   const sessionRuntime = await createLockedAgentSessionRuntime(
-    async ({ cwd, sessionManager, sessionStartEvent }) => {
+    async ({ cwd, sessionManager, sessionStartEvent, conversationState }) => {
       const releaseSettingsSetup = runtimeSettings.begin({});
       try {
       // Bind fresh state to the trusted target before service creation registers
@@ -366,6 +371,10 @@ export async function start(
         services,
         sessionManager,
         sessionStartEvent,
+        // Conversation navigation to a point with no messages leaves the SDK
+        // nothing to restore from, so it would silently fall back to global
+        // defaults. Only the branch transaction supplies this.
+        ...(conversationState ?? {}),
         tools: mainAllowedToolNames(),
       });
       mcpSession = result.session;
@@ -381,6 +390,8 @@ export async function start(
         }
       };
       try {
+        // Track deferred custom input before any binding can enqueue it.
+        bindConversationBranchSession(result.session);
         mcp.bind(result.session);
         lsp.bind(result.session);
         bindFileCheckpointSession(result.session);
@@ -395,7 +406,29 @@ export async function start(
         try { result.session.dispose(); } catch { /* Preserve the binding error. */ }
         throw error;
       }
-      return { ...result, services, diagnostics: services.diagnostics };
+      return {
+        ...result,
+        services,
+        diagnostics: services.diagnostics,
+        // Trusted, synchronous capability revocation for the exact retiring
+        // runtime, before any awaited extension shutdown hook can still reach a
+        // connected server, a retained preimage or a hosted-search grant. Every
+        // controller here is idempotent, so the ordinary dispose chain below
+        // still runs unchanged.
+        retireConversation: () => {
+          mcpDisposed = true;
+          mcpControllers.delete(result.session);
+          lspControllers.delete(result.session);
+          try { lsp.dispose(); } finally {
+            try { mcp.dispose(); } finally {
+              try { validation.dispose(); } finally {
+                try { checkpointControllerForSession(result.session.sessionId)?.dispose(); }
+                finally { revokeSearchSession(result.session); }
+              }
+            }
+          }
+        },
+      };
       } catch (error) {
         // Service/session setup can fail before a runtime owns these controllers.
         mcpDisposed = true;
@@ -515,6 +548,14 @@ export async function start(
         const result = await sessionRuntime.switchSession(path);
         if (!result.cancelled) statsManager.bindMainSession(sessionRuntime.session);
         return result.cancelled ? null : sessionRuntime.session;
+      }}
+      onBranchConversation={async (selection, branchOptions) => {
+        // Same session, same file, same lock: only the selected conversation
+        // path changes. A cancelled transaction leaves the runtime untouched.
+        const result = await sessionRuntime.branchConversation(selection, branchOptions);
+        if (result.cancelled) return null;
+        statsManager.bindMainSession(sessionRuntime.session);
+        return result;
       }}
       onRelocate={async (targetCwd: string) => {
         // Switch to the session it is already on, with a new cwd. pi rebuilds

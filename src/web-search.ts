@@ -57,6 +57,14 @@ type SearchAuthority = Readonly<{
 const requestAuthorities = new WeakMap<PayloadHook, SearchAuthority>();
 const diagnosticObservers = new WeakMap<PayloadHook, (payload: unknown) => void>();
 const finalPayloadHooks = new WeakSet<PayloadHook>();
+const sessionRevocations = new WeakMap<object, () => void>();
+
+/** Trusted exact-runtime retirement, not a global setting or model capability.
+ * Idempotently withdraws request grants before awaited session shutdown hooks.
+ */
+export function revokeSearchSession(session: object): void {
+  sessionRevocations.get(session)?.();
+}
 
 /** Bind once during trusted session setup, including resumed/replaced sessions. */
 export function bindSearchSession(
@@ -102,16 +110,19 @@ export function bindSearchSession(
   resetRequestDiagnostics(sessionId);
   const disposable = session as typeof session & Partial<Pick<AgentSession, "dispose">>;
   const dispose = disposable.dispose;
-  if (dispose) disposable.dispose = function () {
+  const revoke = () => {
+    if (!live) return;
     live = false;
     for (const controller of activeRequests) controller.abort();
     activeRequests.clear();
-    try { return dispose.call(session); }
-    finally {
-      search = Object.freeze({ enabled: false, disableEpoch: searchDisableEpoch });
-      projection.reset();
-      clearRequestDiagnostics(sessionId);
-    }
+    search = Object.freeze({ enabled: false, disableEpoch: searchDisableEpoch });
+    projection.reset();
+    clearRequestDiagnostics(sessionId);
+  };
+  sessionRevocations.set(session, revoke);
+  if (dispose) disposable.dispose = function () {
+    revoke();
+    return dispose.call(session);
   };
   const stream = session.agent.streamFunction;
   session.agent.streamFunction = (model, context, options) => {

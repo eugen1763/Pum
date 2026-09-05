@@ -112,6 +112,18 @@ export class RuntimeSettingsCoordinator {
 export const runtimeSettings = new RuntimeSettingsCoordinator();
 
 const activity = new WeakMap<AgentSession, () => boolean>();
+const admissionFreezers = new WeakMap<AgentSession, () => void>();
+
+/** Permanently retire an exact idle runtime before awaited shutdown hooks.
+ * Queue cancellation, abort and disposal remain available; no new input, shell
+ * or core work may enter. This is not disposal and does not release ownership.
+ */
+export function freezeRuntimeAdmissions(session: AgentSession): void {
+  if (!isRuntimeIdle(session)) throw new Error("Only an exact idle runtime can be retired.");
+  const freeze = admissionFreezers.get(session);
+  if (!freeze) throw new Error("Runtime admission tracking is unavailable.");
+  freeze();
+}
 
 /** Exact-runtime consent boundary. Missing/binding/disposed runtimes are not idle.
  * SDK session flags can be reset by an older cancelled preflight; neither those
@@ -134,6 +146,10 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
   type Admission = { epoch: number; started: boolean; released: boolean; parent?: Admission; release: () => void };
   let epoch = 0;
   let disposed = false;
+  let frozen = false;
+  const requireAdmission = () => {
+    if (disposed || frozen) throw new Error("Runtime is disposed or retiring");
+  };
   const shellReleases = new Set<() => void>();
   const scopes = new AsyncLocalStorage<Admission>();
   const admissions = new Set<Admission>();
@@ -179,10 +195,10 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
     }
   });
   const admit = async <T>(run: () => Promise<T>): Promise<T> => {
-    if (disposed) throw new Error("Runtime is disposed");
+    requireAdmission();
     const admission = reserve();
     try {
-      if (disposed || admission.released || admission.epoch !== epoch) throw new Error("Runtime admission was cancelled");
+      if (disposed || frozen || admission.released || admission.epoch !== epoch) throw new Error("Runtime admission was cancelled");
       return await scopes.run(admission, run);
     }
     finally {
@@ -195,7 +211,7 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
   // retain their public admission; do not release it between retry attempts.
   const dispatch = async <T>(run: () => Promise<T>): Promise<T> => {
     const admission = scopes.getStore();
-    if (disposed || (admission && admission.epoch !== epoch)) {
+    if (disposed || frozen || (admission && admission.epoch !== epoch)) {
       throw new Error("Runtime admission was cancelled");
     }
     // A dispatch has its own identity too: a direct agent.prompt/continue can
@@ -207,7 +223,7 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
     direct.started = true;
     if (admission && !admission.released) direct.parent = admission;
     try {
-      if (disposed || direct.released || direct.epoch !== epoch) throw new Error("Runtime admission was cancelled");
+      if (disposed || frozen || direct.released || direct.epoch !== epoch) throw new Error("Runtime admission was cancelled");
       return await scopes.run(direct, run);
     }
     finally { direct.release(); }
@@ -227,12 +243,47 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
   const prompt = session.prompt.bind(session);
   session.prompt = (...args) => admit(() => prompt(...args));
   const custom = session.sendCustomMessage.bind(session);
-  session.sendCustomMessage = (...args) => args[1]?.triggerTurn && args[1]?.deliverAs !== "nextTurn"
-    ? admit(() => custom(...args)) : custom(...args);
+  session.sendCustomMessage = async (...args) => {
+    requireAdmission();
+    return args[1]?.triggerTurn && args[1]?.deliverAs !== "nextTurn"
+      ? admit(() => custom(...args)) : custom(...args);
+  };
+  // These queue-only paths do not reserve a run, but accepting them after the
+  // retirement fence would silently strand user/custom input in the old runtime.
+  const guardQueueInput = <Args extends unknown[], Result>(send: (...args: Args) => Promise<Result>) => async (...args: Args): Promise<Result> => {
+    requireAdmission();
+    return send(...args);
+  };
+  if (session.steer) session.steer = guardQueueInput(session.steer.bind(session));
+  if (session.followUp) session.followUp = guardQueueInput(session.followUp.bind(session));
+  if (session.sendUserMessage) session.sendUserMessage = guardQueueInput(session.sendUserMessage.bind(session));
+  // Summary/tree methods bypass the ordinary core prompt route. In particular,
+  // shutdown ctx.compact() must not create an implicit summary after retirement.
+  if (session.compact) session.compact = guardQueueInput(session.compact.bind(session));
+  if (session.navigateTree) session.navigateTree = guardQueueInput(session.navigateTree.bind(session));
+  // Retained public SessionManager objects must not switch files or select a
+  // different tree during shutdown. Normal runtime semantics remain unchanged.
+  // The branch transaction reopens a new manager under the same lock for its
+  // own append after cleanup; it never thaws the retired manager.
+  for (const name of ["newSession", "setSessionFile", "branch", "resetLeaf", "branchWithSummary", "createBranchedSession"] as const) {
+    const manager = session.sessionManager;
+    const original = manager?.[name]?.bind(manager);
+    if (original) (manager as any)[name] = (...args: unknown[]) => {
+      requireAdmission();
+      return (original as (...args: unknown[]) => unknown)(...args);
+    };
+  }
+  for (const name of ["steer", "followUp"] as const) {
+    const original = session.agent?.[name]?.bind(session.agent);
+    if (original) session.agent[name] = (...args) => {
+      requireAdmission();
+      original(...args);
+    };
+  }
   if (session.executeBash) {
     const executeBash = session.executeBash.bind(session);
     session.executeBash = async (...args) => {
-      if (disposed) throw new Error("Runtime is disposed");
+      requireAdmission();
       // User shell execution can outlive agent_settled and has its own policy use.
       let release = () => {};
       let released = false;
@@ -241,7 +292,7 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
       release = coordinator.begin({});
       if (released) release();
       try {
-        if (disposed) throw new Error("Runtime is disposed");
+        requireAdmission();
         return await executeBash(...args);
       }
       finally { shellReleases.delete(owner); owner(); }
@@ -278,7 +329,13 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
       shellReleases.clear();
     }
   };
-  activity.set(session, () => !disposed && admissions.size === 0 && shellReleases.size === 0
+  admissionFreezers.set(session, () => {
+    // isRuntimeIdle was checked without awaiting; setting the fence runs no
+    // callbacks and cannot release or manufacture an activity owner.
+    frozen = true;
+    epoch++;
+  });
+  activity.set(session, () => !disposed && !frozen && admissions.size === 0 && shellReleases.size === 0
     && session.isStreaming === false && session.agent?.state?.isStreaming === false);
 }
 

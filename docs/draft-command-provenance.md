@@ -54,6 +54,15 @@ This is not protection against arbitrary code execution inside the App process,
 OS input automation, or a user choosing to clear and retype/paste untrusted text.
 Other slash-command families are outside this prerequisite's scope.
 
+## Conversation branch commands (#50)
+
+`/branch` and `/rewind` also require this direct-origin boundary, including opening
+the selection UI. Selecting a previous user prompt restores it with **restored**
+origin; it cannot invoke a sensitive slash command merely because navigation put
+it in the editor. Branch selection does not submit it automatically. The main-only,
+exact-runtime-idle, pending-input and retained-worker guards are additional checks,
+not substitutes for provenance. See [conversation branches](conversation-branches.md).
+
 ## Rendered regressions
 
 `tests/mcp-ui.test.tsx` uses OpenTUI's real renderer/input dispatch with bound

@@ -177,7 +177,7 @@ describe("canonical tools through the installed SDK request and prompt construct
 
   test("main and child registration load trusted state before creating services", () => {
     const main = readFileSync(join(import.meta.dir, "../src/main.tsx"), "utf8");
-    const factory = main.indexOf("async ({ cwd, sessionManager, sessionStartEvent }) => {");
+    const factory = main.indexOf("async ({ cwd, sessionManager, sessionStartEvent, conversationState }) => {");
     const construct = main.indexOf('new ToolGroupsController("main")');
     const load = main.indexOf("mainToolGroups.load(sessionManager.getSessionFile())");
     const services = main.indexOf("await createAgentSessionServices(", factory);

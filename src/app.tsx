@@ -166,6 +166,17 @@ import {
 } from "./settings-command";
 import { isRejectedToolResult, rejectedToolReason } from "./check-mode";
 import { SessionHistoryPopup } from "./session-history-popup";
+import {
+  ConversationBranchPopup,
+  CONVERSATION_BRANCH_PAGE_SIZE,
+} from "./conversation-branch-popup";
+import {
+  hasConversationBranchPendingInput,
+  listConversationBranchPoints,
+  type ConversationBranchPage,
+  type ConversationBranchSelection,
+} from "./conversation-branch";
+import type { ConversationBranchResult } from "./session-lock-runtime";
 import type { SessionHistoryItem } from "./session-history-metadata";
 import { setWritingStyle, WRITING_STYLES } from "./writing-style";
 import {
@@ -807,6 +818,8 @@ const DEFAULT_PROMPT_STASH_STORE: PromptStashStore = {
   remove: removePromptStash,
 };
 
+const EMPTY_BRANCH_PAGE: ConversationBranchPage = { points: [], total: 0, nextOffset: null };
+
 /** Move any buffered stream into the transcript so later lines land in order. */
 function flushed(t: Transcript): Transcript {
   return flushStream(t);
@@ -819,6 +832,7 @@ export function App({
   loadSessions,
   onSwitchSession,
   onRelocate,
+  onBranchConversation,
   settings: initial,
   searchProviders,
   subagentManager,
@@ -857,6 +871,15 @@ export function App({
   onSwitchSession: (path: string) => Promise<AgentSession | null>;
   /** Move this same session to another directory. Null when it could not move. */
   onRelocate?: (targetCwd: string) => Promise<AgentSession | null>;
+  /**
+   * Same-session conversation navigation. The host keeps the canonical file,
+   * id and ownership; it never restores files or companion state. Null means
+   * the host declined without changing the conversation.
+   */
+  onBranchConversation?: (
+    selection: ConversationBranchSelection,
+    options: { validate: () => void; validateRetired: () => void },
+  ) => Promise<ConversationBranchResult | null>;
   settings: PumSettings;
   /** Provider ids that carry the hosted web-search tool; empty means none. */
   searchProviders: string[];
@@ -1080,11 +1103,26 @@ export function App({
   const newsCursorRef = useRef(0);
   const statsOpenRef = useRef(false);
 
+  const [branchOpen, setBranchOpen] = useState(false);
+  const branchOpenRef = useRef(false);
+  const [branchPage, setBranchPage] = useState<ConversationBranchPage>(EMPTY_BRANCH_PAGE);
+  const branchPageRef = useRef<ConversationBranchPage>(EMPTY_BRANCH_PAGE);
+  const [branchOffset, setBranchOffset] = useState(0);
+  const branchOffsetRef = useRef(0);
+  const [branchCursor, setBranchCursor] = useState(0);
+  const branchCursorRef = useRef(0);
+  const [branchConfirming, setBranchConfirming] = useState(false);
+  const branchConfirmingRef = useRef(false);
+  /** Set only for the window in which a branch transaction owns the session. */
+  const branchRunningRef = useRef(false);
+  const branchNoticeRef = useRef<string | null>(null);
+  const [branchNotice, setBranchNotice] = useState(0);
+
   // Preview only the visible autocomplete selection. The committed setting and
   // its session/global persistence never participate in this temporary state.
   const themeSuggestions = shellMode || stashOpen || commandSuggestionsDismissed || activeAgentId
     || transcriptFocused || settingsOpen || helpOpen || historyOpen || statsOpen || agentSelectorOpen
-    || triggersOpen || loginOpen || providersOpen || newsOpen || todoOpen
+    || triggersOpen || loginOpen || providersOpen || newsOpen || todoOpen || branchOpen
     || questionnaireManager?.current() || spawnPreviewManager?.current()
     ? [] : settingsCompletions(commandInput, inputCursorOffset, cwd);
   const previewTheme = themeSuggestions[Math.min(commandCursor, Math.max(0, themeSuggestions.length - 1))]?.previewTheme;
@@ -1141,7 +1179,8 @@ export function App({
   // it from each opener means a popup added later cannot forget a line here.
   const todoVisible = todoOpen
     && !settingsOpen && !helpOpen && !historyOpen && !statsOpen && !agentSelectorOpen
-    && !triggersOpen && !loginOpen && !providersOpen && !newsOpen && !visibleQuestionnaire && !spawnPreview;
+    && !triggersOpen && !loginOpen && !providersOpen && !newsOpen && !branchOpen
+    && !visibleQuestionnaire && !spawnPreview;
   // Memoized because the filtered result is a new object every call whenever
   // the transcript holds reasoning. That new identity would re-run the dwell
   // and projection passes below on every render, keystrokes included.
@@ -1859,6 +1898,7 @@ export function App({
       helpOpen ||
       historyOpen ||
       newsOpenRef.current ||
+      branchOpenRef.current ||
       todoOpenRef.current ||
       statsOpenRef.current ||
       settingsOpenRef.current
@@ -2043,6 +2083,10 @@ export function App({
         setLoginOpen(false);
         setNewsOpen(false);
         newsOpenRef.current = false;
+        setBranchOpen(false);
+        branchOpenRef.current = false;
+        setBranchConfirming(false);
+        branchConfirmingRef.current = false;
         setStatsOpen(false);
         statsOpenRef.current = false;
       }
@@ -2279,6 +2323,16 @@ export function App({
       }
     });
   }, [session]);
+
+  // Ordered after the session replay effect above, so a branch disclosure lands
+  // under the newly selected path instead of being wiped by that replay. It
+  // also runs when a host rebuilds runtime state behind the same object.
+  useEffect(() => {
+    const notice = branchNoticeRef.current;
+    if (!notice) return;
+    branchNoticeRef.current = null;
+    append({ kind: "text", role: "system", text: notice });
+  }, [branchNotice, session]);
 
   useEffect(
     () => () => {
@@ -3002,6 +3056,213 @@ export function App({
     newsOpenRef.current = false;
     setNewsOpen(false);
     queueMicrotask(() => inputRef.current?.focus());
+  };
+
+  // Guards that must still hold when the retired runtime's cleanup has settled
+  // and the selection is about to be published. Refusing here is not a
+  // cancellation: no queued input is dropped and no companion state changes.
+  const conversationBranchStateBlocker = (): string | null => {
+    if (activeAgentIdRef.current !== null) {
+      return "Conversation branching belongs to the main transcript. Select the main transcript first.";
+    }
+    if (checkpointRecoveryRef.current || relocatingRef.current || pendingRelocationRef.current) {
+      return "Wait for the running session operation to finish before branching the conversation.";
+    }
+    if (pendingImages.current.length > 0 || pendingPastedTexts.current.length > 0) {
+      return "Clear attached images and pasted text before branching the conversation.";
+    }
+    if (!subagentManager.canBranchMainSession(session.sessionManager)) {
+      return "Worker setup, a retained worker or a pending delivery must finish before branching the conversation.";
+    }
+    const goal = goalRef.current;
+    if (goal && (goal.state === "active" || goal.state === "blocked")) {
+      return "Stop the goal with /goal stop before branching the conversation.";
+    }
+    if (goal?.pendingContinuation) {
+      return "A goal continuation is still owed. Resolve it before branching the conversation.";
+    }
+    return null;
+  };
+
+  /** Full opening guard: the state guard plus exact-runtime idleness. */
+  const conversationBranchBlocker = (): string | null => {
+    if (!onBranchConversation) return "Conversation branching is unavailable for this session runtime.";
+    if (branchRunningRef.current) return "A conversation branch is already being applied.";
+    if (sessionSwitchRef.current) {
+      return "Wait for the running session operation to finish before branching the conversation.";
+    }
+    const state = conversationBranchStateBlocker();
+    if (state) return state;
+    if (busyRef.current || !isRuntimeIdle(session) || session.pendingMessageCount !== 0
+      || session.isBashRunning !== false || session.hasPendingBashMessages !== false
+      || txRef.current.pending.length > 0 || hasConversationBranchPendingInput(session)) {
+      return "Wait for the main session to become idle with no pending input, delivery or Bash work before branching.";
+    }
+    return null;
+  };
+
+  const closeConversationBranch = () => {
+    branchOpenRef.current = false;
+    setBranchOpen(false);
+    branchConfirmingRef.current = false;
+    setBranchConfirming(false);
+    queueMicrotask(() => inputRef.current?.focus());
+  };
+
+  /** Bounded, read-only projection. A throw means the transcript is unsafe. */
+  const readConversationBranchPage = (offset: number): ConversationBranchPage | null => {
+    try {
+      return listConversationBranchPoints(session, { offset, limit: CONVERSATION_BRANCH_PAGE_SIZE });
+    } catch {
+      append({
+        kind: "text",
+        role: "error",
+        text: "This conversation cannot be projected safely, so branching is refused. Nothing was changed.",
+      });
+      return null;
+    }
+  };
+
+  const openConversationBranch = () => {
+    const blocked = conversationBranchBlocker();
+    if (blocked) {
+      append({ kind: "text", role: "error", text: blocked });
+      return;
+    }
+    const page = readConversationBranchPage(0);
+    if (!page) return;
+    if (page.total === 0) {
+      append({
+        kind: "text",
+        role: "system",
+        text: "No safe conversation points are available to branch from.",
+      });
+      return;
+    }
+    settingsOpenRef.current = false;
+    setSettingsOpen(false);
+    setHelpOpen(false);
+    setHistoryOpen(false);
+    setAgentSelectorOpen(false);
+    setTriggerPopup(false, false);
+    setLoginOpen(false);
+    setStatsOpen(false);
+    statsOpenRef.current = false;
+    todoOpenRef.current = false;
+    setTodoOpen(false);
+    newsOpenRef.current = false;
+    setNewsOpen(false);
+    branchOffsetRef.current = 0;
+    setBranchOffset(0);
+    branchCursorRef.current = 0;
+    setBranchCursor(0);
+    branchConfirmingRef.current = false;
+    setBranchConfirming(false);
+    branchPageRef.current = page;
+    setBranchPage(page);
+    branchOpenRef.current = true;
+    setBranchOpen(true);
+  };
+
+  const moveBranchCursor = (direction: number) => {
+    if (branchConfirmingRef.current) return;
+    const count = branchPageRef.current.points.length;
+    if (count === 0) return;
+    const next = Math.max(0, Math.min(count - 1, branchCursorRef.current + direction));
+    branchCursorRef.current = next;
+    setBranchCursor(next);
+  };
+
+  const pageConversationBranch = (direction: number) => {
+    if (branchConfirmingRef.current) return;
+    const current = branchPageRef.current;
+    const offset = direction > 0
+      ? current.nextOffset
+      : (branchOffsetRef.current > 0
+        ? Math.max(0, branchOffsetRef.current - CONVERSATION_BRANCH_PAGE_SIZE)
+        : null);
+    if (offset === null) return;
+    // Re-project instead of caching pages: a selection must always carry the
+    // transcript state it was actually read from.
+    const page = readConversationBranchPage(offset);
+    if (!page) {
+      closeConversationBranch();
+      return;
+    }
+    branchOffsetRef.current = offset;
+    setBranchOffset(offset);
+    branchPageRef.current = page;
+    setBranchPage(page);
+    branchCursorRef.current = 0;
+    setBranchCursor(0);
+  };
+
+  const confirmConversationBranch = () => {
+    if (!branchPageRef.current.points[branchCursorRef.current]) return;
+    if (!branchConfirmingRef.current) {
+      branchConfirmingRef.current = true;
+      setBranchConfirming(true);
+      return;
+    }
+    applyConversationBranch();
+  };
+
+  const applyConversationBranch = () => {
+    const point = branchPageRef.current.points[branchCursorRef.current];
+    const blocked = conversationBranchBlocker();
+    closeConversationBranch();
+    if (!point || !onBranchConversation) return;
+    if (blocked) {
+      append({ kind: "text", role: "error", text: blocked });
+      return;
+    }
+    // The App owns view/delivery admission; the host owns runtime, ownership and
+    // transcript proof. Both are rechecked while the transaction still holds the
+    // canonical lock, before and after the retired runtime's cleanup.
+    const guard = () => {
+      const reason = conversationBranchStateBlocker();
+      if (reason) throw new Error(reason);
+    };
+    branchRunningRef.current = true;
+    sessionSwitchRef.current = true;
+    setWorking(true);
+    onBranchConversation(point.selection, { validate: guard, validateRetired: guard })
+      .then((result) => {
+        if (!result) {
+          append({
+            kind: "text",
+            role: "system",
+            text: "Conversation branch was not applied; the current path is unchanged.",
+          });
+          queueMicrotask(() => inputRef.current?.focus());
+          return;
+        }
+        branchNoticeRef.current = result.recovered
+          ? "Conversation branch failed and the original conversation path was restored. Nothing else was changed."
+          : "Conversation branch selected in the same session. Files, git state and current goals, todos, settings, News and tool groups were not rewound.";
+        if (activeAgentIdRef.current !== null) selectAgentView(null);
+        focusInputAfterSwitch.current = true;
+        setSession(result.session);
+        setBranchNotice((revision) => revision + 1);
+        const restored = result.recovered ? undefined : result.editorText;
+        queueMicrotask(() => {
+          // A restored earlier prompt is never fresh command authority and is
+          // never submitted for the user.
+          if (restored !== undefined && !inputRef.current?.plainText) {
+            setEditorText(restored, restored.length, false, "restored");
+          }
+          inputRef.current?.focus();
+        });
+      })
+      .catch((error) => {
+        append({ kind: "text", role: "error", text: String(error) });
+        queueMicrotask(() => inputRef.current?.focus());
+      })
+      .finally(() => {
+        branchRunningRef.current = false;
+        sessionSwitchRef.current = false;
+        setWorking(false);
+      });
   };
 
   // Re-read on every transcript change while the popup is open: a todo tool call
@@ -4589,6 +4850,33 @@ export function App({
       return;
     }
 
+    // Explicit user-only conversation navigation. Never an extension command,
+    // model tool, attachment or pasted marker, and never a filesystem restore.
+    if (attachments.length === 0 && commandEligible && /^\/(?:branch|rewind)(?:\s|$)/.test(promptText)) {
+      setEditingStash(null);
+      histCursor.current = null;
+      draft.current = "";
+      const report = (text: string, error = false) => {
+        const line: Line = { kind: "text", role: error ? "error" : "system", text };
+        if (selectedAgentId) subagentManager.appendAgentLine(selectedAgentId, line, { persist: false });
+        else appendMainLine(line);
+      };
+      if (!directSubmission) {
+        report("Conversation branch commands require direct user input. Clear the draft and type the command anew.", true);
+        return;
+      }
+      if (selectedAgentId) {
+        report("Conversation branching is available only in the main transcript. Select the main transcript first.", true);
+        return;
+      }
+      if (promptText.trim().split(/\s+/).length !== 1) {
+        report("Usage: /branch (alias /rewind). Choose and confirm a point in the selector.", true);
+        return;
+      }
+      openConversationBranch();
+      return;
+    }
+
     // Explicit user-only recovery: never registered as an extension command or
     // model tool, and never interpreted from an attached image or pasted marker.
     if (attachments.length === 0 && commandEligible && /^\/checkpoint(?:\s|$)/.test(promptText)) {
@@ -5258,7 +5546,8 @@ export function App({
       helpOpen ||
       historyOpen ||
       statsOpenRef.current ||
-      newsOpenRef.current
+      newsOpenRef.current ||
+      branchOpenRef.current
     )) {
       key.stopPropagation();
       resetCancelArm();
@@ -5280,6 +5569,7 @@ export function App({
         queueMicrotask(() => inputRef.current?.focus());
       } else if (statsOpenRef.current) closeStats();
       else if (newsOpenRef.current) closeNews();
+      else if (branchOpenRef.current) closeConversationBranch();
       return;
     }
 
@@ -5518,6 +5808,26 @@ export function App({
         queueMicrotask(() => inputRef.current?.focus());
       }
       return; // navigation and Enter belong to the focused select
+    }
+
+    if (branchOpenRef.current || branchOpen) {
+      key.stopPropagation();
+      if (key.name === "escape") {
+        // Escape backs out of the confirmation first, so a stray key cannot
+        // apply a branch the user only wanted to look at.
+        if (branchConfirmingRef.current) {
+          branchConfirmingRef.current = false;
+          setBranchConfirming(false);
+        } else closeConversationBranch();
+      }
+      else if (key.name === "up") moveBranchCursor(-1);
+      else if (key.name === "down") moveBranchCursor(1);
+      else if (key.name === "left") pageConversationBranch(-1);
+      else if (key.name === "right") pageConversationBranch(1);
+      else if (key.name === "return" || key.name === "enter" || key.name === "kpenter") {
+        confirmConversationBranch();
+      }
+      return;
     }
 
     if (key.ctrl && key.name === "h") {
@@ -6118,14 +6428,14 @@ export function App({
 
   const popupResetKey = [
     loginOpen, spawnPreview?.id ?? "", Boolean(questionnaire), helpOpen, triggersOpen,
-    agentSelectorOpen, historyOpen, newsOpen, todoVisible, statsOpen, settingsOpen, page,
+    agentSelectorOpen, historyOpen, newsOpen, branchOpen, todoVisible, statsOpen, settingsOpen, page,
   ].join(":");
   const streamGap = visibleTx.stream
     ? needsTranscriptGap(lastLine, { kind: "text", role: visibleTx.stream.kind, text: visibleTx.stream.text })
     : false;
   const promptFocused = !transcriptFocused && !settingsOpen && !helpOpen && !historyOpen
     && !statsOpen && !agentSelectorOpen && !triggersOpen && !loginOpen && !providersOpen
-    && !visibleQuestionnaire && !spawnPreview && !newsOpen && !todoVisible;
+    && !visibleQuestionnaire && !spawnPreview && !newsOpen && !branchOpen && !todoVisible;
 
   // One element for the whole transcript, rebuilt only when what it shows
   // changes. React walks a child list of this size on every render of the app,
@@ -6472,6 +6782,18 @@ export function App({
               terminalWidth={width}
               terminalHeight={height}
               onSelect={selectHistorySession}
+            />
+          ) : null}
+          {branchOpen ? (
+            <ConversationBranchPopup
+              theme={theme}
+              points={branchPage.points}
+              cursor={branchCursor}
+              offset={branchOffset}
+              total={branchPage.total}
+              confirming={branchConfirming}
+              terminalWidth={width}
+              terminalHeight={height}
             />
           ) : null}
           {newsOpen ? (

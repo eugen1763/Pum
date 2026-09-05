@@ -463,6 +463,8 @@ export class SubagentManager {
   private mainCompletionResponse = "";
   private maxActiveSubagents: number;
   private worktreeQueue: Promise<void> = Promise.resolve();
+  private pendingWorktreeOperations = 0;
+  private mainBindingOperations = 0;
   private setupGeneration = 0;
   private readonly messageTimes = new Map<string, number[]>();
   private readonly settlements = new Map<string, SubagentSettlement>();
@@ -502,6 +504,20 @@ export class SubagentManager {
       .sort((a, b) => a.startedAt - b.startedAt);
   }
 
+  /** Conversation navigation must not race setup or recipient-side delivery.
+   * This is an exact-binding admission snapshot, not an activity/ownership lock.
+   * Retained internal roles count too; clearing a visible worker list is insufficient.
+   */
+  canBranchMainSession(sessionManager: ExtensionContext["sessionManager"]): boolean {
+    return !!this.mainApi && this.mainSessionManager === sessionManager
+      && this.mainBindingOperations === 0 && this.pendingWorktreeOperations === 0
+      && !this.mainRunning && this.records.size === 0
+      && this.settlementDeliveriesInFlight.size === 0
+      && ![...this.settlements.values()].some((settlement) =>
+        settlement.parentAgentId === null && settlement.acknowledgedAt === undefined)
+      && ![...this.idleOpenReminderStates.values()].some((state) => !!state.inFlightMessageId);
+  }
+
   getAgent(id: string): SubagentSnapshot | undefined {
     const record = this.records.get(id);
     return record ? cloneSnapshot(record) : undefined;
@@ -523,6 +539,16 @@ export class SubagentManager {
   }
 
   async attachMain(
+    pi: ExtensionAPI,
+    sessionManager: ExtensionContext["sessionManager"],
+    cwd: string,
+  ): Promise<void> {
+    this.mainBindingOperations++;
+    try { await this.attachMainRuntime(pi, sessionManager, cwd); }
+    finally { this.mainBindingOperations--; }
+  }
+
+  private async attachMainRuntime(
     pi: ExtensionAPI,
     sessionManager: ExtensionContext["sessionManager"],
     cwd: string,
@@ -687,6 +713,12 @@ export class SubagentManager {
   }
 
   async detachMain(): Promise<void> {
+    this.mainBindingOperations++;
+    try { await this.detachMainRuntime(); }
+    finally { this.mainBindingOperations--; }
+  }
+
+  private async detachMainRuntime(): Promise<void> {
     const sessionId = this.parentSessionId;
     this.spawnPreviewManager?.cancelRequester(sessionId);
     await this.shellManager?.invalidateSession(sessionId);
@@ -1753,10 +1785,12 @@ export class SubagentManager {
     const next = new Promise<void>((resolve) => { release = resolve; });
     const previous = this.worktreeQueue;
     this.worktreeQueue = previous.then(() => next);
-    await previous;
+    this.pendingWorktreeOperations++;
     try {
+      await previous;
       return await operation();
     } finally {
+      this.pendingWorktreeOperations--;
       release();
     }
   }

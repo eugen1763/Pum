@@ -265,3 +265,38 @@ Current mandatory implementation guidance. Read before changing identity, reloca
   web search, check mode, and writing style.
 
 <!-- end:ld-108 -->
+
+<a id="conversation-branches"></a>
+
+## Explicit same-session conversation navigation (#50)
+
+The user selected same-session branch/rewind only; new-file forks are deferred.
+`/branch` and `/rewind` change the selected ancestry in one canonical JSONL/UUID,
+retaining the entire original tree and all rollover archives. They never copy,
+truncate or rewrite existing transcript entries, restore files, run Git mutations,
+generate summaries or automatically submit a restored prompt. See the required
+[conversation branch details](../conversation-branches.md).
+
+Current goals/todos/settings/News/tool groups/relocation remain current session
+state, never historical snapshots reconstructed from an earlier point. Require
+stopped/terminal goals without an owed continuation. Canonical ownership must
+remain continuously reserved across same-file runtime replacement and rollback;
+validated relocation aliases still resolve that exact ownership. A private,
+context-excluded append-only navigation anchor makes the chosen leaf durable.
+A failed replacement restores original ancestry by another append-only anchor;
+failed append/recovery fails closed, never by rewriting/deleting JSONL or companions.
+
+Rebuild runtime-local capabilities rather than transferring consent or private
+projections. Permanently freeze exact-idle public/core/queue/shell admissions and
+revoke PUM-owned capabilities synchronously before bounded awaited normal SDK
+`session_shutdown` cleanup. Keep ownership reserved. Cleanup failure/timeout must
+not publish a selection or start a recovery runtime beside unfinished cleanup;
+retain the frozen runtime/lock until actual cleanup settles or process exit.
+Tree/fork hooks remain outside this explicit no-summary operation.
+Branch selection is direct-main-user-only with ref-backed provenance,
+exact-runtime idle plus pending input/delivery/setup/process guards, and no retained
+worker at any status. Selection binds the exact runtime and transcript state and
+revalidates at commit. Show bounded ordinary text-only user and completed assistant
+points, not private/custom/tool contents. Restored user text remains untrusted draft
+origin. The selected ancestry's last rollover boundary governs fresh context;
+other windows remain retained, not automatically injected or summarized.

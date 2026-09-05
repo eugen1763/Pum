@@ -42,6 +42,7 @@ support empty-prompt queued-message recall.
 | `/todo` | Open the selected agent's todo list |
 | `/news` | Recent answers |
 | `/history` | Session history |
+| `/branch`, `/rewind` | Select an earlier conversation path in the same session; no file restore |
 | `/processes`, `/triggers` | Supervised processes; `/triggers` opens that tab |
 | `/worktree` | Move the running session into a worktree and back |
 | `/settings [name] [value]` | Show or change any `pum.json` setting. See [Configuration](configuration.md) |
@@ -51,6 +52,18 @@ support empty-prompt queued-message recall.
 | `/stats` | Usage and cost for the session |
 | `/login` | Add or update a provider |
 | `/providers` | Manage providers: `/providers [add\|edit\|delete] [name]` |
+
+## Conversation branches
+
+Type `/branch` (or `/rewind`) directly in the idle main prompt, select a safe
+conversation point and confirm. `↑`/`↓` move, `←`/`→` page, `Enter` previews the
+chosen point and a second `Enter` confirms it. `Esc` leaves the confirmation, then
+closes the selector; `Ctrl+C` closes it outright. The canonical session and complete transcript
+remain; this is not a new-file fork. Files and **current** goals/todos/settings/
+News/tool groups are not rewound. Pending input, retained workers and outstanding
+automation/process work must settle first. Restored prompts remain untrusted drafts
+and are not sent automatically. See [conversation branches](conversation-branches.md)
+for selection, ownership, rollover, companion and failure semantics.
 
 ## File checkpoint recovery
 
