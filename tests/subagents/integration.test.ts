@@ -17,6 +17,7 @@ import { SandboxController } from "../../src/sandbox";
 import { replayEntries } from "../../src/replay";
 import { ContextWindowController, CONTEXT_TOOL_NAMES } from "../../src/context-window";
 import { bindSearchSession, webSearch, wrapProvider } from "../../src/web-search";
+import { createMemoryExtension, ProjectMemoryStore } from "../../src/memory";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -328,7 +329,7 @@ describe("background subagents", () => {
     unsubscribeUi();
   });
 
-  test("internal judge and AFK runtimes omit own-session context schemas", async () => {
+  test("internal judge and AFK runtimes omit own-session context schemas and private memory", async () => {
     const runtime = await ModelRuntime.create({
       authPath: join(agentDir, "auth.json"),
       modelsPath: join(agentDir, "models.json"),
@@ -337,9 +338,19 @@ describe("background subagents", () => {
       modelRuntime: runtime,
       agentDir,
       sandboxModeSource: () => "off",
+      childWorkerExtensionFactories: [() => createMemoryExtension({ agentDir, audience: "subagent" })],
     });
+    const store = new ProjectMemoryStore(agentDir, repo);
+    const old = store.read();
+    store.edit(old.revision, old.content, "INTERNAL_ROLE_PRIVATE_MEMORY_PROBE");
     await manager.attachMain({ appendEntry() {}, sendMessage() {} } as any, SessionManager.inMemory(repo), repo);
     try {
+      const worker = await manager.spawn({ task: "Inspect worker memory.", name: "memory-worker", modelId: "mock/mock-model", thinkingLevel: "off" });
+      const workerSession = (manager as any).records.get(worker.id).session;
+      const workerInput = await workerSession.agent.transformContext(workerSession.agent.state.messages);
+      expect(JSON.stringify(workerInput)).toContain("INTERNAL_ROLE_PRIVATE_MEMORY_PROBE");
+      expect(workerSession.agent.state.tools.map((tool: any) => tool.name)).toContain("memory_read");
+      expect(workerSession.agent.state.tools.map((tool: any) => tool.name)).not.toContain("memory_edit");
       const judge = await manager.spawnGoalJudge({
         task: "Wait for judge schema inspection.",
         modelId: "mock/mock-model",
@@ -349,6 +360,8 @@ describe("background subagents", () => {
       const judgeSession = (manager as any).records.get(judge.id).session;
       expect(judgeSession.agent.state.tools.map((tool: any) => tool.name).sort())
         .toEqual(["bash", "goal_verdict", "read"]);
+      expect(JSON.stringify(await judgeSession.agent.transformContext(judgeSession.agent.state.messages)))
+        .not.toContain("INTERNAL_ROLE_PRIVATE_MEMORY_PROBE");
       await manager.removeGoalJudge(judge.id);
 
       const afk = await manager.spawnAfkDelegate({
@@ -359,9 +372,13 @@ describe("background subagents", () => {
       });
       const afkSession = (manager as any).records.get(afk.id).session;
       expect(afkSession.agent.state.tools.map((tool: any) => tool.name)).toEqual(["afk_answer"]);
+      expect(JSON.stringify(await afkSession.agent.transformContext(afkSession.agent.state.messages)))
+        .not.toContain("INTERNAL_ROLE_PRIVATE_MEMORY_PROBE");
       await manager.removeAfkDelegate(afk.id);
     } finally {
       await manager.detachMain();
+      const current = store.read();
+      store.edit(current.revision, current.content, old.content);
     }
   });
 

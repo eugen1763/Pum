@@ -12,7 +12,7 @@ session.
 
 ## Project memory
 
-PUM injects private project memory before each model call. The main agent uses
+PUM reads private project memory before each model call. The main agent uses
 `memory_read` and `memory_edit` to maintain durable facts without user action.
 Worker agents can read memory, but they cannot change it. Goal judges and AFK
 delegates receive no memory.
@@ -23,6 +23,28 @@ separate files. A revision check and a cross-process lock prevent lost updates.
 
 The file holds at most 200 lines or 25 KiB. PUM rejects credential-like content.
 Current user instructions and repository files always take priority over memory.
+
+Each runtime keeps one memory snapshot for its active context window. A changed
+revision adds a complete replacement update at the current input's end. Earlier
+snapshots and updates keep their original positions. Updates never split an
+assistant tool-call block from its results. Unchanged reads add nothing, including
+retries. Empty or deleted memory supersedes earlier facts. Invalid or unavailable
+memory adds a generic notice that withdraws earlier memory as authoritative.
+Recovery adds the latest valid snapshot. Invalid content and error paths never
+enter the injected text.
+
+`new_context` deliberately replaces this active snapshot/update chain with the
+latest memory. PUM creates no summary and changes no earlier transcript entries.
+Retained updates consume context; the context meter counts them. There is no
+automatic consolidation, so frequent memory changes can require explicit rollover.
+
+Snapshots stay in runtime memory, not in the session transcript or a companion
+file. Resume, runtime replacement, branch changes, and manual compaction start a
+new projection from current memory. This intentionally resets the memory prefix;
+it does not establish whether a provider's server cache hits or misses. PUM does
+not retain historical private memory on disk merely to preserve a request prefix
+across restarts. Explicit `memory_read` results and model-written `memory_edit`
+arguments still follow the normal tool transcript contract.
 
 ## Interactive questionnaires
 

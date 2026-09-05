@@ -143,7 +143,7 @@ describe("project memory extension", () => {
     const extension = loadExtension("main", agentDir);
     const readTool = extension.tools.get(MEMORY_READ_TOOL_NAME);
     const editTool = extension.tools.get(MEMORY_EDIT_TOOL_NAME);
-    const context = { cwd: project };
+    const context = { cwd: project, sessionManager: { getSessionId: () => "test", getBranch: () => [] } };
     const read = await readTool.execute("read", {}, undefined, undefined, context);
     const emptyRevision = read.details.revision;
     await editTool.execute("edit", {

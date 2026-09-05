@@ -174,6 +174,17 @@ describe("headless project memory", () => {
       expect(writeRun.stderr).toContain("memory_read");
       expect(writeRun.stderr).toContain("memory_edit");
 
+      // Compare real HTTP request bodies, not internal custom-message timestamps.
+      // The memory_edit result must append an update after its complete tool block.
+      const writeRequests = requests as Array<{ messages: Array<{ role: string; content?: unknown }> }>;
+      expect(writeRequests).toHaveLength(3);
+      for (let index = 1; index < writeRequests.length; index++) {
+        const previous = writeRequests[index - 1]!.messages;
+        expect(writeRequests[index]!.messages.slice(0, previous.length)).toEqual(previous);
+      }
+      expect(writeRequests[2]!.messages.slice(-3).map((message) => message.role)).toEqual(["assistant", "tool", "user"]);
+      expect(JSON.stringify(writeRequests[2]!.messages.at(-1))).toContain("PUM project memory update");
+
       phase = "read";
       const readRun = await runHeadless(moved, agentDir, "Read the project memory from this moved worktree.");
       expect(readRun.exitCode).toBe(0);

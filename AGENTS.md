@@ -44,6 +44,7 @@ bun run start    # open the TUI in the current directory
 | `src/prompt-cache.ts` | Reconciliation, retention, migration, and atomic persistence |
 | `src/memory-identity.ts` | Stable Git common-directory or non-Git directory identity for project memory |
 | `src/memory.ts` | Bounded Markdown memory, atomic revision edits, context injection, and model tools |
+| `src/memory-context.ts` | Runtime-private per-window memory snapshots and append-only replacement updates |
 | `src/message-cache.ts` | Agent cache tools, ownership, stable IDs, and App execution bridge |
 | `src/image-paste.ts` | Clipboard image capture and temporary-file lifecycle |
 | `src/text-paste.ts` | Bounded local clipboard text capture for secure login fields |
@@ -251,9 +252,20 @@ These were chosen deliberately. Change them only on purpose.
   identity. The main agent and headless main agent can call `memory_read` and
   `memory_edit` without user approval. Worker agents can call only `memory_read`;
   goal judges and AFK delegates get neither memory context nor memory tools.
-  PUM injects valid non-empty memory before every model call without adding it to
-  the session transcript. Current user instructions and repository evidence take
-  priority. Memory holds at most 200 lines or 25 KiB, rejects credential-like
+  PUM reads memory before every model call. `memory-context.ts` keeps a runtime-private
+  snapshot per active window and inserts changed observations at fixed source-message
+  boundaries. Updates append after complete tool-call/result blocks, never between
+  them, and explicitly supersede earlier memory. Unchanged reads and retries add
+  nothing. Empty/deleted memory withdraws earlier facts; invalid/unavailable memory
+  adds a generic withdrawal notice, and recovery appends the latest valid content.
+  No injected snapshot enters the durable transcript or a companion file. Explicit
+  memory tool inputs/results retain their ordinary transcript contract.
+  `new_context` deliberately consolidates to current memory without a summary;
+  the context meter includes the retained update chain. Resume, runtime replacement,
+  branch changes, and manual compaction start a new projection. This trades prefix
+  continuity across restarts for not persisting historical private memory. It does
+  not establish provider cache-hit behavior. Current user instructions and repository
+  evidence take priority. Memory holds at most 200 lines or 25 KiB, rejects credential-like
   content, uses exact revision-checked replacements, a cross-process lock, and an
   atomic rename. This controlled writer is the sole model-driven exception to the
   generic config-directory write block.
