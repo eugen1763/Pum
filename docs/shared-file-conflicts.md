@@ -27,8 +27,10 @@ ownership assignment system, a transaction, or an automatic merge of semantics.
   in both the baseline and current text, and its complete touched lines are
   unchanged**. This permits disjoint-line edits and preserves other changes.
   It deliberately rejects same-line overlaps, fuzzy matches, ambiguous targets,
-  missing targets and unprovable rebases. A multi-edit proposal fails as a whole
-  if any target conflicts. Native matching, BOM/CRLF handling and diffs still
+  missing targets and unprovable rebases. Stale rebases also reject mixed or
+  bare-CR line endings that native edit would normalize outside the targets;
+  uniform LF/CRLF and a leading UTF-8 BOM remain supported. A multi-edit proposal
+  fails as a whole if any target conflicts. Native matching, BOM/CRLF handling and diffs still
   apply after admission. This is text-level detection, not proof of semantic
   independence (for example, a changed declaration can affect an untouched use).
 - A successful safe rebase reports that other changes were preserved and asks
