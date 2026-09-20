@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, posix, relative, resolve, sep, win32 } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
 const GUIDANCE = "docs/agent-guidance";
@@ -88,6 +88,11 @@ function links(text: string): string[] {
   return destinations;
 }
 
+/** Markdown and migration targets use POSIX separators, even after native path resolution. */
+function toMarkdownPath(path: string, separator = sep): string {
+  return path.split(separator).join("/");
+}
+
 function resolveLink(from: string, destination: string): { path: string; fragment: string } | undefined {
   if (/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(destination)) return undefined;
   const hash = destination.indexOf("#");
@@ -100,10 +105,22 @@ function resolveLink(from: string, destination: string): { path: string; fragmen
     expect(statSync(absolute).isFile(), `${from}: ${destination}`).toBe(true);
     expect(anchors(read(path)).has(fragment), `${from}: missing #${fragment} in ${path}`).toBe(true);
   }
-  return { path, fragment };
+  return { path: toMarkdownPath(path), fragment };
 }
 
 describe("agent guidance migration", () => {
+  test("native POSIX and Windows paths match Markdown migration targets and topic routes", () => {
+    for (const [paths, root] of [[posix, "/repo"], [win32, "D:\\a\\Pum\\Pum"]] as const) {
+      const from = `${GUIDANCE}/README.md`;
+      const native = paths.relative(root, paths.resolve(root, paths.dirname(from), "architecture.md"));
+      const path = toMarkdownPath(native, paths.sep);
+      expect(`${path}#intro`).toBe(`${GUIDANCE}/architecture.md#intro`);
+      expect(path.startsWith(`${GUIDANCE}/`)).toBe(true);
+      expect(toMarkdownPath(paths.relative(root, paths.resolve(root, paths.dirname(from), "../../AGENTS.md")), paths.sep))
+        .toBe("AGENTS.md");
+    }
+  });
+
   test("pins the original baseline and maps every source unit exactly once", () => {
     const { version, baseline, units } = manifest();
     expect(version).toBe(1);

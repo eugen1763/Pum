@@ -174,7 +174,7 @@ describe("bounded stale-safe Python documents", () => {
       expect(() => readLspDocument(cwd, "a.py")).toThrow();
     }
   }));
-  test("rejects mutation during bounded read and uses nonblocking nofollow descriptor flags", () => temporary((cwd) => {
+  test("rejects mutation during bounded read and uses available readonly nonblocking nofollow descriptor flags", () => temporary((cwd) => {
     const path = join(cwd, "a.py");
     writeFileSync(path, "pass\n");
     const original = fs.readSync;
@@ -187,8 +187,9 @@ describe("bounded stale-safe Python documents", () => {
     try {
       readLspDocument(cwd, "a.py");
       const flags = open.mock.calls[0]![1] as number;
-      expect(flags & fs.constants.O_NONBLOCK).toBe(fs.constants.O_NONBLOCK);
-      expect(flags & fs.constants.O_NOFOLLOW).toBe(fs.constants.O_NOFOLLOW);
+      // Windows may omit these optional constants; mutation rejection above still runs everywhere.
+      // Actual LSP process authority requires the Linux-only native MCP adapter.
+      expect(flags).toBe(fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0) | (fs.constants.O_NOFOLLOW ?? 0));
     } finally { open.mockRestore(); }
   }));
 });
