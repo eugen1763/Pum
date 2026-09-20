@@ -125,4 +125,8 @@ nested Bubblewrap.
 
 This MVP mounts the PUM configuration directory, credentials included, inside
 gVisor. With Check mode on it blocks credential access through supported tools,
-but it is not a second OS boundary. A host-side credential broker is planned.
+but it is not a second OS boundary. A host-side credential broker is deferred:
+the current launcher cannot establish a trusted runtime identity separate from
+untrusted tool processes. See the [broker design and prerequisites](outer-sandbox-broker-design.md)
+for the threat model, proposed protocol, failure behavior and required validation.
+No credential-isolation improvement is implemented by that design.
