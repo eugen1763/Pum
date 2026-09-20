@@ -22,6 +22,7 @@ import { createAssistantMessageEventStream, type AssistantMessage } from "@earen
 import { checkpointControllerForSession, createFileCheckpointExtension } from "../../src/file-checkpoints";
 import { filesystemSandboxExtension } from "../../src/filesystem-sandbox";
 import { RuntimeSettingsCoordinator, runtimeSettings } from "../../src/runtime-settings";
+import { createCheckModeExtension, getCheckModeConfig, setCheckModeConfig } from "../../src/check-mode";
 
 const root = mkdtempSync(join(tmpdir(), "pum-subagent-test-"));
 const repo = join(root, "repo");
@@ -191,6 +192,71 @@ function createMainBridge(manager: SubagentManager, sessionManager: SessionManag
 }
 
 describe("background subagents", () => {
+  for (const profile of ["on", "off"] as const) {
+    test(`shared worker pins mutation proposals before asynchronous policy (Check ${profile})`, async () => {
+      const previous = getCheckModeConfig();
+      setCheckModeConfig({ profile, model: "test/verifier" });
+      const path = join(repo, `guard-policy-${profile}.sh`);
+      writeFileSync(path, "before\n");
+      const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: join(agentDir, "models.json") });
+      const model = runtime.getModel("mock", "mock-model")!;
+      let enter!: () => void, release!: () => void;
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let verifierCalls = 0;
+      const verifier = {
+        getAvailableSnapshot: () => [{ provider: "test", id: "verifier" }],
+        completeSimple: async () => {
+          verifierCalls++; enter(); await gate;
+          return { role: "assistant", content: [{ type: "text", text: "SAFE" }], stopReason: "stop" };
+        },
+      } as any;
+      const replies: AssistantMessage["content"][] = [
+        [{ type: "toolCall", id: "guard-edit", name: "edit", arguments: { path, edits: [{ oldText: "before", newText: "stale" }] } }],
+        [{ type: "text", text: "Stopped after conflict." }],
+      ];
+      const provider = Object.create(runtime.getProvider("mock")!);
+      provider.streamSimple = () => {
+        const content = replies.shift()!;
+        const stopReason = content.some((part) => part.type === "toolCall") ? "toolUse" : "stop";
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: "done", reason: stopReason, message: {
+          role: "assistant", content, provider: model.provider, model: model.id, api: model.api, timestamp: Date.now(), stopReason,
+          usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        } });
+        return stream;
+      };
+      runtime.registerNativeProvider(provider);
+      const manager = new SubagentManager({ modelRuntime: runtime, agentDir,
+        childExtensionFactories: [filesystemSandboxExtension],
+        childWorkerExtensionFactories: [(_id, readonly) => createFileCheckpointExtension({ readonly })],
+        childExtensionFactoriesForAgent: [
+          (id) => createCheckModeExtension(verifier, { identity: { kind: "subagent", agentId: id } }),
+          () => ({ name: "off-policy-gate", factory(pi) { pi.on("tool_call", async (event) => {
+            if (profile === "off" && event.toolName === "edit") { enter(); await gate; }
+          }); } }),
+        ],
+      });
+      const sessionManager = SessionManager.inMemory(repo);
+      const bridge = createMainBridge(manager, sessionManager);
+      await manager.attachMain(bridge.api as any, sessionManager, repo);
+      try {
+        const worker = await manager.spawn({ name: `guard-policy-${profile}`, task: "Execute fixture.", modelId: "mock/mock-model", thinkingLevel: "off" });
+        await entered;
+        // Preserve oldText as a substring: native matching alone would incorrectly accept this.
+        writeFileSync(path, "before user changes\n");
+        release();
+        await waitUntil(() => manager.getAgent(worker.id)?.status === "idle");
+        expect(readFileSync(path, "utf8")).toBe("before user changes\n");
+        const snapshot = manager.getAgent(worker.id)!;
+        expect(JSON.stringify(snapshot.transcript)).toContain("File mutation conflict");
+        expect(checkpointControllerForSession(manager.getDiagnosticsSessionId(worker.id)!)!.list()).toEqual([]);
+        expect(verifierCalls).toBe(profile === "on" ? 1 : 0);
+      } finally {
+        release(); await manager.detachMain(); setCheckModeConfig(previous); rmSync(path, { force: true });
+      }
+    });
+  }
   for (const disposal of ["worker removal", "manager detach"] as const) {
     test(`${disposal} clears checkpoints captured by a real managed worker runtime`, async () => {
       const runtime = await ModelRuntime.create({

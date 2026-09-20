@@ -2234,13 +2234,15 @@ export class SubagentManager {
         extensionFactories: [
           ...this.childExtensionFactories,
           readonlySubagentExtension(record.snapshot.readonly === true),
+          // File proposals must pin their baseline before asynchronous Check review.
+          // Internal roles have no worker extensions or mutation state.
+          ...workerExtensions,
           ...this.childExtensionFactoriesForAgent.map((factory) => factory(
             record.snapshot.id,
             record.snapshot.readonly === true,
           )),
           ...(validation ? [validation.extension()] : []),
           ...(contextWindow ? [contextWindow.extension()] : []),
-          ...workerExtensions,
           this.childExtension(record.snapshot.id),
         ],
       },

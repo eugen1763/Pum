@@ -1,5 +1,5 @@
 import {
-  createEditToolDefinition, createWriteToolDefinition, withFileMutationQueue,
+  createEditToolDefinition, createReadToolDefinition, createWriteToolDefinition, withFileMutationQueue,
   type AgentSession, type InlineExtension,
 } from "@earendil-works/pi-coding-agent";
 import { createHash, randomUUID } from "node:crypto";
@@ -11,6 +11,7 @@ import { getCheckModeConfig } from "./check-mode";
 import { pathSensitivity } from "./check-mutation";
 import { validateSandboxPath } from "./filesystem-sandbox";
 import { canonicalPathIdentityAllowMissing, isPathInsideOrSame } from "./platform";
+import { FileMutationGuard, type MutationAdmission } from "./file-mutation-guard";
 
 export const CHECKPOINT_MAX_FILE_BYTES = 1024 * 1024;
 export const CHECKPOINT_MAX_BYTES = 8 * 1024 * 1024;
@@ -64,11 +65,13 @@ export class FileCheckpointController {
   private evicted = 0;
   private disposed = false;
   private generation = 0;
+  readonly mutationGuard: FileMutationGuard;
   constructor(
     private readonly cwd: string,
     private readonly allowedPaths: () => readonly string[] = () => getCheckModeConfig().additionalPaths ?? [],
     private readonly agentDir = AGENT_DIR,
-  ) {}
+    private readonly checkpoints = true,
+  ) { this.mutationGuard = new FileMutationGuard(cwd, allowedPaths); }
 
   private async validate(path: string): Promise<string> {
     const target = await validateSandboxPath(this.cwd, path, this.allowedPaths(), "write");
@@ -123,15 +126,24 @@ export class FileCheckpointController {
     this.skipped = 0;
     this.evicted = 0;
   }
-  dispose(): void { this.disposed = true; this.clear(); }
+  dispose(): void { this.disposed = true; this.clear(); this.mutationGuard.dispose(); }
 
   /** Execute through pi's native queue and exact write/edit argument and diff contracts. */
   async execute(
     toolName: "write" | "edit", toolCallId: string, input: any,
-    signal?: AbortSignal, onUpdate?: any,
+    signal?: AbortSignal, onUpdate?: any, requirePrepared = false,
   ): Promise<any> {
     if (this.disposed) throw new Error("Checkpoint runtime is disposed.");
     const generation = this.generation;
+    return this.mutationGuard.run(toolName, toolCallId, input, signal,
+      (admission) => this.executeAdmitted(toolName, toolCallId, input, admission, generation, signal, onUpdate), requirePrepared);
+  }
+
+  private async executeAdmitted(
+    toolName: "write" | "edit", toolCallId: string, input: any, admission: MutationAdmission,
+    generation: number, signal?: AbortSignal, onUpdate?: any,
+  ): Promise<any> {
+    let writtenContent: string | undefined;
     let pending: Pending | undefined;
     let readState: Snapshot | undefined;
     let skip = false;
@@ -140,6 +152,8 @@ export class FileCheckpointController {
       await validateSandboxPath(this.cwd, path, this.allowedPaths(), "write");
       let before: Snapshot | null | undefined;
       try {
+        // Stable-read protection also applies in headless mode. Disabling
+        // recovery retention must not turn a supported edit into a failure.
         before = await this.snapshot(path);
         if (readState && before?.fingerprint !== readState.fingerprint) {
           throw new CheckpointConflictError("Checkpoint conflict: file changed since edit read; mutation refused.");
@@ -150,8 +164,11 @@ export class FileCheckpointController {
       }
       // A skipped capture must never bypass a boundary that changed during IO.
       await validateSandboxPath(this.cwd, path, this.allowedPaths(), "write");
+      await this.mutationGuard.assertUnchanged(admission);
       if (signal?.aborted || this.disposed) throw new Error("Operation aborted");
       await writeFile(path, content, "utf8");
+      writtenContent = content;
+      if (!this.checkpoints) return;
       if (skip || before === undefined || Buffer.byteLength(content) > CHECKPOINT_MAX_FILE_BYTES) { skip = true; return; }
       try {
         const after = await this.snapshot(path);
@@ -182,8 +199,14 @@ export class FileCheckpointController {
       }, writeFile: captureWrite,
     } });
     const tool = toolName === "write" ? write : edit;
-    const result = await tool.execute(toolCallId, input, signal, onUpdate, { cwd: this.cwd } as any);
-    if (signal?.aborted || this.disposed || generation !== this.generation) return result;
+    let result = await tool.execute(toolCallId, input, signal, onUpdate, { cwd: this.cwd } as any);
+    if (signal?.aborted || this.disposed) return result;
+    if (writtenContent !== undefined) {
+      try { await this.mutationGuard.didWrite(admission, writtenContent); }
+      catch { admission.notice = "File changed or became unavailable after writing; read it again before further mutations."; }
+    }
+    if (admission.notice) result = { ...result, content: [...result.content, { type: "text", text: admission.notice }] };
+    if (!this.checkpoints || generation !== this.generation) return result;
     let note: string;
     if (!skip && pending) {
       const record: Record = {
@@ -258,7 +281,7 @@ export class FileCheckpointController {
 }
 
 /** A fresh extension instance per runtime; no state survives session replacement. */
-export function createFileCheckpointExtension(options: { readonly?: boolean } = {}): InlineExtension {
+export function createFileCheckpointExtension(options: { readonly?: boolean; checkpoints?: boolean } = {}): InlineExtension {
   return {
     name: "pum-file-checkpoints",
     factory(pi) {
@@ -270,7 +293,7 @@ export function createFileCheckpointExtension(options: { readonly?: boolean } = 
         const id = ctx.sessionManager.getSessionId();
         if (retired || (sessionId !== undefined && sessionId !== id)) throw new Error("Checkpoint runtime is unavailable.");
         if (!controller) {
-          controller = new FileCheckpointController(ctx.cwd);
+          controller = new FileCheckpointController(ctx.cwd, undefined, undefined, options.checkpoints !== false);
           sessionId = id;
           controllers.set(id, controller);
           const binding = bindings.get(id);
@@ -285,10 +308,22 @@ export function createFileCheckpointExtension(options: { readonly?: boolean } = 
         if (sessionId && controllers.get(sessionId) === controller) controllers.delete(sessionId);
         controller = undefined;
       });
+      pi.on("before_agent_start", (event) => ({
+        systemPrompt: `${event.systemPrompt}\n\n## Shared file mutation guard\n\nRead existing files before write/edit. Changed read/proposal baselines reject stale writes and overlapping edits; exact unique unchanged edit targets can preserve other changes. On conflict, reread and reconcile, coordinate ownership or use spawn_subagent with worktree: true. This is process-local conflict detection, not filesystem isolation: Bash, user shells and external editors are not locked or checkpointed.`,
+      }));
+      pi.on("tool_call", async (event, ctx) => {
+        if (event.toolName !== "write" && event.toolName !== "edit") return;
+        try { await obtain(ctx).mutationGuard.prepare(event.toolName, event.toolCallId, event.input); }
+        catch (error) { return { block: true, reason: error instanceof Error ? error.message : "File mutation proposal unavailable." }; }
+      });
+      pi.on("tool_result", (event) => { controller?.mutationGuard.forgetProposal(event.input); });
+      pi.on("agent_end", () => { controller?.mutationGuard.clearProposals(); });
+      const read = createReadToolDefinition(process.cwd());
+      pi.registerTool({ ...read, execute: (id, args, signal, onUpdate, ctx) => obtain(ctx).mutationGuard.read(id, args, signal, onUpdate) });
       const write = createWriteToolDefinition(process.cwd());
       const edit = createEditToolDefinition(process.cwd());
-      pi.registerTool({ ...write, execute: (id, args, signal, onUpdate, ctx) => obtain(ctx).execute("write", id, args, signal, onUpdate) });
-      pi.registerTool({ ...edit, execute: (id, args, signal, onUpdate, ctx) => obtain(ctx).execute("edit", id, args, signal, onUpdate) });
+      pi.registerTool({ ...write, execute: (id, args, signal, onUpdate, ctx) => obtain(ctx).execute("write", id, args, signal, onUpdate, true) });
+      pi.registerTool({ ...edit, execute: (id, args, signal, onUpdate, ctx) => obtain(ctx).execute("edit", id, args, signal, onUpdate, true) });
     },
   };
 }
