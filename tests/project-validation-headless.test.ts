@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -15,12 +15,14 @@ function response(delta: Record<string, unknown>, reason: string): Response {
 }
 
 describe("headless automatic validation end to end", () => {
-  for (const scenario of ["disabled", "passed", "failed", "wrong-digest"] as const) {
-    test(`${scenario}: real CLI, isolated config, local provider and registered PUM Bash`, async () => {
+  for (const tool of ["write", "edit"] as const) for (const scenario of ["disabled", "passed", "failed", "wrong-digest"] as const) {
+    test(`${tool}, ${scenario}: real CLI, isolated config, local provider and registered PUM Bash`, async () => {
       const root = mkdtempSync(join(tmpdir(), "pum-validation-headless-"));
       const cwd = join(root, "project");
       const agentDir = join(root, "fixture-state");
       mkdirSync(join(cwd, ".pum"), { recursive: true }); mkdirSync(agentDir);
+      const source = join(cwd, "source.txt");
+      writeFileSync(source, "before\n");
       const bytes = JSON.stringify({ version: 1, commands: [{ kind: "test",
         command: scenario === "failed" ? "printf HEADLESS_VALIDATION_OUTPUT; exit 7" : "printf HEADLESS_VALIDATION_OUTPUT",
         timeoutSeconds: 2 }], maxRuns: 1 });
@@ -32,7 +34,9 @@ describe("headless automatic validation end to end", () => {
         const body = await request.json() as any; requests.push(body);
         if (!body.messages.some((message: any) => message.role === "tool")) {
           return response({ role: "assistant", tool_calls: [{ index: 0, id: "edit-batch", type: "function", function: {
-            name: "write", arguments: JSON.stringify({ path: "source.txt", content: "edited\n" }),
+            name: tool, arguments: JSON.stringify(tool === "write"
+              ? { path: "source.txt", content: "edited\n" }
+              : { path: "source.txt", edits: [{ oldText: "before", newText: "edited" }] }),
           } }] }, "tool_calls");
         }
         return response({ role: "assistant", content: "HEADLESS_ASSISTANT_DONE" }, "stop");
@@ -56,10 +60,15 @@ describe("headless automatic validation end to end", () => {
         } finally { clearTimeout(timer); }
         if (scenario === "wrong-digest") {
           expect(code).not.toBe(0); expect(requests).toHaveLength(0); expect(stderr).toContain("digest does not match");
+          expect(readFileSync(source, "utf8")).toBe("before\n");
         } else {
           expect(requests).toHaveLength(2); expect(stdout).toContain("HEADLESS_ASSISTANT_DONE");
           expect(stdout).not.toContain("HEADLESS_VALIDATION_OUTPUT");
+          expect(readFileSync(source, "utf8")).toBe("edited\n");
+          expect(stderr).toContain("File checkpoints are unavailable in headless mode");
           const serialized = JSON.stringify(requests[1]);
+          expect(serialized).not.toContain("Runtime-only file checkpoint retained");
+          expect(serialized).not.toContain("Checkpoint capture disabled");
           if (scenario === "disabled") {
             expect(code).toBe(0); expect(stderr).not.toContain("Automatic validation:");
             expect(serialized).not.toContain("HEADLESS_VALIDATION_OUTPUT");

@@ -34,6 +34,30 @@ afterEach(() => {
 });
 
 describe("runtime-only file checkpoints", () => {
+  test("disabled retention permits small-file edits with stable-read protection and no checkpoints", async () => {
+    const cwd = directory();
+    const controller = new FileCheckpointController(cwd, () => [], join(cwd, "private-config"), false);
+    controllers.push(controller);
+    const path = join(cwd, "sample.txt");
+    writeFileSync(path, "\ufeffbefore\r\nunchanged\r\n");
+    const result = await edit(controller, path, "before", "after");
+    expect(readFileSync(path, "utf8")).toBe("\ufeffafter\r\nunchanged\r\n");
+    expect(result.details.patch).toContain("+after");
+    expect(JSON.stringify(result)).not.toContain("checkpoint retained");
+    expect(controller.list()).toEqual([]);
+    expect(controller.summary()).toContain("0/32 checkpoints");
+
+    const snapshot = (controller as any).snapshot.bind(controller);
+    let snapshots = 0;
+    (controller as any).snapshot = async (target: string) => {
+      // First is the edit read, second is the actual write-boundary comparison.
+      if (++snapshots === 2) writeFileSync(path, "user changed it during edit\n");
+      return snapshot(target);
+    };
+    await expect(edit(controller, path, "after", "must not overwrite")).rejects.toThrow("file changed since edit read");
+    expect(readFileSync(path, "utf8")).toBe("user changed it during edit\n");
+    expect(controller.list()).toEqual([]);
+  });
   test("exclusive recovery creation never truncates a competing destination", async () => {
     const { cwd, controller, path } = fixture();
     writeFileSync(path, "before");

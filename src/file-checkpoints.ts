@@ -152,7 +152,8 @@ export class FileCheckpointController {
       await validateSandboxPath(this.cwd, path, this.allowedPaths(), "write");
       let before: Snapshot | null | undefined;
       try {
-        if (!this.checkpoints) throw new Error("Checkpoint capture disabled.");
+        // Stable-read protection also applies in headless mode. Disabling
+        // recovery retention must not turn a supported edit into a failure.
         before = await this.snapshot(path);
         if (readState && before?.fingerprint !== readState.fingerprint) {
           throw new CheckpointConflictError("Checkpoint conflict: file changed since edit read; mutation refused.");
@@ -167,6 +168,7 @@ export class FileCheckpointController {
       if (signal?.aborted || this.disposed) throw new Error("Operation aborted");
       await writeFile(path, content, "utf8");
       writtenContent = content;
+      if (!this.checkpoints) return;
       if (skip || before === undefined || Buffer.byteLength(content) > CHECKPOINT_MAX_FILE_BYTES) { skip = true; return; }
       try {
         const after = await this.snapshot(path);
