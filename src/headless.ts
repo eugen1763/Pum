@@ -11,6 +11,7 @@ import { createLockedAgentSessionRuntime, lockedProjectSession } from "./session
 import { conversationBranchState } from "./conversation-branch";
 import { isPlanModeActive, planModeExtension } from "./plan-mode";
 import { createFilesystemSandboxExtension } from "./filesystem-sandbox";
+import { bindFileCheckpointSession, createFileCheckpointExtension } from "./file-checkpoints";
 import { installModelCatalogFallbacks } from "./model-catalog";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, hasMemoryContextExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
@@ -251,6 +252,7 @@ async function runPromptSession(
             writingStyleExtension,
             explanationStrengthExtension,
             checkModePromptExtension,
+            createFileCheckpointExtension({ readonly: restricted, checkpoints: false }),
             checkModeExtension,
             sandboxController.extension({ readonly: restricted }),
             ...(restricted
@@ -274,6 +276,7 @@ async function runPromptSession(
       try {
         bindRuntimeSettingsActivity(result.session);
         bindCheckModeApprovalSession(result.session);
+        if (!restricted) bindFileCheckpointSession(result.session);
         bindSearchSession(result.session, "main");
         contextWindow.bind(result.session);
         validation.bind(result.session);

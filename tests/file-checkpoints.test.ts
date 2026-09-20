@@ -211,6 +211,8 @@ describe("runtime-only file checkpoints", () => {
     expect(controller.list()[0]!.bytes).toBe(CHECKPOINT_MAX_FILE_BYTES);
     controller.clear();
     writeFileSync(path, maximum + "x");
+    // Checkpoint clear must not erase conflict observations; acknowledge the external fixture change.
+    await controller.mutationGuard.read("refresh-large", { path });
     await write(controller, path, "small");
     expect(controller.list()).toEqual([]);
     await write(controller, path, maximum + "x");
@@ -264,10 +266,12 @@ describe("runtime-only file checkpoints", () => {
     expect(controller.list()).toEqual([]);
   });
 
-  test("native queue serializes preimages and clear invalidates queued capture", async () => {
+  test("native queue retains sequential preimages and clear invalidates queued capture", async () => {
     const { controller, path } = fixture();
     writeFileSync(path, "zero");
-    await Promise.all([write(controller, path, "one"), write(controller, path, "two")]);
+    // Concurrent whole-file proposals now conflict; a subsequent proposal sees our own write.
+    await write(controller, path, "one");
+    await write(controller, path, "two");
     const records = controller.list();
     expect(records).toHaveLength(2);
     expect(readFileSync(await controller.recover(records[1]!.id), "utf8")).toBe("one");
@@ -424,6 +428,7 @@ describe("runtime-only file checkpoints", () => {
         { path: "sample.txt", edits: { oldText: "three", newText: "THREE" } },
       ]) {
         const prepared = await tool.prepareArguments(raw);
+        await handlers.get("tool_call")!({ toolName: "edit", toolCallId: "sdk-contract", input: prepared }, ctx);
         const result = await tool.execute("sdk-contract", prepared, undefined, undefined, ctx);
         expect(result.details.diff).toBeString();
       }

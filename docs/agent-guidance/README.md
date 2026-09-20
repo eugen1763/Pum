@@ -54,6 +54,10 @@ All 157 original units are covered: 149 preserved and eight clarified with evide
 
 ## Post-migration contracts
 
+- [Shared file mutation baselines (#65)](security.md#shared-file-conflicts):
+  per-runtime observed/proposed versions, canonical process-local serialization,
+  stale-write rejection and conservative disjoint-line edits, with explicit Bash limits.
+
 - [Enforced plan-only mode and implementation approval (#51)](security.md#plan-mode):
   the readonly role applied to main, its fail-closed unavailable-enforcement
   behavior, dual mode records and direct-user transition gate.
