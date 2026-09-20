@@ -26,7 +26,7 @@ async function settle(setup: Setup) {
   await setup.flush();
 }
 
-async function renderApp() {
+async function renderApp(width = 100, theme = "tokyonight") {
   const directory = mkdtempSync(join(tmpdir(), "pum-theme-ui-"));
   directories.push(directory);
   const sessionFile = join(directory, "session.jsonl");
@@ -42,14 +42,14 @@ async function renderApp() {
     clearQueue: () => ({ steering: [], followUp: [] }), abort: async () => {},
     prompt: async () => { prompts++; }, steer: async () => {},
   } as any;
-  const setup = await createTestRenderer({ width: 100, height: 28, kittyKeyboard: true, exitOnCtrlC: false });
+  const setup = await createTestRenderer({ width, height: 28, kittyKeyboard: true, exitOnCtrlC: false });
   destroy = () => setup.renderer.destroy();
   createRoot(setup.renderer).render(<App
     session={session}
     modelRuntime={{ getAvailableSnapshot: () => [], getProviders: () => [] } as any}
     onNewSession={async () => session} loadSessions={async () => []}
     onSwitchSession={async () => session}
-    settings={{ showThinking: false, theme: "tokyonight", animations: false,
+    settings={{ showThinking: false, theme, animations: false,
       workingRuleAnimation: "off", webSearch: false, writingStyle: "none",
       explanationStrength: "simple", checkMode: "off", checkModel: "mock/check",
       maxActiveSubagents: 10 }}
@@ -81,6 +81,32 @@ async function type(setup: Setup, text: string) {
   await setup.mockInput.typeText(text);
   await settle(setup);
 }
+
+describe("terminal-default App canvas", () => {
+  for (const width of [32, 100]) {
+    for (const name of ["tokyonight", "github-light"]) {
+      test(`${name} preserves transparent canvas and opaque settings at ${width} columns`, async () => {
+        const { setup } = await renderApp(width, name);
+        // The pinned scrollbar paints its own final column, even in an empty
+        // transcript. Inspect the wide blank canvas spans, not that control.
+        const canvas = () => setup.captureSpans().lines.flatMap((line) => line.spans)
+          .filter((span) => span.text.trim() === "" && span.width >= width - 1);
+        expect(canvas().length).toBeGreaterThan(0);
+        for (const span of canvas()) expect(span.bg.a).toBe(0);
+        expect(setup.captureCharFrame().split("\n").every((line) => Array.from(line).length <= width)).toBe(true);
+        setup.mockInput.pressKey("p", { ctrl: true });
+        await settle(setup);
+        const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+        expect(spans.some((span) => span.bg.equals(parseColor(loadTheme(name).popupBg)))).toBe(true);
+        expect(setup.captureCharFrame().split("\n").every((line) => Array.from(line).length <= width)).toBe(true);
+        setup.mockInput.pressEscape();
+        await settle(setup);
+        expect(canvas().length).toBeGreaterThan(0);
+        for (const span of canvas()) expect(span.bg.a).toBe(0);
+      });
+    }
+  }
+});
 
 describe("theme autocomplete previews", () => {
   for (const command of ["/theme", "/settings theme"]) {

@@ -5,6 +5,7 @@ import { AGENT_DIR } from "./config";
 
 export type Theme = {
   name: string;
+  /** Base canvas: transparent uses the terminal's configured background. */
   bg: string;
   fg: string;
   dim: string;
@@ -57,7 +58,7 @@ export type Theme = {
 
 const tokyonight: Theme = {
   name: "tokyonight",
-  bg: "#1a1b26",
+  bg: "transparent",
   fg: "#c0caf5",
   dim: "#565f89",
   accent: "#7aa2f7",
@@ -96,7 +97,7 @@ const tokyonight: Theme = {
 
 const gruvbox: Theme = {
   name: "gruvbox",
-  bg: "#282828",
+  bg: "transparent",
   fg: "#ebdbb2",
   dim: "#928374",
   accent: "#83a598",
@@ -135,7 +136,7 @@ const gruvbox: Theme = {
 
 const catppuccin: Theme = {
   name: "catppuccin",
-  bg: "#1e1e2e",
+  bg: "transparent",
   fg: "#cdd6f4",
   dim: "#6c7086",
   accent: "#89b4fa",
@@ -174,7 +175,7 @@ const catppuccin: Theme = {
 
 const nord: Theme = {
   name: "nord",
-  bg: "#2e3440",
+  bg: "transparent",
   fg: "#d8dee9",
   dim: "#7b88a1",
   accent: "#88c0d0",
@@ -213,7 +214,7 @@ const nord: Theme = {
 
 const dracula: Theme = {
   name: "dracula",
-  bg: "#282a36",
+  bg: "transparent",
   fg: "#f8f8f2",
   dim: "#6272a4",
   accent: "#bd93f9",
@@ -252,7 +253,7 @@ const dracula: Theme = {
 
 const rosepine: Theme = {
   name: "rosepine",
-  bg: "#191724",
+  bg: "transparent",
   fg: "#e0def4",
   dim: "#6e6a86",
   accent: "#c4a7e7",
@@ -291,7 +292,7 @@ const rosepine: Theme = {
 
 const solarized: Theme = {
   name: "solarized",
-  bg: "#002b36",
+  bg: "transparent",
   fg: "#839496",
   dim: "#586e75",
   accent: "#268bd2",
@@ -330,7 +331,7 @@ const solarized: Theme = {
 
 const kanagawa: Theme = {
   name: "kanagawa",
-  bg: "#1f1f28",
+  bg: "transparent",
   fg: "#dcd7ba",
   dim: "#727169",
   accent: "#7e9cd8",
@@ -369,7 +370,7 @@ const kanagawa: Theme = {
 
 const githubLight: Theme = {
   name: "github-light",
-  bg: "#ffffff",
+  bg: "transparent",
   fg: "#24292f",
   dim: "#6e7781",
   accent: "#0969da",

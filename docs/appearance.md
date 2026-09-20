@@ -42,7 +42,17 @@ The preview ends when suggestions close, including after insertion or Escape.
 Clearing the draft or opening a popup also restores the committed theme.
 Changes belong to the session. Add `--global` to save a theme globally, or use `/store` afterward.
 
-Create `theme.json` in the PUM config directory to override semantic tokens:
+Every preset leaves the base background transparent, using your terminal's
+configured background (and its opacity, if enabled). Popups, user/message bars,
+selections and diff highlights keep their own opaque semantic surfaces. Choose
+a dark preset for a dark terminal, or `github-light` for a light terminal;
+PUM does not change the terminal's background or automatically adjust contrast.
+Animated text carets blink on a transparent background rather than fading toward
+an assumed colour. An opaque background override retains the smooth fade.
+
+Create `theme.json` in the PUM config directory to override semantic tokens.
+Set `"bg": "#1a1b26"`, for example, for an opaque canvas, or `"bg": "transparent"`
+to keep the terminal background. Explicit overrides apply to every preset:
 
 ```json
 {

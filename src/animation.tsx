@@ -60,9 +60,9 @@ export const CARET_FADE_STEPS = 16;
 const ease = (t: number) => (1 - Math.cos(Math.max(0, Math.min(1, t)) * Math.PI)) / 2;
 
 /**
- * The caret dissolves into the background instead of switching off. The block
- * glyph stays in place for the whole cycle, so the row's width never changes
- * and no glyph swap can rewrite the text underneath it.
+ * The caret's brightness envelope. Opaque backgrounds use a smooth fade;
+ * unknown (transparent) backgrounds use its midpoint as a blink threshold.
+ * Both keep one cell occupied so the row's width never changes.
  */
 export function caretAlpha(elapsedMs: number): number {
   const phase = (((elapsedMs % CARET_PERIOD_MS) + CARET_PERIOD_MS) % CARET_PERIOD_MS)
@@ -504,7 +504,7 @@ export function useShimmerText(opts: {
     const stop = subscribe((elapsedMs) => {
       if (!ref.current) return;
       const styled = shimmer(latest.current, base, hi, elapsedMs);
-      if (caret) styled.chunks.push(fg(mixLight(behind, hi, caretAlpha(elapsedMs)))(CARET));
+      if (caret) styled.chunks.push(caretChunk(behind, hi, caretAlpha(elapsedMs)));
       ref.current.content = styled;
     });
     return () => {
@@ -521,7 +521,18 @@ export function useShimmerText(opts: {
   return ref;
 }
 
-/** Own styled text and append a width-stable fading caret while active. */
+/**
+ * Transparent has no RGB background to fade toward. Its zero RGB channels are
+ * not the terminal's colour, and terminal foreground alpha is not a portable
+ * way to recover that colour. Blink a width-stable space instead. Opaque custom
+ * backgrounds retain the smooth linear-light fade; neither path paints a bg.
+ */
+export function caretChunk(background: RGBA, lit: RGBA, strength: number): TextChunk {
+  if (background.a < 1) return fg(lit)(strength >= 0.5 ? CARET : " ");
+  return fg(mixLight(background, lit, strength))(CARET);
+}
+
+/** Own styled text and append a width-stable caret while active. */
 export function useBlinkingText(opts: {
   chunks: TextChunk[];
   contentKey: string;
@@ -543,8 +554,10 @@ export function useBlinkingText(opts: {
 
   const paint = useCallback(() => {
     if (!ref.current) return;
-    const color = mixLight(behind, lit, caretStep.current / CARET_FADE_STEPS);
-    ref.current.content = new StyledText([...latest.current, fg(color)(CARET)]);
+    ref.current.content = new StyledText([
+      ...latest.current,
+      caretChunk(behind, lit, caretStep.current / CARET_FADE_STEPS),
+    ]);
   }, [behind, lit]);
 
   useEffect(() => {

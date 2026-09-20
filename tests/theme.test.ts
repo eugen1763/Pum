@@ -11,6 +11,20 @@ afterEach(() => {
   }
 });
 
+describe("transparent canvas", () => {
+  test("all presets leave the base unpainted but keep semantic surfaces opaque", () => {
+    for (const theme of Object.values(PRESETS)) {
+      expect(theme.bg).toBe("transparent");
+      expect(rgba(theme.bg).a).toBe(0);
+      for (const surface of [theme.popupBg, theme.popupShadow, theme.userBg,
+        theme.agentMessageBg, theme.selectionBg, theme.rejectionBg,
+        theme.diffAddedBg, theme.diffRemovedBg]) {
+        expect(rgba(surface).a).toBe(1);
+      }
+    }
+  });
+});
+
 describe("rejection theme tokens", () => {
   test("defines rejection foreground and background separately in all nine presets", () => {
     expect(Object.keys(PRESETS)).toHaveLength(9);
@@ -34,7 +48,7 @@ describe("rejection theme tokens", () => {
     }
   });
 
-  test("accepts rejection foreground and background from theme.json", async () => {
+  test.each(["#123456", "transparent"])("accepts bg=%s and semantic overrides from theme.json", async (bg) => {
     const directory = mkdtempSync(join(tmpdir(), "pum-theme-test-"));
     temporaryDirectories.push(directory);
     const rejection = PRESETS["github-light"]!.accent;
@@ -45,6 +59,7 @@ describe("rejection theme tokens", () => {
     const diffAddedBg = PRESETS["github-light"]!.diffAddedBg;
     const diffRemovedBg = PRESETS["github-light"]!.diffRemovedBg;
     writeFileSync(join(directory, "theme.json"), JSON.stringify({
+      bg,
       rejection,
       rejectionBg,
       statusCwd,
@@ -75,6 +90,7 @@ describe("rejection theme tokens", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     const theme = JSON.parse(stdout);
+    expect(theme.bg).toBe(bg);
     expect(theme.rejection).toBe(rejection);
     expect(theme.rejectionBg).toBe(rejectionBg);
     expect(theme.statusCwd).toBe(statusCwd);
