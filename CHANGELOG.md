@@ -2,6 +2,27 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.35-beta.1] - 2026-09-20
+
+### Added
+- Added runtime file checkpoints with explicit recovery copies, without overwriting originals or rewinding conversation history.
+- Added explicitly approved project validation, a confined tools-only MCP client, and document-only LSP diagnostics. These capabilities retain their documented consent, platform, and scope restrictions.
+- Added same-session conversation branch/rewind navigation and an enforced readonly planning mode with explicit implementation approval.
+- Added private request diagnostics and more conservative context-budget and recovery guidance.
+
+### Changed
+- All nine themes now use the terminal's background by default. Popups and semantic highlight surfaces remain opaque; explicit `theme.json` background overrides remain supported.
+- Project memory and operational settings updates now preserve stable request prefixes. Active tool schemas and history pagination are canonicalized, and detailed agent guidance is indexed by topic.
+
+### Fixed
+- File tools now detect stale shared-directory mutation proposals, reject conflicting whole-file writes and overlapping edits, and preserve provably disjoint text edits. Runtime baselines and canonical queues cover main, mutable workers, and headless sessions; Bash and external processes remain outside this check-time guard.
+- Hosted search authorization is bound to the exact requesting runtime and role, with revocation across asynchronous requests and retries.
+- Consent and security relaxation now use exact-runtime activity, and restored drafts cannot acquire direct-user command authority.
+- Validation UI test fixtures now release their session activity leases during teardown.
+
+### Known limitations
+- The outer-sandbox credential broker (#67) is deferred. Protocol-1 launches still mount PUM credentials; the new design document records the required runtime/tool isolation prerequisite, not an implemented fix.
+
 ## [0.2.34-beta.2] - 2026-09-05
 
 ### Fixed
