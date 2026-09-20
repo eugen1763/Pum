@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { bindRuntimeSettingsActivity } from "../src/runtime-settings";
+import { bindRuntimeSettingsActivity, runtimeSettings } from "../src/runtime-settings";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App } from "../src/app";
@@ -14,6 +14,7 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   destroy?.(); destroy = undefined;
   for (const cleanup of cleanups.splice(0)) cleanup();
+  expect(runtimeSettings.snapshot()?.active ?? 0).toBe(0);
 });
 function bindController(session: any, readonly = false) {
   const cwd = mkdtempSync(join(tmpdir(), "pum-validation-ui-"));
@@ -32,7 +33,13 @@ function bindController(session: any, readonly = false) {
   session.subscribe ??= () => () => {};
   bindRuntimeSettingsActivity(session);
   const controller = new ProjectValidationController({ cwd, readonly });
-  cleanups.push(() => { controller.dispose(); rmSync(cwd, { recursive: true, force: true }); });
+  cleanups.push(() => {
+    // Controller disposal alone does not retire the bound session's activity
+    // leases (including the deliberately unfinished agent_start fixture).
+    session.dispose();
+    controller.dispose();
+    rmSync(cwd, { recursive: true, force: true });
+  });
   controller.bind(session);
   return { controller, digest: createHash("sha256").update(text).digest("hex") };
 }
