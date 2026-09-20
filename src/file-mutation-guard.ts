@@ -1,4 +1,4 @@
-import { createReadToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { lstat, open } from "node:fs/promises";
@@ -43,6 +43,13 @@ function unchangedEditTargets(before: Snapshot, now: Snapshot, input: any): bool
   if (!Buffer.from(before.bytes.toString("utf8")).equals(before.bytes)
     || !Buffer.from(now.bytes.toString("utf8")).equals(now.bytes)
     || before.bytes.includes(0) || now.bytes.includes(0)) return false;
+  const currentText = now.bytes.toString("utf8");
+  // pi normalizes every line ending before editing and restores one style for
+  // the whole file. A stale rebase must not erase another writer's untouched
+  // mixed/bare-CR endings while claiming to preserve their changes. Uniform LF
+  // and CRLF round-trip; fresh (non-rebased) edits retain native behavior.
+  if (currentText.replace(/\r\n/g, "").includes("\r")
+    || (currentText.includes("\r\n") && /(?<!\r)\n/.test(currentText))) return false;
   const a = normalized(before.bytes), b = normalized(now.bytes);
   return input.edits.every((edit: any) => {
     if (typeof edit?.oldText !== "string") return false;
@@ -131,10 +138,12 @@ export class FileMutationGuard {
   }
 
   /** Preserve native image handling and filename retries; observe only a stable successful read. */
-  async read(id: string, input: any, signal?: AbortSignal, onUpdate?: any): Promise<any> {
+  async read(id: string, input: any, signal?: AbortSignal, onUpdate?: any, ctx?: ExtensionContext, autoResizeImages?: boolean): Promise<any> {
     const target = await this.target(input.path, "read");
     const before = await this.snapshot(target.path, "read");
-    const result = await createReadToolDefinition(this.cwd).execute(id, input, signal, onUpdate, { cwd: this.cwd } as any);
+    const result = await createReadToolDefinition(this.cwd, { autoResizeImages }).execute(
+      id, input, signal, onUpdate, ctx ?? { cwd: this.cwd } as ExtensionContext,
+    );
     const after = await this.snapshot(target.path, "read");
     if (!signal?.aborted && !this.disposed && before.fingerprint === after.fingerprint) this.remember(target.key, before);
     else if (!this.disposed) {
@@ -191,6 +200,9 @@ export class FileMutationGuard {
       };
       if (!current.absent && !current.bytes) admission.notice = (admission.notice ? `${admission.notice} ` : "")
         + "Large-file conflict detection uses metadata only (over 1 MiB); no stale edit rebasing.";
+      // Waiting for another runtime and filesystem validation are asynchronous;
+      // the exact prepared object must still carry the originally pinned args.
+      if (proposal.inputKey !== JSON.stringify(input)) throw new FileMutationConflictError("proposal arguments changed");
       return execute(admission);
     });
   }

@@ -25,11 +25,17 @@ export type FileCheckpointInfo = {
 type Record = FileCheckpointInfo & { before: Buffer | null; after: string };
 type Pending = { path: string; before: Buffer | null; after: string };
 const controllers = new Map<string, FileCheckpointController>();
-const bindings = new Map<string, { controller?: FileCheckpointController }>();
+type CheckpointBinding = { controller?: FileCheckpointController; readAutoResize?: () => boolean };
+const bindings = new Map<string, CheckpointBinding>();
 /** AgentSession.dispose does NOT emit session_shutdown (notably worker closure). */
-export function bindFileCheckpointSession(session: Pick<AgentSession, "sessionId" | "dispose">): void {
+export function bindFileCheckpointSession(session: Pick<AgentSession, "sessionId" | "dispose">
+  & { settingsManager?: Pick<AgentSession["settingsManager"], "getImageAutoResize"> }): void {
   const id = session.sessionId;
-  const binding = { controller: controllers.get(id) };
+  const settings = session.settingsManager;
+  const binding: CheckpointBinding = {
+    controller: controllers.get(id),
+    readAutoResize: settings ? () => settings.getImageAutoResize() : undefined,
+  };
   bindings.set(id, binding);
   const dispose = session.dispose.bind(session);
   session.dispose = () => {
@@ -319,7 +325,9 @@ export function createFileCheckpointExtension(options: { readonly?: boolean; che
       pi.on("tool_result", (event) => { controller?.mutationGuard.forgetProposal(event.input); });
       pi.on("agent_end", () => { controller?.mutationGuard.clearProposals(); });
       const read = createReadToolDefinition(process.cwd());
-      pi.registerTool({ ...read, execute: (id, args, signal, onUpdate, ctx) => obtain(ctx).mutationGuard.read(id, args, signal, onUpdate) });
+      pi.registerTool({ ...read, execute: (id, args, signal, onUpdate, ctx) => obtain(ctx).mutationGuard.read(
+        id, args, signal, onUpdate, ctx, bindings.get(ctx.sessionManager.getSessionId())?.readAutoResize?.(),
+      ) });
       const write = createWriteToolDefinition(process.cwd());
       const edit = createEditToolDefinition(process.cwd());
       pi.registerTool({ ...write, execute: (id, args, signal, onUpdate, ctx) => obtain(ctx).execute("write", id, args, signal, onUpdate, true) });
