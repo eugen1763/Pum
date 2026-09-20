@@ -7,6 +7,7 @@ import {
   TRAIL_HALF_LIFE_MS,
   bloomColor,
   caretAlpha,
+  caretChunk,
   constellationStar,
   coordinatedRuleState,
   decayTrail,
@@ -23,9 +24,34 @@ import {
   workingRuleFrameState,
   type WorkingRuleRole,
 } from "../src/animation";
-import { rgba } from "../src/theme";
+import { mixLight, rgba } from "../src/theme";
 import { goalLabel } from "../src/goal-line";
 import { createGoal } from "../src/goal";
+
+describe("caret backgrounds", () => {
+  test("transparent and translucent backgrounds blink without assuming black", () => {
+    const lit = rgba("#7aa2f7");
+    for (const background of ["transparent", "#12345680"]) {
+      for (const strength of [0, 0.25, 0.5, 0.75, 1]) {
+        const chunk = caretChunk(rgba(background), lit, strength);
+        expect(chunk.text).toBe(strength >= 0.5 ? "▊" : " ");
+        expect(chunk.fg).toEqual(lit);
+        expect(chunk.bg).toBeUndefined();
+      }
+    }
+  });
+
+  test("opaque overrides keep the original linear-light fade", () => {
+    const background = rgba("#ffffff");
+    const lit = rgba("#0969da");
+    for (const strength of [0, 0.25, 0.5, 0.75, 1]) {
+      const chunk = caretChunk(background, lit, strength);
+      expect(chunk.text).toBe("▊");
+      expect(chunk.fg).toEqual(mixLight(background, lit, strength));
+      expect(chunk.bg).toBeUndefined();
+    }
+  });
+});
 
 describe("coordinated working rules", () => {
   test("keeps both rules in the active pair synchronized", () => {
