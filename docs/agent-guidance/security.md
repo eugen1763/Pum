@@ -514,6 +514,26 @@ These scoped clarifications resolve older absolute wording, not change policy.
 
 <!-- end:ld-119 -->
 
+<a id="shared-file-conflicts"></a>
+
+## Shared file mutation baselines (#65)
+
+Main, mutable workers and headless wrap native read/write/edit definitions with
+runtime-private observations and immutable proposal baselines. Pin worker
+proposals before asynchronous Check review; recheck queued admission and the
+actual write boundary. Canonical path identities serialize covered mutations,
+not raw model path spellings. Reject stale whole-file writes. A stale edit may
+proceed only when every exact unique target's complete lines are unchanged;
+never apply fuzzy stale rebases or bless unseen changes as a new read baseline.
+No-prior-read/evicted and metadata-only large-file observations must disclose
+those limits. Checkpoint clear/recovery cannot erase or refresh these baselines;
+rejected mutations create no checkpoint. Dispose runtime state explicitly.
+Bash, user shells, Git, validation commands, extensions and external processes
+are not locked or backed up by this guard. These check-time checks are not OS
+isolation, filesystem CAS, rollback, or proof of semantic independence. See
+[shared-file conflict detection](../shared-file-conflicts.md) for exact bounds,
+worktree guidance and recovery integration.
+
 <a id="plan-mode"></a>
 
 ## Enforced plan-only mode and implementation approval (#51)

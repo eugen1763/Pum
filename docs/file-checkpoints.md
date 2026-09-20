@@ -72,6 +72,13 @@ process-local UI rows, not checkpoint content persisted to conversation history.
 
 ## Conflict and security model
 
+The separate [shared-file mutation guard](shared-file-conflicts.md) checks
+runtime read/proposal baselines before writes and edits, even with Check off.
+Rejected stale mutations retain no checkpoint. Safe disjoint edits capture the
+actual pre-write bytes, including intervening work, rather than the stale read.
+Clearing checkpoints never clears conflict observations; exporting a recovery
+copy does not refresh the original's baseline.
+
 Capture and recovery reuse filesystem sandbox write validation with the current
 project and additional roots. Recovery never grants a new root. Revoked roots,
 credential-sensitive paths, the PUM config boundary, credential-like filenames,

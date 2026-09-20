@@ -14,7 +14,11 @@ gets:
 `spawn_subagent` accepts `worktree: true` when isolated changes or conflict
 avoidance require a separate branch. PUM then creates the worktree under
 `.pum/worktrees`. Without that argument, the subagent can see changes from other
-agents in the shared project directory.
+agents in the shared project directory. File tools detect stale read/proposal
+baselines and reject conflicting writes/edits; disjoint unchanged target lines
+can still be edited safely. Read, reconcile and coordinate after a conflict, or
+use `worktree: true`. This is not isolation from Bash or external editors. See
+[shared-file conflict detection](shared-file-conflicts.md).
 
 Select a range of cached prompts and press `Enter`: the main agent groups
 related work and runs independent groups in parallel. Use `Ctrl+L` to select an
