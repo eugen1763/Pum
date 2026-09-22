@@ -53,7 +53,10 @@ releases only the exact async-scoped owner, never a shared session key or whiche
 run happens to be current. Older promise returns, failures and abort completions
 likewise release only their captured owners. A predecessor's reentry keeps pending
 relaxation blocked; a later subscriber can see a relaxation already committed at
-a genuine zero-reservation boundary. Abort invalidates old preflight dispatches;
+a genuine zero-reservation boundary. The installed SDK defers a run that a settled
+hook requests until every settled hook finishes. A custom-message run of this kind
+starts in the released scope of the older run. PUM leases it from its `agent_start`
+until its own settlement in that scope. Abort invalidates old preflight dispatches;
 an abort failure retains already-started work. Even successful SDK abort return
 cannot release scoped execution early: its own settlement/core promise must finish.
 Disposal refuses reentry before
@@ -188,7 +191,7 @@ A fresh request needs a fresh coherent observation. Enabling globally cannot byp
 the role allowlist or inject search through an unrelated callback.
 
 This additionally depends on an explicitly tested installed-SDK transport seam.
-pi 0.85 invokes `onPayload` once, then reuses that body for WebSocket retries and
+pi 0.87.1 invokes `onPayload` once, then reuses that body for WebSocket retries and
 SSE fallback/retries. Abort rejects its pending handshake and suppresses retries,
 but its cached socket acquisition and open-to-send microtask gap have no final
 abort check. PUM therefore adds an enumerable, request-owned body `toJSON` fence.

@@ -12,6 +12,7 @@ import {
 import {
   createAssistantMessageEventStream, InMemoryCredentialStore,
   type AssistantMessage, type Context, type Model, type ToolCall,
+  type JsonObject,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { ProjectValidationController, validationForSession } from "../src/project-validation";
@@ -37,7 +38,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 const text = (value = "Done."): AssistantMessage["content"] => [{ type: "text", text: value }];
-const call = (id: string, name: string, args: Record<string, unknown> = {}): ToolCall =>
+const call = (id: string, name: string, args: JsonObject = {}): ToolCall =>
   ({ type: "toolCall", id, name, arguments: args });
 const write = (id = "write-one", path = "source.txt", content = "new\n") => call(id, "write", { path, content });
 const command = (value = "fixture-test"): Command => ({ kind: "test", command: value, timeoutSeconds: 1 });
@@ -210,95 +211,47 @@ describe("project validation through the installed pi SDK", () => {
   });
 
   for (const contextOrder of [undefined, "validation-first", "context-first"] as const) {
-    for (const legacy of [false, true]) {
-      for (const partial of [false, true]) {
-        test(`fresh evidence survives ${legacy ? "legacy" : "contextual"} ${partial ? "partial" : "undefined"} predecessor without rollover (${contextOrder ?? "no context controller"})`, async () => {
-          const f = await fixture();
-          const update = partial ? { model: { ...MODEL, id: "predecessor-model" }, thinkingLevel: "off" as const } : undefined;
-          const predecessorInputs: string[] = [];
-          let predecessorCalls = 0;
-          const run = await f.open({ contextOrder, beforeBind(session) {
-            session.agent.prepareNextTurnWithContext = undefined;
-            if (legacy) session.agent.prepareNextTurn = function (signal) {
-              expect(this).toBe(session.agent); expect(signal?.aborted).toBe(false);
-              predecessorCalls++; return update;
-            };
-            else session.agent.prepareNextTurnWithContext = function (turn, signal) {
-              expect(this).toBe(session.agent); expect(signal?.aborted).toBe(false);
-              predecessorInputs.push(JSON.stringify(turn.context.messages));
-              predecessorCalls++; return update;
-            };
-          } });
-          const prepare = run.session.agent.prepareNextTurnWithContext!;
-          const returned: Awaited<ReturnType<typeof prepare>>[] = [];
-          run.session.agent.prepareNextTurnWithContext = async function (turn, signal) {
-            const value = await prepare.call(this, turn, signal); returned.push(value); return value;
-          };
-          // Without our own refresh, preserve even an undefined result verbatim.
-          run.replies.push([call("read-config", "read", { path: ".pum/validation.json" })], text());
-          await run.session.prompt("Read only: no evidence refresh.");
-          expect(returned.length).toBeGreaterThan(0);
-          for (const value of returned) expect(value).toBe(update);
-          returned.length = 0;
-          run.controller.enable(f.digest); run.replies.push([write()], text());
-          await run.session.prompt("Write and retain the predecessor contract.");
-          expect(predecessorCalls).toBeGreaterThan(1);
-          expect(run.executed).toHaveLength(1);
-          expect(run.requests).toHaveLength(4);
-          const next = JSON.stringify(run.requests[3]);
-          expect(next).toContain(f.digest); expect(next).toContain("VALIDATION_OUTPUT:fixture-test");
-          expect(next).toContain("Read only: no evidence refresh.");
-          expect(evidence(run.manager)).toHaveLength(1);
-          expect(run.manager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "pum.context_window")).toHaveLength(0);
-          const refreshed = returned.find((value) => value?.context);
-          expect(JSON.stringify(refreshed?.context?.messages)).toContain("VALIDATION_OUTPUT:fixture-test");
-          if (!legacy) expect(predecessorInputs.some((input) => input.includes("VALIDATION_OUTPUT:fixture-test"))).toBe(true);
-          if (partial) {
-            expect(refreshed?.model).toBe(update!.model);
-            expect(refreshed?.thinkingLevel).toBe("off");
-            expect(run.requestModels[3]).toBe("predecessor-model");
-          }
-          expectClean(run);
-        });
-      }
-    }
-    for (const stop of [true, false]) {
-      test(`preserves explicit predecessor shouldStopAfterTurn=${stop} (${contextOrder ?? "no context controller"})`, async () => {
+    test(`fresh evidence reaches the next request without rollover (${contextOrder ?? "no context controller"})`, async () => {
+      const f = await fixture();
+      const run = await f.open({ contextOrder });
+      run.replies.push([call("read-config", "read", { path: ".pum/validation.json" })], text());
+      await run.session.prompt("Read only: no evidence.");
+      expect(evidence(run.manager)).toHaveLength(0);
+      run.controller.enable(f.digest); run.replies.push([write()], text());
+      await run.session.prompt("Write and validate.");
+      expect(run.executed).toHaveLength(1);
+      expect(run.requests).toHaveLength(4);
+      const next = JSON.stringify(run.requests[3]);
+      expect(next).toContain(f.digest); expect(next).toContain("VALIDATION_OUTPUT:fixture-test");
+      expect(next).toContain("Read only: no evidence.");
+      expect(evidence(run.manager)).toHaveLength(1);
+      expect(run.manager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === "pum.context_window")).toHaveLength(0);
+      expectClean(run);
+    });
+    for (const end of [true, false]) {
+      test(`preserves an explicit predecessor finishTurn ${end ? "end" : "default"} decision (${contextOrder ?? "no context controller"})`, async () => {
         const f = await fixture(); let calls = 0;
         const run = await f.open({ contextOrder, beforeBind(session) {
-          session.agent.shouldStopAfterTurn = function (turn, signal) {
+          // Wrap pi's own hook: it dispatches the turn_end boundary that runs validation.
+          const inner = session.agent.finishTurn;
+          session.agent.finishTurn = async function (turn, signal) {
             expect(this).toBe(session.agent); expect(signal?.aborted).toBe(false);
-            expect(turn.message.role).toBe("assistant"); calls++; return stop;
+            expect(turn.message.role).toBe("assistant"); calls++;
+            const decision = await inner?.call(this, turn, signal);
+            return end ? { action: "end" } : decision ?? undefined;
           };
         } });
         run.controller.enable(f.digest); run.replies.push([write()]);
-        if (!stop) run.replies.push(text());
-        await run.session.prompt("Respect the predecessor stop decision.");
+        if (!end) run.replies.push(text());
+        await run.session.prompt("Respect the predecessor decision.");
         expect(calls).toBeGreaterThan(0); expect(run.executed).toHaveLength(1);
         expect(evidence(run.manager)).toHaveLength(1);
-        expect(run.requests).toHaveLength(stop ? 1 : 2);
-        if (!stop) expect(JSON.stringify(run.requests[1])).toContain("VALIDATION_OUTPUT:fixture-test");
+        expect(run.requests).toHaveLength(end ? 1 : 2);
+        if (!end) expect(JSON.stringify(run.requests[1])).toContain("VALIDATION_OUTPUT:fixture-test");
         expectClean(run);
       });
     }
   }
-
-  test("an explicit predecessor context wins while its other update fields survive", async () => {
-    const f = await fixture();
-    const run = await f.open({ beforeBind(session) {
-      session.agent.prepareNextTurnWithContext = (turn) => ({
-        context: { ...turn.context, messages: [...turn.context.messages,
-          { role: "user", content: "PREDECESSOR_CONTEXT_SENTINEL", timestamp: 1 }] },
-        model: { ...MODEL, id: "explicit-context-model" }, thinkingLevel: "off",
-      });
-    } });
-    run.controller.enable(f.digest); run.replies.push([write()], text());
-    await run.session.prompt("Preserve the predecessor's explicit context.");
-    expect(run.requestModels[1]).toBe("explicit-context-model");
-    expect(JSON.stringify(run.requests[1])).toContain("PREDECESSOR_CONTEXT_SENTINEL");
-    expect(JSON.stringify(run.requests[1])).toContain("VALIDATION_OUTPUT:fixture-test");
-    expectClean(run);
-  });
 
   test("discovery, preview and model text cannot approve; failed mutations do not validate", async () => {
     const f = await fixture(); const run = await f.open();

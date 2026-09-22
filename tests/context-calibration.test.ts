@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import { SessionManager, SettingsManager, type AgentSession, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { ContextWindowController } from "../src/context-window";
 import { contextCalibration, contextUsage, estimateContextMessage, estimateContextText } from "../src/context-estimate";
 
@@ -11,10 +11,12 @@ const usage = (input = 3000, output = 100) => ({ input, output, cacheRead: 0, ca
 const tool = (description: string) => ({ name: "fixture", description, parameters: { type: "object", properties: {} }, execute: async () => ({ content: [], details: {} }) }) as any;
 
 // Public Agent stream/message_end events pair each sample with its real request.
-// Session persistence is deliberately separate, just as in the existing controller harness.
+// Like AgentSession, messages persist at message_end, each request is built from
+// the session projection, and the prompt lives in transcript system messages.
 function harness(options: { systemPrompt?: string; injection?: string; tools?: any[] } = {}) {
   let injection = options.injection ?? "";
   const manager = SessionManager.inMemory();
+  manager.appendMessage({ role: "system", content: options.systemPrompt ?? "s".repeat(3600), timestamp: 0 });
   const controller = new ContextWindowController();
   const tools = new Map<string, any>();
   const extension = controller.extension();
@@ -22,9 +24,14 @@ function harness(options: { systemPrompt?: string; injection?: string; tools?: a
   extension.factory({ on: () => {}, registerTool: (definition: any) => tools.set(definition.name, definition) } as unknown as ExtensionAPI);
   let requestEstimate = 0;
   const agent = new Agent({
-    initialState: { model: model(), systemPrompt: options.systemPrompt ?? "s".repeat(3600), tools: options.tools ?? [] },
+    initialState: { model: model(), messages: manager.buildSessionProjection().messages, tools: options.tools ?? [] },
     transformContext: async (messages) => injection ? [...messages, user(injection)] : messages,
     streamFn: (() => { throw new Error("No configured response"); }) as any,
+  });
+  const sync = () => { agent.state.messages = manager.buildSessionProjection().messages; };
+  agent.prepareRequest = async (request) => ({ context: { ...request.context, messages: manager.buildSessionProjection().messages } });
+  agent.subscribe((event) => {
+    if (event.type === "message_end" && ["system", "user", "assistant", "toolResult"].includes(event.message.role)) manager.appendMessage(event.message as any);
   });
   const session = { agent, sessionManager: manager, settingsManager: SettingsManager.inMemory({ compaction: { reserveTokens: 1000 } }),
     get model() { return agent.state.model; }, async compact() {} } as unknown as AgentSession;
@@ -32,10 +39,12 @@ function harness(options: { systemPrompt?: string; injection?: string; tools?: a
   const meter = async () => (await tools.get("get_context_remaining").execute("meter", {})).details;
   const respond = async (sample: Record<string, unknown> | ((estimated: number) => Record<string, unknown>) = usage(), overrides: Record<string, unknown> = {}) => {
     agent.streamFunction = (_model, context) => {
-      requestEstimate = estimateContextText(context.systemPrompt ?? "")
-        + estimateContextText(JSON.stringify((context.tools ?? []).map(({ name, description, parameters }) => ({ name, description, parameters }))))
-        + (context.tools?.length ?? 0) * 32 // Conservative per-definition provider framing.
-        + context.messages.reduce((sum, message) => sum + estimateContextMessage(message as AgentMessage), 0);
+      const requestTools = getCurrentTools(context.messages);
+      requestEstimate = estimateContextText(getCurrentSystemPrompt(context.messages))
+        + estimateContextText(JSON.stringify(requestTools.map(({ name, description, parameters }) => ({ name, description, parameters }))))
+        + requestTools.length * 32 // Conservative per-definition provider framing.
+        + context.messages.filter((message) => message.role !== "system")
+          .reduce((sum, message) => sum + estimateContextMessage(message as AgentMessage), 0);
       const message = { role: "assistant", api: "openai-completions", provider: "test", model: agent.state.model.id,
         content: [{ type: "text", text: "Answer" }], timestamp: 2, stopReason: "stop",
         usage: typeof sample === "function" ? sample(requestEstimate) : sample, ...overrides } as any;
@@ -44,9 +53,14 @@ function harness(options: { systemPrompt?: string; injection?: string; tools?: a
       return stream;
     };
     await agent.prompt("Meter request");
+    sync();
     return requestEstimate;
   };
-  return { agent, manager, meter, respond, setInjection: (text: string) => { injection = text; } };
+  const append = (...messages: AgentMessage[]) => { for (const message of messages) manager.appendMessage(message as any); sync(); };
+  const setPrompt = (text: string) => append({ role: "system", content: "", sections: { harness: text }, timestamp: 0 } as AgentMessage);
+  /** Persisted conversation messages, which the next request contains. */
+  const persisted = () => manager.buildSessionProjection().messages.filter((message) => message.role !== "system");
+  return { agent, manager, meter, respond, append, setPrompt, persisted, setInjection: (text: string) => { injection = text; } };
 }
 
 describe("conservative context estimate helpers", () => {
@@ -133,9 +147,13 @@ describe("runtime-paired calibration", () => {
     const first = harness();
     await first.respond();
     const restored = harness();
-    restored.agent.state.messages.push(...structuredClone(first.agent.state.messages));
+    restored.append(...structuredClone(first.persisted()));
     expect((await restored.meter()).providerUsageTokens).toBe(0);
-    first.agent.state.messages = structuredClone(first.agent.state.messages);
+    // An equal content replacement makes the projection return a copied message.
+    const answer = first.manager.getBranch().findLast((entry) => entry.type === "message" && entry.message.role === "assistant")!;
+    if (answer.type !== "message" || answer.message.role !== "assistant") throw new Error("Missing answer");
+    expect((await first.meter()).providerUsageTokens).toBeGreaterThan(0);
+    first.manager.appendContextEdit(answer.id, { content: structuredClone(answer.message.content) });
     expect((await first.meter()).providerUsageTokens).toBe(0);
   });
 
@@ -147,27 +165,33 @@ describe("runtime-paired calibration", () => {
     expect(initial.calibrationFactor).toBe(factor);
     expect(initial.usedTokens).toBe(initial.providerUsageTokens);
     const tail = user("界😀".repeat(100));
-    h.agent.state.messages.push(tail);
-    h.agent.state.systemPrompt += "g".repeat(300);
+    h.append(tail);
+    const before = estimateContextText(h.agent.state.systemPrompt);
+    h.setPrompt("g".repeat(300));
+    const promptGrowth = estimateContextText(h.agent.state.systemPrompt) - before;
+    expect(promptGrowth).toBeGreaterThanOrEqual(100);
     const grown = await h.meter();
     expect(grown.uncalibratedTrailingTokens).toBe(estimateContextMessage(tail));
     expect(grown.estimatedTrailingTokens).toBe(Math.ceil(estimateContextMessage(tail) * factor));
-    expect(grown.uncalibratedOverheadTokens).toBe(100);
-    expect(grown.estimatedOverheadTokens).toBe(Math.ceil(100 * factor));
+    expect(grown.uncalibratedOverheadTokens).toBe(promptGrowth);
+    expect(grown.estimatedOverheadTokens).toBe(Math.ceil(promptGrowth * factor));
     expect(grown.usedTokens).toBe(initial.providerUsageTokens + grown.estimatedTrailingTokens + grown.estimatedOverheadTokens);
   });
 
   test("overhead growth has a high-water mark; shrinkage never subtracts and a new anchor resets it", async () => {
     const h = harness({ tools: [tool("base")], injection: "i".repeat(300) });
     await h.respond((n) => usage(n * 2));
-    h.agent.state.systemPrompt += "s".repeat(300);
+    const before = estimateContextText(h.agent.state.systemPrompt);
+    h.setPrompt("s".repeat(300));
+    const promptGrowth = estimateContextText(h.agent.state.systemPrompt) - before;
+    expect(promptGrowth).toBeGreaterThanOrEqual(100);
     h.agent.state.tools = [tool("base" + "t".repeat(600))];
     h.setInjection("i".repeat(1200));
     await h.agent.transformContext!(h.agent.state.messages, new AbortController().signal);
     const grown = await h.meter();
-    expect(grown.uncalibratedOverheadTokens).toBe(600);
-    expect(grown.estimatedOverheadTokens).toBe(1200);
-    h.agent.state.systemPrompt = "";
+    expect(grown.uncalibratedOverheadTokens).toBe(promptGrowth + 500);
+    expect(grown.estimatedOverheadTokens).toBe((promptGrowth + 500) * 2);
+    h.setPrompt("");
     h.agent.state.tools = [];
     h.setInjection("");
     await h.agent.transformContext!(h.agent.state.messages, new AbortController().signal);
@@ -217,19 +241,20 @@ describe("runtime-paired calibration", () => {
       await h.respond(usage(), overrides);
       expect((await h.meter()).source).toBe("estimate");
     }
+    // Persisted message objects are the ones that the next request sends.
     for (const mutate of [
-      (agent: Agent) => { (agent.state.messages[0] as any).content = "changed source"; },
-      (agent: Agent) => { (agent.state.messages.at(-1) as any).content[0].text = "changed answer"; },
-      (agent: Agent) => { (agent.state.messages.at(-1) as any).usage.input++; },
-      (agent: Agent) => { agent.state.model = model("one", 90_000); },
-      (agent: Agent) => { agent.state.model = { ...model(), api: "openai-responses" }; },
-      (agent: Agent) => { agent.state.model = model("one", NaN); },
-      (agent: Agent) => { agent.state.model = model("one", 0); },
+      (h: ReturnType<typeof harness>) => { (h.persisted()[0] as any).content = "changed source"; },
+      (h: ReturnType<typeof harness>) => { (h.persisted().at(-1) as any).content[0].text = "changed answer"; },
+      (h: ReturnType<typeof harness>) => { (h.persisted().at(-1) as any).usage.input++; },
+      (h: ReturnType<typeof harness>) => { h.agent.state.model = model("one", 90_000); },
+      (h: ReturnType<typeof harness>) => { h.agent.state.model = { ...model(), api: "openai-responses" }; },
+      (h: ReturnType<typeof harness>) => { h.agent.state.model = model("one", NaN); },
+      (h: ReturnType<typeof harness>) => { h.agent.state.model = model("one", 0); },
     ]) {
       const h = harness();
       await h.respond();
       expect((await h.meter()).source).toBe("provider_usage");
-      mutate(h.agent);
+      mutate(h);
       expect((await h.meter()).source).toBe("estimate");
       expect((await h.meter()).providerUsageTokens).toBe(0);
     }
@@ -238,10 +263,13 @@ describe("runtime-paired calibration", () => {
   test("calibration adds no session entries or private content to public meter results", async () => {
     const secret = "PRIVATE_INJECTION_FIXTURE_do_not_persist";
     const h = harness({ systemPrompt: "PRIVATE_PROMPT_FIXTURE".repeat(200), injection: secret.repeat(100), tools: [tool("PRIVATE_SCHEMA_FIXTURE".repeat(100))] });
-    const entries = h.manager.getEntries().slice();
+    // Ordinary message persistence is the SDK's; calibration adds nothing else.
+    const nonMessages = () => h.manager.getEntries().filter((entry) => entry.type !== "message");
+    const entries = nonMessages().slice();
     await h.respond((n) => usage(n * 2));
     const report = JSON.stringify(await h.meter());
-    expect(h.manager.getEntries()).toEqual(entries);
+    expect(nonMessages()).toEqual(entries);
+    expect(JSON.stringify(h.manager.getEntries())).not.toContain(secret);
     expect(JSON.stringify(h.agent.state.messages)).not.toContain(secret);
     for (const privateText of [secret, "PRIVATE_PROMPT_FIXTURE", "PRIVATE_SCHEMA_FIXTURE"])
       expect(report).not.toContain(privateText);

@@ -28,11 +28,13 @@
       "originalSha256": "f59e8c05220c7ac9861f3994d2747ac6522a135053602cb29c11f857fb342492",
       "target": "docs/agent-guidance/layout.md#layout",
       "disposition": "clarified",
-      "normalizedSha256": "241bf4630ed0e73c2dd33f40e623c1698e42c80250571d4454dbb81a7d03a369",
-      "note": "Correct the output-minimal module description: Quiet folds all settled calls; Normal groups routine successes.",
+      "normalizedSha256": "6fa6e70e9a71df55f4b8044a08e4b414ef4994b4ed4507a83695bafc3920d00b",
+      "note": "Correct the output-minimal module description: Quiet folds all settled calls; Normal groups routine successes. Remove the model-catalog module row: the installed pi 0.87.1 lists GPT-6 Astra, Luna and Sol, so PUM no longer adds catalog fallbacks.",
       "evidence": [
         "src/output-minimal.ts",
-        "tests/output-minimal.test.ts"
+        "tests/output-minimal.test.ts",
+        "package.json",
+        "tests/model-catalog.test.ts"
       ]
     },
     {
@@ -132,26 +134,37 @@
     {
       "id": "ld-007",
       "section": "Locked decisions",
-      "heading": "Model fallbacks are process-local and additive.",
+      "heading": "Model catalogs come from the installed pi.",
       "sourceStartLine": 156,
       "sourceEndLine": 162,
       "originalSha256": "0fdb87acfde1677e13777c10793fb01c6b7e02e871c2dc5005428f316621ce1c",
       "target": "docs/agent-guidance/architecture.md#ld-007",
-      "disposition": "preserved",
-      "normalizedSha256": "0fdb87acfde1677e13777c10793fb01c6b7e02e871c2dc5005428f316621ce1c",
-      "ordinal": 7
+      "disposition": "clarified",
+      "normalizedSha256": "58678426a89420b45dc2d2c1915aa2ced6a30a1dcda98e6cd1d230740893f6da",
+      "ordinal": 7,
+      "note": "pi 0.87.1 lists GPT-6 Astra, Luna and Sol for OpenAI and Codex. PUM removed its Astra fallback and adds no catalog entries; picker refresh rules are unchanged.",
+      "evidence": [
+        "package.json",
+        "tests/model-catalog.test.ts",
+        "src/settings-popup.tsx"
+      ]
     },
     {
       "id": "ld-008",
       "section": "Locked decisions",
-      "heading": "pi 0.85.0 needs an explicit server dependency.",
+      "heading": "PUM declares only the pi packages that it imports.",
       "sourceStartLine": 163,
       "sourceEndLine": 165,
       "originalSha256": "a95e72aad9bac4aabfdf72b9c6c5d2a135e5d37f941c5dcc2812f0b143427820",
       "target": "docs/agent-guidance/architecture.md#ld-008",
-      "disposition": "preserved",
-      "normalizedSha256": "a95e72aad9bac4aabfdf72b9c6c5d2a135e5d37f941c5dcc2812f0b143427820",
-      "ordinal": 8
+      "disposition": "clarified",
+      "normalizedSha256": "a47cb0a540e293da9d4d9be97a2757ba3010b955d6a783abed7db7889df52bfc",
+      "ordinal": 8,
+      "note": "pi 0.87.1 no longer imports pi-server, so PUM removed the explicit dependency. The rule now covers any undeclared SDK import.",
+      "evidence": [
+        "package.json",
+        "bun.lock"
+      ]
     },
     {
       "id": "ld-009",
@@ -1391,14 +1404,15 @@
       "originalSha256": "ddb6ab2d14a84cb548ba38a78abf53c9d1575fb17e400c52bee115a356f0d6c1",
       "target": "docs/agent-guidance/agents-tools.md#ld-109",
       "disposition": "clarified",
-      "normalizedSha256": "d99704520ae437e566d0691c7b2c41c9225e8f49c3889556ec9a5f3beb21ac21",
+      "normalizedSha256": "c474264af03c98dcd6f3e135325a420ef9e899d5b7c5e732701699fd6ba214bc",
       "ordinal": 109,
-      "note": "Scope core inventory by role; include existing Shells/Todo/MCP/LSP groups, restricted-role omissions and reveal-is-not-consent while retaining ordering and persistence contracts.",
+      "note": "Scope core inventory by role; include existing Shells/Todo/MCP/LSP groups, restricted-role omissions and reveal-is-not-consent while retaining ordering and persistence contracts. pi 0.87 declares tools in transcript system messages in reveal order. The tool-groups controller sorts each request's declarations into the canonical allowlist order.",
       "evidence": [
         "src/tool-groups.ts",
         "src/headless.ts",
         "src/subagents/readonly.ts",
-        "tests/tool-groups.test.ts"
+        "tests/tool-groups.test.ts",
+        "tests/tool-groups-sdk.test.ts"
       ]
     },
     {

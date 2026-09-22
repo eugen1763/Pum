@@ -23,8 +23,8 @@ pum
 PUM opens the login panel automatically on the first start. Press `?` on an
 empty prompt to see every control.
 
-Select a model in `Ctrl+P`. GPT-6 Astra is listed for OpenAI and Codex;
-using it requires access on your provider account. Press `r` in the model
+Select a model in `Ctrl+P`. GPT-6 Astra, Luna and Sol are listed for OpenAI
+and Codex. To use them, your provider account must have access. Press `r` in the model
 list to refresh providers that support catalog discovery.
 
 Use `/model <name or provider/model-id> [effort]` to change the main-agent model.

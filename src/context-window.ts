@@ -1,12 +1,13 @@
 import { Type } from "typebox";
 import { createHash } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { getCurrentSystemMessage, getCurrentSystemPrompt, getCurrentTools, type Message, type Tool } from "@earendil-works/pi-ai";
 import {
-  sessionEntryToContextMessages,
   type AgentSession,
   type ExtensionAPI,
   type InlineExtension,
   type SessionEntry,
+  type SessionProjection,
   type TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 import { registerTranscriptHistoryTool } from "./transcript-history";
@@ -72,7 +73,7 @@ function boundaryData(value: unknown): BoundaryData {
   const { handoff } = handoffParams({ handoff: value.handoff });
   return { version: 1, ...(handoff === undefined ? {} : { handoff }) };
 }
-function header(id: string, handoff?: string, navigation?: { userId?: string; previousId?: string | null }, recovery = ""): AgentMessage {
+function createHeader(id: string, handoff?: string, navigation?: { userId?: string; previousId?: string | null }, recovery = ""): AgentMessage {
   return {
     role: "custom", customType: CONTEXT_WINDOW_CUSTOM_TYPE, display: false, timestamp: 0,
     content: `Fresh PUM context window: ${id}. Earlier transcript entries remain retained in the full session transcript. The rollover generated no summary. Current system instructions still apply. ${recovery}`
@@ -83,6 +84,12 @@ function header(id: string, handoff?: string, navigation?: { userId?: string; pr
 function isBoundary(entry: SessionEntry): boolean {
   return entry.type === "custom" && entry.customType === CONTEXT_WINDOW_CUSTOM_TYPE;
 }
+// System messages carry the prompt and tool declarations, which the meter
+// fingerprints separately. Message lists and indexes here exclude them.
+function conversation(messages: readonly AgentMessage[]): AgentMessage[] {
+  return messages.filter((message) => message.role !== "system");
+}
+const transcript = (messages: readonly AgentMessage[]) => messages as readonly Message[];
 const textResult = (details: Record<string, unknown>) => ({
   content: [{ type: "text" as const, text: JSON.stringify(details, null, 2) }], details,
 });
@@ -91,8 +98,8 @@ const textResult = (details: Record<string, unknown>) => ({
 export class ContextWindowController {
   private session?: AgentSession;
   private pending?: Pending;
-  private refreshPending = false;
   private windowId: string | null = null;
+  private windowHeader?: { id: string; message: AgentMessage };
   private observedExtraTokens = 0;
   private modelKey?: string;
   private usageFloor = 0;
@@ -122,7 +129,7 @@ export class ContextWindowController {
         if (key !== this.modelKey) {
           this.modelKey = key;
           this.generation++;
-          this.usageFloor = this.session?.agent.state.messages.length ?? 0;
+          this.usageFloor = this.session ? this.activeConversation().length : 0;
         }
       });
       pi.on("before_agent_start", (event) => {
@@ -209,22 +216,31 @@ export class ContextWindowController {
     this.disableAutomaticCompaction();
     this.restore();
     const transform = session.agent.transformContext;
-    session.agent.transformContext = async (messages, signal) => {
-      const originalTokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+    session.agent.transformContext = async (input, signal) => {
+      // pi rebuilds request history from the session projection. The rollover
+      // window is applied here, before extension context handlers inject memory.
+      const messages = this.windowRequest(input);
+      const source = conversation(messages);
+      const originalTokens = source.reduce((sum, message) => sum + estimateTokens(message), 0);
       const stateSystemPrompt = fingerprint(session.agent.state.systemPrompt);
       const stateTools = this.toolSchemas();
-      const prompt = this.preparedPrompt ?? { systemPrompt: stateSystemPrompt, tools: stateTools, modelKey: modelIdentity(session.model) };
       this.requestSnapshot = undefined;
       const generation = this.generation;
       const windowId = this.windowId;
-      const sourceHash = messageHash(messages);
-      const sourceCount = messages.length;
+      const sourceHash = messageHash(source);
+      const sourceCount = source.length;
       const transformed = transform ? await transform.call(session.agent, messages, signal) : messages;
       // Observe the complete extension chain, including memory injected after our
       // extension. Return it unchanged; memory and dynamic instructions stay active.
       if (generation === this.generation && !signal?.aborted) {
-        this.observedExtraTokens = Math.max(0, transformed.reduce((sum, message) => sum + estimateTokens(message), 0)
-          - originalTokens);
+        const prompt: PromptSnapshot = {
+          systemPrompt: fingerprint(getCurrentSystemPrompt(transcript(transformed))),
+          tools: this.toolSchemas(getCurrentTools(transcript(transformed))),
+          modelKey: modelIdentity(session.model),
+        };
+        this.preparedPrompt = prompt;
+        const transformedTokens = conversation(transformed).reduce((sum, message) => sum + estimateTokens(message), 0);
+        this.observedExtraTokens = Math.max(0, transformedTokens - originalTokens);
         const measured = this.latestUsageSnapshot;
         if (measured?.generation === generation && measured.modelKey === prompt.modelKey) {
           // A failed request may have observed growth followed by shrinkage
@@ -236,8 +252,7 @@ export class ContextWindowController {
         }
         this.requestSnapshot = { ...prompt, windowId, generation, stateSystemPrompt, stateTools,
           injectedTokens: this.observedExtraTokens, sourceHash, sourceCount,
-          estimatedInputTokens: transformed.reduce((sum, message) => sum + estimateTokens(message), 0)
-            + prompt.systemPrompt.tokens + prompt.tools.tokens };
+          estimatedInputTokens: transformedTokens + prompt.systemPrompt.tokens + prompt.tools.tokens };
       }
       return transformed;
     };
@@ -245,14 +260,7 @@ export class ContextWindowController {
     const legacy = session.agent.prepareNextTurn;
     session.agent.prepareNextTurnWithContext = async (turn, signal) => {
       this.disableAutomaticCompaction();
-      const fresh = this.refreshPending;
-      this.refreshPending = false;
-      const input = fresh ? { ...turn, context: { ...turn.context, messages: session.agent.state.messages.slice() } } : turn;
-      const update = previous ? await previous.call(session.agent, input, signal) : await legacy?.call(session.agent, signal);
-      const context = update?.context ?? input.context;
-      this.preparedPrompt = { systemPrompt: fingerprint(context.systemPrompt), tools: this.toolSchemas(context.tools),
-        modelKey: modelIdentity(update?.model ?? session.model) };
-      return fresh ? { ...update, context } : update;
+      return previous ? await previous.call(session.agent, turn, signal) : await legacy?.call(session.agent, signal);
     };
   }
 
@@ -272,6 +280,7 @@ export class ContextWindowController {
     const branch = session.sessionManager.getBranch();
     const index = branch.findLastIndex(isBoundary);
     this.windowId = index < 0 ? null : branch[index]!.id;
+    this.windowHeader = undefined;
     this.generation++;
     this.usageFloor = 0;
     this.modelKey = modelIdentity(session.model);
@@ -279,28 +288,57 @@ export class ContextWindowController {
     this.preparedPrompt = undefined;
     this.usageSnapshots = new WeakMap();
     this.latestUsageSnapshot = undefined;
-    if (index < 0) { this.restoreUsageFloor(branch); return; }
+    // Validate now so tree and session events report a corrupt boundary. Every
+    // request validates again and fails closed.
+    if (index >= 0) this.activeWindow();
+    this.restoreUsageFloor(branch);
+  }
+  /**
+   * The request messages of the active window, or undefined without a boundary.
+   * The projection is authoritative: pi builds every request from it.
+   */
+  private activeWindow(projection?: SessionProjection): AgentMessage[] | undefined {
+    const manager = this.requireSession().sessionManager;
+    const branch = manager.getBranch();
+    const index = branch.findLastIndex(isBoundary);
+    if (index < 0) return undefined;
     const boundary = branch[index]!;
-    if (boundary.type !== "custom") return;
-    let data: BoundaryData;
-    try { data = boundaryData(boundary.data); }
-    catch (error) {
-      // A tree-event handler can fail after pi has restored unfiltered messages.
-      // Leave no old-window messages available even if its caller catches errors.
-      session.agent.state.messages = [];
-      this.refreshPending = true;
-      throw error;
+    if (boundary.type !== "custom") return undefined;
+    let header = this.windowHeader?.id === boundary.id ? this.windowHeader.message : undefined;
+    if (!header) {
+      const data = boundaryData(boundary.data);
+      const latestUser = branch.slice(0, index).findLast((entry) => entry.type === "message" && entry.message.role === "user");
+      header = createHeader(boundary.id, data.handoff, { userId: latestUser?.id, previousId: boundary.parentId },
+        this.recoveryGuidance());
+      // Keep the header bytes stable for the whole window. Tool changes after
+      // rollover must not rewrite the start of every later request.
+      this.windowHeader = { id: boundary.id, message: header };
     }
     // Legacy sessions can contain a later compaction. Filter its kept entries
     // at the boundary, but never discard the boundary's literal handoff.
     const activeIds = new Set(branch.slice(index + 1).map((entry) => entry.id));
-    const entries = session.sessionManager.buildContextEntries().filter((entry) => activeIds.has(entry.id));
-    const latestUser = branch.slice(0, index).findLast((entry) => entry.type === "message" && entry.message.role === "user");
-    session.agent.state.messages = [header(boundary.id, data.handoff, {
-      userId: latestUser?.id, previousId: boundary.parentId,
-    }, this.recoveryGuidance()), ...entries.flatMap(sessionEntryToContextMessages)];
-    this.restoreUsageFloor(branch);
-    this.refreshPending = true;
+    projection ??= manager.buildSessionProjection();
+    const archived = projection.entries.filter((entry) => !activeIds.has(entry.sourceEntry.id)).flatMap((entry) => entry.messages);
+    const active = projection.entries.filter((entry) => activeIds.has(entry.sourceEntry.id)).flatMap((entry) => entry.messages);
+    // Archived system messages still define the prompt and tools that apply.
+    const system = getCurrentSystemMessage(transcript(archived.filter((message) => message.role === "system")));
+    return [...(system ? [system as AgentMessage] : []), header, ...active];
+  }
+  private windowRequest(input: AgentMessage[]): AgentMessage[] {
+    const projection = this.requireSession().sessionManager.buildSessionProjection();
+    const active = this.activeWindow(projection);
+    if (!active) return input;
+    // Request input must be the persisted projection. Refuse an unexpected
+    // shape rather than send messages from an archived window.
+    if (conversation(input).length !== conversation(projection.messages).length) {
+      throw new Error("PUM context-window request does not match the persisted session. Refusing to send older context.");
+    }
+    return active;
+  }
+  /** Conversation messages that the next request of the active window contains. */
+  private activeConversation(): AgentMessage[] {
+    const projection = this.requireSession().sessionManager.buildSessionProjection();
+    return conversation(this.activeWindow(projection) ?? projection.messages);
   }
   private restoreUsageFloor(branch: SessionEntry[]): void {
     const change = branch.findLastIndex((entry) => entry.type === "model_change" || entry.type === "compaction");
@@ -309,7 +347,7 @@ export class ContextWindowController {
     // identity fallback for runtimes that copy their state on restoration.
     const older = new Set(branch.slice(0, change).filter((entry) => entry.type === "message")
       .map((entry) => JSON.stringify(entry.message)));
-    const messages = this.requireSession().agent.state.messages;
+    const messages = this.activeConversation();
     for (let index = 0; index < messages.length; index++) {
       if (older.has(JSON.stringify(messages[index]))) this.usageFloor = index + 1;
     }
@@ -349,7 +387,7 @@ export class ContextWindowController {
     const capacity = model?.contextWindow;
     const branch = session.sessionManager.getBranch();
     const latestUser = branch.findLast((entry) => entry.type === "message" && entry.message.role === "user");
-    const freshTokens = estimateTokens(header("pending", handoff, {
+    const freshTokens = estimateTokens(createHeader("pending", handoff, {
       userId: latestUser?.id, previousId: session.sessionManager.getLeafId(),
     }, this.recoveryGuidance())) + this.overheadTokens();
     const configuredReserve = this.reserveTokens();
@@ -377,7 +415,7 @@ export class ContextWindowController {
     const factor = typeof meter.calibrationFactor === "number" ? meter.calibrationFactor : 1;
     return Math.max(0, Math.floor(available / factor) - CONTEXT_MESSAGE_TOKENS);
   }
-  private toolSchemas(tools = this.requireSession().agent.state.tools): EstimateFingerprint {
+  private toolSchemas(tools: readonly Tool[] = this.requireSession().agent.state.tools): EstimateFingerprint {
     const schema = fingerprint(JSON.stringify(tools.map((tool) => ({
       name: tool.name, description: tool.description, parameters: tool.parameters,
     }))));
@@ -408,7 +446,7 @@ export class ContextWindowController {
   private remaining(): Record<string, unknown> {
     const session = this.requireSession();
     const model = session.model;
-    const messages = session.agent.state.messages;
+    const messages = this.activeConversation();
     const key = modelIdentity(model);
     if (key !== this.modelKey) { this.modelKey = key; this.generation++; this.usageFloor = messages.length; }
     let usageIndex = -1;

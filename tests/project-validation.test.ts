@@ -212,19 +212,14 @@ describe("runtime-only validation authority", () => {
   });
   test("disposal restores owned hooks and preserves wrappers installed afterwards", () => {
     const f = fixture(); const first = runtime(f.cwd);
-    expect(first.session.agent.prepareNextTurnWithContext).toBeFunction();
-    expect(first.session.agent.shouldStopAfterTurn).toBeFunction();
+    expect(first.session.agent.finishTurn).toBeFunction();
     first.controller.dispose();
-    expect(first.session.agent.prepareNextTurnWithContext).toBeUndefined();
-    expect(first.session.agent.shouldStopAfterTurn).toBeUndefined();
+    expect(first.session.agent.finishTurn).toBeUndefined();
     const second = runtime(f.cwd);
-    const prepare: NonNullable<AgentSession["agent"]["prepareNextTurnWithContext"]> = async () => undefined;
-    const stop = async () => false;
-    second.session.agent.prepareNextTurnWithContext = prepare;
-    second.session.agent.shouldStopAfterTurn = stop;
+    const finish: NonNullable<AgentSession["agent"]["finishTurn"]> = async () => undefined;
+    second.session.agent.finishTurn = finish;
     second.controller.dispose();
-    expect(second.session.agent.prepareNextTurnWithContext).toBe(prepare);
-    expect(second.session.agent.shouldStopAfterTurn).toBe(stop);
+    expect(second.session.agent.finishTurn).toBe(finish);
   });
   test("streaming and cwd mismatch refuse authority", () => {
     const f = fixture(); const r = runtime(f.cwd);

@@ -4,6 +4,9 @@
 a provider limit guarantee, a billing total, or an automatic rollover trigger.
 `new_context` still commits only after its complete successful tool batch and
 creates no generated summary. The canonical transcript and session ID remain.
+pi builds every request from the persisted session projection. The controller
+limits each request to the latest boundary's window before memory and other
+context handlers run. An invalid boundary makes the request fail.
 
 ## Measured anchor and conservative estimates
 
@@ -57,7 +60,7 @@ these are not added again. Positive growth is evaluated separately for prompt,
 schemas and observed injection. Their combined growth keeps a per-anchor
 high-water mark: shrinking one component never subtracts from measured usage,
 and observed growth does not disappear until a newer trusted response includes
-it. A supplied effective next-turn prompt/schema baseline is retained when
+it. The prompt and schemas of the last observed request stay the baseline while
 agent state itself has not changed. Without a trustworthy anchor, the complete
 active state, prompt, schema and observed injection are estimated with factor 1.
 A non-append source or altered response falls back once, avoiding quadratic

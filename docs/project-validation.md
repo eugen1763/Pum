@@ -98,14 +98,15 @@ in the same batch as mutations is refused, regardless of call order: completion
 must follow the prior batch's validation evidence. Failed validation is evidence,
 not an unbounded completion gate; workers may report failures honestly.
 
-Installed pi keeps a separate loop-context snapshot. Persisting a custom message
-at `turn_end` alone does not refresh it. The bound controller composes the public
-`prepareNextTurnWithContext` hook to refresh the snapshot only after its evidence
-has flushed, then delegates the prior hook. It composes `shouldStopAfterTurn` to
-stop after a cancelled batch without another model request. Both hooks preserve
-existing predecessors; disposal restores only a wrapper it still owns. Regression
-tests cover both binding orders with explicit context rollover, ensuring a fresh
-window retains evidence without bringing archived messages back.
+The controller sends evidence as a custom message from the `turn_end` boundary.
+pi appends it after the complete turn and builds every request from the session
+projection, so the next request contains the evidence. The bound controller
+composes the public `finishTurn` hook. It delegates to the prior hook first,
+because pi dispatches `turn_end` from that hook. Then it ends the run after a
+cancelled batch, without another model request. A predecessor decision is kept.
+Disposal restores only a wrapper that the controller still owns. Regression
+tests cover both binding orders with explicit context rollover. A fresh window
+keeps the evidence and does not bring archived messages back.
 
 ## Bounds, failures, and repair
 

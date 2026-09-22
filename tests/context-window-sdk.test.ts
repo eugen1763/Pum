@@ -14,11 +14,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
   InMemoryCredentialStore,
   type AssistantMessage,
   type Context,
   type Model,
   type ToolCall,
+  type JsonObject,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CONTEXT_TOOL_NAMES, ContextWindowController } from "../src/context-window";
@@ -45,6 +48,8 @@ const MEMORY = "SDK_PRIVATE_MEMORY_SENTINEL";
 const MARKER = "pum.context_window";
 
 type Request = Pick<Context, "systemPrompt" | "messages"> & { toolNames: string[] };
+// The prompt and tools now travel as system messages. Keep them apart from the
+// conversation so that assertions about windows compare conversation messages.
 type Reply = AssistantMessage["content"];
 const roots: string[] = [];
 const sessions: AgentSession[] = [];
@@ -58,7 +63,7 @@ function text(value: string): Reply {
   return [{ type: "text", text: value }];
 }
 
-function call(id: string, name: string, args: Record<string, unknown> = {}): ToolCall {
+function call(id: string, name: string, args: JsonObject = {}): ToolCall {
   return { type: "toolCall", id, name, arguments: args };
 }
 
@@ -179,9 +184,9 @@ async function fixture(options: {
     const replies: Reply[] = [];
     session.agent.streamFunction = (_model, context) => {
       requests.push({
-        systemPrompt: context.systemPrompt,
-        messages: structuredClone(context.messages),
-        toolNames: (context.tools ?? []).map((tool) => tool.name),
+        systemPrompt: getCurrentSystemPrompt(context.messages),
+        messages: structuredClone(context.messages.filter((message) => message.role !== "system")),
+        toolNames: getCurrentTools(context.messages).map((tool) => tool.name),
       });
       const content = replies.shift();
       if (!content) throw new Error("Unexpected model request: the SDK script is exhausted");
@@ -375,7 +380,10 @@ describe("context windows through the installed pi SDK", () => {
     const { open } = await fixture({ usageTokens: () => usageTokens });
     const run = await open();
     const archived = "ARCHIVED_BUDGET_EVIDENCE ".repeat(2000);
+    // pi builds requests from the active branch. Keep the archived entry off it.
+    const leaf = run.manager.getLeafId();
     const entryId = run.manager.appendMessage({ role: "user", content: archived, timestamp: 1 });
+    if (leaf === null) run.manager.resetLeaf(); else run.manager.branch(leaf);
     const available = 3000;
     usageTokens = MODEL.contextWindow - run.session.settingsManager.getCompactionSettings().reserveTokens - available;
     expect(usageTokens).toBeGreaterThan(10);

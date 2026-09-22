@@ -9,10 +9,12 @@ import {
 import {
   createAssistantMessageEventStream, InMemoryCredentialStore,
   type AssistantMessage, type Context, type Model, type ToolCall,
+  type JsonObject,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CONTEXT_TOOL_NAMES, ContextWindowController } from "../src/context-window";
 import { ToolGroupsController } from "../src/tool-groups";
+import { requestView, type RequestView } from "./fixtures/request-view";
 
 const MODEL: Model<"openai-completions"> = {
   id: "regression", name: "regression", provider: "pum-context-regression", api: "openai-completions",
@@ -25,7 +27,7 @@ afterEach(() => {
   for (const session of sessions.splice(0)) session.dispose();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-const call = (id: string, name: string, args: Record<string, unknown> = {}): ToolCall => ({ type: "toolCall", id, name, arguments: args });
+const call = (id: string, name: string, args: JsonObject = {}): ToolCall => ({ type: "toolCall", id, name, arguments: args });
 const text = (value: string): AssistantMessage["content"] => [{ type: "text", text: value }];
 
 async function fixture() {
@@ -76,10 +78,10 @@ async function fixture() {
   const errors: unknown[] = [];
   await session.bindExtensions({ onError: (error) => { errors.push(error); } });
   session.setActiveToolsByName([...CONTEXT_TOOL_NAMES, "enable_tools"]);
-  const requests: Context[] = [];
+  const requests: RequestView[] = [];
   const replies: AssistantMessage["content"][] = [];
   session.agent.streamFunction = (_model, context) => {
-    requests.push(JSON.parse(JSON.stringify(context)));
+    requests.push(requestView(context));
     const content = replies.shift();
     if (!content) throw new Error("Unexpected request or summarizer call");
     const message: AssistantMessage = {

@@ -9,7 +9,9 @@ import {
 import {
   createAssistantMessageEventStream, InMemoryCredentialStore,
   type AssistantMessage, type Context, type Model, type ToolCall,
+  type JsonObject,
 } from "@earendil-works/pi-ai";
+import { requestView, type RequestView } from "./fixtures/request-view";
 import { Type } from "typebox";
 import { CONTEXT_TOOL_NAMES, ContextWindowController } from "../src/context-window";
 import { createMemoryExtension, ProjectMemoryStore } from "../src/memory";
@@ -25,7 +27,7 @@ afterEach(() => {
   for (const session of sessions.splice(0)) session.dispose();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-const call = (id: string, name: string, args: Record<string, unknown> = {}): ToolCall => ({ type: "toolCall", id, name, arguments: args });
+const call = (id: string, name: string, args: JsonObject = {}): ToolCall => ({ type: "toolCall", id, name, arguments: args });
 const text = (value: string): AssistantMessage["content"] => [{ type: "text", text: value }];
 // The installed SDK has already converted transient custom entries to provider
 // user messages at this boundary. Ignore transport-omitted internal timestamps.
@@ -80,12 +82,12 @@ async function fixture(options: { root?: string; resume?: string; audience?: "ma
   controller.bind(session);
   const errors: unknown[] = [];
   await session.bindExtensions({ onError: (error) => { errors.push(error); } });
-  const requests: Context[] = [];
+  const requests: RequestView[] = [];
   type Reply = AssistantMessage["content"] | "error" | "aborted";
   const replies: Reply[] = [];
   let onRequest = () => {};
   session.agent.streamFunction = (_model, context) => {
-    requests.push(JSON.parse(JSON.stringify(context)));
+    requests.push(requestView(context));
     onRequest();
     const reply = replies.shift();
     if (!reply) throw new Error("Unexpected memory SDK request");

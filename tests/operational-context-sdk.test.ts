@@ -9,7 +9,9 @@ import {
 import {
   createAssistantMessageEventStream, InMemoryCredentialStore,
   type AssistantMessage, type Context, type Model, type ToolCall,
+  type JsonObject,
 } from "@earendil-works/pi-ai";
+import { requestView, type RequestView } from "./fixtures/request-view";
 import { Type } from "typebox";
 import { estimateContextMessage as estimateTokens } from "../src/context-estimate";
 import { CONTEXT_TOOL_NAMES, CONTEXT_WINDOW_CUSTOM_TYPE, ContextWindowController } from "../src/context-window";
@@ -33,7 +35,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 const text = (value: string): AssistantMessage["content"] => [{ type: "text", text: value }];
-const call = (id: string, name: string, args: Record<string, unknown> = {}): ToolCall => ({ type: "toolCall", id, name, arguments: args });
+const call = (id: string, name: string, args: JsonObject = {}): ToolCall => ({ type: "toolCall", id, name, arguments: args });
 const input = (context: Context) => context.messages.map(({ timestamp: _timestamp, ...message }) => message);
 const notices = (context: Context, marker = CAPACITY) => context.messages.filter((message) =>
   message.role === "user" && JSON.stringify(message.content).includes(marker));
@@ -86,11 +88,11 @@ async function fixture(options: { retry?: boolean; memoryFirst?: boolean; root?:
   sessions.push(session); controller.bind(session);
   const errors: unknown[] = [];
   await session.bindExtensions({ onError: (error) => { errors.push(error); } });
-  const requests: Context[] = [];
+  const requests: RequestView[] = [];
   const replies: Array<AssistantMessage["content"] | "error"> = [];
   let onRequest = () => {};
   session.agent.streamFunction = (_model, context) => {
-    requests.push(JSON.parse(JSON.stringify(context)));
+    requests.push(requestView(context));
     onRequest();
     const reply = replies.shift();
     if (!reply) throw new Error("Unexpected operational SDK request");

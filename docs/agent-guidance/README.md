@@ -79,8 +79,8 @@ All 157 original units are covered: 149 preserved and eight clarified with evide
 | Locked decisions 4 | `@earendil-works/pi-coding-agent` | [ld-004](architecture.md#ld-004) |
 | Locked decisions 5 | There is no custom patch model tool. | [ld-005](architecture.md#ld-005) |
 | Locked decisions 6 | OpenTUI with React | [ld-006](architecture.md#ld-006) |
-| Locked decisions 7 | Model fallbacks are process-local and additive. | [ld-007](architecture.md#ld-007) |
-| Locked decisions 8 | pi 0.85.0 needs an explicit server dependency. | [ld-008](architecture.md#ld-008) |
+| Locked decisions 7 | Model catalogs come from the installed pi. | [ld-007](architecture.md#ld-007) |
+| Locked decisions 8 | PUM declares only the pi packages that it imports. | [ld-008](architecture.md#ld-008) |
 | Locked decisions 9 | PUM keeps its own config dir | [ld-009](architecture.md#ld-009) |
 | Locked decisions 10 | Outer sandbox commands use claudebox protocol 1. | [ld-010](security.md#ld-010) |
 | Locked decisions 11 | Login runs inside PUM. | [ld-011](architecture.md#ld-011) |

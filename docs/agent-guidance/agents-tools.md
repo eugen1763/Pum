@@ -427,11 +427,14 @@ Current mandatory implementation guidance. Read before changing orchestration, g
   revealing a group never grants MCP/LSP consent. One always-present `enable_tools`
   tool (registered per session) accepts group names; its execute calls
   `setActiveToolsByName` so the group's real schemas start being sent from the
-  next request onward. `state.tools` is pi's authoritative outgoing tool list
-  (it flows unmodified into the request body), so narrowing it never filters
-  the core loop's built-ins. Hidden tools stay in the registry but are absent
+  next request onward. `state.tools` is pi's authoritative executable tool list.
+  pi declares its changes in transcript system messages, and those declarations
+  make the request tool list. Narrowing it never filters the core loop's
+  built-ins. Hidden tools stay in the registry but are absent
   from the model tool list until enabled. The audience allowlist defines one
   canonical outgoing tool order, independent of activation or restore order.
+  pi declares revealed tools in reveal order, so the controller sorts the
+  declarations of each request into the canonical order.
   `enable_tools` descriptions contain no enabled state; results report that state.
   Main and child runtimes load their own controller from the trusted session file
   before service creation registers tools, including after runtime replacement.

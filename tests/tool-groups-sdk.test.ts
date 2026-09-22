@@ -12,6 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { CONTEXT_TOOL_NAMES, ContextWindowController } from "../src/context-window";
+import { requestView, type RequestView } from "./fixtures/request-view";
 import { readonlySubagentExtension } from "../src/subagents/readonly";
 import {
   ENABLE_TOOLS, READONLY_CHILD_OMITTED_TOOL_NAMES, TOOL_GROUP_NAMES, ToolGroupsController,
@@ -79,10 +80,10 @@ async function fixture(audience: ToolGroupAudience, readonly = false, file?: str
   session.setActiveToolsByName(groups.activeTools());
   const errors: unknown[] = [];
   await session.bindExtensions({ onError: (error) => { errors.push(error); } });
-  const requests: Context[] = [];
+  const requests: RequestView[] = [];
   const replies: AssistantMessage["content"][] = [];
   session.agent.streamFunction = (_model, context) => {
-    requests.push(JSON.parse(JSON.stringify(context)));
+    requests.push(requestView(context));
     const content = replies.shift();
     if (!content) throw new Error("Unexpected SDK request");
     const message: AssistantMessage = {
