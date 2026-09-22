@@ -2,6 +2,19 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.36-beta.1] - 2026-09-22
+
+### Added
+- Added GPT-6 Luna and GPT-6 Sol for OpenAI API keys and OpenAI Codex subscriptions through pi 0.87.1. GPT-6 Astra now comes from pi's own catalog.
+
+### Changed
+- Upgraded pi to 0.87.1. PUM no longer declares `@earendil-works/pi-server` or adds a local Astra catalog entry.
+- Explicit `new_context` rollover now limits each request to the active window, because pi builds requests from the saved session. A request with an invalid rollover boundary fails. Session files keep the same boundary entries.
+- Requests send revealed tools in the canonical allowlist order, independent of the reveal order.
+
+### Fixed
+- A run that pi starts after a settled hook now holds its activity lease until its own settlement. Security relaxation cannot commit during that run.
+
 ## [0.2.35-beta.1] - 2026-09-20
 
 ### Added
