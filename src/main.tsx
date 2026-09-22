@@ -24,7 +24,6 @@ import { checkPathsForProject, loadSettings } from "./settings";
 import { setBashOutputSettingsIfPresent } from "./bash-output";
 import { bindSearchSession, installWebSearch, revokeSearchSession, webSearch } from "./web-search";
 import { bindRuntimeSettingsActivity, isRuntimeIdle, runtimeSettings } from "./runtime-settings";
-import { installModelCatalogFallbacks } from "./model-catalog";
 import { identityExtension } from "./identity";
 import { setWritingStyle, writingStyleExtension } from "./writing-style";
 import { checkModePromptExtension, setSandboxModeSource } from "./check-mode-prompt";
@@ -112,7 +111,6 @@ export async function start(
     authPath: AUTH_PATH,
     modelsPath: MODELS_PATH,
   });
-  installModelCatalogFallbacks(modelRuntime);
   const loginRequired = options.login || (await modelRuntime.getAvailable()).length === 0;
 
   const settings = loadSettings();

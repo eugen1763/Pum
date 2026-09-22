@@ -67,27 +67,28 @@ bun run start    # open the TUI in the current directory
 
 <!-- end:ld-006 -->
 
-## Model fallbacks are process-local and additive.
+## Model catalogs come from the installed pi.
 
 <a id="ld-007"></a>
 
-- **Model fallbacks are process-local and additive.** TUI and headless startup
-  install the GPT-6 Astra fallback for OpenAI and Codex before selecting models.
-  Provider authentication and transport remain pi's; an existing upstream entry
-  always wins. Nothing writes these fallbacks to user configuration. The Codex
-  fallback keeps pi's conservative 272K context budget. The model and Check model
-  pickers refresh on `r` only outside their search field, with one refresh in
-  flight. Static provider catalogs cannot discover missing entries by refresh.
+- **Model catalogs come from the installed pi.** PUM adds no model entries of
+  its own. The installed pi lists GPT-6 Astra, Luna and Sol for OpenAI and
+  Codex. pi keeps provider authentication and transport, and provider account
+  access is still necessary. PUM writes no catalog entries to user configuration.
+  The model and Check model pickers refresh on `r` only outside their search
+  field, with one refresh in flight. A refresh cannot discover entries that are
+  missing from a static provider catalog.
 
 <!-- end:ld-007 -->
 
-## pi 0.85.0 needs an explicit server dependency.
+## PUM declares only the pi packages that it imports.
 
 <a id="ld-008"></a>
 
-- **pi 0.85.0 needs an explicit server dependency.** Its SDK imports
-  `@earendil-works/pi-server` without declaring it. Keep the matching dependency
-  until upstream fixes its package manifest.
+- **PUM declares only the pi packages that it imports.** pi 0.85.0 imported
+  `@earendil-works/pi-server` without a declaration, so PUM declared it. pi
+  0.87.1 does not import that package, so PUM does not declare it. Add the
+  dependency again only if an installed SDK imports it without a declaration.
 
 <!-- end:ld-008 -->
 

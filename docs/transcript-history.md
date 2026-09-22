@@ -36,9 +36,9 @@ error. The key is constant-size runtime state: no cursor registry, cached
 transcript, file access or companion persistence is added.
 
 The installed SDK's `getEntries()` returns a shallow copy in append order. Its
-stored entry contents are append-only. Explicit `new_context` appends a boundary
-and reprojects the active messages, preserving the history registration and session
-identity. Thus cursors survive in-runtime rollover and branch switching. A new
+stored entry contents are append-only. Explicit `new_context` appends a boundary,
+and later requests project only the active window. The history registration and
+session identity stay. Thus cursors survive in-runtime rollover and branch switching. A new
 registration on runtime replacement or restart intentionally invalidates them,
 even when reopening the same session. Retain entry IDs for durable recovery.
 

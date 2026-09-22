@@ -117,6 +117,11 @@ test("cancelled SDK preflight settling later cannot release a newer running prom
   expect(f.coordinator.snapshot()?.pending).toBe(false);
 });
 
+async function until(condition: () => boolean) {
+  for (let attempt = 0; attempt < 500 && !condition(); attempt++) await new Promise((done) => setTimeout(done, 2));
+  expect(condition()).toBe(true);
+}
+
 for (const source of ["extension", "predecessor-subscriber", "later-subscriber"] as const) {
   for (const method of ["custom", "user", "prompt"] as const) test(`SDK ${source} settled reentry via ${method} cannot lose the newer lease`, async () => {
     let f!: Awaited<ReturnType<typeof fixture>>;
@@ -139,19 +144,52 @@ for (const source of ["extension", "predecessor-subscriber", "later-subscriber"]
     } : undefined);
     if (source === "later-subscriber") f.session.subscribe((event) => { if (event.type === "agent_settled") reenter(); });
     f.session.subscribe((event) => { if (event.type === "agent_end") f.coordinator.request(relaxed); });
-    await f.session.prompt("first");
+    // pi defers a run requested from agent_settled until every settled handler
+    // finishes, and the first prompt awaits it. Its delivery is held below.
+    const first = f.session.prompt("first");
     try {
+      await until(() => f.calls() === 2);
       expect(f.session.isStreaming).toBe(true);
       expect(f.coordinator.snapshot()!.active).toBeGreaterThan(0);
-      // A predecessor admits while the old lease still exists. A later listener
-      // sees the committed idle transition; admission must not roll it back.
+      // A predecessor requests work while the old lease still exists. A later
+      // listener sees the committed idle transition.
       expect(policyAtAdmission).toEqual(source === "later-subscriber" ? relaxed : strict);
-      expect(f.coordinator.snapshot()?.pending).toBe(source !== "later-subscriber");
-      if (source !== "later-subscriber") expect(f.coordinator.snapshot()?.effective).toEqual(strict);
-    } finally { finish.resolve(); await follow; }
+      // The older run truly settled before the deferred run started. A
+      // predecessor subscriber's admission is still open when that run starts,
+      // so the relaxation also waits for the deferred run.
+      expect(f.coordinator.snapshot()).toMatchObject(source === "predecessor-subscriber"
+        ? { pending: true, effective: strict } : { pending: false, effective: relaxed });
+      // The deferred run owns a lease: tightening applies now, relaxation waits.
+      f.coordinator.request(strict);
+      expect(f.coordinator.snapshot()).toMatchObject({ pending: false, effective: strict });
+      f.coordinator.request(relaxed);
+      expect(f.coordinator.snapshot()).toMatchObject({ pending: true, effective: strict });
+    } finally { finish.resolve(); await first; await follow; }
     expect(f.coordinator.snapshot()).toMatchObject({ active: 0, pending: false, effective: relaxed });
   });
 }
+
+test("SDK custom run deferred from agent_settled keeps its lease through its own before-settle hooks", async () => {
+  const entered = deferred(); const release = deferred();
+  let settlements = 0; let befores = 0; let follow!: Promise<void>;
+  let f!: Awaited<ReturnType<typeof fixture>>;
+  f = await fixture([{ name: "deferred-custom", factory(pi) {
+    pi.on("agent_before_settle", async () => { if (++befores === 2) { entered.resolve(); await release.promise; } });
+    pi.on("agent_settled", () => {
+      if (++settlements !== 1) return;
+      follow = f.session.sendCustomMessage({ customType: "follow", content: "next", display: false }, { triggerTurn: true });
+    });
+  } }]);
+  const first = f.session.prompt("first");
+  try {
+    await entered.promise;
+    // The deferred run's core dispatch already returned; only its own lease remains.
+    f.coordinator.request(relaxed);
+    expect(f.coordinator.snapshot()).toMatchObject({ active: 1, pending: true, effective: strict });
+  } finally { release.resolve(); await first; await follow; }
+  expect(f.calls()).toBe(2);
+  expect(f.coordinator.snapshot()).toMatchObject({ active: 0, pending: false, effective: relaxed });
+});
 
 for (const method of ["prompt", "continue"] as const) test(`SDK direct agent.${method} settled-hook reentry owns its dispatch independently`, async () => {
   let f!: Awaited<ReturnType<typeof fixture>>; let follow!: Promise<void>;

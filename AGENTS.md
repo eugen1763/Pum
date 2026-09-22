@@ -43,9 +43,9 @@ traces every original section and bullet to its current anchor.
 - Use **Bun**, **OpenTUI with React**, and **`@earendil-works/pi-coding-agent`**, not
   `pi-ai` alone. Preserve provider methods when wrapping; pi owns authentication,
   transport, model and effort APIs. Verify installed SDK docs/source before
-  changing an SDK-dependent claim. Keep the matching explicit pi-server dependency
-  while required by the installed SDK. Do not add/advertise an `apply_patch` tool;
-  targeted mutations use pi's `edit`.
+  changing an SDK-dependent claim. Declare pi-server only while the installed SDK
+  imports it without a declaration (0.87.1 does not). Do not add/advertise an
+  `apply_patch` tool; targeted mutations use pi's `edit`.
 - CLI help/version exit before TUI/auth/session startup. Headless `-p` retains
   coding, memory and context tools with configured policy, not interactive
   capabilities; do not silently add consent paths or combine unsupported launch modes.

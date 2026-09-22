@@ -14,7 +14,6 @@ Current navigation map; paths are repository-root-relative. Read the relevant mo
 | `src/outer-sandbox-launch.ts` | PUM child command, runtime/state mounts, and outer child context |
 | `src/outer-sandbox-process.ts` | Protocol probe and shell-free claudebox process execution |
 | `src/main.tsx` | Boot: config dir, login hand-off, credential check, session, render |
-| `src/model-catalog.ts` | Missing-model fallbacks that preserve provider methods and prefer upstream entries |
 | `src/headless.ts` | Non-interactive `-p` one-shot: core coding tools, Check mode, no UI surfaces |
 | `src/app.tsx` | The TUI — state, keyboard dispatch, agent events, layout |
 | `src/theme.ts` | Semantic colour tokens, nine presets, `theme.json` merge |

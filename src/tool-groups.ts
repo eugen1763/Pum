@@ -1,3 +1,5 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { getCurrentSystemMessage, type Message } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, InlineExtension } from "@earendil-works/pi-coding-agent";
 import { companionFileFor, readCompanion, writeCompanion } from "./session-companion";
 import { Type } from "typebox";
@@ -414,11 +416,33 @@ export class ToolGroupsController {
     });
   }
 
+  /** Sort tools into the canonical role-allowlist order. Unknown tools keep their order at the end. */
+  canonicalOrder<T extends { name: string }>(tools: readonly T[]): T[] {
+    const allowlist = this.audience === "main" ? mainAllowedToolNames(this.isReadonly) : childAllowedToolNames(this.isReadonly);
+    const rank = new Map(allowlist.map((name, index) => [name, index]));
+    return tools.map((tool, index) => ({ tool, index }))
+      .sort((a, b) => (rank.get(a.tool.name) ?? allowlist.length) - (rank.get(b.tool.name) ?? allowlist.length) || a.index - b.index)
+      .map(({ tool }) => tool);
+  }
+
   /** The inline extension that registers `enable_tools` for one session. */
   extension(): InlineExtension {
     return {
       name: `pum-tool-groups-${this.audience}`,
-      factory: (pi) => this.registerTool(pi),
+      factory: (pi) => {
+        this.registerTool(pi);
+        // pi declares revealed tools in the transcript in reveal order. Send the
+        // canonical order, so that a request does not depend on that history.
+        pi.on("context_with_system", (event) => {
+          const head = getCurrentSystemMessage(event.messages as Message[]);
+          const tools = head?.toolsAdded;
+          if (!head || !tools) return undefined;
+          const ordered = this.canonicalOrder(tools);
+          if (ordered.every((tool, index) => tool === tools[index])) return undefined;
+          return { messages: [{ ...head, toolsAdded: ordered } as AgentMessage,
+            ...event.messages.filter((message) => message.role !== "system")] };
+        });
+      },
     };
   }
 }

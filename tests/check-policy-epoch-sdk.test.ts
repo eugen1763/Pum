@@ -4,7 +4,7 @@ import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { createBashTool, createReadTool, createAgentSessionFromServices, createAgentSessionServices,
   ModelRuntime, SessionManager, SettingsManager, type InlineExtension } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type JsonObject, type Model } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -75,7 +75,7 @@ test("installed SDK parallel preflight cannot run an earlier local Bash after a 
 // records dispatch instead of touching the OS; neither ID uniqueness nor raw
 // arguments identity is assumed by this fixture.
 async function batchFixture(options: {
-  batches: Array<Array<{ id: string; name: string; arguments: Record<string, unknown> }>>;
+  batches: Array<Array<{ id: string; name: string; arguments: JsonObject }>>;
   before?: (event: any) => Promise<any>;
   transform?: boolean;
   beforePrompt?: (agent: Agent, tools: AgentTool[]) => void;

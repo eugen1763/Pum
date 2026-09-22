@@ -3,31 +3,21 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installModelCatalogFallbacks, withAstraModel } from "../src/model-catalog";
 import { filterModels } from "../src/settings-popup";
 import { installWebSearch } from "../src/web-search";
 
-test("Astra survives refresh and web-search wrapping and is searchable in the picker", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "pum-astra-"));
+test("installed pi lists GPT-6 models for OpenAI and Codex through web-search wrapping and the picker", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "pum-gpt-6-"));
   try {
     const runtime = await ModelRuntime.create({
       authPath: join(directory, "auth.json"), modelsPath: null,
       modelsStorePath: join(directory, "models-cache.json"), refreshOnCreate: false,
     });
-    const original = runtime.getProvider("openai-codex")!;
-    const wrapped = withAstraModel(original);
-    expect(wrapped.auth).toBe(original.auth);
-    expect(wrapped.streamSimple).toBe(original.streamSimple);
-    installModelCatalogFallbacks(runtime);
-    installModelCatalogFallbacks(runtime);
     installWebSearch(runtime);
     await runtime.refresh({ allowNetwork: false });
     for (const provider of ["openai", "openai-codex"]) {
-      const models = filterModels(runtime.getModels(provider), "gpt-6");
-      expect(models).toHaveLength(1);
-      expect(models[0]!.id).toBe("gpt-6-astra");
-      expect(models[0]!.thinkingLevelMap?.max).toBe("max");
-      expect(withAstraModel(runtime.getProvider(provider)!)).toBe(runtime.getProvider(provider)!);
+      const ids = filterModels(runtime.getModels(provider), "gpt-6").map((model) => model.id);
+      expect(ids).toEqual(expect.arrayContaining(["gpt-6-astra", "gpt-6-luna", "gpt-6-sol"]));
     }
   } finally {
     rmSync(directory, { recursive: true, force: true });

@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { zstdDecompressSync } from "node:zlib";
+import { normalizeContext } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { bindSearchSession, webSearch, wrapProvider } from "../src/web-search";
@@ -81,7 +82,7 @@ function fixture(options: {
       id: "gpt-5.4", name: "local", provider: "openai-codex", api: "openai-codex-responses",
       baseUrl: `http://127.0.0.1:${server.port}`, reasoning: false, input: ["text"],
       contextWindow: 64_000, maxTokens: 1000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    } as any, context, { apiKey: token, sessionId, transport: "auto", timeoutMs: 2000,
+    } as any, normalizeContext(context), { apiKey: token, sessionId, transport: "auto", timeoutMs: 2000,
       websocketConnectTimeoutMs: 2000, maxRetries: 1, ...extra,
       onPayload: (body: any, model: any) => { hooks++; return extra.onPayload?.(body, model); },
     });

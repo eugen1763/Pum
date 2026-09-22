@@ -129,7 +129,6 @@ export class ProjectValidationController {
   private generation = 0;
   private batchHasMutations = false;
   private latest?: ValidationEvidence;
-  private refreshEvidence = false;
   private unbindHooks?: () => void;
   private readonly cwd: string;
   private readonly readonly: boolean;
@@ -187,30 +186,17 @@ export class ProjectValidationController {
     liveControllers.set(session.sessionId, this);
     const dispose = session.dispose.bind(session);
     session.dispose = () => { this.dispose(); dispose(); };
-    // Agent-core owns a separate context snapshot. SDK custom-message persistence
-    // does not refresh that snapshot unless compaction ran. Refresh only after our
-    // turn-end evidence flushed, before delegating to existing context/compaction.
-    const prepare = session.agent.prepareNextTurnWithContext;
-    const legacy = session.agent.prepareNextTurn;
-    const prepareWrapper: NonNullable<typeof session.agent.prepareNextTurnWithContext> = async (turn, signal) => {
-      if (this.retired) return prepare ? await prepare.call(session.agent, turn, signal) : legacy ? await legacy.call(session.agent, signal) : undefined;
-      signal?.throwIfAborted();
-      const refresh = this.refreshEvidence;
-      this.refreshEvidence = false;
-      const input = refresh ? { ...turn, context: { ...turn.context, messages: session.agent.state.messages.slice() } } : turn;
-      const update = prepare ? await prepare.call(session.agent, input, signal) : await legacy?.call(session.agent, signal);
-      return refresh ? { ...update, context: update?.context ?? input.context } : update;
+    // pi dispatches turn_end, and so runs validation, inside its finishTurn hook.
+    // Delegate first, then end the run when that batch was cancelled.
+    const finish = session.agent.finishTurn;
+    const finishWrapper: NonNullable<typeof session.agent.finishTurn> = async (turn, signal) => {
+      const decision = await finish?.call(session.agent, turn, signal);
+      if (!this.retired && signal?.aborted) return { action: "end" };
+      return decision ?? undefined;
     };
-    session.agent.prepareNextTurnWithContext = prepareWrapper;
-    const stop = session.agent.shouldStopAfterTurn;
-    const stopWrapper: NonNullable<typeof session.agent.shouldStopAfterTurn> = async (turn, signal) => {
-      if (!this.retired && signal?.aborted) return true;
-      return await stop?.call(session.agent, turn, signal) ?? false;
-    };
-    session.agent.shouldStopAfterTurn = stopWrapper;
+    session.agent.finishTurn = finishWrapper;
     this.unbindHooks = () => {
-      if (session.agent.prepareNextTurnWithContext === prepareWrapper) session.agent.prepareNextTurnWithContext = prepare;
-      if (session.agent.shouldStopAfterTurn === stopWrapper) session.agent.shouldStopAfterTurn = stop;
+      if (session.agent.finishTurn === finishWrapper) session.agent.finishTurn = finish;
     };
   }
   extension(): InlineExtension {
@@ -241,7 +227,6 @@ export class ProjectValidationController {
     this.latest = evidence;
     if (this.retired || !this.session) return;
     await this.session.sendCustomMessage({ customType: VALIDATION_CUSTOM_TYPE, content: validationEvidenceText(evidence), display: true, details: evidence }, { triggerTurn: false });
-    this.refreshEvidence = true;
   }
   private stillApproved(proposal: Proposal, generation: number): boolean {
     if (this.retired || this.proposal !== proposal || this.generation !== generation) return false;
@@ -290,7 +275,7 @@ export class ProjectValidationController {
           const tool = session.agent.state.tools.find((entry) => entry.name === "bash");
           if (!tool || !session.agent.beforeToolCall) throw new Error("Checked Bash is unavailable.");
           const { id, args } = createSyntheticCheckCall({ command: command.command, timeout: command.timeoutSeconds, max_bytes: OUTPUT_BYTES });
-          const context = { systemPrompt: session.agent.state.systemPrompt, messages: session.agent.state.messages, tools: session.agent.state.tools };
+          const context = { messages: session.agent.state.messages, tools: session.agent.state.tools };
           // Exactly the session's Check hooks and native-sandbox registered Bash.
           // Never executeBash(): that API deliberately bypasses model Check policy.
           const toolCall = { type: "toolCall" as const, id, name: "bash", arguments: args };

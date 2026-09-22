@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { SessionManager, SettingsManager, type AgentSession, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import { estimateContextText } from "../src/context-estimate";
 import { CONTEXT_HANDOFF_MAX_CHARS, CONTEXT_TOOL_NAMES, CONTEXT_WINDOW_CUSTOM_TYPE, ContextWindowController } from "../src/context-window";
 
 const roots: string[] = [];
@@ -20,6 +21,11 @@ const assistant = (calls: Array<{ id: string; name: string }> = [], overrides: R
 const user = (content: string) => ({ role: "user" as const, content, timestamp: Date.now() });
 const result = (id: string, name = "new_context", isError = false) => ({ role: "toolResult" as const, toolCallId: id, toolName: name, content: [{ type: "text" as const, text: "result" }], isError, timestamp: Date.now() });
 
+const conversation = (messages: readonly any[]) => messages.filter((message) => message.role !== "system");
+
+// A bare Agent that behaves like AgentSession where the controller can see it:
+// messages persist at message_end, every request is built from the session
+// projection, and the prompt lives in transcript system messages.
 function harness(manager = SessionManager.inMemory(), settings = SettingsManager.inMemory({ compaction: { enabled: true, reserveTokens: 1000 } }), transformContext?: Agent["transformContext"]) {
   const controller = new ContextWindowController();
   const handlers = new Map<string, Function>();
@@ -27,9 +33,15 @@ function harness(manager = SessionManager.inMemory(), settings = SettingsManager
   const extension = controller.extension();
   if (typeof extension === "function") throw new Error("Expected named inline extension");
   extension.factory({ on: (event: string, handler: Function) => handlers.set(event, handler), registerTool: (tool: any) => tools.set(tool.name, tool) } as unknown as ExtensionAPI);
-  const agent = new Agent({ transformContext, streamFn: (() => { throw new Error("This harness does not stream"); }) as any, initialState: { model: model(), systemPrompt: "Current system instructions.", messages: manager.buildSessionContext().messages } });
-  const priorTurns: any[] = [];
-  agent.prepareNextTurnWithContext = (turn) => { priorTurns.push(turn); return { context: { ...turn.context, systemPrompt: "dynamic prompt", tools: agent.state.tools }, model: agent.state.model }; };
+  if (!manager.buildSessionProjection().messages.some((message) => message.role === "system")) {
+    manager.appendMessage({ role: "system", content: "Current system instructions.", timestamp: 0 });
+  }
+  const agent = new Agent({ transformContext, streamFn: (() => { throw new Error("This harness does not stream"); }) as any, initialState: { model: model(), messages: manager.buildSessionProjection().messages } });
+  const sync = () => { agent.state.messages = manager.buildSessionProjection().messages; };
+  agent.prepareRequest = async (request) => ({ context: { ...request.context, messages: manager.buildSessionProjection().messages } });
+  agent.subscribe((event) => {
+    if (event.type === "message_end" && ["system", "user", "assistant", "toolResult"].includes(event.message.role)) manager.appendMessage(event.message as any);
+  });
   const compactions: unknown[] = [];
   const compactResult = { summary: "Native compact result", firstKeptEntryId: "kept", tokensBefore: 10 };
   const session = { agent, settingsManager: settings, sessionManager: manager,
@@ -37,13 +49,16 @@ function harness(manager = SessionManager.inMemory(), settings = SettingsManager
     get model() { return agent.state.model; } } as unknown as AgentSession;
   controller.bind(session);
   const execute = (name: string, args: unknown = {}, id = "roll", signal?: AbortSignal) => tools.get(name).execute(id, args, signal, undefined, { sessionManager: manager });
+  const append = (...messages: any[]) => { for (const message of messages) manager.appendMessage(message); sync(); };
+  const setPrompt = (text: string) => append({ role: "system", content: "", sections: { harness: text }, timestamp: 0 });
   const end = (message: any, results: any[], signal?: AbortSignal) => {
-    manager.appendMessage(message); agent.state.messages.push(message);
-    for (const output of results) { manager.appendMessage(output); agent.state.messages.push(output); }
+    append(message, ...results);
     handlers.get("turn_end")!({ type: "turn_end", turnIndex: 0, message, toolResults: results }, { signal });
   };
   const roll = async (handoff?: string, id = "roll") => { await execute("new_context", handoff === undefined ? {} : { handoff }, id); end(assistant([{ id, name: "new_context" }]), [result(id)]); };
   const boundaries = () => manager.getEntries().filter((entry) => entry.type === "custom" && entry.customType === CONTEXT_WINDOW_CUSTOM_TYPE);
+  /** The conversation messages that the next request sends. */
+  const request = async () => conversation(await agent.transformContext!(manager.buildSessionProjection().messages));
   // Use real public Agent events so usage is paired with an actual request.
   const respond = async (overrides: Record<string, unknown> = {}) => {
     agent.streamFunction = () => {
@@ -53,9 +68,10 @@ function harness(manager = SessionManager.inMemory(), settings = SettingsManager
       return stream;
     };
     await agent.prompt("Meter request");
+    sync();
   };
-  return { controller, handlers, tools, agent, session, manager, settings, priorTurns, execute, end, roll, boundaries,
-    respond, compactions, compactResult };
+  return { controller, handlers, tools, agent, session, manager, settings, execute, append, setPrompt, end, roll, boundaries,
+    request, respond, compactions, compactResult };
 }
 
 describe("context-window lifecycle", () => {
@@ -75,8 +91,7 @@ describe("context-window lifecycle", () => {
     const original = manager.getEntries().map((entry) => JSON.stringify(entry));
     const h = harness(manager);
     await h.roll("Literal first handoff", "first");
-    manager.appendMessage(user("Second-window instruction"));
-    h.agent.state.messages.push(user("Second-window instruction"));
+    h.append(user("Second-window instruction"));
     await h.roll("Literal second handoff", "second");
     const after = manager.appendMessage(user("After latest boundary"));
     expect(h.boundaries()).toHaveLength(2);
@@ -85,35 +100,35 @@ describe("context-window lifecycle", () => {
     expect(manager.getEntry(after)).toBeDefined();
     expect(manager.getSessionFile()).toBe(file);
     expect(manager.getSessionId()).toBe(sessionId);
-    expect(h.agent.state.messages).toHaveLength(1);
-    expect(JSON.stringify(h.agent.state.messages)).toContain("Literal second handoff");
-    expect(JSON.stringify(h.agent.state.messages)).not.toContain("Literal first handoff");
+    const latest = await h.request();
+    expect(latest).toHaveLength(2);
+    expect(JSON.stringify(latest)).toContain("Literal second handoff");
+    expect(JSON.stringify(latest)).toContain("After latest boundary");
+    expect(JSON.stringify(latest)).not.toContain("Literal first handoff");
     const reopened = SessionManager.open(file);
     const resumed = harness(reopened);
     expect(reopened.getSessionId()).toBe(sessionId);
     expect(reopened.getSessionFile()).toBe(file);
     expect(reopened.getEntries()).toEqual(manager.getEntries());
-    expect(JSON.stringify(resumed.agent.state.messages)).toContain("After latest boundary");
-    expect(JSON.stringify(resumed.agent.state.messages)).not.toContain("Exact original instruction");
+    expect(JSON.stringify(await resumed.request())).toContain("After latest boundary");
+    expect(JSON.stringify(await resumed.request())).not.toContain("Exact original instruction");
     const calls = reopened.getEntries().filter((entry) => entry.type === "message" && entry.message.role === "assistant");
     expect(calls).toHaveLength(3);
     expect(reopened.getEntries().filter((entry) => entry.type === "message" && entry.message.role === "toolResult")).toHaveLength(2);
     expect(readFileSync(file, "utf8")).toContain("Exact original instruction.");
   });
 
-  test("the inner loop receives fresh state through the previous public refresh hook", async () => {
+  test("the next request after rollover holds only the new window and later messages", async () => {
     const h = harness();
-    h.agent.state.messages.push(user("old window"));
-    const old = h.agent.state.messages.slice();
+    h.append(user("old window"));
     await h.roll("carry this");
     // A queued custom message may be flushed by pi after turn_end.
-    h.agent.state.messages.push(user("steering message"));
-    const update = await h.agent.prepareNextTurnWithContext!({ context: { messages: old, systemPrompt: "old", tools: [] }, message: assistant(), toolResults: [], newMessages: [] });
-    expect(h.priorTurns[0].context.messages).toEqual(h.agent.state.messages);
-    expect(update?.context?.systemPrompt).toBe("dynamic prompt");
-    expect(JSON.stringify(update?.context?.messages)).not.toContain("old window");
-    expect(JSON.stringify(update?.context?.messages)).toContain("steering message");
-    expect(h.agent.state.messages.some((message) => message.role === "toolResult")).toBe(false);
+    h.append(user("steering message"));
+    const next = JSON.stringify(await h.request());
+    expect(next).not.toContain("old window");
+    expect(next).toContain("carry this");
+    expect(next).toContain("steering message");
+    expect(next).not.toContain("toolResult");
   });
 
   test("restoration follows only the current branch", async () => {
@@ -124,12 +139,12 @@ describe("context-window lifecycle", () => {
     manager.branch(ancestor);
     manager.appendMessage(user("Branch B"));
     const second = harness(manager);
-    expect(JSON.stringify(second.agent.state.messages)).toContain("Shared ancestor");
-    expect(JSON.stringify(second.agent.state.messages)).not.toContain("branch A");
+    expect(JSON.stringify(await second.request())).toContain("Shared ancestor");
+    expect(JSON.stringify(await second.request())).not.toContain("branch A");
     await second.roll("branch B handoff", "b");
     const resumed = harness(manager);
-    expect(JSON.stringify(resumed.agent.state.messages)).toContain("branch B handoff");
-    expect(JSON.stringify(resumed.agent.state.messages)).not.toContain("branch A");
+    expect(JSON.stringify(await resumed.request())).toContain("branch B handoff");
+    expect(JSON.stringify(await resumed.request())).not.toContain("branch A");
     expect(manager.getEntries().filter((entry) => entry.type === "custom")).toHaveLength(2);
   });
 
@@ -141,19 +156,20 @@ describe("context-window lifecycle", () => {
     manager.appendMessage(user("Kept recent text"));
     manager.appendCompaction("Manual summary", old, 1000);
     const resumed = harness(manager);
-    expect(JSON.stringify(resumed.agent.state.messages)).toContain("Manual summary");
-    expect(JSON.stringify(resumed.agent.state.messages)).toContain("Literal handoff supplied to new_context:\\nhandoff");
-    expect(JSON.stringify(resumed.agent.state.messages)).toContain("Kept recent text");
-    expect(JSON.stringify(resumed.agent.state.messages)).not.toContain("Discard from active context only");
+    const next = JSON.stringify(await resumed.request());
+    expect(next).toContain("Manual summary");
+    expect(next).toContain("Literal handoff supplied to new_context:\\nhandoff");
+    expect(next).toContain("Kept recent text");
+    expect(next).not.toContain("Discard from active context only");
     expect(manager.getEntry(old)).toBeDefined();
   });
 
-  test("malformed boundary on tree navigation clears unfiltered SDK messages before reporting failure", () => {
+  test("malformed boundary on tree navigation reports failure and every later request fails closed", async () => {
     const h = harness();
-    h.agent.state.messages.push(user("Must not leak from old window"));
+    h.append(user("Must not leak from old window"));
     h.manager.appendCustomEntry(CONTEXT_WINDOW_CUSTOM_TYPE, { version: 99 });
     expect(() => h.handlers.get("session_tree")!({})).toThrow();
-    expect(h.agent.state.messages).toEqual([]);
+    await expect(h.request()).rejects.toThrow("Refusing to restore older context");
   });
 
   test("malformed latest boundaries fail closed instead of restoring an earlier window", () => {
@@ -176,16 +192,14 @@ describe("full-batch transaction", () => {
     expect(h.manager.getLeafEntry()?.type).toBe("message");
     expect(h.manager.getBranch().some((entry) => entry.type === "custom")).toBe(false);
     expect(h.agent.state.messages.some((message) => message.role === "toolResult")).toBe(true);
-    const original = h.agent.state.messages.slice();
-    const update = await h.agent.prepareNextTurnWithContext!({ context: { messages: original, tools: [], systemPrompt: "before" }, message: assistant(), toolResults: [], newMessages: [] });
-    expect(update?.context?.messages).toEqual(original);
+    expect(await h.request()).toEqual(conversation(h.manager.buildSessionProjection().messages));
   });
 
   test("empty handoff provides stable IDs to recover exact instructions without a search query", async () => {
     const h = harness();
     const id = h.manager.appendMessage(user("Find me by stable ID"));
     await h.roll();
-    const text = (h.agent.state.messages[0] as any).content;
+    const text = ((await h.request())[0] as any).content;
     expect(text).toContain(`latest prior user entry ID: ${id}`);
     const recovered = await h.execute("history", { op: "read", entryId: id });
     expect(recovered.details.text).toBe("Find me by stable ID");
@@ -264,7 +278,7 @@ describe("full-batch transaction", () => {
     const literal = "  ${do not expand}\n[not a generated summary]  ";
     await h.roll(literal);
     expect((h.boundaries()[0] as any).data.handoff).toBe(literal);
-    expect(JSON.stringify(h.agent.state.messages)).toContain(JSON.stringify(literal).slice(1, -1));
+    expect(JSON.stringify(await h.request())).toContain(JSON.stringify(literal).slice(1, -1));
   });
 });
 
@@ -275,7 +289,7 @@ describe("capacity and compaction policy", () => {
     let meter = (await h.execute("get_context_remaining")).details;
     expect(meter.providerUsageTokens).toBe(210);
     expect(meter.remainingTokens).toBe(100_000 - 210);
-    h.agent.state.messages.push(user("a".repeat(800)));
+    h.append(user("a".repeat(800)));
     meter = (await h.execute("get_context_remaining")).details;
     expect(meter.source).toBe("provider_usage_plus_estimate");
     expect(meter.usedTokens).toBeGreaterThan(210);
@@ -302,16 +316,19 @@ describe("capacity and compaction policy", () => {
 
   test("request overhead is not counted twice and only positive component growth is added", async () => {
     const h = harness();
-    h.agent.state.systemPrompt = "s".repeat(4000);
+    h.setPrompt("s".repeat(4000));
     await h.respond({ usage: { input: 2000, output: 100, cacheRead: 0, cacheWrite: 0, totalTokens: 2100 } });
     const meter = async () => (await h.execute("get_context_remaining")).details;
     expect((await meter()).usedTokens).toBe(2100);
     expect((await meter()).estimatedOverheadTokens).toBe(0);
-    h.agent.state.systemPrompt += "g".repeat(800);
+    const before = estimateContextText(h.agent.state.systemPrompt);
+    h.setPrompt("s".repeat(4000) + "g".repeat(800));
     const promptGrowth = await meter();
-    expect(promptGrowth.usedTokens).toBe(2100 + Math.ceil((1600 - 1334) * promptGrowth.calibrationFactor));
+    const growth = estimateContextText(h.agent.state.systemPrompt) - before;
+    expect(growth).toBeGreaterThanOrEqual(266);
+    expect(promptGrowth.usedTokens).toBe(2100 + Math.ceil(growth * promptGrowth.calibrationFactor));
     expect(promptGrowth.source).toBe("provider_usage_plus_estimate");
-    h.agent.state.systemPrompt = "short";
+    h.setPrompt("short");
     expect((await meter()).usedTokens).toBe(promptGrowth.usedTokens);
     h.agent.state.tools = [{ name: "revealed", description: "tool".repeat(500), parameters: { type: "object" } } as any];
     const expanded = await meter();
@@ -324,9 +341,11 @@ describe("capacity and compaction policy", () => {
     expect((await meter()).estimatedOverheadTokens).toBe(0);
   });
 
-  test("request baselines use the effective public next-turn prompt rather than stale agent state", async () => {
-    const h = harness();
-    h.agent.state.systemPrompt = "stale state prompt".repeat(1000);
+  test("request baselines use the effective request prompt rather than stale agent state", async () => {
+    // pi projects a forced prompt onto the request, after context handlers.
+    const h = harness(undefined, undefined, async (messages) => [{ role: "system", content: "dynamic prompt", timestamp: 0 } as any,
+      ...messages.filter((message) => message.role !== "system")]);
+    h.setPrompt("stale state prompt".repeat(1000));
     const meters: any[] = [];
     h.agent.state.tools = [{ name: "measure", description: "Measure", parameters: { type: "object" },
       async execute() {
@@ -337,15 +356,15 @@ describe("capacity and compaction policy", () => {
     const contents = [[{ id: "first", name: "measure" }], [{ id: "second", name: "measure" }], []];
     const prompts: string[] = [];
     h.agent.streamFunction = (_model, context) => {
-      prompts.push(context.systemPrompt ?? "");
+      prompts.push(getCurrentSystemPrompt(context.messages));
       const message = assistant(contents.shift(), { usage: { input: 5000, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 5000 } });
       const stream = createAssistantMessageEventStream();
       stream.push({ type: "done", reason: message.stopReason, message });
       return stream;
     };
     await h.agent.prompt("request");
-    expect(prompts[0]).toBe(h.agent.state.systemPrompt);
-    expect(prompts[1]).toBe("dynamic prompt");
+    expect(prompts).toEqual(["dynamic prompt", "dynamic prompt", "dynamic prompt"]);
+    expect(h.agent.state.systemPrompt).toContain("stale state prompt");
     expect(meters.map((meter) => meter.usedTokens)).toEqual([5000, 5000]);
     expect(meters.map((meter) => meter.estimatedOverheadTokens)).toEqual([0, 0]);
   });
@@ -365,8 +384,8 @@ describe("capacity and compaction policy", () => {
 
   test("restored provider usage without a request snapshot is a full estimate", async () => {
     const h = harness();
-    h.agent.state.messages.push(assistant([], { usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 10 } }));
-    h.agent.state.systemPrompt = "new effective prompt".repeat(1000);
+    h.append(assistant([], { usage: { input: 10, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 10 } }));
+    h.setPrompt("new effective prompt".repeat(1000));
     const meter = (await h.execute("get_context_remaining")).details;
     expect(meter.source).toBe("estimate");
     expect(meter.providerUsageTokens).toBe(0);
@@ -391,9 +410,10 @@ describe("capacity and compaction policy", () => {
 
   test("negative or nonfinite saved reserves cannot increase hard capacity", async () => {
     for (const reserveTokens of [-100_000, Infinity, NaN]) {
-      const h = harness(undefined, SettingsManager.inMemory({ compaction: { reserveTokens } }));
-      // JSON-backed SDK settings normalize nonfinite numbers to null. Also cover
-      // malformed values from a public settings accessor without that round trip.
+      // pi rejects an invalid saved reserve itself. Also cover malformed values
+      // from a public settings accessor that bypasses that validation.
+      expect(() => SettingsManager.inMemory({ compaction: { reserveTokens } }).getCompactionSettings()).toThrow();
+      const h = harness(undefined, SettingsManager.inMemory({ compaction: {} }));
       const settings = h.settings.getCompactionSettings.bind(h.settings);
       h.settings.getCompactionSettings = () => ({ ...settings(), reserveTokens });
       h.agent.state.model = model("small", 2048);
@@ -451,8 +471,8 @@ describe("capacity and compaction policy", () => {
   test("unknown models, invalid usage, and prompt/tool overhead remain explicit estimates", async () => {
     const h = harness();
     h.agent.state.tools = [{ name: "tool", description: "Description".repeat(100), parameters: { type: "object" } } as any];
-    h.agent.state.messages.push(assistant([], { usage: { input: NaN, output: -1, cacheRead: 0, cacheWrite: 0, totalTokens: Infinity } }));
-    h.agent.state.messages.push(assistant([], { usage: undefined }));
+    h.append(assistant([], { usage: { input: NaN, output: -1, cacheRead: 0, cacheWrite: 0, totalTokens: Infinity } }));
+    h.append(assistant([], { usage: undefined }));
     const meter = (await h.execute("get_context_remaining")).details;
     expect(meter.source).toBe("estimate");
     expect(meter.estimatedOverheadTokens).toBeGreaterThan(250);

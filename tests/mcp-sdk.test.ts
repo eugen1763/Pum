@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentSessionFromServices, createAgentSessionServices, ModelRuntime, SessionManager, SettingsManager, type AgentSession } from "@earendil-works/pi-coding-agent";
-import { createAssistantMessageEventStream, InMemoryCredentialStore, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, getCurrentTools, InMemoryCredentialStore, type AssistantMessage, type JsonObject, type Model } from "@earendil-works/pi-ai";
 import { McpController } from "../src/mcp";
 import { MCP_PROTOCOL_VERSION } from "../src/mcp-protocol";
 import { readMcpProposal } from "../src/mcp-config";
@@ -46,7 +46,7 @@ test("installed SDK: inactive MCP cannot execute, reveal grants no consent, exac
   await session.bindExtensions({onError: error => { throw error; }});
   const replies: AssistantMessage["content"][] = [];
   session.agent.streamFunction = (_model, context) => {
-    expect(JSON.stringify(context.tools)).not.toContain("UNTRUSTED_SCHEMA_MARKER");
+    expect(JSON.stringify(getCurrentTools(context.messages))).not.toContain("UNTRUSTED_SCHEMA_MARKER");
     const content = replies.shift()!;
     const message: AssistantMessage = {role: "assistant", content, provider: model.provider, model: model.id, api: model.api, timestamp: Date.now(),
       stopReason: content.some(part => part.type === "toolCall") ? "toolUse" : "stop",
@@ -54,7 +54,7 @@ test("installed SDK: inactive MCP cannot execute, reveal grants no consent, exac
     const stream = createAssistantMessageEventStream(); stream.push({type: "done", reason: message.stopReason as "stop" | "toolUse", message}); return stream;
   };
   let index = 0;
-  async function invoke(name: string, args: Record<string, unknown>) {
+  async function invoke(name: string, args: JsonObject) {
     const id = `mcp-sdk-${index++}`;
     replies.push([{type: "toolCall", id, name, arguments: args}], [{type: "text", text: "done"}]);
     await session!.prompt("Run fixture");

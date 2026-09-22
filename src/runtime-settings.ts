@@ -143,7 +143,7 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
   // an older run's extension hook. Async scope follows the SDK's entire
   // _runAgentPrompt (including retry/queued continuations and true settlement).
   // Never settle by session key: extensions run before ordinary subscribers.
-  type Admission = { epoch: number; started: boolean; released: boolean; parent?: Admission; release: () => void };
+  type Admission = { epoch: number; started: boolean; released: boolean; parent?: Admission; outer?: Admission; release: () => void };
   let epoch = 0;
   let disposed = false;
   let frozen = false;
@@ -170,27 +170,36 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
   // compatibility lease separate; unscoped events cannot release scoped work.
   let unscoped: Admission | undefined = session.isStreaming || session.agent?.state?.isStreaming ? reserve() : undefined;
   if (unscoped) unscoped.started = true;
+  // The async scope in which the unscoped lease started. Only a settled event
+  // from that same scope ends it.
+  let unscopedScope: Admission | undefined;
   const unsubscribe = session.subscribe((event) => {
     const admission = scopes.getStore();
     // A cancelled preflight may unwind after a newer accepted prompt starts.
     // Its SDK finally still emits settled; that event does not own the new run.
     if (disposed) return;
+    // pi defers a run requested from agent_settled until those handlers finish.
+    // It starts in the settled admission's scope, after that admission released,
+    // and needs its own lease until its own settled event in that scope.
+    const leaseRun = (scope: Admission | undefined) => {
+      if (!unscoped) { unscoped = reserve(); unscopedScope = scope; }
+      unscoped.started = true;
+    };
     if (event.type === "agent_start") {
-      if (admission) {
-        if (admission.epoch === epoch && !admission.released) {
+      if (admission && !admission.released) {
+        if (admission.epoch === epoch) {
           admission.started = true;
           if (admission.parent && !admission.parent.released) admission.parent.started = true;
+          if (admission.outer) leaseRun(admission.outer);
         }
-      } else {
-        unscoped ??= reserve();
-        unscoped.started = true;
-      }
+      } else if (!admission || admission.epoch === epoch) leaseRun(admission);
     } else if (event.type === "agent_settled") {
-      if (admission) admission.release();
-      else {
+      if (admission && !admission.released) admission.release();
+      else if (unscoped && unscopedScope === admission) {
         const settled = unscoped;
         unscoped = undefined;
-        settled?.release();
+        unscopedScope = undefined;
+        settled.release();
       }
     }
   });
@@ -222,6 +231,7 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
     // Its promise, not the session's shared idle flag, proves completion.
     direct.started = true;
     if (admission && !admission.released) direct.parent = admission;
+    else if (admission && admission.epoch === epoch) direct.outer = admission;
     try {
       if (disposed || frozen || direct.released || direct.epoch !== epoch) throw new Error("Runtime admission was cancelled");
       return await scopes.run(direct, run);
@@ -310,7 +320,7 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
       // SDK waitForIdle can return early after a stale preflight finally resets
       // isStreaming. Scoped execution still needs its own settled/promise proof.
       cancelledUnscoped?.release();
-      if (unscoped?.released) unscoped = undefined;
+      if (unscoped?.released) { unscoped = undefined; unscopedScope = undefined; }
     } finally {
       for (const admission of cancelled) if (!admission.started) admission.release();
     }
@@ -323,6 +333,7 @@ export function bindRuntimeSettingsActivity(session: AgentSession, coordinator =
     finally {
       unsubscribe();
       unscoped = undefined;
+      unscopedScope = undefined;
       for (const admission of admissions) admission.release();
       admissions.clear();
       for (const release of shellReleases) release();

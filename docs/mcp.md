@@ -169,7 +169,8 @@ Installed `@earendil-works/pi-coding-agent` 0.85.0 `docs/sdk.md`, relevant
 `docs/extensions.md` contracts and implementation were inspected for registration,
 active-tool order, exact session context, input mutation, error signaling and
 explicit disposal. The bridge throws bounded labeled tool failures because the
-installed SDK ignores a returned `isError` property.
+installed SDK ignores a returned `isError` property. Installed pi 0.87.1 still
+ignores it.
 
 ## Validation and limitations
 

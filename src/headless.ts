@@ -12,7 +12,6 @@ import { conversationBranchState } from "./conversation-branch";
 import { isPlanModeActive, planModeExtension } from "./plan-mode";
 import { createFilesystemSandboxExtension } from "./filesystem-sandbox";
 import { bindFileCheckpointSession, createFileCheckpointExtension } from "./file-checkpoints";
-import { installModelCatalogFallbacks } from "./model-catalog";
 import { AGENT_DIR, AUTH_PATH, MODELS_PATH } from "./config";
 import { createMemoryExtension, hasMemoryContextExtension, MEMORY_EDIT_TOOL_NAME, MEMORY_READ_TOOL_NAME } from "./memory";
 import { ContextWindowController, CONTEXT_TOOL_NAMES } from "./context-window";
@@ -172,7 +171,6 @@ async function runPromptSession(
     authPath: AUTH_PATH,
     modelsPath: MODELS_PATH,
   });
-  installModelCatalogFallbacks(modelRuntime);
   if ((await modelRuntime.getAvailable()).length === 0) {
     process.stderr.write("pum: no provider is available. Run 'pum login' first.\n");
     return 1;

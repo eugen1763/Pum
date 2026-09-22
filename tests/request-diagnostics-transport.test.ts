@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { zstdDecompressSync } from "node:zlib";
-import type { Context, Model } from "@earendil-works/pi-ai";
+import { normalizeContext, type Context, type Model } from "@earendil-works/pi-ai";
 import { closeOpenAICodexWebSocketSessions, resetOpenAICodexWebSocketDebugStats } from "@earendil-works/pi-ai/api/openai-codex-responses";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { bindSearchSession, webSearch, wrapProvider } from "../src/web-search";
@@ -71,7 +71,7 @@ function fixture(fallback = false) {
   const context: Context = { systemPrompt: "Fixed fixture instruction", messages: [], tools: [] };
   const prompt = async (text: string) => {
     context.messages.push({ role: "user", content: text, timestamp: Date.now() });
-    const stream = await session.agent.streamFunction(model, context, { apiKey: fakeToken, sessionId, transport: "auto" });
+    const stream = await session.agent.streamFunction(model, normalizeContext(context), { apiKey: fakeToken, sessionId, transport: "auto" });
     const result = await stream.result();
     expect(result.stopReason).toBe("stop");
     context.messages.push(result);

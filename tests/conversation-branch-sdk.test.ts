@@ -428,13 +428,16 @@ describe("installed SDK same-session conversation branch", () => {
     const late = f.runtime.session.sessionManager.appendMessage({ role: "user", content: "fresh window prompt", timestamp: 3 });
     f.runtime.session.sessionManager.appendMessage(answer("fresh window answer"));
     const early = await f.runtime.branchConversation(f.selection(f.firstAnswer));
-    expect(JSON.stringify(early.session.messages)).toContain("original answer");
-    expect(JSON.stringify(early.session.messages)).not.toContain("PRIVATE_HANDOFF");
     expect(listConversationBranchPoints(early.session).points.find((point) => point.entryId === f.firstAnswer)?.archived).toBe(true);
+    // The rollover window applies to requests, which pi builds from the selected branch.
+    await early.session.prompt("early probe");
+    expect(JSON.stringify(f.requests.at(-1))).toContain("original answer");
+    expect(JSON.stringify(f.requests.at(-1))).not.toContain("PRIVATE_HANDOFF");
     const lateResult = await f.runtime.branchConversation(f.selection(late));
     expect(lateResult.editorText).toBe("fresh window prompt");
-    expect(JSON.stringify(lateResult.session.messages)).toContain("PRIVATE_HANDOFF");
-    expect(JSON.stringify(lateResult.session.messages)).not.toContain("original answer");
+    await lateResult.session.prompt("late probe");
+    expect(JSON.stringify(f.requests.at(-1))).toContain("PRIVATE_HANDOFF");
+    expect(JSON.stringify(f.requests.at(-1))).not.toContain("original answer");
     expect(lateResult.session.sessionManager.getEntry(f.second)).toBeDefined();
   });
 });
