@@ -4,6 +4,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import { createRoot } from "@opentui/react";
 import { App } from "../src/app";
 import { readFileSync } from "node:fs";
+import { McpCommandError } from "../src/mcp";
 import { ProjectValidationController } from "../src/project-validation";
 import { checkpointControllerForSession, createFileCheckpointExtension } from "../src/file-checkpoints";
 
@@ -366,6 +367,16 @@ describe("main TUI direct MCP authority boundary", () => {
     expect(f.setup.captureCharFrame()).not.toContain("private raw failure");
     f.retire(); await submit(f.setup, "/mcp");
     expect(f.setup.captureCharFrame()).toContain("MCP is unavailable"); expect(f.calls).toEqual([]);
+  });
+  test("rendered MCP errors show only curated controller diagnostics", async () => {
+    const f = await fixture();
+    f.setCommand(async () => { throw new McpCommandError("proposal"); });
+    await submit(f.setup, "/mcp");
+    expect(f.setup.captureCharFrame()).toContain("MCP proposal missing, changed or invalid");
+    f.setCommand(async () => { throw new McpCommandError("native"); });
+    await submit(f.setup, "/mcp connect server " + "a".repeat(64));
+    expect(f.setup.captureCharFrame()).toContain("native Linux Bubblewrap");
+    expect(f.calls).toEqual([]);
   });
   test("pending results cannot appear after runtime retirement", async () => {
     const f = await fixture(); let finish!: (text: string) => void;

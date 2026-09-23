@@ -3,6 +3,8 @@
  * basic/lifecycle,basic/utilities/cancellation,server/tools}.
  * This deliberately rejects unsupported JSON Schema keywords rather than claiming full coverage.
  */
+import { McpNativeUnavailableError } from "./mcp-process";
+
 export const MCP_PROTOCOL_VERSION = "2025-11-25";
 export const MCP_LIMITS = Object.freeze({ frameBytes: 256 * 1024, stdoutBytes: 16 * 1024 * 1024,
   discoveryBytes: 256 * 1024, tools: 32, pages: 4, schemaBytes: 16 * 1024,
@@ -228,7 +230,12 @@ export class McpProtocolClient {
       return client;
     };
     try { return await Promise.race([start(), stopped]); }
-    catch { client.closeWith("MCP connection failed."); throw new Error("MCP connection failed."); }
+    catch (error) {
+      const nativeUnavailable = !signal?.aborted && error instanceof McpNativeUnavailableError;
+      client.closeWith("MCP connection failed.");
+      if (nativeUnavailable) throw new McpNativeUnavailableError();
+      throw new Error("MCP connection failed.");
+    }
     finally { clearTimeout(timer); }
   }
   private assertOpen(): void { if (this.closed || !this.handle) throw new Error("MCP connection closed."); }

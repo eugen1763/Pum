@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { diagnosticsCommandText } from "./request-diagnostics-access";
 import { checkpointControllerForSession, checkpointRecoveryFailureText } from "./file-checkpoints";
 import { VALIDATION_CUSTOM_TYPE, validationForSession } from "./project-validation";
-import type { McpController } from "./mcp";
+import { mcpCommandErrorMessage, type McpController } from "./mcp";
 import type { LspController } from "./lsp";
 import { useKeyboard, usePaste, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
@@ -4877,9 +4877,9 @@ export function App({
       }
       void controller.command(promptText).then((text) => {
         if (sessionRef.current === session && mcpForSession?.(session) === controller) report(text);
-      }).catch(() => {
+      }).catch((error: unknown) => {
         if (sessionRef.current === session && mcpForSession?.(session) === controller) {
-          report("MCP request failed. Preview /mcp and check the current proposal and digests.", true);
+          report(mcpCommandErrorMessage(error), true);
         }
       });
       return;

@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { McpController } from "../src/mcp";
+import { McpCommandError, McpController, mcpCommandErrorMessage } from "../src/mcp";
+import { McpNativeUnavailableError } from "../src/mcp-process";
 import { readMcpProposal } from "../src/mcp-config";
 import { MCP_PROTOCOL_VERSION, type McpSpawnRequest } from "../src/mcp-protocol";
 
@@ -88,9 +89,34 @@ describe("main TUI MCP runtime authority", () => {
     await expect(f.execute("mcp_call", { server: "echo", tool: "echo", arguments: { text: "x" } })).rejects.toThrow();
     expect(f.kills).toBe(1); expect(f.sent.filter(m => m.method === "tools/call")).toHaveLength(0);
   });
-  test("missing/invalid config revokes and generic errors do not reveal proposal secrets", async () => {
+  test("missing/invalid proposal has a curated diagnostic and revokes prior approval", async () => {
     const f = fixture(); await f.approve(); writeFileSync(join(f.cwd, ".pum", "mcp.json"), "SECRET MALFORMED");
-    await expect(f.controller.command("status")).rejects.toThrow("missing, changed or invalid"); expect(f.kills).toBe(1);
+    await expect(f.controller.command("status")).rejects.toBeInstanceOf(McpCommandError);
+    expect(f.kills).toBe(1);
+    expect(mcpCommandErrorMessage(new McpCommandError("proposal"))).toContain("exact-cwd .pum/mcp.json");
+    expect(mcpCommandErrorMessage(new McpCommandError("proposal"))).not.toContain("SECRET");
+    const missing = fixture(); rmSync(join(missing.cwd, ".pum", "mcp.json"));
+    await expect(missing.controller.command("preview")).rejects.toBeInstanceOf(McpCommandError);
+    expect(missing.spawns).toBe(0);
+  });
+  test("native unavailability is distinguished, but server and arbitrary exceptions stay generic", async () => {
+    const f = fixture();
+    const make = (error: Error) => {
+      const controller = new McpController({ cwd: f.cwd, isIdle: () => true, spawn: async () => { throw error; } });
+      controller.bind(f.session);
+      cleanups.push(() => controller.dispose());
+      return controller;
+    };
+    const native = make(new McpNativeUnavailableError());
+    await native.command("preview");
+    const digest = readMcpProposal(f.cwd).digest;
+    await expect(native.command(`connect echo ${digest}`)).rejects.toMatchObject({ kind: "native" });
+    expect(mcpCommandErrorMessage(new McpCommandError("native"))).toContain("Linux Bubblewrap");
+    const server = make(new Error("RAW PRIVATE SERVER FAILURE"));
+    await server.command("preview");
+    await expect(server.command(`connect echo ${digest}`)).rejects.not.toBeInstanceOf(McpCommandError);
+    expect(mcpCommandErrorMessage(new Error("RAW PRIVATE SERVER FAILURE"))).toContain("MCP request failed");
+    expect(mcpCommandErrorMessage(new Error("RAW PRIVATE SERVER FAILURE"))).not.toContain("RAW PRIVATE");
   });
   test("list change notification revokes exact toolset; no automatic rediscovery", async () => {
     const f = fixture(); await f.approve(); f.emit({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });

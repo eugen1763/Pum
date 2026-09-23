@@ -82,6 +82,20 @@ No retry, rediscovery, reconnection or trust restoration is automatic. Consent a
 preview reports are runtime-only; ordinary explicit MCP tool input/output retains
 the normal transcript contract.
 
+## Troubleshooting
+
+- If `/mcp` reports a missing, changed or invalid proposal, check the exact
+  working directory's `.pum/mcp.json` against the bounded version 1 format below.
+  Preview again after correcting the proposal. A changed proposal revokes approval.
+- If `/mcp connect` reports unavailable native Linux Bubblewrap, use Linux with
+  working Bubblewrap enforcement. PUM never starts MCP without it, even with
+  Check and Sandbox Off. Preview again before connecting.
+- Other connection, discovery and tool failures stay generic. PUM does not show
+  raw server, OS or stderr errors. Revoke and preview before another connection.
+- An `mcp_list` failure does **not** mean that no servers are configured. It can
+  mean that authority was revoked or the proposal changed. Only a successful
+  `mcp_list` result describes approved servers, not all configured servers.
+
 ## Native boundary
 
 `src/mcp-process.ts` requires Linux and a successful fixed-path Bubblewrap probe,

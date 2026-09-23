@@ -8,6 +8,7 @@ import type { SandboxPolicy, SandboxProcessExit, SandboxProcessHandle } from "..
 import {
   createMcpProcessAdapter, buildMcpProcessPolicy as buildPolicy, MCP_SYSTEM_MOUNTS, MCP_SCAN_MAX_DEPTH, MCP_SCAN_MAX_MASKS,
   manageMcpProcessHandle, mcpConfigOverlapsSystemSources, MCP_MAX_PENDING_WRITE_BYTES, MCP_MAX_PENDING_WRITES,
+  McpNativeUnavailableError,
 } from "../src/mcp-process";
 
 const linux = process.platform === "linux";
@@ -42,7 +43,12 @@ describe("MCP mandatory native policy", () => {
   test("rejects invalid root without fallback", async () => {
     await expect(createMcpProcessAdapter().spawn({
       executable: "/bin/cat", args: [], cwd: "/", onStdout() {}, onStderr() {},
-    })).rejects.toThrow("native policy");
+    })).rejects.toThrow(/native policy|native Linux Bubblewrap enforcement unavailable/);
+  });
+  test.skipIf(linux)("unsupported platform reports only the curated native marker", async () => {
+    await expect(createMcpProcessAdapter().spawn({
+      executable: "/bin/cat", args: [], cwd: "/", onStdout() {}, onStderr() {},
+    })).rejects.toBeInstanceOf(McpNativeUnavailableError);
   });
   test("revoked pending requests cannot start either", async () => {
     const abort = new AbortController();

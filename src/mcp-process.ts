@@ -28,6 +28,10 @@ export const MCP_MAX_PENDING_WRITES = 64;
 export const MCP_WRITE_TIMEOUT_MS = 5_000;
 export const MCP_CLOSE_GRACE_MS = 1_000;
 const failure = () => new Error("MCP process unavailable or blocked by native policy");
+/** Only the adapter may identify an unavailable mandatory native boundary. */
+export class McpNativeUnavailableError extends Error {
+  constructor() { super("MCP native Linux Bubblewrap enforcement unavailable"); }
+}
 
 export const MCP_SCAN_MAX_ENTRIES = 50_000;
 export const MCP_SCAN_MAX_DEPTH = 32;
@@ -163,18 +167,23 @@ export function createMcpProcessAdapter(options: McpProcessAdapterOptions = {}):
   return {
     async spawn(request) {
       try {
-        if (process.platform !== "linux" || request.signal?.aborted) throw failure();
+        if (request.signal?.aborted) throw failure();
+        if (process.platform !== "linux") throw new McpNativeUnavailableError();
         const bubblewrap = ["/usr/bin/bwrap", "/bin/bwrap"].find(existsSync);
-        if (!bubblewrap) throw failure();
+        if (!bubblewrap) throw new McpNativeUnavailableError();
         const backend = createBubblewrapBackend({ executable: bubblewrap, systemMounts: MCP_SYSTEM_MOUNTS });
-        if ((await backend.probe()).state !== "enforced" || request.signal?.aborted) throw failure();
+        if ((await backend.probe()).state !== "enforced") throw new McpNativeUnavailableError();
+        if (request.signal?.aborted) throw failure();
         const policy = await buildMcpProcessPolicy(request, options);
         if (request.signal?.aborted) throw failure();
         return manageMcpProcessHandle(backend.spawn(policy, {
           persistentStdin: true, signal: request.signal,
           onStdout: request.onStdout, onStderr: request.onStderr,
         }), request.signal ?? new AbortController().signal);
-      } catch { throw failure(); }
+      } catch (error) {
+        if (error instanceof McpNativeUnavailableError && !request.signal?.aborted) throw error;
+        throw failure();
+      }
     },
   };
 }
