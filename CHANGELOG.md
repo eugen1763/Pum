@@ -2,6 +2,12 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.36-beta.2] - 2026-09-23
+
+### Fixed
+- `/mcp` now identifies an invalid or missing exact-directory proposal, and `/mcp connect` reports unavailable native Linux Bubblewrap. Server and operating-system errors remain hidden.
+- MCP troubleshooting now distinguishes configured proposals from runtime-approved tools; a failed `mcp_list` does not prove that no servers are configured.
+
 ## [0.2.36-beta.1] - 2026-09-22
 
 ### Added
