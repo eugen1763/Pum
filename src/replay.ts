@@ -1,4 +1,5 @@
 import type { AgentMessageKind, Line } from "./transcript";
+import { providerErrorLine } from "./provider-error";
 import { toolArgs, type ToolCall } from "./tool-line";
 import { interruptedToolCall, settledToolCall, startedToolCall } from "./tool-row";
 import {
@@ -303,8 +304,8 @@ export function replayEntries(
       continue;
     }
 
-    if (message?.role === "assistant" && Array.isArray(message.content)) {
-      for (const block of message.content) {
+    if (message?.role === "assistant") {
+      for (const block of Array.isArray(message.content) ? message.content : []) {
         if (block?.type === "text" && block.text?.trim()) {
           lines.push({ kind: "text", role: "assistant", text: block.text.trim() });
         } else if (showThinking && block?.type === "thinking" && block.thinking?.trim()) {
@@ -322,6 +323,8 @@ export function replayEntries(
           lines.push({ kind: "tool", call });
         }
       }
+      const error = providerErrorLine(message);
+      if (error) lines.push(error);
       continue;
     }
 

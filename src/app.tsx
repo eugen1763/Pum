@@ -62,7 +62,6 @@ import {
   rawToolText,
   resolveGoalReview,
   resolvePendingDelivery,
-  settleTranscriptMessage,
   streamedDelta,
   StreamLine,
   TextLine,
@@ -74,6 +73,7 @@ import {
 } from "./transcript";
 import { bashOutput, bashResultDisplay, editCounts, toolArgs, type ToolCall } from "./tool-line";
 import { interruptedToolCall, settledToolCall, startedToolCall } from "./tool-row";
+import { settleAssistantTranscript } from "./provider-error";
 import { toolPreviewFromResult, toolPreviewFromStart } from "./tool-preview";
 import { readBranch, watchBranch } from "./git-branch";
 import { HelpPopup, maxHelpScrollOffset } from "./help-popup";
@@ -2222,7 +2222,7 @@ export function App({
         }
         case "message_end":
           if (event.message.role === "assistant") {
-            setTx((value) => settleTranscriptMessage(value));
+            setTx((value) => settleAssistantTranscript(value, event.message));
           } else if (event.message.role === "custom" && event.message.customType === VALIDATION_CUSTOM_TYPE) {
             append({
               kind: "text",

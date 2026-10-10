@@ -20,6 +20,7 @@ import {
   usageFromEntries,
 } from "../agent-usage";
 import { replayEntries } from "../replay";
+import { settleAssistantTranscript } from "../provider-error";
 import { registerOperationalNotice } from "../operational-context";
 import { bindFileCheckpointSession } from "../file-checkpoints";
 import { ProjectValidationController, VALIDATION_CUSTOM_TYPE } from "../project-validation";
@@ -76,7 +77,6 @@ import { GOAL_VERDICT_TOOL_NAME, goalVerdictParameters } from "../goal-judge";
 import {
   flushStream,
   resolvePendingDelivery,
-  settleTranscriptMessage,
   streamedDelta,
   type Line,
   type PendingLine,
@@ -1041,7 +1041,7 @@ export class SubagentManager {
           this.appendLine(record, { kind: "text", role: event.message.details?.outcome === "passed" ? "system" : "error", text: String(event.message.content) });
         }
         if (event.message?.role === "assistant") {
-          this.updateTranscript(record, (value) => settleTranscriptMessage(value));
+          this.updateTranscript(record, (value) => settleAssistantTranscript(value, event.message));
         }
         break;
       case "message_update": {

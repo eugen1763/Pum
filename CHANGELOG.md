@@ -2,6 +2,16 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.37-beta.1] - 2026-10-10
+
+### Changed
+- Upgraded pi to 1.1.0.
+
+### Fixed
+- Fixed Anthropic strict-tool requests rejected for `maxItems`, while preserving local tool-schema limits.
+- Provider failures now show safely redacted errors in main, child, and resumed transcripts, including after partial output. Cancellation is not shown as a failure.
+- Preserved nonzero Bash result/error handling and automatic-validation failure semantics with the new pi SDK.
+
 ## [0.2.36-beta.1] - 2026-09-22
 
 ### Added
