@@ -2,6 +2,17 @@
 
 All notable changes to PUM are documented in this file.
 
+## [0.2.38-beta.1] - 2026-10-14
+
+### Added
+
+- MCP now runs on Windows through mandatory MXC BaseContainer enforcement (never the AppContainer+DACL fallback) and accepts drive-qualified absolute server executables. Linux Bubblewrap behaviour is unchanged; LSP remains Linux-only.
+
+### Fixed
+
+- `/mcp` now identifies an invalid or missing exact-directory proposal, and `/mcp connect` reports unavailable mandatory native enforcement (Linux Bubblewrap or Windows MXC BaseContainer) when the host lacks it. Server and operating-system errors remain hidden.
+- MCP troubleshooting now distinguishes configured proposals from runtime-approved tools; a failed `mcp_list` does not prove that no servers are configured.
+
 ## [0.2.37-beta.1] - 2026-10-10
 
 ### Changed
