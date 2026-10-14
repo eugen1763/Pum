@@ -1,4 +1,4 @@
-import { createReadToolDefinition, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition, type ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { lstat, open } from "node:fs/promises";
@@ -138,11 +138,11 @@ export class FileMutationGuard {
   }
 
   /** Preserve native image handling and filename retries; observe only a stable successful read. */
-  async read(id: string, input: any, signal?: AbortSignal, onUpdate?: any, ctx?: ExtensionContext, autoResizeImages?: boolean): Promise<any> {
+  async read(id: string, input: any, signal?: AbortSignal, onUpdate?: any, ctx?: ExtensionToolContext, autoResizeImages?: boolean): Promise<any> {
     const target = await this.target(input.path, "read");
     const before = await this.snapshot(target.path, "read");
     const result = await createReadToolDefinition(this.cwd, { autoResizeImages }).execute(
-      id, input, signal, onUpdate, ctx ?? { cwd: this.cwd } as ExtensionContext,
+      id, input, signal, onUpdate, ctx ?? { cwd: this.cwd } as ExtensionToolContext,
     );
     const after = await this.snapshot(target.path, "read");
     if (!signal?.aborted && !this.disposed && before.fingerprint === after.fingerprint) this.remember(target.key, before);

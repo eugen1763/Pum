@@ -3,6 +3,7 @@ import {
   SessionManager,
   type ExtensionAPI,
   type ExtensionContext,
+  type ExtensionToolContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
@@ -20,7 +21,7 @@ function fixture(budget?: (ctx: ExtensionContext) => number | undefined) {
         return target[property].bind(target);
       },
     }),
-  } as unknown as ExtensionContext);
+  } as unknown as ExtensionToolContext);
   return { tool: tool!, manager, call };
 }
 

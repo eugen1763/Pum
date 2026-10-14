@@ -580,7 +580,12 @@ export type BashToolLike = {
     signal?: AbortSignal,
     onUpdate?: (update: { content: unknown[]; details?: unknown }) => void,
     ctx?: unknown,
-  ) => Promise<{ content: Array<{ type: string; text: string }>; details?: { fullOutputPath?: string } }>;
+  ) => Promise<{
+    content: Array<{ type: string; text: string }>;
+    details?: { fullOutputPath?: string };
+    isError?: boolean;
+    structuredContent?: unknown;
+  }>;
 };
 
 export const bashOutputParameters = Type.Object({
@@ -666,16 +671,27 @@ export function withBashOutput(
           await capture.remove();
           return result; // Fail open to pi's bounded native result; never lose output.
         }
-        const source = captured ?? textOf(result.content);
-        const summary = summarizeBashOutput(source, perCall, {
-          exitCode: 0,
+        const nativeText = textOf(result.content);
+        // pi 1.1.0 returns nonzero exits as error results, not thrown Errors.
+        // Keep native status/error identity while summarizing our trusted stream.
+        const exit = result.isError ? EXIT_RE.exec(nativeText) : null;
+        const status = exit ? `Command exited with code ${exit[2]}` : undefined;
+        if (result.isError && !exit) {
+          await capture?.remove();
+          return result; // Unknown error shape: preserve native evidence intact.
+        }
+        const source = captured ?? (exit ? exit[1] : nativeText);
+        const summary = summarizeBashOutput(source, status
+          ? { ...perCall, maxBytes: Math.max(64, perCall.maxBytes - byteLen(status) - 2) }
+          : perCall, {
+          exitCode: exit ? Number(exit[2]) : 0,
           path: capture?.path,
           patterns,
         });
         if (capture && !summary.lossy) await capture.remove();
         return {
           ...result,
-          content: [{ type: "text", text: summary.content }],
+          content: [{ type: "text", text: status ? `${summary.content}\n\n${status}` : summary.content }],
           details: capture && summary.lossy ? { fullOutputPath: capture.path } : result.details,
         };
       } catch (error) {

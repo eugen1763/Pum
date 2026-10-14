@@ -319,7 +319,7 @@ describe("withBashOutput", () => {
 
   test("reframes a non-zero exit from the trusted capture and preserves the full file", async () => {
     const raw = "normal\n".repeat(3000) + "note: crash here\n";
-    const error = await executeBashWithOutput(
+    const result = await executeBashWithOutput(
       process.cwd(),
       {
         operations: {
@@ -334,12 +334,15 @@ describe("withBashOutput", () => {
       undefined,
       undefined,
       { cwd: process.cwd(), sessionManager: { getSessionId: () => "id", getSessionFile: () => null } },
-    ).catch((value) => value as Error);
-    expect(error).toBeInstanceOf(Error);
-    expect(error.message).toContain("note: crash here");
-    expect(error.message).toContain("Command exited with code 1");
-    expect(Buffer.byteLength(error.message, "utf8")).toBeLessThanOrEqual(DEFAULT_BASH_OUTPUT.maxBytes);
-    const path = /Full output: ([^\]]+)\]/.exec(error.message)?.[1];
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.exit_code).toBe(1);
+    const text = result.content[0].text;
+    expect(text).toContain("note: crash here");
+    expect(text).toEndWith("Command exited with code 1");
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(DEFAULT_BASH_OUTPUT.maxBytes);
+    const path = /Full output: ([^\]]+)\]/.exec(text)?.[1];
+    expect(result.details.fullOutputPath).toBe(path);
     expect(path).toBeTruthy();
     if (path) {
       expect(readFileSync(path, "utf8")).toBe(raw);

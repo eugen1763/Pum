@@ -290,8 +290,9 @@ export class ProjectValidationController {
             outcome = deadline.signal.aborted ? "timeout" : "cancelled";
           } else {
             const result = await tool.execute(toolCall.id, args, signal);
-            const after = await untilAborted(Promise.resolve(session.agent.afterToolCall?.({ assistantMessage, toolCall, args, result, isError: false, context }, signal)), signal);
-            if (after?.isError) outcome = "failed";
+            const isError = result.isError === true;
+            const after = await untilAborted(Promise.resolve(session.agent.afterToolCall?.({ assistantMessage, toolCall, args, result, isError, context }, signal)), signal);
+            if (after?.isError ?? isError) outcome = "failed";
             output = (after?.content ?? result.content).filter((item) => item.type === "text").map((item) => item.text).join("\n");
           }
         } catch (error) {

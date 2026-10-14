@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   SessionManager,
   type ExtensionAPI,
-  type ExtensionContext,
+  type ExtensionToolContext,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
@@ -23,7 +23,7 @@ function fixture(budget?: () => number | undefined) {
         throw new Error(`Unexpected history session access: ${String(property)}`);
       },
     }),
-  } as unknown as ExtensionContext);
+  } as unknown as ExtensionToolContext);
   return { manager, call, tool };
 }
 

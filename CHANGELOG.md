@@ -2,11 +2,15 @@
 
 All notable changes to PUM are documented in this file.
 
-## [0.2.36-beta.2] - 2026-09-23
+## [0.2.37-beta.1] - 2026-10-10
+
+### Changed
+- Upgraded pi to 1.1.0.
 
 ### Fixed
-- `/mcp` now identifies an invalid or missing exact-directory proposal, and `/mcp connect` reports unavailable native Linux Bubblewrap. Server and operating-system errors remain hidden.
-- MCP troubleshooting now distinguishes configured proposals from runtime-approved tools; a failed `mcp_list` does not prove that no servers are configured.
+- Fixed Anthropic strict-tool requests rejected for `maxItems`, while preserving local tool-schema limits.
+- Provider failures now show safely redacted errors in main, child, and resumed transcripts, including after partial output. Cancellation is not shown as a failure.
+- Preserved nonzero Bash result/error handling and automatic-validation failure semantics with the new pi SDK.
 
 ## [0.2.36-beta.1] - 2026-09-22
 
