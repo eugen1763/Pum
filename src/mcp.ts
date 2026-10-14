@@ -20,11 +20,11 @@ export class McpCommandError extends Error {
 export function mcpCommandErrorMessage(error: unknown): string {
   if (error instanceof McpCommandError) {
     if (error.kind === "proposal") return "MCP proposal missing, changed or invalid. Check exact-cwd .pum/mcp.json against docs/mcp.md, then preview /mcp again.";
-    if (error.kind === "native") return "MCP connection needs native Linux Bubblewrap. Install or enable Bubblewrap on Linux, then preview /mcp and connect again; no unsandboxed fallback.";
+    if (error.kind === "native") return "MCP connection needs native enforcement (Linux Bubblewrap or Windows MXC BaseContainer). Install or enable it, then preview /mcp and connect again; no unsandboxed fallback.";
   }
   return "MCP request failed. Preview /mcp and check the current proposal and digests.";
 }
-const scope = "Linux native Bubblewrap required, even with Check Off; no fallback or network. Live project read-only, private scratch writable; filtered environment, no auth passthrough, PUM configuration/credentials denied. Sensitive-name masks are defense in depth only: arbitrary secrets, aliases and future files may be read and returned to the model. Approval trusts current/future server and project code. No startup/resume trust.";
+const scope = "Native enforcement required (Linux Bubblewrap or Windows MXC BaseContainer), even with Check Off; no fallback or network. Live project read-only, private scratch writable; filtered environment, no auth passthrough, PUM configuration/credentials denied. Sensitive-name masks are defense in depth only: arbitrary secrets, aliases and future files may be read and returned to the model. Approval trusts current/future server and project code. No startup/resume trust.";
 
 /** Main-TUI-only runtime authority. No SDK command, persisted approval, automatic discovery or inherited trust. */
 export class McpController {

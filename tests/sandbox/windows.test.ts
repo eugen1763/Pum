@@ -136,6 +136,23 @@ test("buildWindowsMxcConfig never exposes a drive root for a bin shell", () => {
   expect(received?.filesystem.readonlyPaths.some((path) => /^[A-Za-z]:\\?$/u.test(path))).toBe(false);
 });
 
+test("buildWindowsMxcConfig with runtimePaths false grants only the exact executable file", () => {
+  let received: { filesystem: { readonlyPaths: string[] } } | undefined;
+  buildWindowsMxcConfig(
+    {
+      createConfigFromPolicy: (input) => {
+        received = input as typeof received;
+        return configFactory(input);
+      },
+    },
+    { ...policy, executable: "C:\\tools\\server.exe", readOnlyPaths: ["C:\\work", "C:\\tools\\server.exe"] },
+    undefined,
+    { runtimePaths: false },
+  );
+  // The parent directory is not granted on top of the exact executable file.
+  expect(received?.filesystem.readonlyPaths).toEqual(["C:\\work", "C:\\tools\\server.exe"]);
+});
+
 test("probe does not import MXC away from Windows", async () => {
   let loaded = false;
   const result = await probeWindowsSandbox(
@@ -329,6 +346,72 @@ test("does not misreport a plain non-zero exit as a timeout without a configured
   child.emit("close", 1, null);
   expect(await handle.completed).toEqual({ exitCode: 1, signal: null });
   expect(child.killCalls).toBe(0);
+});
+
+test("backend keeps persistent stdin open and flushes queued protocol writes", async () => {
+  class FakeChild extends EventEmitter {
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    stdin = new PassThrough();
+    killCalls = 0;
+    kill() {
+      this.killCalls += 1;
+      return true;
+    }
+  }
+  const child = new FakeChild();
+  const stdin: Buffer[] = [];
+  child.stdin.on("data", (chunk) => stdin.push(chunk));
+  const backend = new MxcSandboxBackend({
+    platform: "win32",
+    loader: async () =>
+      ({
+        getPlatformSupport: () => supported,
+        createConfigFromPolicy: configFactory,
+        spawnSandboxFromConfig: () => child,
+      }) as never,
+  });
+  const handle = backend.spawn(policy, {
+    persistentStdin: true,
+    onStdout: () => {},
+    onStderr: () => {},
+  });
+  await handle.write?.("first\n");
+  await handle.write?.("second\n");
+  handle.closeInput?.();
+  expect(Buffer.concat(stdin).toString()).toBe("first\nsecond\n");
+  expect(handle.write).toBeDefined();
+  expect(handle.closeInput).toBeDefined();
+  child.emit("close", 0, null);
+  expect(await handle.completed).toEqual({ exitCode: 0, signal: null });
+});
+
+test("backend exposes no persistent stdin entries for one-shot runs", async () => {
+  class FakeChild extends EventEmitter {
+    stdout = new PassThrough();
+    stderr = new PassThrough();
+    stdin = new PassThrough();
+    kill() {
+      return true;
+    }
+  }
+  const child = new FakeChild();
+  const backend = new MxcSandboxBackend({
+    platform: "win32",
+    loader: async () =>
+      ({
+        getPlatformSupport: () => supported,
+        createConfigFromPolicy: configFactory,
+        spawnSandboxFromConfig: () => child,
+      }) as never,
+  });
+  const handle = backend.spawn(policy, { onStdout: () => {}, onStderr: () => {} });
+  expect(handle.write).toBeUndefined();
+  expect(handle.closeInput).toBeUndefined();
+  // Let the async spawn attach its close listener before the event fires.
+  await Bun.sleep(0);
+  child.emit("close", 0, null);
+  await handle.completed;
 });
 
 test("backend maps the native MXC timeout envelope to pi timeout semantics", async () => {

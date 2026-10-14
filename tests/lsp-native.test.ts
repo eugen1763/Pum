@@ -117,7 +117,7 @@ test.skipIf(enforced)("missing or failed real native probe refuses LSP connectio
   try {
     await expect(adapter.spawn({ cwd: files.cwd, executable: python, args: ["-B", files.server],
       onStdout(data) { outputBytes += data.byteLength; }, onStderr(data) { outputBytes += data.byteLength; },
-    }).then(value => { handle = value; return value; })).rejects.toThrow("native policy");
+    }).then(value => { handle = value; return value; })).rejects.toThrow(/native policy|MCP native enforcement unavailable/);
     expect(handle).toBeUndefined();
     await expect(LspProtocolClient.connect(async request => {
       handle = await adapter.spawn(request);

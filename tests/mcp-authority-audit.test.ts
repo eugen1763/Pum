@@ -12,7 +12,8 @@ afterEach(() => { for (const fn of cleanup.splice(0).reverse()) fn(); });
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), "pum-mcp-authority-audit-"));
   mkdirSync(join(cwd, ".pum"));
-  const config = JSON.stringify({ version: 1, servers: [{ name: "audit", executable: "/fake/audit", args: [] }] });
+  const executable = process.platform === "win32" ? "C:\\tools\\fake-audit.exe" : "/fake/audit";
+  const config = JSON.stringify({ version: 1, servers: [{ name: "audit", executable, args: [] }] });
   const path = join(cwd, ".pum", "mcp.json");
   writeFileSync(path, config);
   const manager = { getSessionId: () => "same-id", getCwd: () => cwd };

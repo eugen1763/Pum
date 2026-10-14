@@ -375,7 +375,7 @@ describe("main TUI direct MCP authority boundary", () => {
     expect(f.setup.captureCharFrame()).toContain("MCP proposal missing, changed or invalid");
     f.setCommand(async () => { throw new McpCommandError("native"); });
     await submit(f.setup, "/mcp connect server " + "a".repeat(64));
-    expect(f.setup.captureCharFrame()).toContain("native Linux Bubblewrap");
+    expect(f.setup.captureCharFrame()).toContain("native enforcement");
     expect(f.calls).toEqual([]);
   });
   test("pending results cannot appear after runtime retirement", async () => {

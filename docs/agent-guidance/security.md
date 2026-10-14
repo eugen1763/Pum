@@ -372,18 +372,22 @@ These scoped clarifications resolve older absolute wording, not change policy.
   failure, config bytes or path identity changes, tool-list changes and disposal
   withdraw authority. File watchers revoke on relevant renames rather than trusting
   detached old inodes; boundary revalidation also checks config/ancestor identity.
-  Linux Bubblewrap is mandatory even with Check/Sandbox Off: no fallback/network,
-  fixed credential-free environment, readonly cwd only (no additional roots),
-  minimal system runtime mounts and exact external executable file, never its
-  directory. PUM configuration remains denied. The user approved live-project
-  residual exposure: bounded sensitive-name masks are defense in depth, not a
-  guarantee against arbitrary secrets, aliases or future files returned to the
-  model. Recursive scans do not follow links and fail closed on bounds/errors.
-  General Bash sandbox policy stays unchanged. Protocol is pinned legacy
-  2025-11-25 tools-only stdio, not latest/full MCP. No OAuth, remote transport,
-  installers, resources, sampling, prompts or URI following. Treat descriptions,
-  schemas and bounded text results as untrusted data. See `docs/mcp.md` for limits
-  and missing native-enforcement evidence on hosts without Bubblewrap.
+  Mandatory enforcement is platform-native even with Check/Sandbox Off: Linux
+  Bubblewrap or Windows MXC BaseContainer, never an unsandboxed fallback; the
+  AppContainer+DACL fallback is rejected. Boundary: no network, fixed
+  credential-free environment, readonly cwd only (no additional roots), minimal
+  system runtime mounts on Linux and the exact external executable file, never its
+  directory or runtime siblings. PUM configuration remains denied. The user
+  approved live-project residual exposure: bounded sensitive-name masks are
+  defense in depth, not a guarantee against arbitrary secrets, aliases or future
+  files returned to the model. Recursive scans do not follow links/junctions and
+  fail closed on bounds/errors. General Bash sandbox policy stays unchanged.
+  Protocol is pinned legacy 2025-11-25 tools-only stdio, not latest/full MCP. No
+  OAuth, remote transport, installers, resources, sampling, prompts or URI
+  following. Treat descriptions, schemas and bounded text results as untrusted
+  data. See `docs/mcp.md` for limits and the native-enforcement evidence status;
+  hosts whose platform-native probe is not enforced report unavailable and skip
+  native fixtures.
 
 <!-- end:ld-112 -->
 

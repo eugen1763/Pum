@@ -35,8 +35,10 @@ An exact-cwd `.pum/mcp.json` proposes servers, for example:
 }
 ```
 
-This is a format example, not an installation or activation instruction. Never
-put credentials in the file or arguments. No installers, remote URLs, environment
+This is a format example, not an installation or activation instruction.
+Executable paths are absolute for the runtime platform: POSIX on Linux,
+drive-qualified on Windows (for example `C:\\tools\\server.exe`). Never put
+credentials in the file or arguments. No installers, remote URLs, environment
 configuration or automatic startup fields are accepted.
 
 1. Enter `/mcp` or `/mcp preview` directly in the main TUI. It shows complete literal
@@ -87,9 +89,10 @@ the normal transcript contract.
 - If `/mcp` reports a missing, changed or invalid proposal, check the exact
   working directory's `.pum/mcp.json` against the bounded version 1 format below.
   Preview again after correcting the proposal. A changed proposal revokes approval.
-- If `/mcp connect` reports unavailable native Linux Bubblewrap, use Linux with
-  working Bubblewrap enforcement. PUM never starts MCP without it, even with
-  Check and Sandbox Off. Preview again before connecting.
+- If `/mcp connect` reports unavailable native enforcement, use a host where
+  the platform probe is enforced: Linux Bubblewrap, or Windows MXC BaseContainer
+  (PUM rejects the AppContainer+DACL fallback). PUM never starts MCP without it,
+  even with Check and Sandbox Off. Preview again before connecting.
 - Other connection, discovery and tool failures stay generic. PUM does not show
   raw server, OS or stderr errors. Revoke and preview before another connection.
 - An `mcp_list` failure does **not** mean that no servers are configured. It can
@@ -98,20 +101,33 @@ the normal transcript contract.
 
 ## Native boundary
 
-`src/mcp-process.ts` requires Linux and a successful fixed-path Bubblewrap probe,
-regardless of Check or Sandbox settings. Missing or unusable native enforcement
-fails closed; there is no unsandboxed fallback. General Bash sandbox policy is
-unchanged.
+`src/mcp-process.ts` requires enforced platform-native isolation regardless of
+Check or Sandbox settings. Linux requires a successful fixed-path Bubblewrap
+probe; Windows requires MXC BaseContainer (`processcontainer`, base-container
+tier) and never accepts the AppContainer+DACL fallback. Missing or unusable
+native enforcement fails closed; there is no unsandboxed fallback. The
+experimental MXC `windows_sandbox` VM backend is not used: it boots a disposable
+VM per invocation, allows one VM per logon session, buffers stdin and shares
+only directories, so it does not fit the stdio contract. General Bash sandbox
+policy is unchanged.
 
 - Only the exact cwd project is shared readonly; additional Check roots are not
   inherited. Files outside that scope remain unavailable except minimal readonly
   system runtime mounts (`/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, where present)
   and the exact canonical executable **file**, never its containing directory.
+- Windows uses the same scope through MXC BaseContainer: only the exact cwd
+  project and the exact executable file are granted readonly; the executable's
+  directory and runtime siblings are not granted, so a server needing its own
+  neighboring DLLs or configuration may fail (the same disclosed limitation as
+  nonstandard Linux executables). HOME, USERPROFILE, TEMP and TMP point at a
+  per-connection private temp directory; no host user profile is available.
 - No host `/etc`, home, ambient environment, credentials, OAuth or network access.
-  The environment contains only fixed PATH, HOME, TMPDIR and LANG values. PUM's
-  custom/default configuration boundary is denied even when inside a visible root.
-  MCP refuses configuration boundaries overlapping any system mount source in
-  **either containment direction**, checking supplied and canonical spellings.
+  The environment contains only fixed platform values: PATH, HOME, TMPDIR and
+  LANG on Linux; SystemRoot, PATH, HOME, USERPROFILE, TEMP and TMP on Windows.
+  PUM's custom/default configuration boundary is denied even when inside a
+  visible root. On Linux, MCP refuses configuration boundaries overlapping any
+  system mount source in **either containment direction**, checking supplied and
+  canonical spellings.
   For example, `/usr/lib/pum` is refused rather than masked only there while
   the independent `/lib` bind could still expose `/lib/pum`. The same rule covers
   `/bin`, `/sbin` and `/lib64` aliases. This protected PUM configuration is **not**
@@ -143,8 +159,10 @@ unchanged.
 ## Bounded proposal and protocol
 
 `src/mcp-config.ts` accepts at most 16 KiB UTF-8, four uniquely named servers,
-lowercase ASCII server identifiers (1–32 characters), absolute POSIX executable
-paths (4096 bytes), and 16 literal arguments (1024 bytes each). Controls and bidi
+lowercase ASCII server identifiers (1–32 characters), absolute native
+executable paths (4096 bytes: POSIX on Linux; drive-qualified on Windows without
+`.`/`..` segments, drive roots, UNC or device paths), and 16 literal arguments
+(1024 bytes each). Controls and bidi
 formatting are rejected. Unknown fields fail closed. Reads use bounded nonblocking
 regular-file descriptors, single-link checks and before/after file/ancestor identity
 checks; symlink components are rejected. These remain check-time safeguards.
@@ -210,10 +228,15 @@ TUI command routing. Protocol/controller fixtures use injected literal transport
 they are not native enforcement evidence. A disposable actual Bubblewrap fixture
 runs only where native enforcement is available, without installing server software.
 
-On this host Bubblewrap was absent during the initial implementation. Native
-fixtures are skipped and that absence is a material validation limitation. No
-paid-provider test, installed third-party interoperability, Windows MCP execution,
-headless access, remote HTTP/SSE/OAuth, authenticated/writable/networked servers,
-full-protocol compatibility or confidentiality proof is claimed. These remain
-validation limitations after #45 integration; closure does not establish native
-interoperability or imply a release.
+Initial implementation ran on a host without Bubblewrap; Windows support was
+added on a host whose MXC probe reports `appcontainer-dacl`, so BaseContainer is
+not enforced there either. Native fixtures skip on both hosts and that absence is
+a material validation limitation: the Windows policy/adapter behavior is covered
+by deterministic unit tests and an injected fake backend, never by a real MXC
+enforcement run. No paid-provider test, installed third-party interoperability,
+native Windows MCP execution, headless access, remote HTTP/SSE/OAuth,
+authenticated/writable/networked servers, full-protocol compatibility or
+confidentiality proof is claimed. These remain validation limitations after #45
+integration; closure does not establish native interoperability or imply a
+release. Windows Sandbox does not change this: its MXC VM backend stays
+experimental and unused for PUM MCP.

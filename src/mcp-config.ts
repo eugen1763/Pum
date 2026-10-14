@@ -21,8 +21,18 @@ function string(value: unknown, maximum: number): value is string {
 }
 function invalid(): never { throw new Error("Invalid MCP proposal: use the documented bounded version 1 stdio configuration."); }
 
+/** One platform-native absolute executable path. Drive-qualified only on Windows:
+ * drive roots, UNC/device paths, `.`/`..` segments and trailing separators are rejected. */
+export function isAbsoluteMcpExecutable(value: string, platform: NodeJS.Platform): boolean {
+  if (platform === "win32") {
+    return /^[A-Za-z]:[\\/][^\\/]/.test(value)
+      && !value.split(/[\\/]/).slice(1).some((part) => part === "" || part === "." || part === "..");
+  }
+  return posix.isAbsolute(value) && value !== "/";
+}
+
 /** Parsing is not authorization. Unknown transport/auth/environment fields fail closed. */
-export function parseMcpConfig(text: string): McpConfig {
+export function parseMcpConfig(text: string, platform: NodeJS.Platform = process.platform): McpConfig {
   if (Buffer.byteLength(text) > MCP_MAX_CONFIG_BYTES) invalid();
   let value: unknown;
   try { value = JSON.parse(text); } catch { invalid(); }
@@ -32,8 +42,8 @@ export function parseMcpConfig(text: string): McpConfig {
   const servers = value.servers.map((entry): McpServerConfig => {
     if (!object(entry) || !keys(entry, ["name", "executable", "args"])
       || typeof entry.name !== "string" || !namePattern.test(entry.name) || names.has(entry.name)
-      || !string(entry.executable, 4096) || !posix.isAbsolute(entry.executable)
-      || entry.executable === "/" || !Array.isArray(entry.args) || entry.args.length > 16
+      || !string(entry.executable, 4096) || !isAbsoluteMcpExecutable(entry.executable, platform)
+      || !Array.isArray(entry.args) || entry.args.length > 16
       || !entry.args.every((argument) => string(argument, 1024))) invalid();
     names.add(entry.name);
     return { name: entry.name, executable: entry.executable, args: [...entry.args] as string[] };

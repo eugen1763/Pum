@@ -28,12 +28,14 @@
       "originalSha256": "f59e8c05220c7ac9861f3994d2747ac6522a135053602cb29c11f857fb342492",
       "target": "docs/agent-guidance/layout.md#layout",
       "disposition": "clarified",
-      "normalizedSha256": "6fa6e70e9a71df55f4b8044a08e4b414ef4994b4ed4507a83695bafc3920d00b",
-      "note": "Correct the output-minimal module description: Quiet folds all settled calls; Normal groups routine successes. Remove the model-catalog module row: the installed pi 0.87.1 lists GPT-6 Astra, Luna and Sol, so PUM no longer adds catalog fallbacks.",
+      "normalizedSha256": "53c4c088d62fcfda141192e6fae8cd7a0c84c12700c5042a25ffb5ba52b6ca57",
+      "note": "Correct the output-minimal module description: Quiet folds all settled calls; Normal groups routine successes. Remove the model-catalog module row: the installed pi 0.87.1 lists GPT-6 Astra, Luna and Sol, so PUM no longer adds catalog fallbacks. Update the mcp-process row: the adapter is platform-native (Linux Bubblewrap or Windows MXC BaseContainer).",
       "evidence": [
         "src/output-minimal.ts",
         "tests/output-minimal.test.ts",
         "package.json",
+        "src/mcp-process.ts",
+        "docs/mcp.md",
         "tests/model-catalog.test.ts"
       ]
     },
@@ -1453,9 +1455,16 @@
       "sourceEndLine": 1015,
       "originalSha256": "a3b6ae8646c246796c80d1ba0027088200b83e89c6e07a886adeb9b3b6c93d16",
       "target": "docs/agent-guidance/security.md#ld-112",
-      "disposition": "preserved",
-      "normalizedSha256": "a3b6ae8646c246796c80d1ba0027088200b83e89c6e07a886adeb9b3b6c93d16",
-      "ordinal": 112
+      "disposition": "clarified",
+      "normalizedSha256": "f61b00ec47e87937ab87692c34d484b54fc328bc6563f821c03ba1ebb21545ae",
+      "ordinal": 112,
+      "note": "Mandatory MCP enforcement is platform-native: Linux Bubblewrap or Windows MXC BaseContainer (AppContainer+DACL rejected, no unsandboxed fallback); Windows grants the exact executable file, never runtime siblings.",
+      "evidence": [
+        "src/mcp-process.ts",
+        "src/mcp-config.ts",
+        "tests/mcp-process.test.ts",
+        "docs/mcp.md"
+      ]
     },
     {
       "id": "ld-113",

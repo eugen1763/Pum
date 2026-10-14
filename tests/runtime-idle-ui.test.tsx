@@ -49,7 +49,8 @@ test("rendered App refuses real controller grants after installed SDK old settle
     return stream;
   };
   mkdirSync(join(cwd, ".pum"));
-  writeFileSync(join(cwd, ".pum", "mcp.json"), JSON.stringify({ version: 1, servers: [{ name: "audit", executable: "/fake/server", args: [] }] }));
+  const executable = process.platform === "win32" ? "C:\\tools\\fake-server.exe" : "/fake/server";
+  writeFileSync(join(cwd, ".pum", "mcp.json"), JSON.stringify({ version: 1, servers: [{ name: "audit", executable, args: [] }] }));
   writeFileSync(join(cwd, ".pum", "lsp.json"), JSON.stringify({ version: 1, executable: "/fake/server", args: [] }));
   writeFileSync(join(cwd, ".pum", "validation.json"), JSON.stringify({ version: 1, commands: [{ kind: "test", command: "echo test", timeoutSeconds: 1 }] }));
   let spawns = 0;

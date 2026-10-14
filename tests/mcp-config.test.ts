@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MCP_MAX_CONFIG_BYTES, parseMcpConfig, readMcpProposal } from "../src/mcp-config";
 
-const config = { version: 1 as const, servers: [{ name: "local", executable: "/usr/bin/node", args: ["server.js"] }] };
+const platform: NodeJS.Platform = process.platform;
+const executablePath = platform === "win32" ? "C:\\tools\\node.exe" : "/usr/bin/node";
+const config = { version: 1 as const, servers: [{ name: "local", executable: executablePath, args: ["server.js"] }] };
 const text = JSON.stringify(config);
 function temporary(run: (cwd: string) => void): void {
   const cwd = mkdtempSync(join(tmpdir(), "pum-mcp-config-test-"));
@@ -17,7 +19,7 @@ describe("inert MCP server proposals", () => {
   test("parses only explicit bounded version 1 argv without execution or expansion", () => {
     expect(parseMcpConfig(text)).toEqual(config);
     const literal = { version: 1 as const, servers: [{ name: "literal", executable: "/bin/tool", args: ["$(touch never)", "$SECRET", "", "space argument"] }] };
-    expect(parseMcpConfig(JSON.stringify(literal))).toEqual(literal);
+    expect(parseMcpConfig(JSON.stringify(literal), "linux")).toEqual(literal);
   });
 
   test("rejects unknown and credential/transport/environment fields", () => {
@@ -37,9 +39,24 @@ describe("inert MCP server proposals", () => {
       ...["node", "/", "C:\\node.exe", "/bin/\u001bnode", "/" + "a".repeat(4096)].map((executable) => ({ ...config, servers: [{ ...config.servers[0], executable }] })),
       ...[null, "hello", Array(17).fill("x"), [1], ["a".repeat(1025)], ["😀".repeat(257)], ["a\n"], ["a\u009b"], ["a\u2066"]].map((args) => ({ ...config, servers: [{ ...config.servers[0], args }] })),
     ];
-    for (const value of invalid) expect(() => parseMcpConfig(JSON.stringify(value))).toThrow("Invalid MCP proposal");
+    for (const value of invalid) expect(() => parseMcpConfig(JSON.stringify(value), "linux")).toThrow("Invalid MCP proposal");
     expect(() => parseMcpConfig(" ".repeat(MCP_MAX_CONFIG_BYTES) + text)).toThrow();
     expect(() => parseMcpConfig("not json secret-sentinel")).toThrow("Invalid MCP proposal");
+  });
+
+  test("Windows accepts only drive-qualified absolute executables", () => {
+    const valid = ["C:\\tools\\server.exe", "D:/bin/server.exe", "C:\\Program Files\\Server\\server.exe"];
+    for (const executable of valid) {
+      const value = { ...config, servers: [{ ...config.servers[0], executable }] };
+      expect(parseMcpConfig(JSON.stringify(value), "win32")).toEqual(value);
+    }
+    const invalid = ["node", "C:\\", "C:", "C:node.exe", "C:\\..\\server.exe",
+      "C:\\tools\\..\\server.exe", "\\\\server\\share\\server.exe", "\\\\?\\C:\\tools\\server.exe",
+      "/usr/bin/node", "C:/tools/", "C:\\tools\\"];
+    for (const executable of invalid) {
+      expect(() => parseMcpConfig(JSON.stringify({ ...config, servers: [{ ...config.servers[0], executable }] }), "win32"))
+        .toThrow("Invalid MCP proposal");
+    }
   });
 
   test("exact cwd only, stable raw-byte digest, whitespace changes require new digest", () => temporary((cwd) => {

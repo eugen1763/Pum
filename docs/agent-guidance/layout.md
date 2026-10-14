@@ -33,7 +33,7 @@ Current navigation map; paths are repository-root-relative. Read the relevant mo
 | `src/tool-groups.ts` | Hidden tool groups, the `enable_tools` tool, and per-session persistence |
 | `src/mcp.ts` | Main-TUI-only MCP consent, runtime lifecycle and static tool bridge |
 | `src/mcp-config.ts` | Inert bounded exact-cwd MCP proposals and identity-checked reads |
-| `src/mcp-process.ts` | Mandatory Linux native readonly/networkless MCP process policy |
+| `src/mcp-process.ts` | Mandatory platform-native (Linux Bubblewrap / Windows MXC BaseContainer) readonly/networkless MCP process policy |
 | `src/mcp-protocol.ts` | Bounded pinned 2025-11-25 tools-only stdio MCP client |
 | `src/lsp.ts` | Main-TUI-only direct-consent document diagnostics lifecycle and cached agent feedback |
 | `src/lsp-files.ts` | Inert bounded LSP proposals and identity-checked Python document snapshots |

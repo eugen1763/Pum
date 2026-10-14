@@ -4,14 +4,15 @@ import { mkdirSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildBubblewrapArgv, createBubblewrapBackend, NodeBubblewrapProcessAdapter, probeBubblewrap } from "../src/sandbox/linux";
-import type { SandboxPolicy, SandboxProcessExit, SandboxProcessHandle } from "../src/sandbox/types";
+import type { SandboxPolicy, SandboxProcessExit, SandboxProcessHandle, SandboxProcessOptions } from "../src/sandbox/types";
 import {
-  createMcpProcessAdapter, buildMcpProcessPolicy as buildPolicy, MCP_SYSTEM_MOUNTS, MCP_SCAN_MAX_DEPTH, MCP_SCAN_MAX_MASKS,
+  createMcpProcessAdapter, buildMcpProcessPolicy as buildPolicy, buildWindowsMcpProcessPolicy, MCP_SYSTEM_MOUNTS, MCP_SCAN_MAX_DEPTH, MCP_SCAN_MAX_MASKS,
   manageMcpProcessHandle, mcpConfigOverlapsSystemSources, MCP_MAX_PENDING_WRITE_BYTES, MCP_MAX_PENDING_WRITES,
   McpNativeUnavailableError,
 } from "../src/mcp-process";
 
 const linux = process.platform === "linux";
+const windows = process.platform === "win32";
 // Policy tests never depend on or inspect the user's real PUM config.
 let fixtureConfig: string;
 beforeAll(async () => { fixtureConfig = await mkdtemp(join(tmpdir(), "pum-mcp-config-")); });
@@ -43,9 +44,9 @@ describe("MCP mandatory native policy", () => {
   test("rejects invalid root without fallback", async () => {
     await expect(createMcpProcessAdapter().spawn({
       executable: "/bin/cat", args: [], cwd: "/", onStdout() {}, onStderr() {},
-    })).rejects.toThrow(/native policy|native Linux Bubblewrap enforcement unavailable/);
+    })).rejects.toThrow(/native policy|MCP native enforcement unavailable/);
   });
-  test.skipIf(linux)("unsupported platform reports only the curated native marker", async () => {
+  test.skipIf(linux || windows)("unsupported platform reports only the curated native marker", async () => {
     await expect(createMcpProcessAdapter().spawn({
       executable: "/bin/cat", args: [], cwd: "/", onStdout() {}, onStderr() {},
     })).rejects.toBeInstanceOf(McpNativeUnavailableError);
@@ -236,6 +237,112 @@ describe.skipIf(!linux)("MCP readonly live-project planning", () => {
       for (let i = 0; i <= MCP_SCAN_MAX_DEPTH; i++) { nested = join(nested, "nested"); await mkdir(nested); }
       await expect(buildMcpProcessPolicy(request)).rejects.toThrow("native policy");
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+});
+
+describe.skipIf(!windows)("Windows MCP readonly live-project planning", () => {
+  let fixtureConfig: string;
+  beforeAll(async () => { fixtureConfig = await mkdtemp(join(tmpdir(), "pum-mcp-win-config-")); });
+  afterAll(async () => { await rm(fixtureConfig, { recursive: true, force: true }); });
+  const buildWindowsPolicy: typeof buildWindowsMcpProcessPolicy = (request, options) =>
+    buildWindowsMcpProcessPolicy(request, { configDir: fixtureConfig, ...options });
+
+  test("masks known secrets, keeps live data readonly and records the exact scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pum-mcp-win-plan-"));
+    try {
+      const cwd = join(root, "project");
+      const configDir = join(cwd, "pum-private");
+      await mkdir(join(cwd, "packages", "api"), { recursive: true });
+      await mkdir(configDir);
+      await writeFile(join(cwd, "packages", "api", ".env.prod"), "secret");
+      await writeFile(join(cwd, "packages", "api", "private.key"), "secret");
+      await writeFile(join(configDir, "auth.json"), "secret");
+      const executable = join(root, "server.exe");
+      await writeFile(executable, "MZ");
+      const privateTemp = await mkdtemp(join(tmpdir(), "pum-mcp-win-tmp-"));
+      const policy = await buildWindowsPolicy({ cwd, executable, args: ["$(literal); argument"] }, { configDir, privateTemp });
+      expect(policy.readWritePaths).toEqual([]);
+      expect(policy.readOnlyPaths).toEqual([cwd, executable]);
+      expect(policy.deniedPaths.sort()).toEqual([
+        configDir, join(cwd, "packages", "api", ".env.prod"), join(cwd, "packages", "api", "private.key"),
+      ].sort());
+      expect(policy.network).toBe("deny");
+      expect(policy.privateTemp).toBe(privateTemp);
+      expect(policy.environment.HOME).toBe(privateTemp);
+      expect(policy.environment.USERPROFILE).toBe(privateTemp);
+      expect(policy.environment.SystemRoot).toBeTruthy();
+      expect(policy.environment.PATH).toContain(policy.environment.SystemRoot);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("refuses junctions, config overlap, drive and system roots, missing and malformed values", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pum-mcp-win-links-"));
+    try {
+      const target = join(root, "actual");
+      await mkdir(target);
+      const executable = join(target, "server.exe");
+      await writeFile(executable, "MZ");
+      const alignment = join(root, "junction");
+      await symlink(target, alignment, "junction");
+      const privateTemp = await mkdtemp(join(tmpdir(), "pum-mcp-win-tmp-"));
+      const request = { executable, args: [] };
+      await expect(buildWindowsPolicy({ ...request, cwd: join(root, "missing-project") }, { privateTemp }))
+        .rejects.toThrow("native policy");
+      await expect(buildWindowsPolicy({ ...request, cwd: alignment }, { privateTemp }))
+        .rejects.toThrow("native policy");
+      await expect(buildWindowsPolicy({ ...request, cwd: root, executable: join(alignment, "server.exe") }, { privateTemp }))
+        .rejects.toThrow("native policy");
+      await expect(buildWindowsPolicy({ ...request, cwd: root }, { privateTemp, configDir: alignment }))
+        .rejects.toThrow("native policy");
+      const drive = /^[A-Za-z]:/.exec(root)![0] + "\\";
+      await expect(buildWindowsPolicy({ ...request, cwd: drive }, { privateTemp })).rejects.toThrow("native policy");
+      await expect(buildWindowsPolicy({ ...request, cwd: root }, { privateTemp, configDir: root }))
+        .rejects.toThrow("native policy");
+      await expect(buildWindowsPolicy({ ...request, cwd: root }, { privateTemp: "C:\\not-absolute" }))
+        .rejects.toThrow("native policy");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("adapter requires enforced MXC and pipes a persistent protocol through it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pum-mcp-win-adapter-"));
+    try {
+      const cwd = join(root, "project");
+      const configDir = join(root, "pum-private");
+      await mkdir(cwd);
+      await mkdir(configDir);
+      const executable = join(root, "server.exe");
+      await writeFile(executable, "MZ");
+      let persistent = false;
+      let received: SandboxPolicy | undefined;
+      const backend = {
+        async probe() { return { state: "enforced" as const, backend: "mxc" as const }; },
+        spawn(policy: SandboxPolicy, options: SandboxProcessOptions) {
+          persistent = options.persistentStdin === true;
+          received = policy;
+          return {
+            completed: Promise.resolve({ exitCode: 0, signal: null } satisfies SandboxProcessExit),
+            kill() {},
+            write(data: string) { return Promise.resolve(data.length); },
+            closeInput() {},
+          } as unknown as SandboxProcessHandle;
+        },
+      };
+      const handle = await createMcpProcessAdapter({ configDir, platform: "win32", windowsBackend: backend as never }).spawn({
+        cwd, executable, args: [], onStdout() {}, onStderr() {},
+      });
+      expect(persistent).toBe(true);
+      expect(received?.readOnlyPaths).toEqual([cwd, executable]);
+      expect(received?.network).toBe("deny");
+      await handle.write("{\"jsonrpc\":\"2.0\"}\n");
+      handle.close();
+      await handle.completed;
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("allowWindows false keeps the curated native marker", async () => {
+    await expect(createMcpProcessAdapter({ platform: "win32", allowWindows: false }).spawn({
+      executable: "C:\\tools\\server.exe", args: [], cwd: "C:\\work", onStdout() {}, onStderr() {},
+    })).rejects.toBeInstanceOf(McpNativeUnavailableError);
   });
 });
 

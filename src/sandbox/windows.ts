@@ -154,11 +154,14 @@ function sandboxEnvironment(policy: SandboxPolicy): string[] {
   return entries.map(([name, value]) => `${name}=${value}`);
 }
 
-/** Build the exact stable MXC 0.7 ProcessContainer configuration used for a run. */
+/** Build the exact stable MXC 0.7 ProcessContainer configuration used for a run.
+ * `runtimePaths` follows the writable-mutable Bash convention: grant the executable's
+ * runtime directory. MCP is stricter and passes false: only the exact executable file. */
 export function buildWindowsMxcConfig(
   sdk: Pick<MxcSdk, "createConfigFromPolicy">,
   policy: SandboxPolicy,
   timeoutSeconds?: number,
+  options: { runtimePaths?: boolean } = {},
 ): ContainerConfig {
   const timeoutMs = timeoutSeconds === undefined ? 0 : Math.ceil(timeoutSeconds * 1000);
   if (timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
@@ -168,10 +171,11 @@ export function buildWindowsMxcConfig(
     throw new Error("Invalid timeout: maximum is 2147483.647 seconds");
   }
 
+  const runtimePaths = options.runtimePaths === false ? [] : windowsRuntimePaths(policy.executable);
   const mxcPolicy: MxcPolicy = {
     version: "0.7.0-alpha",
     filesystem: {
-      readonlyPaths: uniqueWindowsPaths([...policy.readOnlyPaths, ...windowsRuntimePaths(policy.executable)]),
+      readonlyPaths: uniqueWindowsPaths([...policy.readOnlyPaths, ...runtimePaths]),
       readwritePaths: uniqueWindowsPaths([...policy.readWritePaths, policy.privateTemp]),
       deniedPaths: uniqueWindowsPaths(policy.deniedPaths),
       clearPolicyOnExit: true,
@@ -295,7 +299,10 @@ function startSandboxProcess(
     });
 
     child.stdin?.on("error", () => {});
-    child.stdin?.end(options.stdin ? Buffer.from(options.stdin) : undefined);
+    // A persistent protocol owns the stdin pipe after spawn; one-shot stdin closes now.
+    if (!options.persistentStdin) {
+      child.stdin?.end(options.stdin ? Buffer.from(options.stdin) : undefined);
+    }
   });
 }
 
@@ -316,6 +323,23 @@ export class MxcSandboxBackend implements SandboxBackend {
   spawn(policy: SandboxPolicy, options: SandboxProcessOptions): SandboxProcessHandle {
     let child: ChildProcess | undefined;
     let killRequested = false;
+    let stdinClosed = false;
+    const pendingWrites: { data: string; resolve(): void; reject(error: Error): void }[] = [];
+    const rejectWrites = (error: Error) => {
+      for (const write of pendingWrites.splice(0)) write.reject(error);
+    };
+    const dispatch = (entry: { data: string; resolve(): void; reject(error: Error): void }) => {
+      const stdin = child?.stdin;
+      if (!stdin || stdin.destroyed || stdin.writableEnded || stdinClosed) {
+        entry.reject(new Error("Persistent process input is closed"));
+        return;
+      }
+      try {
+        stdin.write(entry.data, "utf8", (error) => error ? entry.reject(error) : entry.resolve());
+      } catch (error) {
+        entry.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
     const completed = (async () => {
       if (this.#platform !== "win32") throw new Error("MXC ProcessContainer requires Windows");
       if (options.signal?.aborted) throw new Error("aborted");
@@ -325,14 +349,30 @@ export class MxcSandboxBackend implements SandboxBackend {
       return startSandboxProcess(sdk, policy, options, (spawned) => {
         child = spawned;
         if (killRequested) child.kill();
+        for (const entry of pendingWrites.splice(0)) dispatch(entry);
+        if (stdinClosed) child.stdin?.end();
       });
     })();
+    void completed.catch(() => rejectWrites(new Error("Persistent process input is closed")));
     return {
       completed,
       kill: () => {
         killRequested = true;
         child?.kill();
       },
+      ...(options.persistentStdin ? {
+        write(data: string): Promise<void> {
+          return new Promise<void>((resolve, reject) => {
+            const entry = { data, resolve, reject };
+            if (child?.stdin) dispatch(entry);
+            else pendingWrites.push(entry);
+          });
+        },
+        closeInput(): void {
+          stdinClosed = true;
+          child?.stdin?.end();
+        },
+      } : {}),
     };
   }
 }

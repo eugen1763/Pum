@@ -13,7 +13,8 @@ afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup();
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), "pum-mcp-controller-"));
   mkdirSync(join(cwd, ".pum"));
-  const config = { version: 1, servers: [{ name: "echo", executable: "/fake/server", args: [] }] };
+  const executable = process.platform === "win32" ? "C:\\tools\\fake-server.exe" : "/fake/server";
+  const config = { version: 1, servers: [{ name: "echo", executable, args: [] }] };
   const save = () => writeFileSync(join(cwd, ".pum", "mcp.json"), JSON.stringify(config)); save();
   let listener: (event: any) => void = () => {}, idle = true, current = true;
   const sessionManager = { getSessionId: () => "owner" };
@@ -57,7 +58,7 @@ describe("main TUI MCP runtime authority", () => {
     await expect(f.controller.command(`connect echo ${readMcpProposal(f.cwd).digest}`)).rejects.toThrow("Preview");
     await expect(f.execute("mcp_call", { server: "echo", tool: "echo", arguments: { text: "hi" } })).rejects.toThrow("unavailable");
     const preview = await f.controller.command("/mcp");
-    expect(preview).toContain("arbitrary secrets"); expect(preview).toContain('["/fake/server"]'); expect(f.spawns).toBe(0);
+    expect(preview).toContain("arbitrary secrets"); expect(preview).toContain(JSON.stringify([f.config.servers[0].executable])); expect(f.spawns).toBe(0);
   });
   test("separate exact toolset approval then bounded untrusted list/call; static schemas never contain server data", async () => {
     const f = fixture(); const discovery = await f.connect();
@@ -111,7 +112,7 @@ describe("main TUI MCP runtime authority", () => {
     await native.command("preview");
     const digest = readMcpProposal(f.cwd).digest;
     await expect(native.command(`connect echo ${digest}`)).rejects.toMatchObject({ kind: "native" });
-    expect(mcpCommandErrorMessage(new McpCommandError("native"))).toContain("Linux Bubblewrap");
+    expect(mcpCommandErrorMessage(new McpCommandError("native"))).toContain("Windows MXC BaseContainer");
     const server = make(new Error("RAW PRIVATE SERVER FAILURE"));
     await server.command("preview");
     await expect(server.command(`connect echo ${digest}`)).rejects.not.toBeInstanceOf(McpCommandError);

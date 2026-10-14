@@ -329,6 +329,8 @@ export async function start(
       let mcpSession: AgentSession | undefined;
       let mcpDisposed = false;
       const mcpProcess = createMcpProcessAdapter({ configDir: AGENT_DIR });
+      // LSP keeps the reviewed Linux-only boundary; only the MCP controller uses MXC on Windows.
+      const lspProcess = createMcpProcessAdapter({ configDir: AGENT_DIR, allowWindows: false });
       const mcp: McpController = new McpController({
         cwd,
         spawn: (request) => mcpProcess.spawn(request),
@@ -337,7 +339,7 @@ export async function start(
       });
       const lsp: LspController = new LspController({
         cwd,
-        spawn: (request) => mcpProcess.spawn(request),
+        spawn: (request) => lspProcess.spawn(request),
         isIdle: () => isRuntimeIdle(mcpSession),
         isCurrent: (): boolean => !mcpDisposed && !!mcpSession && lspControllers.get(mcpSession) === lsp,
       });

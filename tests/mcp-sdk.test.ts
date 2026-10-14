@@ -20,7 +20,8 @@ const model: Model<"openai-completions"> = {
 test("installed SDK: inactive MCP cannot execute, reveal grants no consent, exact approval enables calls", async () => {
   const root = mkdtempSync(join(tmpdir(), "pum-mcp-sdk-")); cleanup.push(() => rmSync(root, {recursive: true, force: true}));
   const cwd = join(root, "project"), agentDir = join(root, "agent"); mkdirSync(cwd); mkdirSync(agentDir); mkdirSync(join(cwd, ".pum"));
-  writeFileSync(join(cwd, ".pum", "mcp.json"), JSON.stringify({version: 1, servers: [{name: "echo", executable: "/fake/server", args: []}]}));
+  const executable = process.platform === "win32" ? "C:\\tools\\fake-server.exe" : "/fake/server";
+  writeFileSync(join(cwd, ".pum", "mcp.json"), JSON.stringify({version: 1, servers: [{name: "echo", executable, args: []}]}));
   let session: AgentSession | undefined, spawns = 0, serverCalls = 0;
   const controller = new McpController({ cwd, isIdle: () => !!session && !session.isStreaming, spawn: request => {
     spawns++; let finish!: () => void;
